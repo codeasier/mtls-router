@@ -16,7 +16,7 @@
 
 **Last updated:** 2026-06-18
 
-**Overall status:** Phase 1 and Phase 2 are complete. Phase 3 is the next executable phase. Phases 4-8 remain blocked by dependencies.
+**Overall status:** Phase 1, Phase 2, and Phase 3 are complete. Phase 4 is the next executable phase. Phases 5-8 remain blocked by dependencies.
 
 **Current HEAD:** `845a7a8 feat: implement phase 2 atomic packages and CI`
 
@@ -32,8 +32,8 @@
 |---|---:|---|---|---|
 | Phase 1 — Repository Scaffold | T01 | **DONE** | Commit `4089fbc`; files `go.mod`, `.gitignore`, `LICENSE`, `README.md` exist | Nothing for code; optionally commit phase planning docs separately |
 | Phase 2 — Independent Atomic Packages and CI | T02, T03, T05, T06, T07, T08, T11, T15 | **DONE** | Commit `845a7a8`; phase-level verification passed: openssl setup; `go test ./internal/config/... ./internal/certs/... ./internal/proxy/... ./internal/log/... -v`; `go build ./...`; workflow file checks; `test -z "$(gofmt -l internal)"` | Nothing; Phase 3 is next |
-| Phase 3 — mTLS Transport and Startup Probe | T04, T10 | **NEXT EXECUTABLE** | Phase 2 dependencies now exist: config, cert loader, proxy helpers, access log, CI workflows | Implement mTLS transport and startup probe after committing or carrying Phase 2 changes |
-| Phase 4 — Compose ReverseProxy | T09 | **BLOCKED** until Phase 3 passes | No `internal/proxy/proxy.go` | Compose Director, ModifyResponse, ErrorHandler, transport, and stream sniff wrapper |
+| Phase 3 — mTLS Transport and Startup Probe | T04, T10 | **DONE** | Phase-level verification passed: `go test ./internal/proxy/... -run TestNewMTLSTransport -v`; `go test ./internal/health/... -v`; `go build ./...`; `test -z "$(gofmt -l internal)"`. Commit pending controller action. | Nothing; Phase 4 is next |
+| Phase 4 — Compose ReverseProxy | T09 | **NEXT EXECUTABLE** | Phase 3 transport and startup probe implemented; Phase 3 commit pending controller action | Compose Director, ModifyResponse, ErrorHandler, transport, and stream sniff wrapper |
 | Phase 5 — Main Program Wiring | T12 | **BLOCKED** until Phase 4 passes | No `main.go` | Wire config, certs, probe, reverse proxy, access log, HTTP server, shutdown |
 | Phase 6 — Build Script and README | T13, T16 | **BLOCKED** until Phase 5 passes | No `scripts/build.sh`; README is only scaffold stub | Add local build script and polish README |
 | Phase 7 — Deployment Artifacts | T14 | **BLOCKED** until Phase 6 passes | No `Dockerfile`, `.dockerignore`, or `systemd/` | Add systemd unit and Docker scratch image |
@@ -41,21 +41,18 @@
 
 ### Next Required Execution
 
-The next executable phase is **Phase 3 — mTLS Transport and Startup Probe**.
+The next executable phase is **Phase 4 — Compose ReverseProxy**.
 
-Recommended execution order inside Phase 3:
+Recommended execution order inside Phase 4:
 
-1. T04 — mTLS `http.Transport`
-2. T10 — Startup mTLS probe
+1. T09 — Compose ReverseProxy
 
-These Phase 3 tickets depend on Phase 2 outputs but may be executed concurrently if orchestration is reliable.
+T09 depends on T04, T05, T06, T07, and T08, all of which now exist after Phases 2 and 3.
 
 ### Do Not Execute Yet
 
 Do not start these until their prerequisites pass:
 
-- T04/T10 before T02/T03 and relevant proxy helpers exist.
-- T09 before T04/T05/T06/T07/T08 pass.
 - T12 before T02/T09/T10/T11 pass.
 - T13/T16 before T12 passes.
 - T14 before Phase 6 passes.
