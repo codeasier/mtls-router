@@ -16,9 +16,9 @@
 
 **Last updated:** 2026-06-18
 
-**Overall status:** Phase 1, Phase 2, Phase 3, and Phase 4 are complete. Phase 5 is the next executable phase. Phases 6-8 remain blocked by dependencies.
+**Overall status:** Phase 1, Phase 2, Phase 3, Phase 4, and Phase 5 are complete. Phase 6 is the next executable phase. Phases 7-8 remain blocked by dependencies.
 
-**Current HEAD:** `0aff614 feat(proxy): compose reverse proxy`
+**Current HEAD:** `bdf7df8 feat: wire main program`
 
 **Working tree status at snapshot time:**
 
@@ -35,26 +35,26 @@
 | Phase 2 — Independent Atomic Packages and CI | T02, T03, T05, T06, T07, T08, T11, T15 | **DONE** | Commit `845a7a8`; phase-level verification passed: openssl setup; `go test ./internal/config/... ./internal/certs/... ./internal/proxy/... ./internal/log/... -v`; `go build ./...`; workflow file checks; `test -z "$(gofmt -l internal)"` | Nothing; Phase 3 is next |
 | Phase 3 — mTLS Transport and Startup Probe | T04, T10 | **DONE** | Commit `e0b51e9`; phase-level verification passed: `go test ./internal/proxy/... -run TestNewMTLSTransport -v`; `go test ./internal/health/... -v`; `go build ./...`; `test -z "$(gofmt -l internal)"` | Nothing |
 | Phase 4 — Compose ReverseProxy | T09 | **DONE** | Commit `0aff614`; phase-level verification passed: `go test ./internal/proxy/... -v`; `go build ./...` | Nothing; Phase 5 is next |
-| Phase 5 — Main Program Wiring | T12 | **NEXT EXECUTABLE** | Phase 4 reverse proxy composition implemented and verified | Wire config, certs, probe, reverse proxy, access log, HTTP server, shutdown |
-| Phase 6 — Build Script and README | T13, T16 | **BLOCKED** until Phase 5 passes | No `scripts/build.sh`; README is only scaffold stub | Add local build script and polish README |
+| Phase 5 — Main Program Wiring | T12 | **DONE** | Commit `bdf7df8`; phase-level verification passed: `go test ./...`; `go build ./...`; `gofmt -l .` | Nothing; Phase 6 is next |
+| Phase 6 — Build Script and README | T13, T16 | **NEXT EXECUTABLE** | Phase 5 main wiring implemented and verified | Add local build script and polish README |
 | Phase 7 — Deployment Artifacts | T14 | **BLOCKED** until Phase 6 passes | No `Dockerfile`, `.dockerignore`, or `systemd/` | Add systemd unit and Docker scratch image |
 | Phase 8 — Final Verification | T17 | **BLOCKED** until Phases 1-7 pass | Final test matrix not run | Run race tests, vet, gofmt, cross-compile, fail-fast smoke |
 
 ### Next Required Execution
 
-The next executable phase is **Phase 5 — Main Program Wiring**.
+The next executable phase is **Phase 6 — Build Script and README**.
 
-Recommended execution order inside Phase 5:
+Recommended execution order inside Phase 6:
 
-1. T12 — `main.go` wiring
+1. T13 — `scripts/build.sh`
+2. T16 — README polish
 
-T12 depends on T02, T04, T09, T10, and T11, all of which now exist after Phases 2-4.
+T13 and T16 may run concurrently after Phase 5 passes.
 
 ### Do Not Execute Yet
 
 Do not start these until their prerequisites pass:
 
-- T13/T16 before T12 passes.
 - T14 before Phase 6 passes.
 - T17 before all earlier phases pass.
 
@@ -843,6 +843,25 @@ Latest Phase 4 evidence:
 ```bash
 go test ./internal/proxy/... -v
 go build ./...
+git status --short
+```
+
+Phase 5 completion checklist:
+
+- [x] All tickets in Phase 5 completed their lifecycle: 理解 → 实施 → 验收 → fix if needed → 重新验收.
+- [x] Every Phase 5 expected file exists.
+- [x] Every Phase 5 phase-level verification command was run from `/Users/test1/liuyekang/dev/code/mtls-router`.
+- [x] Command output matched the Phase 5 pass standard.
+- [x] No failing verification required a fix.
+- [x] Git contains the expected commit: `bdf7df8 feat: wire main program`.
+- [x] `git status --short` contains only `.omc/` execution state plus files staged for the Phase 5 commit before committing.
+
+Latest Phase 5 evidence:
+
+```bash
+go test ./...
+go build ./...
+gofmt -l .
 git status --short
 ```
 
