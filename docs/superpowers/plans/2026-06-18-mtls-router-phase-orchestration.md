@@ -18,21 +18,12 @@
 
 **Overall status:** Phase 1 and Phase 2 are complete. Phase 3 is the next executable phase. Phases 4-8 remain blocked by dependencies.
 
-**Current HEAD:** `4089fbc chore: scaffold mtls-router repository` (Phase 2 changes pending commit)
+**Current HEAD:** `845a7a8 feat: implement phase 2 atomic packages and CI`
 
 **Working tree status at snapshot time:**
 
 - Code scaffold from Phase 1 is committed.
-- Phase planning docs are present but uncommitted:
-  - `docs/superpowers/plans/2026-06-18-mtls-router-phase-orchestration.md`
-  - `docs/superpowers/plans/2026-06-18-mtls-router-phase-01-repository-scaffold.md`
-  - `docs/superpowers/plans/2026-06-18-mtls-router-phase-02-atomic-packages-ci.md`
-  - `docs/superpowers/plans/2026-06-18-mtls-router-phase-03-mtls-transport-probe.md`
-  - `docs/superpowers/plans/2026-06-18-mtls-router-phase-04-compose-reverse-proxy.md`
-  - `docs/superpowers/plans/2026-06-18-mtls-router-phase-05-main-wiring.md`
-  - `docs/superpowers/plans/2026-06-18-mtls-router-phase-06-build-script-readme.md`
-  - `docs/superpowers/plans/2026-06-18-mtls-router-phase-07-deployment-artifacts.md`
-  - `docs/superpowers/plans/2026-06-18-mtls-router-phase-08-final-verification.md`
+- Phase 2 implementation and phase planning docs are committed in `845a7a8`.
 - `.omc/` contains local execution/session state and is not part of the implementation.
 
 ### Progress by Phase
@@ -40,7 +31,7 @@
 | Phase | Tickets | Status | Evidence | What remains |
 |---|---:|---|---|---|
 | Phase 1 — Repository Scaffold | T01 | **DONE** | Commit `4089fbc`; files `go.mod`, `.gitignore`, `LICENSE`, `README.md` exist | Nothing for code; optionally commit phase planning docs separately |
-| Phase 2 — Independent Atomic Packages and CI | T02, T03, T05, T06, T07, T08, T11, T15 | **DONE** | Phase-level verification passed: openssl setup; `go test ./internal/config/... ./internal/certs/... ./internal/proxy/... ./internal/log/... -v`; `go build ./...`; workflow file checks; `test -z "$(gofmt -l /Users/test1/liuyekang/dev/code/mtls-router)"`; `git status --short` shows expected uncommitted Phase 2 files and prior planning docs | Commit Phase 2 changes when requested |
+| Phase 2 — Independent Atomic Packages and CI | T02, T03, T05, T06, T07, T08, T11, T15 | **DONE** | Commit `845a7a8`; phase-level verification passed: openssl setup; `go test ./internal/config/... ./internal/certs/... ./internal/proxy/... ./internal/log/... -v`; `go build ./...`; workflow file checks; `test -z "$(gofmt -l internal)"` | Nothing; Phase 3 is next |
 | Phase 3 — mTLS Transport and Startup Probe | T04, T10 | **NEXT EXECUTABLE** | Phase 2 dependencies now exist: config, cert loader, proxy helpers, access log, CI workflows | Implement mTLS transport and startup probe after committing or carrying Phase 2 changes |
 | Phase 4 — Compose ReverseProxy | T09 | **BLOCKED** until Phase 3 passes | No `internal/proxy/proxy.go` | Compose Director, ModifyResponse, ErrorHandler, transport, and stream sniff wrapper |
 | Phase 5 — Main Program Wiring | T12 | **BLOCKED** until Phase 4 passes | No `main.go` | Wire config, certs, probe, reverse proxy, access log, HTTP server, shutdown |
@@ -804,8 +795,8 @@ timeout 5 ./mtls-router; echo "exit=$?"
 - [x] Every Phase 2 phase-level verification command was run from `/Users/test1/liuyekang/dev/code/mtls-router`.
 - [x] Command output matched the Phase 2 pass standard after one minimal test expectation fix.
 - [x] Failed verification produced a minimal fix and successful re-verification evidence.
-- [ ] Git contains the expected commit(s), or batching was explicitly chosen. Phase 2 is pending commit by user instruction.
-- [x] `git status --short` contains expected untracked Phase 2 files, prior planning docs, and `.omc/` execution state; no unexpected deletions.
+- [x] Git contains the expected commit: `845a7a8 feat: implement phase 2 atomic packages and CI`.
+- [x] `git status --short` contains only `.omc/` execution state after the commit.
 
 Latest Phase 2 evidence:
 
