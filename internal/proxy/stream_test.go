@@ -3,8 +3,10 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -50,6 +52,89 @@ func TestSniffStreamDetectsMarkerInsideFirst4KBOfLargeBody(t *testing.T) {
 	b, _ := io.ReadAll(body)
 	if !bytes.Equal(b, payload) {
 		t.Fatal("body not preserved")
+	}
+}
+
+var errInjectedRead = errors.New("injected read error")
+
+type errorAfterPrefixBody struct {
+	prefix strings.Reader
+}
+
+func (b *errorAfterPrefixBody) Read(p []byte) (int, error) {
+	if b.prefix.Len() > 0 {
+		n, _ := b.prefix.Read(p)
+		return n, errInjectedRead
+	}
+	return 0, errInjectedRead
+}
+
+func (b *errorAfterPrefixBody) Close() error { return nil }
+
+type countingReadCloser struct {
+	io.Reader
+	closed atomic.Int32
+}
+
+func (c *countingReadCloser) Close() error {
+	c.closed.Add(1)
+	return nil
+}
+
+type closeCountingBody struct {
+	io.ReadCloser
+}
+
+func (b *closeCountingBody) Set(rc io.ReadCloser) { b.ReadCloser = rc }
+
+func TestSniffStreamRestoredSetterCloseDoesNotRecurse(t *testing.T) {
+	original := &countingReadCloser{Reader: strings.NewReader(`{"stream":true}`)}
+	body := &closeCountingBody{ReadCloser: original}
+
+	_, ok := SniffStream(context.Background(), body)
+	if !ok {
+		t.Fatal("expected stream request")
+	}
+	if err := body.ReadCloser.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if original.closed.Load() != 1 {
+		t.Fatalf("original Close called %d times, want 1", original.closed.Load())
+	}
+}
+
+func TestSniffStreamRestoredEmbeddedSetterCloseDoesNotRecurse(t *testing.T) {
+	body := &mutableBody{ReadCloser: io.NopCloser(strings.NewReader(`{"stream":true}`))}
+
+	_, ok := SniffStream(context.Background(), body)
+	if !ok {
+		t.Fatal("expected stream request")
+	}
+	if err := body.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSniffStreamPreservesPrefixOnReadError(t *testing.T) {
+	body := &mutableBody{ReadCloser: &errorAfterPrefixBody{prefix: *strings.NewReader(`{"stream":`)}}
+
+	_, ok := SniffStream(context.Background(), body)
+	if ok {
+		t.Fatal("unexpected stream request")
+	}
+	got, _ := io.ReadAll(body)
+	if string(got) != `{"stream":` {
+		t.Fatalf("body prefix lost after read error: %q", got)
+	}
+}
+
+func TestSniffStreamDoesNotReadPastWindow(t *testing.T) {
+	body := newBlockingBody(strings.Repeat("x", sniffLimit))
+
+	_, _ = SniffStream(context.Background(), body)
+
+	if body.blocked.Load() {
+		t.Fatal("SniffStream read beyond the sniff window")
 	}
 }
 

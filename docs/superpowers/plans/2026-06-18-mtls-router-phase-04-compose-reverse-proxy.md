@@ -75,10 +75,18 @@ git status --short
 
 ## Phase Completion Checklist
 
-- [ ] Every ticket in this phase completed: 理解 -> 实施 -> 验收 -> fix if needed -> 重新验收.
-- [ ] Every expected file listed in this phase exists.
-- [ ] Every ticket-level verification command passed.
-- [ ] Every phase-level verification command passed from `/Users/test1/liuyekang/dev/code/mtls-router`.
-- [ ] Any failed verification produced a minimal fix and successful re-verification.
-- [ ] Expected commit(s) exist, unless batching commits was explicitly chosen.
-- [ ] `git status --short` contains no unexpected source changes.
+- [x] Every ticket in this phase completed: 理解 -> 实施 -> 验收 -> fix if needed -> 重新验收.
+- [x] Every expected file listed in this phase exists.
+- [x] Every ticket-level verification command passed.
+- [x] Every phase-level verification command passed from `/Users/test1/liuyekang/dev/code/mtls-router`.
+- [x] Any failed verification produced a minimal fix and successful re-verification.
+- [x] Expected commit(s) exist, unless batching commits was explicitly chosen.
+- [x] `git status --short` contains no unexpected source changes.
+
+Latest Phase 4 evidence:
+
+```bash
+go test ./internal/proxy/... -v
+go build ./...
+git status --short
+```

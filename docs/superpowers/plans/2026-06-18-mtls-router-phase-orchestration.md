@@ -16,14 +16,15 @@
 
 **Last updated:** 2026-06-18
 
-**Overall status:** Phase 1, Phase 2, and Phase 3 are complete. Phase 4 is the next executable phase. Phases 5-8 remain blocked by dependencies.
+**Overall status:** Phase 1, Phase 2, Phase 3, and Phase 4 are complete. Phase 5 is the next executable phase. Phases 6-8 remain blocked by dependencies.
 
-**Current HEAD:** `e0b51e9 feat: add phase 3 mtls transport and probe`
+**Current HEAD:** `PENDING feat(proxy): compose reverse proxy`
 
 **Working tree status at snapshot time:**
 
 - Code scaffold from Phase 1 is committed.
 - Phase 2 implementation and phase planning docs are committed in `845a7a8`.
+- Phase 4 implementation is ready to commit with the phase planning docs.
 - `.omc/` contains local execution/session state and is not part of the implementation.
 
 ### Progress by Phase
@@ -32,28 +33,27 @@
 |---|---:|---|---|---|
 | Phase 1 — Repository Scaffold | T01 | **DONE** | Commit `4089fbc`; files `go.mod`, `.gitignore`, `LICENSE`, `README.md` exist | Nothing for code; optionally commit phase planning docs separately |
 | Phase 2 — Independent Atomic Packages and CI | T02, T03, T05, T06, T07, T08, T11, T15 | **DONE** | Commit `845a7a8`; phase-level verification passed: openssl setup; `go test ./internal/config/... ./internal/certs/... ./internal/proxy/... ./internal/log/... -v`; `go build ./...`; workflow file checks; `test -z "$(gofmt -l internal)"` | Nothing; Phase 3 is next |
-| Phase 3 — mTLS Transport and Startup Probe | T04, T10 | **DONE** | Commit `e0b51e9`; phase-level verification passed: `go test ./internal/proxy/... -run TestNewMTLSTransport -v`; `go test ./internal/health/... -v`; `go build ./...`; `test -z "$(gofmt -l internal)"` | Nothing; Phase 4 is next |
-| Phase 4 — Compose ReverseProxy | T09 | **NEXT EXECUTABLE** | Phase 3 transport and startup probe implemented in `e0b51e9` | Compose Director, ModifyResponse, ErrorHandler, transport, and stream sniff wrapper |
-| Phase 5 — Main Program Wiring | T12 | **BLOCKED** until Phase 4 passes | No `main.go` | Wire config, certs, probe, reverse proxy, access log, HTTP server, shutdown |
+| Phase 3 — mTLS Transport and Startup Probe | T04, T10 | **DONE** | Commit `e0b51e9`; phase-level verification passed: `go test ./internal/proxy/... -run TestNewMTLSTransport -v`; `go test ./internal/health/... -v`; `go build ./...`; `test -z "$(gofmt -l internal)"` | Nothing |
+| Phase 4 — Compose ReverseProxy | T09 | **DONE** | Pending commit `feat(proxy): compose reverse proxy`; phase-level verification passed: `go test ./internal/proxy/... -v`; `go build ./...` | Nothing; Phase 5 is next |
+| Phase 5 — Main Program Wiring | T12 | **NEXT EXECUTABLE** | Phase 4 reverse proxy composition implemented and verified | Wire config, certs, probe, reverse proxy, access log, HTTP server, shutdown |
 | Phase 6 — Build Script and README | T13, T16 | **BLOCKED** until Phase 5 passes | No `scripts/build.sh`; README is only scaffold stub | Add local build script and polish README |
 | Phase 7 — Deployment Artifacts | T14 | **BLOCKED** until Phase 6 passes | No `Dockerfile`, `.dockerignore`, or `systemd/` | Add systemd unit and Docker scratch image |
 | Phase 8 — Final Verification | T17 | **BLOCKED** until Phases 1-7 pass | Final test matrix not run | Run race tests, vet, gofmt, cross-compile, fail-fast smoke |
 
 ### Next Required Execution
 
-The next executable phase is **Phase 4 — Compose ReverseProxy**.
+The next executable phase is **Phase 5 — Main Program Wiring**.
 
-Recommended execution order inside Phase 4:
+Recommended execution order inside Phase 5:
 
-1. T09 — Compose ReverseProxy
+1. T12 — `main.go` wiring
 
-T09 depends on T04, T05, T06, T07, and T08, all of which now exist after Phases 2 and 3.
+T12 depends on T02, T04, T09, T10, and T11, all of which now exist after Phases 2-4.
 
 ### Do Not Execute Yet
 
 Do not start these until their prerequisites pass:
 
-- T12 before T02/T09/T10/T11 pass.
 - T13/T16 before T12 passes.
 - T14 before Phase 6 passes.
 - T17 before all earlier phases pass.
@@ -825,6 +825,24 @@ go test ./internal/proxy/... -run TestNewMTLSTransport -v
 go test ./internal/health/... -v
 go build ./...
 test -z "$(gofmt -l internal)"
+git status --short
+```
+
+Phase 4 completion checklist:
+
+- [x] All tickets in Phase 4 completed their lifecycle: 理解 → 实施 → 验收 → fix if needed → 重新验收.
+- [x] Every Phase 4 expected file exists.
+- [x] Every Phase 4 phase-level verification command was run from `/Users/test1/liuyekang/dev/code/mtls-router`.
+- [x] Command output matched the Phase 4 pass standard after fixing stream sniffing to avoid full-body buffering and preserve replay semantics.
+- [x] Failed review produced minimal fixes and successful re-verification evidence.
+- [x] Git contains the expected commit: pending `feat(proxy): compose reverse proxy`.
+- [x] `git status --short` contains only `.omc/` execution state after the commit.
+
+Latest Phase 4 evidence:
+
+```bash
+go test ./internal/proxy/... -v
+go build ./...
 git status --short
 ```
 
