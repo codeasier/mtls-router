@@ -16,15 +16,16 @@
 
 **Last updated:** 2026-06-18
 
-**Overall status:** Phase 1, Phase 2, Phase 3, Phase 4, Phase 5, and Phase 6 are complete. Phase 7 is the next executable phase. Phase 8 remains blocked by dependencies.
+**Overall status:** Phases 1-7 are complete. Phase 8 is the next executable phase.
 
-**Current HEAD:** `bdf7df8 feat: wire main program`
+**Current HEAD:** `PENDING chore: add deployment artifacts`
 
 **Working tree status at snapshot time:**
 
 - Code scaffold from Phase 1 is committed.
 - Phase 2 implementation and phase planning docs are committed in `845a7a8`.
 - Phase 4 implementation and phase planning docs are committed in `0aff614`.
+- Phase 7 deployment artifacts and planning docs are ready to commit: `systemd/mtls-router.service`, `Dockerfile`, `.dockerignore`, and this phase orchestration plan.
 - `.omc/` contains local execution/session state and is not part of the implementation.
 
 ### Progress by Phase
@@ -37,24 +38,22 @@
 | Phase 4 — Compose ReverseProxy | T09 | **DONE** | Commit `0aff614`; phase-level verification passed: `go test ./internal/proxy/... -v`; `go build ./...` | Nothing; Phase 5 is next |
 | Phase 5 — Main Program Wiring | T12 | **DONE** | Commit `bdf7df8`; phase-level verification passed: `go test ./...`; `go build ./...`; `gofmt -l .` | Nothing |
 | Phase 6 — Build Script and README | T13, T16 | **DONE** | Phase-level verification passed: `test -x scripts/build.sh`; `./scripts/build.sh`; `test -x ./mtls-router`; `./mtls-router` exits 1 with placeholder upstream; `go test ./...`; `go build ./...`; `test -z "$(gofmt -l .)"` | Nothing; Phase 7 is next |
-| Phase 7 — Deployment Artifacts | T14 | **NEXT EXECUTABLE** | Phase 6 build script and README implemented and verified | Add systemd unit and Docker scratch image |
-| Phase 8 — Final Verification | T17 | **BLOCKED** until Phases 1-7 pass | Final test matrix not run | Run race tests, vet, gofmt, cross-compile, fail-fast smoke |
+| Phase 7 — Deployment Artifacts | T14 | **DONE** | Files `systemd/mtls-router.service`, `Dockerfile`, and `.dockerignore` exist; phase-level verification passed: `test -f systemd/mtls-router.service`; `test -f Dockerfile`; `test -f .dockerignore`; `go test ./...`; `go build ./...`; `git status --short`; quality fix applied so Dockerfile builder uses `golang:1.26.2-alpine` to match `go.mod` | Nothing; Phase 8 is next |
+| Phase 8 — Final Verification | T17 | **NEXT EXECUTABLE** | Phases 1-7 pass | Run race tests, vet, gofmt, cross-compile, fail-fast smoke |
 
 ### Next Required Execution
 
-The next executable phase is **Phase 7 — Deployment Artifacts**.
+The next executable phase is **Phase 8 — Final Verification / T17**.
 
-Recommended execution order inside Phase 7:
+Recommended execution order inside Phase 8:
 
-1. T14 — systemd + Docker
+1. T17 — final verification
 
-T14 must run after Phase 6 passes.
+T17 may run after Phase 7 passes.
 
 ### Do Not Execute Yet
 
-Do not start these until their prerequisites pass:
-
-- T17 before all earlier phases pass.
+No later phases remain before T17. Do not mark the whole project complete until Phase 8 passes.
 
 ### Completion Definition for the Whole Project
 
@@ -883,6 +882,28 @@ test -x ./mtls-router
 go test ./...
 go build ./...
 test -z "$(gofmt -l .)"
+git status --short
+```
+
+Phase 7 completion checklist:
+
+- [x] All tickets in Phase 7 completed their lifecycle: 理解 → 实施 → 验收 → fix if needed → 重新验收.
+- [x] Every Phase 7 expected file exists: `systemd/mtls-router.service`, `Dockerfile`, and `.dockerignore`.
+- [x] Every Phase 7 phase-level verification command was run from `/Users/test1/liuyekang/dev/code/mtls-router`.
+- [x] Command output matched the Phase 7 pass standard after the Dockerfile Go version quality fix.
+- [x] Quality review found the Dockerfile Go version was too low; the builder image now uses `golang:1.26.2-alpine` to match `go.mod` (`go 1.26.2`).
+- [x] Quality re-review approved the deployment artifacts.
+- [x] Git contains the expected commit after committing Phase 7.
+- [x] `git status --short` contains only `.omc/` execution state and local generated artifacts after the commit.
+
+Latest Phase 7 evidence:
+
+```bash
+test -f systemd/mtls-router.service
+test -f Dockerfile
+test -f .dockerignore
+go test ./...
+go build ./...
 git status --short
 ```
 

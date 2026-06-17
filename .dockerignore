@@ -1,0 +1,10 @@
+.git
+.github
+.omc
+docs
+dist
+secrets
+mtls-router
+*.md
+*.test
+*_test.go
