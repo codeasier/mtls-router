@@ -1,0 +1,77 @@
+package config
+
+import (
+	"flag"
+	"fmt"
+	"net/url"
+	"os"
+	"strconv"
+	"time"
+)
+
+type Config struct {
+	ListenAddr  string
+	UpstreamURL string
+	TLSMin      string
+	Timeout     time.Duration
+	Debug       bool
+}
+
+type Defaults = Config
+
+func Load(defaults Defaults, args []string) (Config, error) {
+	cfg := Config(defaults)
+	applyEnv(&cfg)
+
+	fs := flag.NewFlagSet("mtls-router", flag.ContinueOnError)
+	fs.StringVar(&cfg.ListenAddr, "listen", cfg.ListenAddr, "listen address")
+	fs.StringVar(&cfg.UpstreamURL, "upstream", cfg.UpstreamURL, "upstream URL")
+	fs.StringVar(&cfg.TLSMin, "tls-min", cfg.TLSMin, "minimum TLS version")
+	fs.DurationVar(&cfg.Timeout, "timeout", cfg.Timeout, "upstream timeout")
+	fs.BoolVar(&cfg.Debug, "debug", cfg.Debug, "enable debug logging")
+	if err := fs.Parse(args); err != nil {
+		return Config{}, err
+	}
+	if err := cfg.Validate(); err != nil {
+		return Config{}, err
+	}
+	return cfg, nil
+}
+
+func (c Config) Validate() error {
+	if c.UpstreamURL == "" {
+		return fmt.Errorf("upstream URL is required")
+	}
+	u, err := url.Parse(c.UpstreamURL)
+	if err != nil || u.Scheme == "" || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+		return fmt.Errorf("invalid upstream URL")
+	}
+	switch c.TLSMin {
+	case "", "tls1.2", "tls1.3":
+		return nil
+	default:
+		return fmt.Errorf("invalid TLS minimum version")
+	}
+}
+
+func applyEnv(cfg *Config) {
+	if v := os.Getenv("MTLS_LISTEN_ADDR"); v != "" {
+		cfg.ListenAddr = v
+	}
+	if v := os.Getenv("MTLS_UPSTREAM_URL"); v != "" {
+		cfg.UpstreamURL = v
+	}
+	if v := os.Getenv("MTLS_TLS_MIN"); v != "" {
+		cfg.TLSMin = v
+	}
+	if v := os.Getenv("MTLS_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			cfg.Timeout = d
+		}
+	}
+	if v := os.Getenv("MTLS_DEBUG"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.Debug = b
+		}
+	}
+}

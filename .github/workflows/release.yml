@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+          - goos: windows
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CLIENT_CERT_PEM: ${{ secrets.CLIENT_CERT_PEM }}
+          CLIENT_KEY_PEM: ${{ secrets.CLIENT_KEY_PEM }}
+          UPSTREAM_CA_PEM: ${{ secrets.UPSTREAM_CA_PEM }}
+          UPSTREAM_URL: ${{ vars.UPSTREAM_URL }}
+        run: |
+          ext=""
+          if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
+          go build -trimpath \
+            -ldflags "-s -w -X 'main.clientCertPEM=${CLIENT_CERT_PEM}' -X 'main.clientKeyPEM=${CLIENT_KEY_PEM}' -X 'main.upstreamCAPEM=${UPSTREAM_CA_PEM}' -X 'main.upstreamURL=${UPSTREAM_URL}' -X 'main.version=${GITHUB_REF_NAME}'" \
+            -o "dist/mtls-router-${GOOS}-${GOARCH}${ext}" .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mtls-router-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
