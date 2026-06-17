@@ -345,6 +345,73 @@ upstream resources promptly.
 The binary **never reads certificate files at runtime**. All secrets are
 compiled in. The local filesystem has no plaintext key, even at rest.
 
+### 7.1.1 Build-time injection mechanics
+
+The injection is performed by the Go linker via `-ldflags -X`. The
+mechanics, end-to-end, are:
+
+1. **One-time, on the build machine or CI runner**, the operator generates
+   the client cert (or receives it from the upstream Nginx operator) and
+   places the three PEM files outside version control:
+
+   ```
+   secrets/
+   ├── client.pem         # client cert (public)
+   ├── client.key         # client private key
+   └── upstream-ca.pem    # CA that signs the public Nginx cert
+   ```
+
+   `.gitignore` excludes the `secrets/` directory. CI uses GitHub Secrets
+   (`MTLS_CLIENT_CERT`, `MTLS_CLIENT_KEY`, `MTLS_UPSTREAM_CA`).
+
+2. **At build time**, the linker replaces four string variables in `main.go`:
+
+   ```bash
+   go build -trimpath \
+     -ldflags "-s -w \
+       -X main.clientCertPEM=$(cat secrets/client.pem) \
+       -X main.clientKeyPEM=$(cat secrets/client.key) \
+       -X main.upstreamCAPEM=$(cat secrets/upstream-ca.pem) \
+       -X main.upstreamURL=${MTLS_UPSTREAM_URL} \
+       -X main.version=${GITHUB_REF_NAME}" \
+     -o dist/mtls-router-${GOOS}-${GOARCH}
+   ```
+
+   The `-X` flag takes a `package.Var=value` form. The value is a string
+   literal that the linker writes into the data segment of the final binary
+   at the address of the named package-level variable. This is a Go
+   compiler feature documented in `go tool link -X`.
+
+3. **At runtime**, the process loads the certs **once**, in `certs.Load()`
+   at startup, by calling `tls.X509KeyPair([]byte(clientCertPEM),
+   []byte(clientKeyPEM))` and `x509.NewCertPool().AppendCertsFromPEM(
+   []byte(upstreamCAPEM))`. After that, no path on the runtime filesystem
+   is ever opened. There is no fallback to disk; if the build-time
+   injection is empty, `certs.Load()` returns an error and the process
+   exits non-zero.
+
+4. **Distribution**: end users receive the compiled binary only. There is
+   no `secrets/` directory on their machines, no PEM file alongside the
+   binary, no documentation telling them to download one. The only way to
+   obtain the client cert is to extract it from the binary itself (see
+   §11 for the threat-model discussion of this).
+
+**Why not read PEM files at runtime?** Considered alternatives and why they
+were rejected:
+
+- OS Keychain / DPAPI / secret-service: each platform needs a different
+  API, requires user interaction on first launch, and contradicts the
+  "executable starts and works" goal.
+- Read PEM from a fixed path next to the binary: the user would need a
+  PEM file, contradicting the "built-in cert" requirement.
+- PKCS#11 / TPM: not available on commodity hardware; adds 500+ lines.
+- Encrypt the in-binary key with another hard-coded key: the attacker
+  who reverses the binary recovers the encryption key, so this adds
+  complexity with zero security gain.
+
+The chosen `ldflags -X` approach is the simplest path that meets the
+stated requirements, with the threat model documented in §11.
+
 ### 7.2 Runtime (env / flags)
 
 | Setting | Env | Flag | Default |
