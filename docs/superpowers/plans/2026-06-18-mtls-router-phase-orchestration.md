@@ -16,7 +16,7 @@
 
 **Last updated:** 2026-06-18
 
-**Overall status:** Phase 1, Phase 2, Phase 3, Phase 4, and Phase 5 are complete. Phase 6 is the next executable phase. Phases 7-8 remain blocked by dependencies.
+**Overall status:** Phase 1, Phase 2, Phase 3, Phase 4, Phase 5, and Phase 6 are complete. Phase 7 is the next executable phase. Phase 8 remains blocked by dependencies.
 
 **Current HEAD:** `bdf7df8 feat: wire main program`
 
@@ -35,27 +35,25 @@
 | Phase 2 — Independent Atomic Packages and CI | T02, T03, T05, T06, T07, T08, T11, T15 | **DONE** | Commit `845a7a8`; phase-level verification passed: openssl setup; `go test ./internal/config/... ./internal/certs/... ./internal/proxy/... ./internal/log/... -v`; `go build ./...`; workflow file checks; `test -z "$(gofmt -l internal)"` | Nothing; Phase 3 is next |
 | Phase 3 — mTLS Transport and Startup Probe | T04, T10 | **DONE** | Commit `e0b51e9`; phase-level verification passed: `go test ./internal/proxy/... -run TestNewMTLSTransport -v`; `go test ./internal/health/... -v`; `go build ./...`; `test -z "$(gofmt -l internal)"` | Nothing |
 | Phase 4 — Compose ReverseProxy | T09 | **DONE** | Commit `0aff614`; phase-level verification passed: `go test ./internal/proxy/... -v`; `go build ./...` | Nothing; Phase 5 is next |
-| Phase 5 — Main Program Wiring | T12 | **DONE** | Commit `bdf7df8`; phase-level verification passed: `go test ./...`; `go build ./...`; `gofmt -l .` | Nothing; Phase 6 is next |
-| Phase 6 — Build Script and README | T13, T16 | **NEXT EXECUTABLE** | Phase 5 main wiring implemented and verified | Add local build script and polish README |
-| Phase 7 — Deployment Artifacts | T14 | **BLOCKED** until Phase 6 passes | No `Dockerfile`, `.dockerignore`, or `systemd/` | Add systemd unit and Docker scratch image |
+| Phase 5 — Main Program Wiring | T12 | **DONE** | Commit `bdf7df8`; phase-level verification passed: `go test ./...`; `go build ./...`; `gofmt -l .` | Nothing |
+| Phase 6 — Build Script and README | T13, T16 | **DONE** | Phase-level verification passed: `test -x scripts/build.sh`; `./scripts/build.sh`; `test -x ./mtls-router`; `./mtls-router` exits 1 with placeholder upstream; `go test ./...`; `go build ./...`; `test -z "$(gofmt -l .)"` | Nothing; Phase 7 is next |
+| Phase 7 — Deployment Artifacts | T14 | **NEXT EXECUTABLE** | Phase 6 build script and README implemented and verified | Add systemd unit and Docker scratch image |
 | Phase 8 — Final Verification | T17 | **BLOCKED** until Phases 1-7 pass | Final test matrix not run | Run race tests, vet, gofmt, cross-compile, fail-fast smoke |
 
 ### Next Required Execution
 
-The next executable phase is **Phase 6 — Build Script and README**.
+The next executable phase is **Phase 7 — Deployment Artifacts**.
 
-Recommended execution order inside Phase 6:
+Recommended execution order inside Phase 7:
 
-1. T13 — `scripts/build.sh`
-2. T16 — README polish
+1. T14 — systemd + Docker
 
-T13 and T16 may run concurrently after Phase 5 passes.
+T14 must run after Phase 6 passes.
 
 ### Do Not Execute Yet
 
 Do not start these until their prerequisites pass:
 
-- T14 before Phase 6 passes.
 - T17 before all earlier phases pass.
 
 ### Completion Definition for the Whole Project
@@ -862,6 +860,29 @@ Latest Phase 5 evidence:
 go test ./...
 go build ./...
 gofmt -l .
+git status --short
+```
+
+Phase 6 completion checklist:
+
+- [x] All tickets in Phase 6 completed their lifecycle: 理解 → 实施 → 验收 → fix if needed → 重新验收.
+- [x] Every Phase 6 expected file exists.
+- [x] Every Phase 6 phase-level verification command was run from `/Users/test1/liuyekang/dev/code/mtls-router`.
+- [x] Command output matched the Phase 6 pass standard.
+- [x] Missing macOS `timeout` command produced an alternate direct run verification; `./mtls-router` exited 1 quickly with placeholder upstream DNS failure.
+- [x] Git contains the expected commit after committing Phase 6.
+- [x] `git status --short` contains only `.omc/` execution state and local generated artifacts after the commit.
+
+Latest Phase 6 evidence:
+
+```bash
+test -x scripts/build.sh
+./scripts/build.sh
+test -x ./mtls-router
+./mtls-router; echo "exit=$?"
+go test ./...
+go build ./...
+test -z "$(gofmt -l .)"
 git status --short
 ```
 
