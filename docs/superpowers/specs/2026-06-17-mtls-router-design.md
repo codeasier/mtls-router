@@ -1,7 +1,7 @@
 # mtls-router Design Spec
 
 **Date:** 2026-06-17
-**Status:** Approved (pending user review of written spec)
+**Status:** Draft (pending user review of written spec)
 **Author:** Brainstorming session
 
 ## 1. Purpose
@@ -53,7 +53,10 @@ Claude Code / Codex CLI
 
 Startup sequence:
 
-1. Parse configuration: CLI flags override env vars, which override defaults.
+1. Parse configuration. Precedence: CLI flag > env var > build-time ldflags
+   value > built-in default. For the upstream URL this means the build-time
+   `upstreamURL` is the default, and a runtime `-upstream` flag or
+   `MTLS_UPSTREAM_URL` env var overrides it.
 2. Load build-time-injected client cert PEM, client key PEM, and upstream CA
    PEM from `ldflags -X` variables.
 3. Build an `*http.Transport` configured with the mTLS `tls.Config`.
@@ -117,8 +120,11 @@ var (
 )
 ```
 
-`certs` package reads these strings, parses them with
-`tls.X509KeyPair(certPEM, keyPEM)` and `x509.NewCertPool().AppendCertsFromPEM`.
+`certs` package reads these string constants (defined in `main.go`) and parses
+them once at startup with `tls.X509KeyPair(certPEM, keyPEM)` and
+`x509.NewCertPool().AppendCertsFromPEM`. **The runtime never reads certificate
+files from disk**; everything is compiled into the binary via `-ldflags -X`.
+This is a deliberate security choice — see §11.
 
 #### 4.3.2 `internal/proxy/transport.go`
 
@@ -148,38 +154,62 @@ upstream Nginx using the configured CA to verify the server certificate.
 #### 4.3.4 `internal/proxy/stream.go` — Request Body Sniff
 
 - Use `bufio.NewReader` to peek up to 4096 bytes of the request body.
-- Regex search the peeked bytes for `"stream"\s*:\s*true` (case-insensitive
-  substring match is sufficient and avoids encoding-fragile regexes).
-- If found: mark this request as streaming mode (used to force
-  `FlushInterval = -1` on the ReverseProxy for the response side).
-- If not found: passthrough. Default ReverseProxy buffering is acceptable for
-  non-stream responses.
+- Substring search the peeked bytes for `"stream":true` (case-insensitive,
+  whitespace-tolerant).
+- If found: **mark the request as streaming** by stashing a flag on the
+  `http.Request` context (e.g. `context.WithValue(req.Context(), streamKey{}, true)`).
+  This flag is read by the response-writing side to force flushes.
+- If not found: passthrough. The request body is still streamed through
+  `req.Body`; no buffering.
+
+**Design note:** `httputil.ReverseProxy.FlushInterval` is an instance-level
+field and cannot vary per request. Therefore `mtls-router` uses
+`FlushInterval = -1` (immediate flush on every chunk) **unconditionally** for
+all responses, and uses the request-side stream flag only to:
+
+1. Skip unnecessary peeking on responses that will obviously be small JSON
+   bodies (an optional optimization, off by default).
+2. Allow `ModifyResponse` to know whether to enforce the SSE headers (see
+   §4.3.5) without re-parsing the body.
+
+The unconditional `FlushInterval = -1` has negligible cost for non-stream
+responses (one extra flush at end-of-body) and guarantees that streaming
+responses are never buffered into invisibility. This is the simplest correct
+choice.
 
 The peeked reader remains usable; no body bytes are lost. The peek is a single
 4 KB allocation, with < 1 ms latency overhead even on large messages.
 
 #### 4.3.5 `internal/proxy/modifyresponse.go`
 
-A `ModifyResponse` hook attached to the ReverseProxy:
+A `ModifyResponse` hook attached to the ReverseProxy. The hook inspects the
+upstream response and conditionally rewrites two headers:
 
-- If `resp.Header.Get("Content-Type")` contains `text/event-stream`:
-  - Force `Content-Type: text/event-stream`
-  - Force `Cache-Control: no-cache`
-- Otherwise: passthrough all response headers unchanged.
+- **Content-Type enforcement**: If the request context flag set by §4.3.4
+  indicates a streaming request (`stream:true` was sniffed), **or** the
+  upstream `Content-Type` already contains `text/event-stream`, force:
+  - `Content-Type: text/event-stream`
+  - `Cache-Control: no-cache`
+- **Otherwise**: passthrough all response headers unchanged.
 
 The ReverseProxy is configured with `FlushInterval = -1` (immediate flush on
-every chunk) so SSE events reach the local client with first-byte latency
-dominated only by the upstream network RTT.
+every chunk) **unconditionally** — see §4.3.4 for rationale. This guarantees
+that SSE events reach the local client with first-byte latency dominated only
+by the upstream network RTT.
 
 #### 4.3.6 `internal/proxy/errorhandler.go`
 
 Called by the ReverseProxy when the upstream transport round-trip itself
 fails (mTLS handshake failure, TCP reset, timeout, DNS error, etc.):
 
-- HTTP 502: mTLS handshake failure or connection refused.
-- HTTP 504: upstream timeout.
-- Response body is always
-  `{"error":{"message":"<short reason>","type":"proxy_error"}}`.
+The error handler distinguishes three failure modes by inspecting the error
+type returned by the transport:
+
+| Underlying error | HTTP status | Body |
+|------------------|-------------|------|
+| `crypto/tls` handshake error (cert verify, bad cert, etc.) | 502 | `{"error":{"message":"upstream mTLS handshake failed","type":"proxy_error"}}` |
+| `context.DeadlineExceeded` or net.Error.Timeout() | 504 | `{"error":{"message":"upstream timeout","type":"proxy_error"}}` |
+| Any other transport error (refused, reset, DNS, etc.) | 502 | `{"error":{"message":"upstream unreachable","type":"proxy_error"}}` |
 
 HTTP responses received from the upstream (including 4xx and 5xx) are passed
 through unchanged. `mtls-router` does not interpret upstream application
@@ -325,9 +355,15 @@ compiled in. The local filesystem has no plaintext key, even at rest.
 | Non-stream timeout | `MTLS_TIMEOUT` | `-timeout` | `0` (no timeout) |
 | Debug body logging | `MTLS_DEBUG=1` | `-debug` | off |
 
-Flags override env which override defaults. `MTLS_DEBUG` is intentionally not
-on by default; SSE bodies in production logs would be both a privacy and
-disk-space hazard.
+Flags override env which override build-time values which override defaults.
+`MTLS_DEBUG` is intentionally not on by default; SSE bodies in production
+logs would be both a privacy and disk-space hazard.
+
+**Note on build-time vs runtime `upstreamURL`:** the `main.upstreamURL`
+ldflags value is treated as the *default* upstream. The runtime
+`MTLS_UPSTREAM_URL` env var and `-upstream` flag take precedence and can
+override it. This allows the same binary to be re-pointed at a different
+upstream without rebuilding — useful for staging vs production.
 
 ## 8. Build and Release
 
