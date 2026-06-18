@@ -22,6 +22,21 @@ func TestHandleMetaFlagsIgnoresConfigFlags(t *testing.T) {
 	}
 }
 
+func TestHandleMetaFlagsIgnoresBackendAndLogFlags(t *testing.T) {
+	output := captureStdout(t, func() {
+		handled, err := handleMetaFlags([]string{"--backend", "--log", "/tmp/mtls-router.log"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if handled {
+			t.Fatal("backend and log flags should not be handled as meta flags")
+		}
+	})
+	if output != "" {
+		t.Fatalf("unexpected output for runtime flags: %q", output)
+	}
+}
+
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 	old := os.Stdout

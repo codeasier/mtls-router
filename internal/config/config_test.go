@@ -42,3 +42,48 @@ func TestLoadTLSMinValidation(t *testing.T) {
 		t.Fatal("expected invalid TLS version error")
 	}
 }
+
+func TestLoadParsesBackendAndLogFlags(t *testing.T) {
+	cfg, err := Load(Defaults{UpstreamURL: "https://upstream.example.com"}, []string{"-backend", "-log", "/tmp/mtls-router.log"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Backend {
+		t.Fatal("Backend = false, want true")
+	}
+	if cfg.LogPath != "/tmp/mtls-router.log" {
+		t.Fatalf("LogPath = %q, want /tmp/mtls-router.log", cfg.LogPath)
+	}
+}
+
+func TestLoadParsesBackendAndLogEnv(t *testing.T) {
+	t.Setenv("MTLS_BACKEND", "true")
+	t.Setenv("MTLS_LOG", "/tmp/env-router.log")
+
+	cfg, err := Load(Defaults{UpstreamURL: "https://upstream.example.com"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Backend {
+		t.Fatal("Backend = false, want true")
+	}
+	if cfg.LogPath != "/tmp/env-router.log" {
+		t.Fatalf("LogPath = %q, want /tmp/env-router.log", cfg.LogPath)
+	}
+}
+
+func TestLoadBackendAndLogFlagsOverrideEnv(t *testing.T) {
+	t.Setenv("MTLS_BACKEND", "false")
+	t.Setenv("MTLS_LOG", "/tmp/env-router.log")
+
+	cfg, err := Load(Defaults{UpstreamURL: "https://upstream.example.com"}, []string{"-backend", "-log", "/tmp/flag-router.log"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Backend {
+		t.Fatal("Backend = false, want true")
+	}
+	if cfg.LogPath != "/tmp/flag-router.log" {
+		t.Fatalf("LogPath = %q, want /tmp/flag-router.log", cfg.LogPath)
+	}
+}
