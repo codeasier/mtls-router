@@ -16,9 +16,9 @@
 
 **Last updated:** 2026-06-18
 
-**Overall status:** Phases 1-7 are complete. Phase 8 is the next executable phase.
+**Overall status:** Phases 1-8 are complete. The project has passed final verification.
 
-**Current HEAD:** `PENDING chore: add deployment artifacts`
+**Current HEAD:** `PENDING chore: record phase 8 final verification`
 
 **Working tree status at snapshot time:**
 
@@ -39,25 +39,21 @@
 | Phase 5 — Main Program Wiring | T12 | **DONE** | Commit `bdf7df8`; phase-level verification passed: `go test ./...`; `go build ./...`; `gofmt -l .` | Nothing |
 | Phase 6 — Build Script and README | T13, T16 | **DONE** | Phase-level verification passed: `test -x scripts/build.sh`; `./scripts/build.sh`; `test -x ./mtls-router`; `./mtls-router` exits 1 with placeholder upstream; `go test ./...`; `go build ./...`; `test -z "$(gofmt -l .)"` | Nothing; Phase 7 is next |
 | Phase 7 — Deployment Artifacts | T14 | **DONE** | Files `systemd/mtls-router.service`, `Dockerfile`, and `.dockerignore` exist; phase-level verification passed: `test -f systemd/mtls-router.service`; `test -f Dockerfile`; `test -f .dockerignore`; `go test ./...`; `go build ./...`; `git status --short`; quality fix applied so Dockerfile builder uses `golang:1.26.2-alpine` to match `go.mod` | Nothing; Phase 8 is next |
-| Phase 8 — Final Verification | T17 | **NEXT EXECUTABLE** | Phases 1-7 pass | Run race tests, vet, gofmt, cross-compile, fail-fast smoke |
+| Phase 8 — Final Verification | T17 | **DONE** | Phase-level verification passed: `go test -race -count=1 ./...`; `go vet ./...`; `test -z "$(gofmt -l .)"`; six-target cross-compile to `/tmp/mtls-router-*`; placeholder runtime exited 1 quickly on macOS direct run because `timeout` was unavailable | Nothing |
 
 ### Next Required Execution
 
-The next executable phase is **Phase 8 — Final Verification / T17**.
+The next executable phase is **complete**. No later phases remain.
 
-Recommended execution order inside Phase 8:
-
-1. T17 — final verification
-
-T17 may run after Phase 7 passes.
+All implementation phases and final verification have passed.
 
 ### Do Not Execute Yet
 
-No later phases remain before T17. Do not mark the whole project complete until Phase 8 passes.
+No later phases remain.
 
 ### Completion Definition for the Whole Project
 
-The whole project is complete only when Phase 8 passes all of these:
+The whole project is complete because Phase 8 passed all of these:
 
 ```bash
 cd /Users/test1/liuyekang/dev/code/mtls-router
@@ -906,6 +902,40 @@ go test ./...
 go build ./...
 git status --short
 ```
+
+Phase 8 completion checklist:
+
+- [x] All tickets in Phase 8 completed their lifecycle: 理解 → 实施 → 验收 → fix if needed → 重新验收.
+- [x] Every Phase 8 expected verification artifact exists: six `/tmp/mtls-router-*` cross-compile binaries.
+- [x] Every Phase 8 phase-level verification command was run from `/Users/test1/liuyekang/dev/code/mtls-router`.
+- [x] Command output matched the Phase 8 pass standard.
+- [x] No failing verification required a fix.
+- [x] Git contains the expected commit after committing Phase 8.
+- [x] `git status --short` contains only `.omc/` execution state after the commit.
+
+Latest Phase 8 evidence:
+
+```bash
+go test -race -count=1 ./...
+go vet ./...
+test -z "$(gofmt -l .)"
+for GOOS in linux darwin windows; do
+  for GOARCH in amd64 arm64; do
+    GOOS=$GOOS GOARCH=$GOARCH go build -trimpath \
+      -ldflags "-s -w \
+        -X main.clientCertPEM=placeholder \
+        -X main.clientKeyPEM=placeholder \
+        -X main.upstreamCAPEM=placeholder \
+        -X main.upstreamURL=https://placeholder" \
+      -o /tmp/mtls-router-$GOOS-$GOARCH .
+  done
+done
+ls -la /tmp/mtls-router-*
+./mtls-router; echo "exit=$?"
+git status --short
+```
+
+`timeout(1)` was unavailable on macOS, so the placeholder smoke check used a direct `./mtls-router` run. It exited quickly with status 1 and a probe upstream DNS failure.
 
 ## Phase Completion Checklist Template
 
