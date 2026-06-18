@@ -1,13 +1,43 @@
 # mtls-router
 
-`mtls-router` is a single-binary, cross-platform local reverse proxy. It accepts plain HTTP from local clients such as Claude Code or Codex CLI, then forwards requests to a public upstream mTLS server using a build-time-injected client certificate, private key, upstream CA, and upstream URL.
+`mtls-router` is a single-binary, cross-platform local reverse proxy. It accepts plain HTTP from local clients such as Claude Code or Codex CLI, then forwards requests to a public upstream mTLS server using an embedded client certificate, private key, upstream CA, and upstream URL.
 
 The proxy streams request bodies and Server-Sent Events responses transparently. It does not perform protocol conversion: local traffic is HTTP, and upstream traffic is HTTPS with mTLS.
 
-## Quick start
+## Download
+
+Download the binary for your platform from GitHub Releases:
+
+```text
+https://github.com/codeasier/mtls-router/releases
+```
+
+Choose the matching asset:
+
+| Platform | Asset |
+|---|---|
+| Linux x86_64 | `mtls-router-linux-amd64` |
+| Linux arm64 | `mtls-router-linux-arm64` |
+| macOS Intel | `mtls-router-darwin-amd64` |
+| macOS Apple Silicon | `mtls-router-darwin-arm64` |
+| Windows x86_64 | `mtls-router-windows-amd64.exe` |
+| Windows arm64 | `mtls-router-windows-arm64.exe` |
+
+On macOS or Linux, make the binary executable:
 
 ```bash
-./scripts/build.sh
+chmod +x ./mtls-router-*
+```
+
+Optionally rename it:
+
+```bash
+mv ./mtls-router-darwin-arm64 ./mtls-router
+```
+
+## Run
+
+```bash
 ./mtls-router
 ```
 
@@ -22,8 +52,6 @@ Point local clients at:
 ```text
 http://127.0.0.1:19099/v1
 ```
-
-The developer build script injects a placeholder upstream URL, so the resulting binary fails fast during startup until you build with a real upstream URL and certificate material.
 
 ## Configuration
 
@@ -52,46 +80,9 @@ Example:
 
 ```bash
 MTLS_LISTEN_ADDR=127.0.0.1:19099 \
-MTLS_UPSTREAM_URL=https://router.example.com \
 MTLS_TLS_MIN=tls1.3 \
 ./mtls-router -timeout 10s
 ```
-
-## Build with placeholder certs
-
-For local development:
-
-```bash
-./scripts/build.sh
-```
-
-The script creates these files if they are missing:
-
-- `secrets/client.pem`
-- `secrets/client.key`
-- `secrets/upstream-ca.pem`
-
-It then runs `go build -trimpath` and writes `./mtls-router`.
-
-## Build with real certs
-
-```bash
-go build -trimpath \
-  -ldflags "-s -w \
-    -X 'main.clientCertPEM=$(cat secrets/client.pem)' \
-    -X 'main.clientKeyPEM=$(cat secrets/client.key)' \
-    -X 'main.upstreamCAPEM=$(cat secrets/upstream-ca.pem)' \
-    -X 'main.upstreamURL=https://router.example.com'" \
-  -o mtls-router .
-```
-
-The binary never reads cert files at runtime. Certificate PEM, key PEM, upstream CA PEM, and the default upstream URL are embedded at build time through linker variables:
-
-- `main.clientCertPEM`
-- `main.clientKeyPEM`
-- `main.upstreamCAPEM`
-- `main.upstreamURL`
-- `main.version`
 
 ## Runtime behavior
 
@@ -108,12 +99,16 @@ SSE responses preserve streaming behavior and use SSE-safe headers, including:
 - `Content-Type: text/event-stream`
 - `Cache-Control: no-cache`
 
+## Build from source
+
+Maintainer build and release instructions live in `docs/BUILD.md`.
+
 ## Deployment
 
-Systemd and Docker artifacts are added in the deployment phase. Planned deployment options include:
+Systemd and Docker artifacts are available for deployment:
 
-- systemd: copy the binary to `/usr/local/bin/mtls-router`, install the service unit, then enable and start it with `systemctl`;
-- Docker: build a small `FROM scratch` image, expected to remain under 20 MB;
+- systemd: copy the binary to `/usr/local/bin/mtls-router`, install `systemd/mtls-router.service`, then enable and start it with `systemctl`;
+- Docker: build the provided `Dockerfile`, which produces a static binary in a `scratch` image;
 - bare metal: run `./mtls-router` directly.
 
 ## Design
