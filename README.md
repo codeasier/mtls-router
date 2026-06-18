@@ -6,7 +6,7 @@ The proxy streams request bodies and Server-Sent Events responses transparently.
 
 ## One-click setup
 
-These scripts download the latest `mtls-router` binary for your operating system and CPU architecture, configure Claude Code to use the local router, start `mtls-router` in backend mode, then launch `claude`.
+These scripts download the latest `mtls-router` binary for your operating system and CPU architecture, start `mtls-router` in backend mode, then detect Claude Code, opencode, and Codex so you can choose which agent configs to back up and update. They do not install or launch any agent.
 
 On macOS or Linux:
 
@@ -97,6 +97,16 @@ When `-backend` is used without `-log`, logs are written to `mtls-router.log` ne
 ```
 
 This mode is convenient for local background use. For production supervision, prefer systemd, Docker, launchd, or a Windows service wrapper so the process can be restarted and managed by the platform.
+
+## Configure agents
+
+The setup script only installs and starts `mtls-router`. It then detects Claude Code, opencode, and Codex in that order. For each detected agent it asks whether to back up the existing config and write the mtls-router provider block.
+
+- Claude Code writes the `env` block into `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR/settings.json`).
+- opencode writes the `mtls-router` provider into the chosen opencode.json (respecting `OPENCODE_CONFIG` and falling back to `~/.config/opencode/opencode.json`).
+- Codex CLI writes the `[model_providers.mtls-router]` block and router profiles into `~/.codex/config.toml` (respecting `CODEX_HOME`).
+
+The setup scripts do not install any agent and do not launch any agent.
 
 The default local listen address is:
 
