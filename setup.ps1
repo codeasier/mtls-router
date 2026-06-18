@@ -65,34 +65,6 @@ function Refresh-Path {
     $env:Path = "$machinePath;$userPath"
 }
 
-function Ensure-ClaudeCode {
-    Write-Info '[检测] Claude Code 安装状态...'
-    $claude = Get-Command claude -ErrorAction SilentlyContinue
-    if ($claude) {
-        Write-Success "  已找到 Claude Code：$($claude.Source)"
-        return
-    }
-
-    $localClaude = Join-Path $env:USERPROFILE '.local\bin\claude.exe'
-    if (Test-Path $localClaude) {
-        $env:Path = "$(Split-Path $localClaude);$env:Path"
-        Write-Success "  已找到 Claude Code：$localClaude"
-        return
-    }
-
-    Write-Warn '  未找到 Claude Code，开始尝试通过 npm 安装...'
-    if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
-        Write-Fail '未找到 npm。请先安装 Node.js/npm 后重试。'
-    }
-
-    npm install -g '@anthropic-ai/claude-code' --registry 'https://registry.npmmirror.com'
-    Refresh-Path
-
-    $claude = Get-Command claude -ErrorAction SilentlyContinue
-    if (-not $claude) { Write-Fail 'Claude Code 安装后仍不可用，请检查 npm 全局 bin 是否在 PATH 中。' }
-    Write-Success "  Claude Code 安装完成：$($claude.Source)"
-}
-
 function Set-ObjectProperty($Object, $Name, $Value) {
     $property = $Object.PSObject.Properties[$Name]
     if ($property) {
@@ -153,15 +125,13 @@ function Start-MtlsRouter {
 function Main {
     Show-Banner
     Download-MtlsRouter
-    Ensure-ClaudeCode
     Update-ClaudeSettings
     Update-UserEnvironment
     Start-MtlsRouter
 
     Write-Success '============================================================'
-    Write-Success '配置完成！即将启动 Claude Code。'
+    Write-Success '配置完成。'
     Write-Success '============================================================'
-    claude
 }
 
 Main
