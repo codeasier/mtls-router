@@ -4,7 +4,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -132,25 +131,15 @@ func withAccessLog(next http.Handler, logger *slog.Logger) http.Handler {
 }
 
 func handleMetaFlags(args []string) (bool, error) {
-	fs := flag.NewFlagSet("mtls-router", flag.ContinueOnError)
-	fs.SetOutput(os.Stdout)
-	showVersion := fs.Bool("version", false, "print version and exit")
-	showHelp := fs.Bool("help", false, "print help and exit")
-	fs.BoolVar(showHelp, "h", false, "print help and exit")
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
+	for _, arg := range args {
+		switch arg {
+		case "-version", "--version":
+			fmt.Fprintf(os.Stdout, "mtls-router %s\n", version)
+			return true, nil
+		case "-help", "--help", "-h":
 			printUsage()
 			return true, nil
 		}
-		return false, nil
-	}
-	if *showVersion {
-		fmt.Fprintf(os.Stdout, "mtls-router %s\n", version)
-		return true, nil
-	}
-	if *showHelp {
-		printUsage()
-		return true, nil
 	}
 	return false, nil
 }
