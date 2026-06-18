@@ -23,22 +23,33 @@ Choose the matching asset:
 | Windows x86_64 | `mtls-router-windows-amd64.exe` |
 | Windows arm64 | `mtls-router-windows-arm64.exe` |
 
-On macOS or Linux, make the binary executable:
+On macOS or Linux, make the binary executable and optionally rename it:
 
 ```bash
 chmod +x ./mtls-router-*
-```
-
-Optionally rename it:
-
-```bash
 mv ./mtls-router-darwin-arm64 ./mtls-router
 ```
 
-## Run
+On Windows, download the `.exe` asset and optionally rename it in PowerShell:
+
+```powershell
+Rename-Item .\mtls-router-windows-amd64.exe mtls-router.exe
+```
+
+Use the `arm64` asset instead if you are on Windows arm64.
+
+## Run on macOS or Linux
 
 ```bash
 ./mtls-router
+```
+
+## Run on Windows
+
+Open PowerShell in the folder containing the downloaded executable, then run:
+
+```powershell
+.\mtls-router.exe
 ```
 
 The default local listen address is:
