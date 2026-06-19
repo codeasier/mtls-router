@@ -214,7 +214,7 @@ function Opencode-ProviderObject($ApiKey = '{UserApiKey}') {
             npm = '@ai-sdk/openai-compatible'
             name = 'mtls-router'
             options = [ordered]@{
-                baseURL = 'http://127.0.0.1:19099'
+                baseURL = 'http://127.0.0.1:19099/v1'
                 apiKey = $ApiKey
             }
             models = [ordered]@{

@@ -37,7 +37,7 @@ test_opencode_config_creates_when_missing() (
   name="$(jq -r '.provider."mtls-router".name' "$path")"
   assert_eq "$name" "mtls-router" "mtls-router name"
   base_url="$(jq -r '.provider."mtls-router".options.baseURL' "$path")"
-  assert_eq "$base_url" "http://127.0.0.1:19099" "mtls-router baseURL"
+  assert_eq "$base_url" "http://127.0.0.1:19099/v1" "mtls-router baseURL"
   api_key="$(jq -r '.provider."mtls-router".options.apiKey' "$path")"
   assert_eq "$api_key" "{UserApiKey}" "mtls-router apiKey"
   has_5_5="$(jq -r '.provider."mtls-router".models | has("cx/gpt-5.5")' "$path")"
