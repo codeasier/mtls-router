@@ -44,9 +44,11 @@ download_router() { echo "DOWNLOAD_CALLED"; }
 start_router() { echo "START_CALLED"; }
 if [[ "${STUB_DETECTED_AGENTS:-}" == "1" ]]; then
   detect_agents() {
-    DETECTED_NAMES=("Claude Code")
-    DETECTED_COMMANDS=("/tmp/claude")
-    DETECTED_CONFIG_PATHS=("/tmp/settings.json")
+    local base="${STUB_CONFIG_DIR:-/tmp}"
+    DETECTED_NAMES=("Claude Code" "Codex")
+    DETECTED_COMMANDS=("/tmp/claude" "<desktop>")
+    DETECTED_CONFIG_PATHS=("$base/settings.json" "$base/.codex/config.toml")
+    DETECTED_AUTH_PATHS=("" "$base/.codex/auth.json")
   }
 fi
 main "$@"
@@ -107,7 +109,22 @@ test_print_config_does_not_download_or_start() {
   assert_not_contains "START_CALLED" "$out" "--print-config should not start"
 }
 
-# --- 4. --write-config without --agent= fails ------------------------
+# --- 4. --write-config is config-only: no download/start -------------
+test_write_config_does_not_download_or_start() {
+  local shim tmp out
+  shim="$(build_shim)"
+  tmp="$(mktemp -d)"
+  out="$(STUB_DETECTED_AGENTS=1 STUB_CONFIG_DIR="$tmp" MTLS_ROUTER_OPENAI_API_KEY=sk-test bash "$shim" --write-config --agent=codex 2>&1)"
+  rm -f "$shim"
+  rm -rf "$tmp"
+  assert_contains "已写入 Codex 配置" "$out" "--write-config should write config"
+  assert_contains "未启动 mtls-router" "$out" "--write-config summary should not claim router is running"
+  assert_not_contains "mtls-router 已在后台运行" "$out" "--write-config should not claim router started"
+  assert_not_contains "DOWNLOAD_CALLED" "$out" "--write-config should not download"
+  assert_not_contains "START_CALLED" "$out" "--write-config should not start"
+}
+
+# --- 5. --write-config without --agent= fails ------------------------
 test_write_config_without_agent_fails() {
   local shim
   shim="$(build_shim)"
@@ -152,6 +169,7 @@ test_unknown_flag_fails() {
 test_default_invokes_no_agents
 test_help
 test_print_config_does_not_download_or_start
+test_write_config_does_not_download_or_start
 test_write_config_without_agent_fails
 test_write_config_with_unknown_agent_fails
 test_write_config_with_duplicate_agent_fails

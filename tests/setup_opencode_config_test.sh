@@ -143,8 +143,24 @@ test_opencode_config_rejects_non_object_provider() (
   [[ ! -e "${baks[0]}" ]] || { printf 'FAIL: expected no backup for non-object provider rejection\n' >&2; return 1; }
 )
 
+test_opencode_config_uses_real_api_key_when_provided() (
+  source_setup
+  local home path
+  home="$(mktemp -d)"
+  trap 'rm -rf "$home"' EXIT
+  path="$home/.config/opencode/opencode.json"
+  configure_opencode "$path" "real-key-456" >/dev/null
+  local api_key
+  api_key="$(jq -r '.provider."mtls-router".options.apiKey' "$path")"
+  assert_eq "$api_key" "real-key-456" "real provider apiKey written"
+  local placeholder
+  placeholder="$(grep -c '{UserApiKey}' "$path" || true)"
+  assert_eq "$placeholder" "0" "placeholder removed"
+)
+
 test_opencode_config_creates_when_missing
 test_opencode_config_preserves_other_providers
 test_opencode_config_rejects_jsonc
 test_opencode_config_rejects_invalid_json
 test_opencode_config_rejects_non_object_provider
+test_opencode_config_uses_real_api_key_when_provided

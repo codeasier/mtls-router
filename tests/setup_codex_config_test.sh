@@ -60,6 +60,10 @@ test_codex_config_creates_when_missing() (
   first_line="$(printf '%s\n' "$result" | sed -n '1p')"
   [[ "$first_line" == "$path" ]] || { printf 'FAIL: wrong written path\n' >&2; return 1; }
   assert_file_exists "$path" 'created config'
+  local first_lines
+  first_lines="$(head -8 "$path")"
+  [[ "$first_lines" == *'model_provider = "custom"'* ]] || { printf 'FAIL: minimal config not at file start\n' >&2; return 1; }
+  [[ "$first_lines" == *'[model_providers.custom]'* ]] || { printf 'FAIL: custom provider block not near file start\n' >&2; return 1; }
   assert_contains "$path" 'model_provider = "custom"' 'root provider'
   assert_contains "$path" 'model = "gpt-5.5"' 'root model'
   assert_contains "$path" 'disable_response_storage = true' 'response storage disabled'
@@ -100,9 +104,18 @@ TOML
   local original_content
   original_content="$(<"$path")"
   result="$(configure_codex "$path")"
-  local count_provider
+  local count_provider count_root_provider count_root_model count_disable
   count_provider="$(grep -c '^\[model_providers\.custom\]$' "$path" || true)"
   [[ "$count_provider" == "1" ]] || { printf 'FAIL: custom provider block duplicated\n' >&2; return 1; }
+  count_root_provider="$(grep -c '^model_provider = ' "$path" || true)"
+  [[ "$count_root_provider" == "1" ]] || { printf 'FAIL: root model_provider duplicated\n' >&2; return 1; }
+  count_root_model="$(grep -c '^model = ' "$path" || true)"
+  [[ "$count_root_model" == "1" ]] || { printf 'FAIL: root model duplicated\n' >&2; return 1; }
+  count_disable="$(grep -c '^disable_response_storage = ' "$path" || true)"
+  [[ "$count_disable" == "1" ]] || { printf 'FAIL: disable_response_storage duplicated\n' >&2; return 1; }
+  local first_lines
+  first_lines="$(head -10 "$path")"
+  [[ "$first_lines" == *'model_provider = "custom"'* ]] || { printf 'FAIL: minimal config not at file start\n' >&2; return 1; }
   assert_contains "$path" 'approval_policy = "on-request"' 'approval preserved'
   assert_contains "$path" 'sandbox_mode = "workspace-write"' 'sandbox preserved'
   assert_contains "$path" 'notify = ["keep"]' 'notify preserved'
@@ -154,18 +167,22 @@ test_codex_config_writes_auth_json_when_key_given() (
   jq -e '.OPENAI_API_KEY == "sk-fake-test-key-1234"' "$auth_path" >/dev/null
 )
 
-# --- codex auth.json merges with existing keys ------------------------
-test_codex_config_merges_auth_json_existing_keys() (
+# --- codex auth.json is fully overwritten -----------------------------
+test_codex_config_overwrites_auth_json_existing_keys() (
   source_setup
-  local home path result auth_path
+  local home path auth_path
   home="$(mktemp -d)"
   trap 'rm -rf "$home"' EXIT
   mkdir -p "$home/.codex"
   path="$home/.codex/config.toml"
   auth_path="$home/.codex/auth.json"
-  echo '{"OPENAI_API_KEY": "old-key", "extra": "keep-me"}' >"$auth_path"
+  echo '{"OPENAI_API_KEY": "old-key", "extra": "drop-me"}' >"$auth_path"
   configure_codex "$path" "new-key" >/dev/null
-  jq -e '.OPENAI_API_KEY == "new-key" and .extra == "keep-me"' "$auth_path" >/dev/null
+  jq -e '.OPENAI_API_KEY == "new-key" and (keys | length) == 1' "$auth_path" >/dev/null
+  if jq -e '.extra' "$auth_path" >/dev/null 2>&1; then
+    printf 'FAIL: auth.json should have been fully overwritten\n' >&2
+    return 1
+  fi
 )
 
 # --- codex auth.json backup is reported in result ---------------------
@@ -228,7 +245,7 @@ test_print_config_codex_emits_auth_json_placeholder() (
 )
 
 test_codex_config_writes_auth_json_when_key_given
-test_codex_config_merges_auth_json_existing_keys
+test_codex_config_overwrites_auth_json_existing_keys
 test_codex_config_auth_json_backup_reported
 test_detect_agents_codex_via_dotdir
 test_print_config_codex_emits_auth_json_placeholder

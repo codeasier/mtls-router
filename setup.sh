@@ -119,12 +119,8 @@ start_router() {
     return 0
   fi
   info "[启动] 启动 mtls-router 后台模式..."
-  local log_dir="$HOME/.mtls-router"
-  local log_path="$log_dir/mtls-router-$(date +%Y%m%d-%H%M%S).log"
-  mkdir -p "$log_dir"
-  "$BINARY_PATH" -backend -log "$log_path"
+  "$BINARY_PATH" -backend
   success "  mtls-router 已启动，监听地址通常为 $ROUTER_BASE_URL"
-  success "  日志文件: $log_path"
 }
 
 select_targets() {
@@ -237,8 +233,13 @@ print_next_steps() {
   success "============================================================"
   success "配置完成。"
   success "============================================================"
-  info "mtls-router 已在后台运行："
-  info "  $ROUTER_BASE_URL"
+  if [[ "${ROUTER_STARTED:-}" == "1" ]]; then
+    info "mtls-router 已在后台运行："
+    info "  $ROUTER_BASE_URL"
+  else
+    info "未启动 mtls-router（本次仅处理配置）。如需启动，请运行："
+    info "  $0"
+  fi
   if [[ -n "${CONFIGURED_AGENT_PATHS:-}" ]]; then
     info "已写入配置："
     while IFS= read -r line; do
@@ -322,25 +323,29 @@ backup_file() {
 }
 
 claude_env_block() {
-  cat <<'JSON'
-{
-  "ANTHROPIC_BASE_URL": "http://127.0.0.1:19099",
-  "ANTHROPIC_AUTH_TOKEN": "{UserApiKey}",
-  "ANTHROPIC_DEFAULT_HAIKU_MODEL": "cx/gpt-5.5",
-  "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "gpt-5.5",
-  "ANTHROPIC_DEFAULT_OPUS_MODEL": "cx/gpt-5.5",
-  "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "gpt-5.5",
-  "ANTHROPIC_DEFAULT_SONNET_MODEL": "cx/gpt-5.4[1M]",
-  "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "gpt-5.4",
-  "ANTHROPIC_MODEL": "cx/gpt-5.5",
-  "ENABLE_TOOL_SEARCH": "true",
-  "DISABLE_AUTOUPDATER": "1"
-}
-JSON
+  local api_key="${1-}"
+  [[ -n "$api_key" ]] || api_key='{UserApiKey}'
+  jq -n \
+    --arg token "$api_key" \
+    '{
+      ANTHROPIC_BASE_URL: "http://127.0.0.1:19099",
+      ANTHROPIC_AUTH_TOKEN: $token,
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: "cx/gpt-5.5",
+      ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME: "gpt-5.5",
+      ANTHROPIC_DEFAULT_OPUS_MODEL: "cx/gpt-5.5",
+      ANTHROPIC_DEFAULT_OPUS_MODEL_NAME: "gpt-5.5",
+      ANTHROPIC_DEFAULT_SONNET_MODEL: "cx/gpt-5.4[1M]",
+      ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "gpt-5.4",
+      ANTHROPIC_MODEL: "cx/gpt-5.5",
+      ENABLE_TOOL_SEARCH: "true",
+      DISABLE_AUTOUPDATER: "1"
+    }'
 }
 
 configure_claude() {
   local path="$1"
+  local api_key="${2-}"
+  [[ -n "$api_key" ]] || api_key='{UserApiKey}'
   local backup=""
   if [[ -f "$path" ]]; then
     if ! jq empty "$path" >/dev/null 2>&1; then
@@ -353,51 +358,55 @@ configure_claude() {
   local tmp
   tmp="$(mktemp)"
   if [[ -f "$path" ]]; then
-    jq --argjson env "$(claude_env_block)" 'del(.env) + {env: $env}' "$path" >"$tmp"
+    jq --argjson env "$(claude_env_block "$api_key")" 'del(.env) + {env: $env}' "$path" >"$tmp"
   else
-    jq -n --argjson env "$(claude_env_block)" '{env: $env}' >"$tmp"
+    jq -n --argjson env "$(claude_env_block "$api_key")" '{env: $env}' >"$tmp"
   fi
   mv "$tmp" "$path"
   printf '%s\n%s\n' "$path" "${backup:-}"
 }
 
 opencode_provider_block() {
-  cat <<'JSON'
-{
-  "mtls-router": {
-    "npm": "@ai-sdk/openai-compatible",
-    "name": "mtls-router",
-    "options": {
-      "baseURL": "http://127.0.0.1:19099",
-      "apiKey": "{UserApiKey}"
-    },
-    "models": {
-      "cx/gpt-5.5": {
-        "name": "GPT-5.5",
-        "reasoning": true,
-        "attachment": true,
-        "tool_call": true,
-        "limit": { "context": 272000, "input": 244800, "output": 27200 },
-        "modalities": { "input": ["text", "image"], "output": ["text"] },
-        "options": { "reasoningEffort": "medium" }
-      },
-      "cx/gpt-5.4": {
-        "name": "GPT-5.4",
-        "reasoning": true,
-        "attachment": true,
-        "tool_call": true,
-        "limit": { "context": 1000000, "input": 900000, "output": 100000 },
-        "modalities": { "input": ["text", "image"], "output": ["text"] },
-        "options": { "reasoningEffort": "medium" }
+  local api_key="${1-}"
+  [[ -n "$api_key" ]] || api_key='{UserApiKey}'
+  jq -n \
+    --arg key "$api_key" \
+    '{
+      "mtls-router": {
+        npm: "@ai-sdk/openai-compatible",
+        name: "mtls-router",
+        options: {
+          baseURL: "http://127.0.0.1:19099",
+          apiKey: $key
+        },
+        models: {
+          "cx/gpt-5.5": {
+            name: "GPT-5.5",
+            reasoning: true,
+            attachment: true,
+            tool_call: true,
+            limit: { context: 272000, input: 244800, output: 27200 },
+            modalities: { input: ["text", "image"], output: ["text"] },
+            options: { reasoningEffort: "medium" }
+          },
+          "cx/gpt-5.4": {
+            name: "GPT-5.4",
+            reasoning: true,
+            attachment: true,
+            tool_call: true,
+            limit: { context: 1000000, input: 900000, output: 100000 },
+            modalities: { input: ["text", "image"], output: ["text"] },
+            options: { reasoningEffort: "medium" }
+          }
+        }
       }
-    }
-  }
-}
-JSON
+    }'
 }
 
 configure_opencode() {
   local path="$1"
+  local api_key="${2-}"
+  [[ -n "$api_key" ]] || api_key='{UserApiKey}'
   if [[ "$path" == *.jsonc ]]; then
     fail "opencode 当前选中的配置文件是 JSONC：$path（暂不支持就地合并）。请设置 OPENCODE_CONFIG 指向 JSON 文件。"
   fi
@@ -418,9 +427,9 @@ configure_opencode() {
   local tmp
   tmp="$(mktemp)"
   if [[ -f "$path" ]]; then
-    jq --argjson prov "$(opencode_provider_block)" '.provider = ((.provider // {}) + $prov)' "$path" >"$tmp"
+    jq --argjson prov "$(opencode_provider_block "$api_key")" '.provider = ((.provider // {}) + $prov)' "$path" >"$tmp"
   else
-    jq -n --argjson prov "$(opencode_provider_block)" '{provider: $prov}' >"$tmp"
+    jq -n --argjson prov "$(opencode_provider_block "$api_key")" '{provider: $prov}' >"$tmp"
   fi
   mv "$tmp" "$path"
   printf '%s\n%s\n' "$path" "${backup:-}"
@@ -466,8 +475,11 @@ configure_codex() {
   remove_codex_root_keys "$path"
   remove_codex_block "$path" 'model_providers\.custom'
 
-  cat >>"$path" <<'TOML'
-
+  local body_tmp final_tmp
+  body_tmp="$(mktemp)"
+  final_tmp="$(mktemp)"
+  cp "$path" "$body_tmp"
+  cat >"$final_tmp" <<'TOML'
 model_provider = "custom"
 model = "gpt-5.5"
 disable_response_storage = true
@@ -478,13 +490,18 @@ wire_api = "responses"
 requires_openai_auth = true
 base_url = "http://127.0.0.1:19099/v1"
 TOML
+  if [[ -s "$body_tmp" ]]; then
+    printf '\n' >>"$final_tmp"
+    cat "$body_tmp" >>"$final_tmp"
+  fi
+  mv "$final_tmp" "$path"
+  rm -f "$body_tmp"
 
   if [[ -n "$api_key" ]]; then
     local auth_path auth_perm
     auth_path="$(dirname "$path")/auth.json"
     local auth_backup=""
     if [[ -f "$auth_path" ]]; then
-      # Match the existing file's permissions (per the user's choice).
       auth_perm="$(stat -f %Lp "$auth_path" 2>/dev/null || stat -c %a "$auth_path" 2>/dev/null || echo '')"
       auth_backup="$(backup_file "$auth_path")"
     else
@@ -493,11 +510,7 @@ TOML
     fi
     local auth_tmp
     auth_tmp="$(mktemp)"
-    if [[ -f "$auth_path" ]]; then
-      jq --arg key "$api_key" '. + {OPENAI_API_KEY: $key}' "$auth_path" >"$auth_tmp"
-    else
-      jq -n --arg key "$api_key" '{OPENAI_API_KEY: $key}' >"$auth_tmp"
-    fi
+    jq -n --arg key "$api_key" '{OPENAI_API_KEY: $key}' >"$auth_tmp"
     mv "$auth_tmp" "$auth_path"
     if [[ -n "$auth_perm" ]]; then
       chmod "$auth_perm" "$auth_path" 2>/dev/null || true
@@ -550,6 +563,7 @@ main() {
   if [[ "$action" == "start" ]]; then
     download_router
     start_router
+    ROUTER_STARTED=1
     info "提示：未对 agent 配置做任何改动。如需写入 mtls-router 配置："
     info "  $0 --write-config --agent=claude,opencode,codex"
     info "先看会写什么：$0 --print-config"
@@ -557,11 +571,6 @@ main() {
       info "（已跳过实际启动 mtls-router）"
     fi
     return 0
-  fi
-
-  if [[ "$action" == "write" ]]; then
-    download_router
-    start_router
   fi
 
   detect_agents
@@ -621,6 +630,30 @@ main() {
   CONFIGURED_AGENT_PATHS=""
   CONFIGURED_BACKUPS=""
 
+  local shared_api_key=""
+  if [[ "$action" == "write" ]]; then
+    local needs_api_key=0
+    for key in "${targets[@]}"; do
+      case "$key" in
+        claude|opencode|codex)
+          needs_api_key=1
+          break
+          ;;
+      esac
+    done
+    if (( needs_api_key )); then
+      shared_api_key="${MTLS_ROUTER_OPENAI_API_KEY:-}"
+      if [[ -z "$shared_api_key" && -t 0 ]]; then
+        printf '请输入 mtls-router OPENAI_API_KEY（输入隐藏）：' >&2
+        IFS= read -rs shared_api_key || true
+        printf '\n' >&2
+      fi
+      if [[ -z "$shared_api_key" ]]; then
+        fail "写入 claude/opencode/codex 配置需要 apikey。可在 TTY 下重试，或通过 MTLS_ROUTER_OPENAI_API_KEY 环境变量传入。"
+      fi
+    fi
+  fi
+
   local key
   for key in "${targets[@]}"; do
     name="$(agent_name_from_key "$key")"
@@ -665,7 +698,7 @@ requires_openai_auth = true
 base_url = "http://127.0.0.1:19099/v1"
 TOML
           printf '\n### %s -> %s\n' "$name" "$auth_path"
-          printf '### 把以下 JSON 合并到 %s：\n\n' "$auth_path"
+          printf '### 将 %s 覆盖为以下最小 JSON：\n\n' "$auth_path"
           cat <<'JSON'
 {
   "OPENAI_API_KEY": "{UserApiKey}"
@@ -680,19 +713,10 @@ JSON
     # action=write
     local result
     case "$key" in
-      claude) result="$(configure_claude "$path")" ;;
-      opencode) result="$(configure_opencode "$path")" ;;
+      claude) result="$(configure_claude "$path" "$shared_api_key")" ;;
+      opencode) result="$(configure_opencode "$path" "$shared_api_key")" ;;
       codex)
-        local api_key="${MTLS_ROUTER_OPENAI_API_KEY:-}"
-        if [[ -z "$api_key" && -t 0 ]]; then
-          printf '请输入 mtls-router OPENAI_API_KEY（输入隐藏，codex 不会自己管理这个 key）：' >&2
-          IFS= read -rs api_key || true
-          printf '\n' >&2
-        fi
-        if [[ -z "$api_key" ]]; then
-          fail "codex 配置需要 apikey。可在 TTY 下重试，或通过 MTLS_ROUTER_OPENAI_API_KEY 环境变量传入。"
-        fi
-        result="$(configure_codex "$path" "$api_key")"
+        result="$(configure_codex "$path" "$shared_api_key")"
         ;;
       *) fail "未知 agent key：$key" ;;
     esac

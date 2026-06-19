@@ -171,10 +171,10 @@ function Backup-File($Path) {
     return $null
 }
 
-function Claude-EnvObject {
+function Claude-EnvObject($ApiKey = '{UserApiKey}') {
     [ordered]@{
         ANTHROPIC_BASE_URL = 'http://127.0.0.1:19099'
-        ANTHROPIC_AUTH_TOKEN = '{UserApiKey}'
+        ANTHROPIC_AUTH_TOKEN = $ApiKey
         ANTHROPIC_DEFAULT_HAIKU_MODEL = 'cx/gpt-5.5'
         ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME = 'gpt-5.5'
         ANTHROPIC_DEFAULT_OPUS_MODEL = 'cx/gpt-5.5'
@@ -187,7 +187,7 @@ function Claude-EnvObject {
     }
 }
 
-function Configure-Claude($Path) {
+function Configure-Claude($Path, $ApiKey = '{UserApiKey}') {
     $backup = Backup-File $Path
     $dir = Split-Path -Parent $Path
     if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
@@ -203,19 +203,19 @@ function Configure-Claude($Path) {
             Write-Fail "Claude Code 配置文件不是合法 JSON：$Path"
         }
     }
-    $settings['env'] = Claude-EnvObject
+    $settings['env'] = Claude-EnvObject $ApiKey
     $settings | ConvertTo-Json -Depth 20 | Set-Content -Path $Path -Encoding UTF8
     return ,@($Path, $backup)
 }
 
-function Opencode-ProviderObject {
+function Opencode-ProviderObject($ApiKey = '{UserApiKey}') {
     [ordered]@{
         'mtls-router' = [ordered]@{
             npm = '@ai-sdk/openai-compatible'
             name = 'mtls-router'
             options = [ordered]@{
                 baseURL = 'http://127.0.0.1:19099'
-                apiKey = '{UserApiKey}'
+                apiKey = $ApiKey
             }
             models = [ordered]@{
                 'cx/gpt-5.5' = [ordered]@{
@@ -241,7 +241,7 @@ function Opencode-ProviderObject {
     }
 }
 
-function Configure-Opencode($Path) {
+function Configure-Opencode($Path, $ApiKey = '{UserApiKey}') {
     if ($Path -like '*.jsonc') {
         Write-Fail "opencode 当前选中的配置文件是 JSONC：$Path（暂不支持就地合并）。请设置 OPENCODE_CONFIG 指向 JSON 文件。"
     }
@@ -266,7 +266,7 @@ function Configure-Opencode($Path) {
     if (-not $config.Contains('provider') -or $null -eq $config['provider']) {
         $config['provider'] = [ordered]@{}
     }
-    $config['provider']['mtls-router'] = (Opencode-ProviderObject)['mtls-router']
+    $config['provider']['mtls-router'] = (Opencode-ProviderObject $ApiKey)['mtls-router']
     $config | ConvertTo-Json -Depth 30 | Set-Content -Path $Path -Encoding UTF8
     return ,@($Path, $backup)
 }
@@ -315,7 +315,9 @@ function Configure-Codex($Path, $apiKey = '') {
     Remove-CodexRootKeys $Path
     Remove-CodexBlock $Path 'model_providers.custom'
 
-    Add-Content -Path $Path -Encoding UTF8 -Value @'
+    $bodyTmp = [System.IO.Path]::GetTempFileName()
+    Copy-Item -Path $Path -Destination $bodyTmp -Force
+    $header = @'
 model_provider = "custom"
 model = "gpt-5.5"
 disable_response_storage = true
@@ -326,23 +328,20 @@ wire_api = "responses"
 requires_openai_auth = true
 base_url = "http://127.0.0.1:19099/v1"
 '@
+    $body = Get-Content $bodyTmp -Raw
+    if ($body.Length -gt 0) {
+        Set-Content -Path $Path -Value ($header + "`n" + $body) -Encoding UTF8
+    } else {
+        Set-Content -Path $Path -Value $header -Encoding UTF8
+    }
+    Remove-Item $bodyTmp -Force
 
     if ($apiKey) {
         $authPath = Join-Path (Split-Path -Parent $Path) 'auth.json'
         $authBackup = Backup-File $authPath
         $authDir = Split-Path -Parent $authPath
         if ($authDir) { New-Item -ItemType Directory -Force -Path $authDir | Out-Null }
-        $auth = [ordered]@{}
-        if (Test-Path $authPath) {
-            try {
-                $loaded = Get-Content $authPath -Raw | ConvertFrom-Json -AsHashtable
-                foreach ($key in $loaded.Keys) { $auth[$key] = $loaded[$key] }
-            } catch {
-                Write-Fail "Codex auth.json 不是合法 JSON：$authPath"
-            }
-        }
-        $auth['OPENAI_API_KEY'] = $apiKey
-        $auth | ConvertTo-Json -Depth 20 | Set-Content -Path $authPath -Encoding UTF8
+        [ordered]@{ OPENAI_API_KEY = $apiKey } | ConvertTo-Json -Depth 20 | Set-Content -Path $authPath -Encoding UTF8
         return ,@($Path, $backup, "AUTH:$authPath", $authBackup)
     }
 
@@ -353,9 +352,13 @@ function Print-NextSteps {
     Write-Success '============================================================'
     Write-Success '配置完成。'
     Write-Success '============================================================'
-    Write-Info 'mtls-router 已在后台运行：'
-    Write-Info "  $RouterBaseUrl"
-    Write-Info "  日志文件: $script:LogPath"
+    if ($script:RouterStarted) {
+        Write-Info 'mtls-router 已在后台运行：'
+        Write-Info "  $RouterBaseUrl"
+    } else {
+        Write-Info '未启动 mtls-router（本次仅处理配置）。如需启动，请运行：'
+        Write-Info "  $PSCommandPath"
+    }
     if ($script:ConfiguredAgentPaths.Count -gt 0) {
         Write-Info '已写入配置：'
         foreach ($line in $script:ConfiguredAgentPaths) {
@@ -475,6 +478,7 @@ function Main {
             Write-Info '[Start] skipped (MTLS_ROUTER_SKIP_START=1)'
         } else {
             Start-MtlsRouter
+            $script:RouterStarted = $true
         }
 
         Write-Info '提示：未对 agent 配置做任何改动。如需写入 mtls-router 配置：'
@@ -484,20 +488,6 @@ function Main {
             Write-Info '（已跳过实际启动 mtls-router）'
         }
         return
-    }
-
-    if ($action -eq 'write') {
-        if ($env:MTLS_ROUTER_SKIP_DOWNLOAD -eq '1') {
-            Write-Info '[Download] skipped (MTLS_ROUTER_SKIP_DOWNLOAD=1)'
-        } else {
-            Download-MtlsRouter
-        }
-
-        if ($env:MTLS_ROUTER_SKIP_START -eq '1') {
-            Write-Info '[Start] skipped (MTLS_ROUTER_SKIP_START=1)'
-        } else {
-            Start-MtlsRouter
-        }
     }
 
     Detect-Agents
@@ -545,6 +535,33 @@ function Main {
     $script:ConfiguredAgentPaths = @()
     $script:ConfiguredBackups = @()
 
+    $sharedApiKey = ''
+    if ($action -eq 'write') {
+        $needsApiKey = $false
+        foreach ($k in $targets) {
+            if ($k -in @('claude', 'opencode', 'codex')) {
+                $needsApiKey = $true
+                break
+            }
+        }
+        if ($needsApiKey) {
+            $sharedApiKey = $env:MTLS_ROUTER_OPENAI_API_KEY
+            if (-not $sharedApiKey) {
+                try {
+                    $secure = Read-Host '请输入 mtls-router OPENAI_API_KEY（输入隐藏）' -AsSecureString
+                    $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+                    $sharedApiKey = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+                    [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) | Out-Null
+                } catch {
+                    $sharedApiKey = ''
+                }
+            }
+            if (-not $sharedApiKey) {
+                Write-Fail '写入 claude/opencode/codex 配置需要 apikey。在 TTY 下重试，或通过 MTLS_ROUTER_OPENAI_API_KEY 环境变量传入。'
+            }
+        }
+    }
+
     foreach ($key in $targets) {
         $displayName = ConvertFrom-AgentKey $key
         if (-not $displayName) { Write-Fail "Unknown agent key: $key" }
@@ -591,7 +608,7 @@ base_url = "http://127.0.0.1:19099/v1"
 '@
                     Write-Host ''
                     Write-Host "### $displayName -> $authPath"
-                    Write-Host '### 把以下 JSON 合并到 auth.json:'
+                    Write-Host '### 将 auth.json 覆盖为以下最小 JSON:'
                     Write-Host ''
                     Write-Host '{'
                     Write-Host '  "OPENAI_API_KEY": "{UserApiKey}"'
@@ -601,25 +618,10 @@ base_url = "http://127.0.0.1:19099/v1"
             continue
         }
 
-        $apiKey = $env:MTLS_ROUTER_OPENAI_API_KEY
-        if (-not $apiKey) {
-            try {
-                $secure = Read-Host '请输入 mtls-router OPENAI_API_KEY（codex 不会自己管理这个 key）' -AsSecureString
-                $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
-                $apiKey = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
-                [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) | Out-Null
-            } catch {
-                $apiKey = ''
-            }
-        }
-        if ($key -eq 'codex' -and -not $apiKey) {
-            Write-Fail 'codex 配置需要 apikey。在 TTY 下重试，或通过 MTLS_ROUTER_OPENAI_API_KEY 环境变量传入。'
-        }
-
         $result = switch ($key) {
-            'claude' { Configure-Claude $path }
-            'opencode' { Configure-Opencode $path }
-            'codex' { Configure-Codex $path $apiKey }
+            'claude' { Configure-Claude $path $sharedApiKey }
+            'opencode' { Configure-Opencode $path $sharedApiKey }
+            'codex' { Configure-Codex $path $sharedApiKey }
             default { Write-Fail "Unknown agent key: $key" }
         }
 
