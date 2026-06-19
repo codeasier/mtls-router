@@ -111,8 +111,12 @@ download_router() {
 
 start_router() {
   info "[启动] 启动 mtls-router 后台模式..."
-  "$BINARY_PATH" -backend
+  local log_dir="$HOME/.mtls-router"
+  local log_path="$log_dir/mtls-router-$(date +%Y%m%d-%H%M%S).log"
+  mkdir -p "$log_dir"
+  "$BINARY_PATH" -backend -log "$log_path"
   success "  mtls-router 已启动，监听地址通常为 $ROUTER_BASE_URL"
+  success "  日志文件: $log_path"
 }
 
 select_targets() {

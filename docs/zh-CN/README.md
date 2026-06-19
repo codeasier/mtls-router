@@ -112,6 +112,11 @@ Windows PowerShell：
 
 该模式适合本地后台使用。生产环境建议使用 systemd、Docker、launchd 或 Windows service wrapper，以便由平台负责重启和进程管理。
 
+通过一键安装脚本启动时，日志文件不会放在安装目录下：
+
+- macOS / Linux：`~/.mtls-router/mtls-router-<start-timestamp>.log`
+- Windows：`%LOCALAPPDATA%\mtls-router\mtls-router-<start-timestamp>.log`
+
 ## 配置 agents
 
 安装脚本只负责安装并启动 `mtls-router`。之后会依次检测 Claude Code、opencode 和 Codex。对于每个检测到的 agent，脚本都会询问是否备份现有配置并写入 mtls-router provider 配置。
