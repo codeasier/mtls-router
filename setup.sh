@@ -15,7 +15,7 @@ fail() { printf '\033[31m%s\033[0m\n' "$1" >&2; exit 1; }
 
 print_banner() {
   info "============================================================"
-  info " mtls-router Claude Code 一键配置工具"
+  info " mtls-router 代理配置向导"
   info "============================================================"
 }
 
@@ -107,69 +107,6 @@ download_router() {
   chmod +x "$tmp"
   mv "$tmp" "$BINARY_PATH"
   success "  已安装 mtls-router：$BINARY_PATH"
-}
-
-update_settings_json() {
-  info "[修复] 写入 Claude Code settings.json..."
-  local claude_dir="$HOME/.claude"
-  local settings="$claude_dir/settings.json"
-  mkdir -p "$claude_dir"
-
-  if command -v node >/dev/null 2>&1; then
-    SETTINGS_PATH="$settings" ANTHROPIC_BASE_URL_VALUE="$ANTHROPIC_BASE_URL_VALUE" node <<'NODE'
-const fs = require('fs');
-const path = process.env.SETTINGS_PATH;
-let data = {};
-try {
-  if (fs.existsSync(path)) data = JSON.parse(fs.readFileSync(path, 'utf8'));
-} catch {
-  data = {};
-}
-data.env = data.env && typeof data.env === 'object' && !Array.isArray(data.env) ? data.env : {};
-data.env.ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL_VALUE;
-fs.writeFileSync(path, JSON.stringify(data, null, 2) + '\n');
-NODE
-  else
-    if [[ -f "$settings" ]]; then
-      fail "检测到已有 settings.json，但未找到 node，无法安全合并配置。请先安装 Node.js 后重试。"
-    fi
-    cat >"$settings" <<JSON
-{
-  "env": {
-    "ANTHROPIC_BASE_URL": "$ANTHROPIC_BASE_URL_VALUE"
-  }
-}
-JSON
-  fi
-
-  success "  已配置 ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL_VALUE"
-}
-
-update_shell_profile() {
-  info "[修复] 写入 shell 环境变量..."
-  local profile
-  if [[ -f "$HOME/.zshrc" ]]; then
-    profile="$HOME/.zshrc"
-  else
-    profile="$HOME/.bashrc"
-  fi
-
-  touch "$profile"
-  if grep -q '^export ANTHROPIC_BASE_URL=' "$profile"; then
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-      sed -i '' "s|^export ANTHROPIC_BASE_URL=.*|export ANTHROPIC_BASE_URL=\"$ANTHROPIC_BASE_URL_VALUE\"|" "$profile"
-    else
-      sed -i "s|^export ANTHROPIC_BASE_URL=.*|export ANTHROPIC_BASE_URL=\"$ANTHROPIC_BASE_URL_VALUE\"|" "$profile"
-    fi
-  else
-    printf '\nexport ANTHROPIC_BASE_URL="%s"\n' "$ANTHROPIC_BASE_URL_VALUE" >>"$profile"
-  fi
-
-  export ANTHROPIC_BASE_URL="$ANTHROPIC_BASE_URL_VALUE"
-  if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
-    export PATH="$INSTALL_DIR:$PATH"
-  fi
-  success "  已更新：$profile"
 }
 
 start_router() {
@@ -456,7 +393,7 @@ configure_codex() {
 [model_providers.mtls-router]
 name = "mtls-router"
 base_url = "http://127.0.0.1:19099/v1"
-env_key = "MTLS_ROUTER_API_KEY"
+env_key = "{UserApiKey}"
 wire_api = "responses"
 request_max_retries = 2
 stream_max_retries = 2

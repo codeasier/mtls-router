@@ -9,18 +9,22 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+func windowsSysProcAttr() *syscall.SysProcAttr {
+	return &syscall.SysProcAttr{
+		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.DETACHED_PROCESS,
+		HideWindow:    true,
+	}
+}
+
 func Start(exePath string, args []string, logPath string) (int, error) {
-	logFile, err := openLogFile(logPath)
+	logFile, err := OpenLogFile(logPath)
 	if err != nil {
 		return 0, err
 	}
 	defer logFile.Close()
 
 	cmd := exec.Command(exePath, args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP,
-		HideWindow:    true,
-	}
+	cmd.SysProcAttr = windowsSysProcAttr()
 	cmd.Stdin = nil
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile

@@ -153,7 +153,7 @@ func logWriter(logPath string) (io.Writer, func(), error) {
 	if logPath == "" {
 		return os.Stderr, func() {}, nil
 	}
-	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	f, err := background.OpenLogFile(logPath)
 	if err != nil {
 		return nil, nil, err
 	}

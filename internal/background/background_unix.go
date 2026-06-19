@@ -8,7 +8,7 @@ import (
 )
 
 func Start(exePath string, args []string, logPath string) (int, error) {
-	logFile, err := openLogFile(logPath)
+	logFile, err := OpenLogFile(logPath)
 	if err != nil {
 		return 0, err
 	}

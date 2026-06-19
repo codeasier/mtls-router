@@ -15,7 +15,7 @@ function Write-Fail($Message) { Write-Host $Message -ForegroundColor Red; exit 1
 
 function Show-Banner {
     Write-Info '============================================================'
-    Write-Info ' mtls-router Claude Code 一键配置工具'
+    Write-Info ' mtls-router 代理配置向导'
     Write-Info '============================================================'
 }
 
@@ -307,7 +307,7 @@ function Configure-Codex($Path) {
 [model_providers.mtls-router]
 name = "mtls-router"
 base_url = "http://127.0.0.1:19099/v1"
-env_key = "MTLS_ROUTER_API_KEY"
+env_key = "{UserApiKey}"
 wire_api = "responses"
 request_max_retries = 2
 stream_max_retries = 2

@@ -9,9 +9,9 @@ import (
 func TestOpenLogFileCreatesAppendOnlyLogFile(t *testing.T) {
 	logPath := filepath.Join(t.TempDir(), "mtls-router.log")
 
-	f, err := openLogFile(logPath)
+	f, err := OpenLogFile(logPath)
 	if err != nil {
-		t.Fatalf("openLogFile() error = %v", err)
+		t.Fatalf("OpenLogFile() error = %v", err)
 	}
 	if _, err := f.WriteString("first line\n"); err != nil {
 		_ = f.Close()
@@ -21,9 +21,9 @@ func TestOpenLogFileCreatesAppendOnlyLogFile(t *testing.T) {
 		t.Fatalf("first Close() error = %v", err)
 	}
 
-	f, err = openLogFile(logPath)
+	f, err = OpenLogFile(logPath)
 	if err != nil {
-		t.Fatalf("second openLogFile() error = %v", err)
+		t.Fatalf("second OpenLogFile() error = %v", err)
 	}
 	if _, err := f.WriteString("second line\n"); err != nil {
 		_ = f.Close()
