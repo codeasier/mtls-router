@@ -117,16 +117,16 @@ function Detect-Agents {
     }
 
     $codex = Get-Command codex -ErrorAction SilentlyContinue
-    if ($codex -and $codex.Source) {
-        $configPath = if ($env:CODEX_HOME) {
-            Join-Path $env:CODEX_HOME 'config.toml'
-        } else {
-            Join-Path (Join-Path $env:USERPROFILE '.codex') 'config.toml'
-        }
+    $codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' }
+    # Detect Codex when either the CLI is on PATH, or the Codex Desktop
+    # app has been used (which writes ~/.codex/config.toml and auth.json
+    # without ever installing the CLI).
+    if (($codex -and $codex.Source) -or (Test-Path -PathType Container $codexHome)) {
         $script:DetectedAgents += [PSCustomObject]@{
             Name = 'Codex'
-            Command = $codex.Source
-            ConfigPath = $configPath
+            Command = if ($codex -and $codex.Source) { $codex.Source } else { '<desktop>' }
+            ConfigPath = Join-Path $codexHome 'config.toml'
+            AuthPath = Join-Path $codexHome 'auth.json'
         }
     }
 }
@@ -291,7 +291,7 @@ function Remove-CodexBlock($Path, $Header) {
     Set-Content -Path $Path -Value $result -Encoding UTF8
 }
 
-function Configure-Codex($Path) {
+function Configure-Codex($Path, $apiKey = '') {
     $backup = Backup-File $Path
     $dir = Split-Path -Parent $Path
     if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
@@ -307,7 +307,7 @@ function Configure-Codex($Path) {
 [model_providers.mtls-router]
 name = "mtls-router"
 base_url = "http://127.0.0.1:19099/v1"
-env_key = "{UserApiKey}"
+env_key = "OPENAI_API_KEY"
 wire_api = "responses"
 request_max_retries = 2
 stream_max_retries = 2
@@ -325,6 +325,25 @@ model = "gpt-5.4"
 model_provider = "mtls-router"
 model_reasoning_effort = "medium"
 '@
+
+    if ($apiKey) {
+        $authPath = Join-Path (Split-Path -Parent $Path) 'auth.json'
+        $authBackup = Backup-File $authPath
+        $authDir = Split-Path -Parent $authPath
+        if ($authDir) { New-Item -ItemType Directory -Force -Path $authDir | Out-Null }
+        $auth = [ordered]@{}
+        if (Test-Path $authPath) {
+            try {
+                $loaded = Get-Content $authPath -Raw | ConvertFrom-Json -AsHashtable
+                foreach ($key in $loaded.Keys) { $auth[$key] = $loaded[$key] }
+            } catch {
+                Write-Fail "Codex auth.json 不是合法 JSON：$authPath"
+            }
+        }
+        $auth['OPENAI_API_KEY'] = $apiKey
+        $auth | ConvertTo-Json -Depth 20 | Set-Content -Path $authPath -Encoding UTF8
+        return ,@($Path, $backup, "AUTH:$authPath", $authBackup)
+    }
 
     return ,@($Path, $backup)
 }
@@ -555,6 +574,7 @@ function Main {
                     Write-Host (Opencode-ProviderObject | ConvertTo-Json -Depth 20)
                 }
                 'codex' {
+                    $authPath = Join-Path (Split-Path -Parent $path) 'auth.json'
                     Write-Host '### 把以下 TOML 追加到 config.toml：'
                     Write-Host ''
                     @'
@@ -563,7 +583,7 @@ function Main {
 [model_providers.mtls-router]
 name = "mtls-router"
 base_url = "http://127.0.0.1:19099/v1"
-env_key = "{UserApiKey}"
+env_key = "OPENAI_API_KEY"
 wire_api = "responses"
 request_max_retries = 2
 stream_max_retries = 2
@@ -581,15 +601,37 @@ model = "gpt-5.4"
 model_provider = "mtls-router"
 model_reasoning_effort = "medium"
 '@
+                    Write-Host ''
+                    Write-Host "### $displayName -> $authPath"
+                    Write-Host '### 把以下 JSON 合并到 auth.json:'
+                    Write-Host ''
+                    Write-Host '{'
+                    Write-Host '  "OPENAI_API_KEY": "{UserApiKey}"'
+                    Write-Host '}'
                 }
             }
             continue
         }
 
+        $apiKey = $env:MTLS_ROUTER_OPENAI_API_KEY
+        if (-not $apiKey) {
+            try {
+                $secure = Read-Host '请输入 mtls-router OPENAI_API_KEY（codex 不会自己管理这个 key）' -AsSecureString
+                $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+                $apiKey = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+                [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) | Out-Null
+            } catch {
+                $apiKey = ''
+            }
+        }
+        if ($key -eq 'codex' -and -not $apiKey) {
+            Write-Fail 'codex 配置需要 apikey。在 TTY 下重试，或通过 MTLS_ROUTER_OPENAI_API_KEY 环境变量传入。'
+        }
+
         $result = switch ($key) {
             'claude' { Configure-Claude $path }
             'opencode' { Configure-Opencode $path }
-            'codex' { Configure-Codex $path }
+            'codex' { Configure-Codex $path $apiKey }
             default { Write-Fail "Unknown agent key: $key" }
         }
 
@@ -599,6 +641,15 @@ model_reasoning_effort = "medium"
         if ($backup) { $script:ConfiguredBackups += $backup }
         Write-Success ("  已写入 {0} 配置: {1}" -f $displayName, $wrote)
         if ($backup) { Write-Success "  备份: $backup" }
+        # codex also writes auth.json when an api key was provided.
+        if ($key -eq 'codex' -and $result.Count -ge 3 -and $result[2] -like 'AUTH:*') {
+            $authPath = $result[2] -replace '^AUTH:', ''
+            $authBackup = if ($result.Count -ge 4) { $result[3] } else { $null }
+            $script:ConfiguredAgentPaths += ("{0} auth: {1}" -f $displayName, $authPath)
+            if ($authBackup) { $script:ConfiguredBackups += $authBackup }
+            Write-Success ("  已写入 {0} auth.json: {1}" -f $displayName, $authPath)
+            if ($authBackup) { Write-Success "  备份: $authBackup" }
+        }
     }
 
     if ($action -eq 'print') {

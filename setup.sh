@@ -260,6 +260,7 @@ detect_agents() {
   DETECTED_NAMES=()
   DETECTED_COMMANDS=()
   DETECTED_CONFIG_PATHS=()
+  DETECTED_AUTH_PATHS=()
   local opencode_path=""
 
   local claude_bin
@@ -291,16 +292,22 @@ detect_agents() {
     DETECTED_CONFIG_PATHS+=("$opencode_path")
   fi
 
+  local codex_home
+  if [[ -n "${CODEX_HOME:-}" ]]; then
+    codex_home="$CODEX_HOME"
+  else
+    codex_home="$HOME/.codex"
+  fi
+  # Detect Codex when either the CLI is on PATH, or the Codex Desktop
+  # app has been used (which writes ~/.codex/config.toml and auth.json
+  # without ever installing the CLI).
   local codex_bin
   codex_bin="$(type -P codex || true)"
-  if [[ -n "$codex_bin" ]]; then
+  if [[ -n "$codex_bin" || -d "$codex_home" ]]; then
     DETECTED_NAMES+=("Codex")
-    DETECTED_COMMANDS+=("$codex_bin")
-    if [[ -n "${CODEX_HOME:-}" ]]; then
-      DETECTED_CONFIG_PATHS+=("$CODEX_HOME/config.toml")
-    else
-      DETECTED_CONFIG_PATHS+=("$HOME/.codex/config.toml")
-    fi
+    DETECTED_COMMANDS+=("${codex_bin:-<desktop>}")
+    DETECTED_CONFIG_PATHS+=("$codex_home/config.toml")
+    DETECTED_AUTH_PATHS+=("$codex_home/auth.json")
   fi
 }
 
@@ -436,6 +443,7 @@ remove_codex_block() {
 
 configure_codex() {
   local path="$1"
+  local api_key="${2:-}"
   local backup=""
   if [[ -f "$path" ]]; then
     backup="$(backup_file "$path")"
@@ -453,7 +461,7 @@ configure_codex() {
 [model_providers.mtls-router]
 name = "mtls-router"
 base_url = "http://127.0.0.1:19099/v1"
-env_key = "{UserApiKey}"
+env_key = "OPENAI_API_KEY"
 wire_api = "responses"
 request_max_retries = 2
 stream_max_retries = 2
@@ -472,7 +480,34 @@ model_provider = "mtls-router"
 model_reasoning_effort = "medium"
 TOML
 
-  printf '%s\n%s\n' "$path" "${backup:-}"
+  if [[ -n "$api_key" ]]; then
+    local auth_path auth_perm
+    auth_path="$(dirname "$path")/auth.json"
+    local auth_backup=""
+    if [[ -f "$auth_path" ]]; then
+      # Match the existing file's permissions (per the user's choice).
+      auth_perm="$(stat -f %Lp "$auth_path" 2>/dev/null || stat -c %a "$auth_path" 2>/dev/null || echo '')"
+      auth_backup="$(backup_file "$auth_path")"
+    else
+      mkdir -p "$(dirname "$auth_path")"
+      auth_perm=""
+    fi
+    local auth_tmp
+    auth_tmp="$(mktemp)"
+    if [[ -f "$auth_path" ]]; then
+      jq --arg key "$api_key" '. + {OPENAI_API_KEY: $key}' "$auth_path" >"$auth_tmp"
+    else
+      jq -n --arg key "$api_key" '{OPENAI_API_KEY: $key}' >"$auth_tmp"
+    fi
+    mv "$auth_tmp" "$auth_path"
+    if [[ -n "$auth_perm" ]]; then
+      chmod "$auth_perm" "$auth_path" 2>/dev/null || true
+    fi
+    printf '%s\n%s\n' "$path" "${backup:-}"
+    printf 'AUTH:%s\n%s\n' "$auth_path" "${auth_backup:-}"
+  else
+    printf '%s\n%s\n' "$path" "${backup:-}"
+  fi
 }
 
 main() {
@@ -615,6 +650,8 @@ main() {
           printf '\n'
           ;;
         codex)
+          local auth_path
+          auth_path="$(dirname "$path")/auth.json"
           printf '### %s -> %s\n' "$name" "$path"
           printf '### 把以下 TOML 追加到 %s：\n\n' "$path"
           cat <<'TOML'
@@ -623,7 +660,7 @@ main() {
 [model_providers.mtls-router]
 name = "mtls-router"
 base_url = "http://127.0.0.1:19099/v1"
-env_key = "{UserApiKey}"
+env_key = "OPENAI_API_KEY"
 wire_api = "responses"
 request_max_retries = 2
 stream_max_retries = 2
@@ -641,6 +678,14 @@ model = "gpt-5.4"
 model_provider = "mtls-router"
 model_reasoning_effort = "medium"
 TOML
+          printf '\n### %s -> %s\n' "$name" "$auth_path"
+          printf '### 把以下 JSON 合并到 %s：\n\n' "$auth_path"
+          cat <<'JSON'
+{
+  "OPENAI_API_KEY": "{UserApiKey}"
+}
+JSON
+          printf '\n'
           ;;
       esac
       continue
@@ -651,7 +696,18 @@ TOML
     case "$key" in
       claude) result="$(configure_claude "$path")" ;;
       opencode) result="$(configure_opencode "$path")" ;;
-      codex) result="$(configure_codex "$path")" ;;
+      codex)
+        local api_key="${MTLS_ROUTER_OPENAI_API_KEY:-}"
+        if [[ -z "$api_key" && -t 0 ]]; then
+          printf '请输入 mtls-router OPENAI_API_KEY（输入隐藏，codex 不会自己管理这个 key）：' >&2
+          IFS= read -rs api_key || true
+          printf '\n' >&2
+        fi
+        if [[ -z "$api_key" ]]; then
+          fail "codex 配置需要 apikey。可在 TTY 下重试，或通过 MTLS_ROUTER_OPENAI_API_KEY 环境变量传入。"
+        fi
+        result="$(configure_codex "$path" "$api_key")"
+        ;;
       *) fail "未知 agent key：$key" ;;
     esac
     local wrote backup
@@ -660,6 +716,24 @@ TOML
     CONFIGURED_AGENT_PATHS+="${name}: ${wrote}"$'\n'
     if [[ -n "$backup" ]]; then
       CONFIGURED_BACKUPS+="${backup}"$'\n'
+    fi
+    # codex also writes auth.json; the configure_codex output may include
+    # an "AUTH:<auth_path>" line followed by the auth backup. Surface it.
+    if [[ "$key" == "codex" ]]; then
+      local auth_line auth_path auth_backup
+      auth_line="$(printf '%s\n' "$result" | sed -n '3p' || true)"
+      if [[ "$auth_line" == AUTH:* ]]; then
+        auth_path="${auth_line#AUTH:}"
+        auth_backup="$(printf '%s\n' "$result" | sed -n '4p' || true)"
+        CONFIGURED_AGENT_PATHS+="${name} auth: ${auth_path}"$'\n'
+        if [[ -n "$auth_backup" ]]; then
+          CONFIGURED_BACKUPS+="${auth_backup}"$'\n'
+        fi
+        success "  已写入 ${name} auth.json：${auth_path}"
+        if [[ -n "$auth_backup" ]]; then
+          success "  备份：${auth_backup}"
+        fi
+      fi
     fi
     success "  已写入 ${name} 配置：${wrote}"
     if [[ -n "$backup" ]]; then
