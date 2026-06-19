@@ -1,28 +1,28 @@
-# Build and Release
+# 构建与发布
 
-[中文](zh-CN/BUILD.md)
+[English](../BUILD.md)
 
-This document is for maintainers who need to build `mtls-router` from source or publish GitHub Release binaries.
+本文档面向需要从源码构建 `mtls-router` 或发布 GitHub Release 二进制文件的维护者。
 
-## Local placeholder build
+## 本地占位构建
 
-For local development, run:
+本地开发时运行：
 
 ```bash
 ./scripts/build.sh
 ```
 
-The script creates these files if they are missing:
+如果以下文件不存在，脚本会自动创建：
 
 - `secrets/client.pem`
 - `secrets/client.key`
 - `secrets/upstream-ca.pem`
 
-It then runs `go build -trimpath` and writes `./mtls-router`.
+随后脚本会执行 `go build -trimpath`，并输出 `./mtls-router`。
 
-The generated placeholder binary is expected to fail fast at startup until it is built with real upstream configuration and certificate material.
+生成的占位二进制预期会在启动时快速失败，直到使用真实的上游配置和证书材料重新构建。
 
-## Build with real certs
+## 使用真实证书构建
 
 ```bash
 go build -trimpath \
@@ -34,7 +34,7 @@ go build -trimpath \
   -o mtls-router .
 ```
 
-The binary never reads cert files at runtime. Certificate PEM, key PEM, upstream CA PEM, and the default upstream URL are embedded at build time through linker variables:
+二进制文件不会在运行时读取证书文件。证书 PEM、私钥 PEM、上游 CA PEM 和默认上游 URL 都会通过 linker variables 在构建期嵌入：
 
 - `main.clientCertPEM`
 - `main.clientKeyPEM`
@@ -42,19 +42,19 @@ The binary never reads cert files at runtime. Certificate PEM, key PEM, upstream
 - `main.upstreamURL`
 - `main.version`
 
-## GitHub Release configuration
+## GitHub Release 配置
 
-The release workflow reads these repository secrets:
+release workflow 会读取以下 repository secrets：
 
 - `CLIENT_CERT_PEM`
 - `CLIENT_KEY_PEM`
 - `UPSTREAM_CA_PEM`
 
-It also reads this repository variable:
+它也会读取以下 repository variable：
 
 - `UPSTREAM_URL`
 
-Set them with `gh`:
+使用 `gh` 设置：
 
 ```bash
 gh secret set CLIENT_CERT_PEM --repo codeasier/mtls-router < secrets/client.pem
@@ -63,16 +63,16 @@ gh secret set UPSTREAM_CA_PEM --repo codeasier/mtls-router < secrets/upstream-ca
 gh variable set UPSTREAM_URL --repo codeasier/mtls-router --body "https://router.example.com"
 ```
 
-## Publish a release
+## 发布版本
 
-Push a version tag:
+推送版本 tag：
 
 ```bash
 git tag v0.1.1
 git push origin v0.1.1
 ```
 
-The GitHub Actions release workflow cross-compiles binaries for:
+GitHub Actions release workflow 会为以下平台交叉编译二进制文件：
 
 - `linux/amd64`
 - `linux/arm64`
@@ -81,4 +81,4 @@ The GitHub Actions release workflow cross-compiles binaries for:
 - `windows/amd64`
 - `windows/arm64`
 
-The workflow uploads each binary as a workflow artifact and, for tag builds, attaches the binaries to the GitHub Release.
+workflow 会将每个二进制文件上传为 workflow artifact；对于 tag 构建，还会把这些二进制文件附加到 GitHub Release。
