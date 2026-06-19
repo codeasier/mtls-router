@@ -441,6 +441,18 @@ remove_codex_block() {
   mv "$tmp" "$file"
 }
 
+remove_codex_root_keys() {
+  local file="$1" tmp
+  tmp="$(mktemp)"
+  awk '
+    BEGIN { in_root = 1 }
+    /^[[:space:]]*\[/ { in_root = 0 }
+    in_root && /^[[:space:]]*(model_provider|model|disable_response_storage)[[:space:]]*=/ { next }
+    { print }
+  ' "$file" >"$tmp"
+  mv "$tmp" "$file"
+}
+
 configure_codex() {
   local path="$1"
   local api_key="${2:-}"
@@ -451,33 +463,20 @@ configure_codex() {
     mkdir -p "$(dirname "$path")"
     : >"$path"
   fi
-  remove_codex_block "$path" 'model_providers\.mtls-router'
-  remove_codex_block "$path" 'profiles\.gpt-5-5-router'
-  remove_codex_block "$path" 'profiles\.gpt-5-4-1m-router'
+  remove_codex_root_keys "$path"
+  remove_codex_block "$path" 'model_providers\.custom'
 
   cat >>"$path" <<'TOML'
 
-# mtls-router provider
-[model_providers.mtls-router]
-name = "mtls-router"
-base_url = "http://127.0.0.1:19099/v1"
-env_key = "OPENAI_API_KEY"
-wire_api = "responses"
-request_max_retries = 2
-stream_max_retries = 2
-supports_websockets = false
-
-# GPT-5.5 via mtls-router
-[profiles.gpt-5-5-router]
+model_provider = "custom"
 model = "gpt-5.5"
-model_provider = "mtls-router"
-model_reasoning_effort = "medium"
+disable_response_storage = true
 
-# GPT-5.4 1M via mtls-router
-[profiles.gpt-5-4-1m-router]
-model = "gpt-5.4"
-model_provider = "mtls-router"
-model_reasoning_effort = "medium"
+[model_providers.custom]
+name = "9router"
+wire_api = "responses"
+requires_openai_auth = true
+base_url = "http://127.0.0.1:19099/v1"
 TOML
 
   if [[ -n "$api_key" ]]; then
@@ -653,30 +652,17 @@ main() {
           local auth_path
           auth_path="$(dirname "$path")/auth.json"
           printf '### %s -> %s\n' "$name" "$path"
-          printf '### 把以下 TOML 追加到 %s：\n\n' "$path"
+          printf '### 使用以下最小 TOML 配置 %s：\n\n' "$path"
           cat <<'TOML'
-
-# mtls-router provider
-[model_providers.mtls-router]
-name = "mtls-router"
-base_url = "http://127.0.0.1:19099/v1"
-env_key = "OPENAI_API_KEY"
-wire_api = "responses"
-request_max_retries = 2
-stream_max_retries = 2
-supports_websockets = false
-
-# GPT-5.5 via mtls-router
-[profiles.gpt-5-5-router]
+model_provider = "custom"
 model = "gpt-5.5"
-model_provider = "mtls-router"
-model_reasoning_effort = "medium"
+disable_response_storage = true
 
-# GPT-5.4 1M via mtls-router
-[profiles.gpt-5-4-1m-router]
-model = "gpt-5.4"
-model_provider = "mtls-router"
-model_reasoning_effort = "medium"
+[model_providers.custom]
+name = "9router"
+wire_api = "responses"
+requires_openai_auth = true
+base_url = "http://127.0.0.1:19099/v1"
 TOML
           printf '\n### %s -> %s\n' "$name" "$auth_path"
           printf '### 把以下 JSON 合并到 %s：\n\n' "$auth_path"

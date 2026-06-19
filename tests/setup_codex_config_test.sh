@@ -60,17 +60,17 @@ test_codex_config_creates_when_missing() (
   first_line="$(printf '%s\n' "$result" | sed -n '1p')"
   [[ "$first_line" == "$path" ]] || { printf 'FAIL: wrong written path\n' >&2; return 1; }
   assert_file_exists "$path" 'created config'
-  assert_contains "$path" '[model_providers.mtls-router]' 'provider section'
-  assert_contains "$path" '[profiles.gpt-5-5-router]' '5.5 profile'
-  assert_contains "$path" '[profiles.gpt-5-4-1m-router]' '5.4 profile'
-  assert_section_contains "$path" '[model_providers.mtls-router]' 'base_url = "http://127.0.0.1:19099/v1"' 'provider base_url'
-  assert_section_contains "$path" '[model_providers.mtls-router]' 'env_key = "OPENAI_API_KEY"' 'provider env_key'
+  assert_contains "$path" 'model_provider = "custom"' 'root provider'
+  assert_contains "$path" 'model = "gpt-5.5"' 'root model'
+  assert_contains "$path" 'disable_response_storage = true' 'response storage disabled'
+  assert_contains "$path" '[model_providers.custom]' 'custom provider section'
+  assert_section_contains "$path" '[model_providers.custom]' 'name = "9router"' 'provider name'
+  assert_section_contains "$path" '[model_providers.custom]' 'wire_api = "responses"' 'provider wire_api'
+  assert_section_contains "$path" '[model_providers.custom]' 'requires_openai_auth = true' 'provider auth flag'
+  assert_section_contains "$path" '[model_providers.custom]' 'base_url = "http://127.0.0.1:19099/v1"' 'provider base_url'
+  assert_not_contains "$path" '[model_providers.mtls-router]' 'old mtls-router provider absent'
+  assert_not_contains "$path" '[profiles.gpt-5-5-router]' 'old profile absent'
   assert_not_contains "$path" 'env_key = "{UserApiKey}"' 'placeholder removed'
-  assert_section_contains "$path" '[model_providers.mtls-router]' 'wire_api = "responses"' 'provider wire_api'
-  assert_section_contains "$path" '[profiles.gpt-5-5-router]' 'model = "gpt-5.5"' '5.5 model'
-  assert_section_contains "$path" '[profiles.gpt-5-5-router]' 'model_provider = "mtls-router"' '5.5 provider'
-  assert_section_contains "$path" '[profiles.gpt-5-4-1m-router]' 'model = "gpt-5.4"' '5.4 model'
-  assert_section_contains "$path" '[profiles.gpt-5-4-1m-router]' 'model_provider = "mtls-router"' '5.4 provider'
 )
 
 test_codex_config_replaces_existing_blocks_and_preserves_others() (
@@ -83,40 +83,39 @@ test_codex_config_replaces_existing_blocks_and_preserves_others() (
   cat >"$path" <<'TOML'
 model = "gpt-5-codex"
 model_provider = "openai"
+disable_response_storage = false
 approval_policy = "on-request"
 sandbox_mode = "workspace-write"
+notify = ["keep"]
 
-[model_providers.mtls-router]
+[model_providers.custom]
 name = "old"
 base_url = "http://old"
-env_key = "OLD"
 wire_api = "responses"
+requires_openai_auth = false
 
-[profiles.gpt-5-5-router]
-model = "gpt-5.5"
-model_provider = "openai"
+[features]
+js_repl = false
 TOML
   local original_content
   original_content="$(<"$path")"
   result="$(configure_codex "$path")"
-  local count_provider count_5_5 count_5_4
-  count_provider="$(grep -c '^\[model_providers\.mtls-router\]$' "$path" || true)"
-  [[ "$count_provider" == "1" ]] || { printf 'FAIL: provider block duplicated\n' >&2; return 1; }
-  count_5_5="$(grep -c '^\[profiles\.gpt-5-5-router\]$' "$path" || true)"
-  [[ "$count_5_5" == "1" ]] || { printf 'FAIL: 5.5 profile duplicated\n' >&2; return 1; }
-  count_5_4="$(grep -c '^\[profiles\.gpt-5-4-1m-router\]$' "$path" || true)"
-  [[ "$count_5_4" == "1" ]] || { printf 'FAIL: 5.4 profile duplicated\n' >&2; return 1; }
-  assert_contains "$path" 'model = "gpt-5-codex"' 'model preserved'
+  local count_provider
+  count_provider="$(grep -c '^\[model_providers\.custom\]$' "$path" || true)"
+  [[ "$count_provider" == "1" ]] || { printf 'FAIL: custom provider block duplicated\n' >&2; return 1; }
   assert_contains "$path" 'approval_policy = "on-request"' 'approval preserved'
+  assert_contains "$path" 'sandbox_mode = "workspace-write"' 'sandbox preserved'
+  assert_contains "$path" 'notify = ["keep"]' 'notify preserved'
+  assert_contains "$path" '[features]' 'features block preserved'
+  assert_contains "$path" 'js_repl = false' 'feature preserved'
+  assert_contains "$path" 'model_provider = "custom"' 'root provider replaced'
+  assert_contains "$path" 'model = "gpt-5.5"' 'root model replaced'
+  assert_contains "$path" 'disable_response_storage = true' 'response storage replaced'
   assert_not_contains "$path" 'name = "old"' 'old provider removed'
-  assert_section_contains "$path" '[model_providers.mtls-router]' 'base_url = "http://127.0.0.1:19099/v1"' 'replacement provider base_url'
-  assert_section_contains "$path" '[model_providers.mtls-router]' 'env_key = "OPENAI_API_KEY"' 'replacement provider env_key'
-  assert_not_contains "$path" 'env_key = "{UserApiKey}"' 'replacement placeholder removed'
-  assert_section_contains "$path" '[model_providers.mtls-router]' 'wire_api = "responses"' 'replacement provider wire_api'
-  assert_section_contains "$path" '[profiles.gpt-5-5-router]' 'model = "gpt-5.5"' 'replacement 5.5 model'
-  assert_section_contains "$path" '[profiles.gpt-5-5-router]' 'model_provider = "mtls-router"' 'replacement 5.5 provider'
-  assert_section_contains "$path" '[profiles.gpt-5-4-1m-router]' 'model = "gpt-5.4"' 'replacement 5.4 model'
-  assert_section_contains "$path" '[profiles.gpt-5-4-1m-router]' 'model_provider = "mtls-router"' 'replacement 5.4 provider'
+  assert_section_contains "$path" '[model_providers.custom]' 'name = "9router"' 'replacement provider name'
+  assert_section_contains "$path" '[model_providers.custom]' 'base_url = "http://127.0.0.1:19099/v1"' 'replacement provider base_url'
+  assert_section_contains "$path" '[model_providers.custom]' 'wire_api = "responses"' 'replacement provider wire_api'
+  assert_section_contains "$path" '[model_providers.custom]' 'requires_openai_auth = true' 'replacement provider auth flag'
   local second_line backup_path backup_content
   second_line="$(printf '%s\n' "$result" | sed -n '2p')"
   backup_path="$(find "$(dirname "$path")" -maxdepth 1 -type f -name "$(basename "$path").bak-*" -print)"

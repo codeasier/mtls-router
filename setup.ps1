@@ -291,39 +291,40 @@ function Remove-CodexBlock($Path, $Header) {
     Set-Content -Path $Path -Value $result -Encoding UTF8
 }
 
+function Remove-CodexRootKeys($Path) {
+    if (-not (Test-Path $Path)) { return }
+    $lines = Get-Content $Path
+    $result = New-Object System.Collections.Generic.List[string]
+    $inRoot = $true
+    foreach ($line in $lines) {
+        if ($line -match '^\\s*\\[') { $inRoot = $false }
+        if ($inRoot -and $line -match '^\\s*(model_provider|model|disable_response_storage)\\s*=') {
+            continue
+        }
+        $result.Add($line)
+    }
+    Set-Content -Path $Path -Value $result -Encoding UTF8
+}
+
 function Configure-Codex($Path, $apiKey = '') {
     $backup = Backup-File $Path
     $dir = Split-Path -Parent $Path
     if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
     if (-not (Test-Path $Path)) { New-Item -ItemType File -Force -Path $Path | Out-Null }
 
-    Remove-CodexBlock $Path 'model_providers.mtls-router'
-    Remove-CodexBlock $Path 'profiles.gpt-5-5-router'
-    Remove-CodexBlock $Path 'profiles.gpt-5-4-1m-router'
+    Remove-CodexRootKeys $Path
+    Remove-CodexBlock $Path 'model_providers.custom'
 
     Add-Content -Path $Path -Encoding UTF8 -Value @'
-
-# mtls-router provider
-[model_providers.mtls-router]
-name = "mtls-router"
-base_url = "http://127.0.0.1:19099/v1"
-env_key = "OPENAI_API_KEY"
-wire_api = "responses"
-request_max_retries = 2
-stream_max_retries = 2
-supports_websockets = false
-
-# GPT-5.5 via mtls-router
-[profiles.gpt-5-5-router]
+model_provider = "custom"
 model = "gpt-5.5"
-model_provider = "mtls-router"
-model_reasoning_effort = "medium"
+disable_response_storage = true
 
-# GPT-5.4 1M via mtls-router
-[profiles.gpt-5-4-1m-router]
-model = "gpt-5.4"
-model_provider = "mtls-router"
-model_reasoning_effort = "medium"
+[model_providers.custom]
+name = "9router"
+wire_api = "responses"
+requires_openai_auth = true
+base_url = "http://127.0.0.1:19099/v1"
 '@
 
     if ($apiKey) {
@@ -575,31 +576,18 @@ function Main {
                 }
                 'codex' {
                     $authPath = Join-Path (Split-Path -Parent $path) 'auth.json'
-                    Write-Host '### 把以下 TOML 追加到 config.toml：'
+                    Write-Host '### 使用以下最小 TOML 配置 config.toml：'
                     Write-Host ''
                     @'
-
-# mtls-router provider
-[model_providers.mtls-router]
-name = "mtls-router"
-base_url = "http://127.0.0.1:19099/v1"
-env_key = "OPENAI_API_KEY"
-wire_api = "responses"
-request_max_retries = 2
-stream_max_retries = 2
-supports_websockets = false
-
-# GPT-5.5 via mtls-router
-[profiles.gpt-5-5-router]
+model_provider = "custom"
 model = "gpt-5.5"
-model_provider = "mtls-router"
-model_reasoning_effort = "medium"
+disable_response_storage = true
 
-# GPT-5.4 1M via mtls-router
-[profiles.gpt-5-4-1m-router]
-model = "gpt-5.4"
-model_provider = "mtls-router"
-model_reasoning_effort = "medium"
+[model_providers.custom]
+name = "9router"
+wire_api = "responses"
+requires_openai_auth = true
+base_url = "http://127.0.0.1:19099/v1"
 '@
                     Write-Host ''
                     Write-Host "### $displayName -> $authPath"
