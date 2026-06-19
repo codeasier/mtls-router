@@ -1,8 +1,22 @@
 # mtls-router
 
+[中文](docs/zh-CN/README.md)
+
 `mtls-router` is a single-binary, cross-platform local reverse proxy. It accepts plain HTTP from local clients such as Claude Code or Codex CLI, then forwards requests to a public upstream mTLS server using an embedded client certificate, private key, upstream CA, and upstream URL.
 
 The proxy streams request bodies and Server-Sent Events responses transparently. It does not perform protocol conversion: local traffic is HTTP, and upstream traffic is HTTPS with mTLS.
+
+## Release notes
+
+See [docs/CHANGELOG.md](docs/CHANGELOG.md) for the full changelog.
+
+### v0.1.1
+
+Adds one-click setup scripts, background mode, log file support, agent configuration wizard, Windows setup improvements, and setup test coverage.
+
+### v0.1.0
+
+Initial release of the single-binary local reverse proxy for forwarding local HTTP traffic to an upstream HTTPS mTLS endpoint.
 
 ## One-click setup
 
