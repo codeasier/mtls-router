@@ -15,6 +15,8 @@ type Config struct {
 	TLSMin      string
 	Timeout     time.Duration
 	Debug       bool
+	Backend     bool
+	LogPath     string
 }
 
 type Defaults = Config
@@ -29,6 +31,8 @@ func Load(defaults Defaults, args []string) (Config, error) {
 	fs.StringVar(&cfg.TLSMin, "tls-min", cfg.TLSMin, "minimum TLS version")
 	fs.DurationVar(&cfg.Timeout, "timeout", cfg.Timeout, "upstream timeout")
 	fs.BoolVar(&cfg.Debug, "debug", cfg.Debug, "enable debug logging")
+	fs.BoolVar(&cfg.Backend, "backend", cfg.Backend, "run in background")
+	fs.StringVar(&cfg.LogPath, "log", cfg.LogPath, "log file path")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
 	}
@@ -73,5 +77,13 @@ func applyEnv(cfg *Config) {
 		if b, err := strconv.ParseBool(v); err == nil {
 			cfg.Debug = b
 		}
+	}
+	if v := os.Getenv("MTLS_BACKEND"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.Backend = b
+		}
+	}
+	if v := os.Getenv("MTLS_LOG"); v != "" {
+		cfg.LogPath = v
 	}
 }

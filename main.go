@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -13,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/codeasier/mtls-router/internal/background"
 	"github.com/codeasier/mtls-router/internal/config"
 	"github.com/codeasier/mtls-router/internal/health"
 	mlog "github.com/codeasier/mtls-router/internal/log"
@@ -54,12 +56,21 @@ func run() error {
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
+	if cfg.Backend {
+		return startBackend(cfg.LogPath)
+	}
 
 	level := slog.LevelInfo
 	if cfg.Debug {
 		level = slog.LevelDebug
 	}
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+	writer, closeLog, err := logWriter(cfg.LogPath)
+	if err != nil {
+		return err
+	}
+	defer closeLog()
+	logger := slog.New(slog.NewTextHandler(writer, &slog.HandlerOptions{Level: level}))
+	slog.SetDefault(logger)
 
 	transport, err := proxy.NewMTLSTransport(clientCertPEM, clientKeyPEM, upstreamCAPEM, proxy.WithTLSMin(cfg.TLSMin))
 	if err != nil {
@@ -121,6 +132,34 @@ func run() error {
 	return server.Shutdown(ctx)
 }
 
+func startBackend(logPath string) error {
+	exePath, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if logPath == "" {
+		logPath = background.DefaultLogPath(exePath)
+	}
+	childArgs := background.ChildArgs(os.Args[1:], logPath)
+	pid, err := background.Start(exePath, childArgs, logPath)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stdout, "mtls-router started in background, pid=%d, log=%s\n", pid, logPath)
+	return nil
+}
+
+func logWriter(logPath string) (io.Writer, func(), error) {
+	if logPath == "" {
+		return os.Stderr, func() {}, nil
+	}
+	f, err := background.OpenLogFile(logPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	return f, func() { _ = f.Close() }, nil
+}
+
 func withAccessLog(next http.Handler, logger *slog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -153,6 +192,8 @@ func printUsage() {
 	fmt.Fprintln(os.Stdout, "  -tls-min string   minimum TLS version: tls1.2 or tls1.3")
 	fmt.Fprintln(os.Stdout, "  -timeout duration upstream probe timeout")
 	fmt.Fprintln(os.Stdout, "  -debug            enable debug logging")
+	fmt.Fprintln(os.Stdout, "  -backend         run in background")
+	fmt.Fprintln(os.Stdout, "  -log string      log file path")
 	fmt.Fprintln(os.Stdout, "  -version          print version and exit")
 	fmt.Fprintln(os.Stdout, "  -help, -h         print help and exit")
 }

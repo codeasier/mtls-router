@@ -4,7 +4,25 @@
 
 The proxy streams request bodies and Server-Sent Events responses transparently. It does not perform protocol conversion: local traffic is HTTP, and upstream traffic is HTTPS with mTLS.
 
-## Download
+## One-click setup
+
+These scripts download the latest `mtls-router` binary for your operating system and CPU architecture, start `mtls-router` in backend mode, then detect Claude Code, opencode, and Codex so you can choose which agent configs to back up and update. They do not install or launch any agent.
+
+On macOS or Linux:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/codeasier/mtls-router/main/setup.sh | bash
+```
+
+On Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/codeasier/mtls-router/main/setup.ps1 | iex
+```
+
+The scripts install `mtls-router` under `~/.local/bin` by default. To choose another install directory, set `MTLS_ROUTER_INSTALL_DIR` before running the script.
+
+## Manual download
 
 Download the binary for your platform from GitHub Releases:
 
@@ -52,6 +70,44 @@ Open PowerShell in the folder containing the downloaded executable, then run:
 .\mtls-router.exe
 ```
 
+## Run in the background
+
+`-backend` starts a detached child process and returns control to the shell. The same release binaries support foreground and background mode; no separate background build is required.
+
+On macOS or Linux:
+
+```bash
+./mtls-router -backend
+```
+
+On Windows PowerShell:
+
+```powershell
+.\mtls-router.exe -backend
+```
+
+When `-backend` is used without `-log`, logs are written to `mtls-router.log` next to the binary. To choose an explicit log file, pass `-log`:
+
+```bash
+./mtls-router -backend -log /tmp/mtls-router.log
+```
+
+```powershell
+.\mtls-router.exe -backend -log C:\mtls-router\mtls-router.log
+```
+
+This mode is convenient for local background use. For production supervision, prefer systemd, Docker, launchd, or a Windows service wrapper so the process can be restarted and managed by the platform.
+
+## Configure agents
+
+The setup script only installs and starts `mtls-router`. It then detects Claude Code, opencode, and Codex in that order. For each detected agent it asks whether to back up the existing config and write the mtls-router provider block.
+
+- Claude Code writes the `env` block into `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR/settings.json`).
+- opencode writes the `mtls-router` provider into the chosen opencode.json (respecting `OPENCODE_CONFIG` and falling back to `~/.config/opencode/opencode.json`).
+- Codex CLI writes the `[model_providers.mtls-router]` block and router profiles into `~/.codex/config.toml` (respecting `CODEX_HOME`).
+
+The setup scripts do not install any agent and do not launch any agent.
+
 The default local listen address is:
 
 ```text
@@ -79,11 +135,15 @@ flag > env > build-time > default
 | Minimum TLS version | `MTLS_TLS_MIN` | `-tls-min` | `tls1.2` |
 | Non-stream timeout | `MTLS_TIMEOUT` | `-timeout` | `0` means no timeout |
 | Debug body logging | `MTLS_DEBUG=1` | `-debug` | off |
+| Backend mode | `MTLS_BACKEND` | `-backend` | off |
+| Log file | `MTLS_LOG` | `-log` | stderr in foreground; `<binary-dir>/mtls-router.log` in backend mode |
 
 Additional flags:
 
 | Flag | Description |
 |---|---|
+| `-backend` | Start a detached background process and return |
+| `-log` | Write logs to the specified file |
 | `-version` | Print version and exit |
 | `-help`, `-h` | Print usage and exit |
 
@@ -114,6 +174,8 @@ SSE responses preserve streaming behavior and use SSE-safe headers, including:
 
 Maintainer build and release instructions live in `docs/BUILD.md`.
 
+`-backend` and `-log` are runtime flags in the same binary, so the release workflow does not need separate assets or build steps for background mode.
+
 ## Deployment
 
 Systemd and Docker artifacts are available for deployment:
@@ -121,6 +183,20 @@ Systemd and Docker artifacts are available for deployment:
 - systemd: copy the binary to `/usr/local/bin/mtls-router`, install `systemd/mtls-router.service`, then enable and start it with `systemctl`;
 - Docker: build the provided `Dockerfile`, which produces a static binary in a `scratch` image;
 - bare metal: run `./mtls-router` directly.
+
+For production-style Windows service hosting, use NSSM instead of `-backend`:
+
+```powershell
+nssm install mtls-router
+```
+
+In the NSSM service editor, configure:
+
+- Path: the full path to `mtls-router.exe`;
+- Startup directory: the directory containing `mtls-router.exe`;
+- Arguments: any router flags except `-backend`, such as `-listen`, `-upstream`, or `-log`.
+
+Do not pass `-backend` under NSSM because NSSM manages the background process.
 
 ## Design
 
