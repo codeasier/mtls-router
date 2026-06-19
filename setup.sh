@@ -330,13 +330,13 @@ claude_env_block() {
     '{
       ANTHROPIC_BASE_URL: "http://127.0.0.1:19099",
       ANTHROPIC_AUTH_TOKEN: $token,
-      ANTHROPIC_DEFAULT_HAIKU_MODEL: "cx/gpt-5.5",
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: "gpt-5.5",
       ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME: "gpt-5.5",
-      ANTHROPIC_DEFAULT_OPUS_MODEL: "cx/gpt-5.5",
+      ANTHROPIC_DEFAULT_OPUS_MODEL: "gpt-5.5",
       ANTHROPIC_DEFAULT_OPUS_MODEL_NAME: "gpt-5.5",
-      ANTHROPIC_DEFAULT_SONNET_MODEL: "cx/gpt-5.4[1M]",
+      ANTHROPIC_DEFAULT_SONNET_MODEL: "gpt-5.4[1M]",
       ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "gpt-5.4",
-      ANTHROPIC_MODEL: "cx/gpt-5.5",
+      ANTHROPIC_MODEL: "gpt-5.5",
       ENABLE_TOOL_SEARCH: "true",
       DISABLE_AUTOUPDATER: "1"
     }'
@@ -380,7 +380,7 @@ opencode_provider_block() {
           apiKey: $key
         },
         models: {
-          "cx/gpt-5.5": {
+          "gpt-5.5": {
             name: "GPT-5.5",
             reasoning: true,
             attachment: true,
@@ -389,7 +389,7 @@ opencode_provider_block() {
             modalities: { input: ["text", "image"], output: ["text"] },
             options: { reasoningEffort: "medium" }
           },
-          "cx/gpt-5.4": {
+          "gpt-5.4": {
             name: "GPT-5.4",
             reasoning: true,
             attachment: true,

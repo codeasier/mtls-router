@@ -40,9 +40,9 @@ test_opencode_config_creates_when_missing() (
   assert_eq "$base_url" "http://127.0.0.1:19099/v1" "mtls-router baseURL"
   api_key="$(jq -r '.provider."mtls-router".options.apiKey' "$path")"
   assert_eq "$api_key" "{UserApiKey}" "mtls-router apiKey"
-  has_5_5="$(jq -r '.provider."mtls-router".models | has("cx/gpt-5.5")' "$path")"
+  has_5_5="$(jq -r '.provider."mtls-router".models | has("gpt-5.5")' "$path")"
   assert_eq "$has_5_5" "true" "gpt-5.5 model present"
-  has_5_4="$(jq -r '.provider."mtls-router".models | has("cx/gpt-5.4")' "$path")"
+  has_5_4="$(jq -r '.provider."mtls-router".models | has("gpt-5.4")' "$path")"
   assert_eq "$has_5_4" "true" "gpt-5.4 model present"
 )
 

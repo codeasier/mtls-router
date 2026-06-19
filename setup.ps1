@@ -175,13 +175,13 @@ function Claude-EnvObject($ApiKey = '{UserApiKey}') {
     [ordered]@{
         ANTHROPIC_BASE_URL = 'http://127.0.0.1:19099'
         ANTHROPIC_AUTH_TOKEN = $ApiKey
-        ANTHROPIC_DEFAULT_HAIKU_MODEL = 'cx/gpt-5.5'
+        ANTHROPIC_DEFAULT_HAIKU_MODEL = 'gpt-5.5'
         ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME = 'gpt-5.5'
-        ANTHROPIC_DEFAULT_OPUS_MODEL = 'cx/gpt-5.5'
+        ANTHROPIC_DEFAULT_OPUS_MODEL = 'gpt-5.5'
         ANTHROPIC_DEFAULT_OPUS_MODEL_NAME = 'gpt-5.5'
-        ANTHROPIC_DEFAULT_SONNET_MODEL = 'cx/gpt-5.4[1M]'
+        ANTHROPIC_DEFAULT_SONNET_MODEL = 'gpt-5.4[1M]'
         ANTHROPIC_DEFAULT_SONNET_MODEL_NAME = 'gpt-5.4'
-        ANTHROPIC_MODEL = 'cx/gpt-5.5'
+        ANTHROPIC_MODEL = 'gpt-5.5'
         ENABLE_TOOL_SEARCH = 'true'
         DISABLE_AUTOUPDATER = '1'
     }
@@ -218,7 +218,7 @@ function Opencode-ProviderObject($ApiKey = '{UserApiKey}') {
                 apiKey = $ApiKey
             }
             models = [ordered]@{
-                'cx/gpt-5.5' = [ordered]@{
+                'gpt-5.5' = [ordered]@{
                     name = 'GPT-5.5'
                     reasoning = $true
                     attachment = $true
@@ -227,7 +227,7 @@ function Opencode-ProviderObject($ApiKey = '{UserApiKey}') {
                     modalities = [ordered]@{ input = @('text','image'); output = @('text') }
                     options = [ordered]@{ reasoningEffort = 'medium' }
                 }
-                'cx/gpt-5.4' = [ordered]@{
+                'gpt-5.4' = [ordered]@{
                     name = 'GPT-5.4'
                     reasoning = $true
                     attachment = $true
