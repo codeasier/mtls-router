@@ -37,12 +37,12 @@ test_opencode_config_creates_when_missing() (
   name="$(jq -r '.provider."mtls-router".name' "$path")"
   assert_eq "$name" "mtls-router" "mtls-router name"
   base_url="$(jq -r '.provider."mtls-router".options.baseURL' "$path")"
-  assert_eq "$base_url" "http://127.0.0.1:19099" "mtls-router baseURL"
+  assert_eq "$base_url" "http://127.0.0.1:19099/v1" "mtls-router baseURL"
   api_key="$(jq -r '.provider."mtls-router".options.apiKey' "$path")"
   assert_eq "$api_key" "{UserApiKey}" "mtls-router apiKey"
-  has_5_5="$(jq -r '.provider."mtls-router".models | has("cx/gpt-5.5")' "$path")"
+  has_5_5="$(jq -r '.provider."mtls-router".models | has("gpt-5.5")' "$path")"
   assert_eq "$has_5_5" "true" "gpt-5.5 model present"
-  has_5_4="$(jq -r '.provider."mtls-router".models | has("cx/gpt-5.4")' "$path")"
+  has_5_4="$(jq -r '.provider."mtls-router".models | has("gpt-5.4")' "$path")"
   assert_eq "$has_5_4" "true" "gpt-5.4 model present"
 )
 
@@ -143,8 +143,24 @@ test_opencode_config_rejects_non_object_provider() (
   [[ ! -e "${baks[0]}" ]] || { printf 'FAIL: expected no backup for non-object provider rejection\n' >&2; return 1; }
 )
 
+test_opencode_config_uses_real_api_key_when_provided() (
+  source_setup
+  local home path
+  home="$(mktemp -d)"
+  trap 'rm -rf "$home"' EXIT
+  path="$home/.config/opencode/opencode.json"
+  configure_opencode "$path" "real-key-456" >/dev/null
+  local api_key
+  api_key="$(jq -r '.provider."mtls-router".options.apiKey' "$path")"
+  assert_eq "$api_key" "real-key-456" "real provider apiKey written"
+  local placeholder
+  placeholder="$(grep -c '{UserApiKey}' "$path" || true)"
+  assert_eq "$placeholder" "0" "placeholder removed"
+)
+
 test_opencode_config_creates_when_missing
 test_opencode_config_preserves_other_providers
 test_opencode_config_rejects_jsonc
 test_opencode_config_rejects_invalid_json
 test_opencode_config_rejects_non_object_provider
+test_opencode_config_uses_real_api_key_when_provided

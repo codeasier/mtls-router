@@ -97,6 +97,24 @@ test_claude_config_rejects_invalid_json() {
   )
 }
 
+test_claude_config_uses_real_api_key_when_provided() {
+  (
+    source_setup
+    local home tmp_path
+    home="$(mktemp -d)"
+    trap 'rm -rf "$home"' EXIT
+    tmp_path="$home/.claude/settings.json"
+    configure_claude "$tmp_path" "real-key-123" >/dev/null
+    local token
+    token="$(jq -r '.env.ANTHROPIC_AUTH_TOKEN' "$tmp_path")"
+    assert_eq "$token" "real-key-123" "real auth token written"
+    local placeholder
+    placeholder="$(grep -c '{UserApiKey}' "$tmp_path" || true)"
+    assert_eq "$placeholder" "0" "placeholder removed"
+  )
+}
+
 test_claude_config_creates_file_when_missing
 test_claude_config_preserves_non_env_keys_and_replaces_env
 test_claude_config_rejects_invalid_json
+test_claude_config_uses_real_api_key_when_provided

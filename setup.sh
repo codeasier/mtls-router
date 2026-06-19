@@ -85,6 +85,10 @@ detect_asset() {
 }
 
 download_router() {
+  if [[ "${MTLS_ROUTER_SKIP_DOWNLOAD:-}" == "1" ]]; then
+    info "[下载] 跳过（MTLS_ROUTER_SKIP_DOWNLOAD=1）"
+    return 0
+  fi
   info "[下载] 检测并下载最新 mtls-router..."
   require_downloader
   detect_asset
@@ -110,13 +114,13 @@ download_router() {
 }
 
 start_router() {
+  if [[ "${MTLS_ROUTER_SKIP_START:-}" == "1" ]]; then
+    info "[启动] 跳过（MTLS_ROUTER_SKIP_START=1）"
+    return 0
+  fi
   info "[启动] 启动 mtls-router 后台模式..."
-  local log_dir="$HOME/.mtls-router"
-  local log_path="$log_dir/mtls-router-$(date +%Y%m%d-%H%M%S).log"
-  mkdir -p "$log_dir"
-  "$BINARY_PATH" -backend -log "$log_path"
+  "$BINARY_PATH" -backend
   success "  mtls-router 已启动，监听地址通常为 $ROUTER_BASE_URL"
-  success "  日志文件: $log_path"
 }
 
 select_targets() {
@@ -130,11 +134,6 @@ select_targets() {
     return 0
   fi
   if [[ -z "$input" ]]; then
-    local out=""
-    for ((i = 1; i <= total; i++)); do
-      out+="${i} "
-    done
-    printf '%s' "${out% }"
     return 0
   fi
   local result=""
@@ -177,12 +176,70 @@ select_targets() {
   printf '%s' "${result% }"
 }
 
+# Convert an agent name to its canonical key used by --agent=...
+agent_key() {
+  case "$1" in
+    "Claude Code") printf 'claude' ;;
+    "opencode") printf 'opencode' ;;
+    "Codex") printf 'codex' ;;
+    *) return 1 ;;
+  esac
+}
+
+# Reverse: canonical key -> displayed name.
+agent_name_from_key() {
+  case "$1" in
+    claude) printf 'Claude Code' ;;
+    opencode) printf 'opencode' ;;
+    codex) printf 'Codex' ;;
+    *) return 1 ;;
+  esac
+}
+
+print_usage() {
+  cat <<'USAGE'
+用法: setup.sh [选项]
+
+默认行为：下载并启动 mtls-router，**不会修改任何 agent 配置文件**。
+
+选项:
+  --print-config [--agent=claude,opencode,codex]
+      把要写入的配置片段打印到 stdout（只输出，不动文件）。默认所有检测到的 agent。
+  --write-config [--agent=claude,opencode,codex]
+      把 mtls-router 配置写入检测到的 agent 配置文件。会先备份原文件。
+      需要先 --agent= 指定至少一个，否则报错。
+  --agent=LIST
+      逗号分隔的 agent key：claude / opencode / codex。
+      与 --print-config 或 --write-config 搭配使用。
+  -h, --help
+      显示本帮助。
+
+示例:
+  # 只下载并启动 router，不动 agent 配置
+  ./setup.sh
+
+  # 看看会写入哪些内容（不动文件）
+  ./setup.sh --print-config
+
+  # 只为 Claude Code 写入配置
+  ./setup.sh --write-config --agent=claude
+
+  # 为 opencode 和 Codex 写入配置
+  ./setup.sh --write-config --agent=opencode,codex
+USAGE
+}
+
 print_next_steps() {
   success "============================================================"
   success "配置完成。"
   success "============================================================"
-  info "mtls-router 已在后台运行："
-  info "  $ROUTER_BASE_URL"
+  if [[ "${ROUTER_STARTED:-}" == "1" ]]; then
+    info "mtls-router 已在后台运行："
+    info "  $ROUTER_BASE_URL"
+  else
+    info "未启动 mtls-router（本次仅处理配置）。如需启动，请运行："
+    info "  $0"
+  fi
   if [[ -n "${CONFIGURED_AGENT_PATHS:-}" ]]; then
     info "已写入配置："
     while IFS= read -r line; do
@@ -197,13 +254,14 @@ print_next_steps() {
       [[ -n "$line" ]] && info "  $line"
     done <<<"$CONFIGURED_BACKUPS"
   fi
-  info "可手动启动 agent。"
+  info "现在可以手动启动 agent。"
 }
 
 detect_agents() {
   DETECTED_NAMES=()
   DETECTED_COMMANDS=()
   DETECTED_CONFIG_PATHS=()
+  DETECTED_AUTH_PATHS=()
   local opencode_path=""
 
   local claude_bin
@@ -235,16 +293,22 @@ detect_agents() {
     DETECTED_CONFIG_PATHS+=("$opencode_path")
   fi
 
+  local codex_home
+  if [[ -n "${CODEX_HOME:-}" ]]; then
+    codex_home="$CODEX_HOME"
+  else
+    codex_home="$HOME/.codex"
+  fi
+  # Detect Codex when either the CLI is on PATH, or the Codex Desktop
+  # app has been used (which writes ~/.codex/config.toml and auth.json
+  # without ever installing the CLI).
   local codex_bin
   codex_bin="$(type -P codex || true)"
-  if [[ -n "$codex_bin" ]]; then
+  if [[ -n "$codex_bin" || -d "$codex_home" ]]; then
     DETECTED_NAMES+=("Codex")
-    DETECTED_COMMANDS+=("$codex_bin")
-    if [[ -n "${CODEX_HOME:-}" ]]; then
-      DETECTED_CONFIG_PATHS+=("$CODEX_HOME/config.toml")
-    else
-      DETECTED_CONFIG_PATHS+=("$HOME/.codex/config.toml")
-    fi
+    DETECTED_COMMANDS+=("${codex_bin:-<desktop>}")
+    DETECTED_CONFIG_PATHS+=("$codex_home/config.toml")
+    DETECTED_AUTH_PATHS+=("$codex_home/auth.json")
   fi
 }
 
@@ -259,25 +323,29 @@ backup_file() {
 }
 
 claude_env_block() {
-  cat <<'JSON'
-{
-  "ANTHROPIC_BASE_URL": "http://127.0.0.1:19099",
-  "ANTHROPIC_AUTH_TOKEN": "{UserApiKey}",
-  "ANTHROPIC_DEFAULT_HAIKU_MODEL": "cx/gpt-5.5",
-  "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "gpt-5.5",
-  "ANTHROPIC_DEFAULT_OPUS_MODEL": "cx/gpt-5.5",
-  "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "gpt-5.5",
-  "ANTHROPIC_DEFAULT_SONNET_MODEL": "cx/gpt-5.4[1M]",
-  "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "gpt-5.4",
-  "ANTHROPIC_MODEL": "cx/gpt-5.5",
-  "ENABLE_TOOL_SEARCH": "true",
-  "DISABLE_AUTOUPDATER": "1"
-}
-JSON
+  local api_key="${1-}"
+  [[ -n "$api_key" ]] || api_key='{UserApiKey}'
+  jq -n \
+    --arg token "$api_key" \
+    '{
+      ANTHROPIC_BASE_URL: "http://127.0.0.1:19099",
+      ANTHROPIC_AUTH_TOKEN: $token,
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: "gpt-5.5",
+      ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME: "gpt-5.5",
+      ANTHROPIC_DEFAULT_OPUS_MODEL: "gpt-5.5",
+      ANTHROPIC_DEFAULT_OPUS_MODEL_NAME: "gpt-5.5",
+      ANTHROPIC_DEFAULT_SONNET_MODEL: "gpt-5.4[1M]",
+      ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "gpt-5.4",
+      ANTHROPIC_MODEL: "gpt-5.5",
+      ENABLE_TOOL_SEARCH: "true",
+      DISABLE_AUTOUPDATER: "1"
+    }'
 }
 
 configure_claude() {
   local path="$1"
+  local api_key="${2-}"
+  [[ -n "$api_key" ]] || api_key='{UserApiKey}'
   local backup=""
   if [[ -f "$path" ]]; then
     if ! jq empty "$path" >/dev/null 2>&1; then
@@ -290,51 +358,55 @@ configure_claude() {
   local tmp
   tmp="$(mktemp)"
   if [[ -f "$path" ]]; then
-    jq --argjson env "$(claude_env_block)" 'del(.env) + {env: $env}' "$path" >"$tmp"
+    jq --argjson env "$(claude_env_block "$api_key")" 'del(.env) + {env: $env}' "$path" >"$tmp"
   else
-    jq -n --argjson env "$(claude_env_block)" '{env: $env}' >"$tmp"
+    jq -n --argjson env "$(claude_env_block "$api_key")" '{env: $env}' >"$tmp"
   fi
   mv "$tmp" "$path"
   printf '%s\n%s\n' "$path" "${backup:-}"
 }
 
 opencode_provider_block() {
-  cat <<'JSON'
-{
-  "mtls-router": {
-    "npm": "@ai-sdk/openai-compatible",
-    "name": "mtls-router",
-    "options": {
-      "baseURL": "http://127.0.0.1:19099",
-      "apiKey": "{UserApiKey}"
-    },
-    "models": {
-      "cx/gpt-5.5": {
-        "name": "GPT-5.5",
-        "reasoning": true,
-        "attachment": true,
-        "tool_call": true,
-        "limit": { "context": 272000, "input": 244800, "output": 27200 },
-        "modalities": { "input": ["text", "image"], "output": ["text"] },
-        "options": { "reasoningEffort": "medium" }
-      },
-      "cx/gpt-5.4": {
-        "name": "GPT-5.4",
-        "reasoning": true,
-        "attachment": true,
-        "tool_call": true,
-        "limit": { "context": 1000000, "input": 900000, "output": 100000 },
-        "modalities": { "input": ["text", "image"], "output": ["text"] },
-        "options": { "reasoningEffort": "medium" }
+  local api_key="${1-}"
+  [[ -n "$api_key" ]] || api_key='{UserApiKey}'
+  jq -n \
+    --arg key "$api_key" \
+    '{
+      "mtls-router": {
+        npm: "@ai-sdk/openai-compatible",
+        name: "mtls-router",
+        options: {
+          baseURL: "http://127.0.0.1:19099/v1",
+          apiKey: $key
+        },
+        models: {
+          "gpt-5.5": {
+            name: "GPT-5.5",
+            reasoning: true,
+            attachment: true,
+            tool_call: true,
+            limit: { context: 272000, input: 244800, output: 27200 },
+            modalities: { input: ["text", "image"], output: ["text"] },
+            options: { reasoningEffort: "medium" }
+          },
+          "gpt-5.4": {
+            name: "GPT-5.4",
+            reasoning: true,
+            attachment: true,
+            tool_call: true,
+            limit: { context: 1000000, input: 900000, output: 100000 },
+            modalities: { input: ["text", "image"], output: ["text"] },
+            options: { reasoningEffort: "medium" }
+          }
+        }
       }
-    }
-  }
-}
-JSON
+    }'
 }
 
 configure_opencode() {
   local path="$1"
+  local api_key="${2-}"
+  [[ -n "$api_key" ]] || api_key='{UserApiKey}'
   if [[ "$path" == *.jsonc ]]; then
     fail "opencode 当前选中的配置文件是 JSONC：$path（暂不支持就地合并）。请设置 OPENCODE_CONFIG 指向 JSON 文件。"
   fi
@@ -355,9 +427,9 @@ configure_opencode() {
   local tmp
   tmp="$(mktemp)"
   if [[ -f "$path" ]]; then
-    jq --argjson prov "$(opencode_provider_block)" '.provider = ((.provider // {}) + $prov)' "$path" >"$tmp"
+    jq --argjson prov "$(opencode_provider_block "$api_key")" '.provider = ((.provider // {}) + $prov)' "$path" >"$tmp"
   else
-    jq -n --argjson prov "$(opencode_provider_block)" '{provider: $prov}' >"$tmp"
+    jq -n --argjson prov "$(opencode_provider_block "$api_key")" '{provider: $prov}' >"$tmp"
   fi
   mv "$tmp" "$path"
   printf '%s\n%s\n' "$path" "${backup:-}"
@@ -378,8 +450,21 @@ remove_codex_block() {
   mv "$tmp" "$file"
 }
 
+remove_codex_root_keys() {
+  local file="$1" tmp
+  tmp="$(mktemp)"
+  awk '
+    BEGIN { in_root = 1 }
+    /^[[:space:]]*\[/ { in_root = 0 }
+    in_root && /^[[:space:]]*(model_provider|model|disable_response_storage)[[:space:]]*=/ { next }
+    { print }
+  ' "$file" >"$tmp"
+  mv "$tmp" "$file"
+}
+
 configure_codex() {
   local path="$1"
+  local api_key="${2:-}"
   local backup=""
   if [[ -f "$path" ]]; then
     backup="$(backup_file "$path")"
@@ -387,119 +472,287 @@ configure_codex() {
     mkdir -p "$(dirname "$path")"
     : >"$path"
   fi
-  remove_codex_block "$path" 'model_providers\.mtls-router'
-  remove_codex_block "$path" 'profiles\.gpt-5-5-router'
-  remove_codex_block "$path" 'profiles\.gpt-5-4-1m-router'
+  remove_codex_root_keys "$path"
+  remove_codex_block "$path" 'model_providers\.custom'
 
-  cat >>"$path" <<'TOML'
-
-# mtls-router provider
-[model_providers.mtls-router]
-name = "mtls-router"
-base_url = "http://127.0.0.1:19099/v1"
-env_key = "{UserApiKey}"
-wire_api = "responses"
-request_max_retries = 2
-stream_max_retries = 2
-supports_websockets = false
-
-# GPT-5.5 via mtls-router
-[profiles.gpt-5-5-router]
+  local body_tmp final_tmp
+  body_tmp="$(mktemp)"
+  final_tmp="$(mktemp)"
+  cp "$path" "$body_tmp"
+  cat >"$final_tmp" <<'TOML'
+model_provider = "custom"
 model = "gpt-5.5"
-model_provider = "mtls-router"
-model_reasoning_effort = "medium"
+disable_response_storage = true
 
-# GPT-5.4 1M via mtls-router
-[profiles.gpt-5-4-1m-router]
-model = "gpt-5.4"
-model_provider = "mtls-router"
-model_reasoning_effort = "medium"
+[model_providers.custom]
+name = "9router"
+wire_api = "responses"
+requires_openai_auth = true
+base_url = "http://127.0.0.1:19099/v1"
 TOML
+  if [[ -s "$body_tmp" ]]; then
+    printf '\n' >>"$final_tmp"
+    cat "$body_tmp" >>"$final_tmp"
+  fi
+  mv "$final_tmp" "$path"
+  rm -f "$body_tmp"
 
-  printf '%s\n%s\n' "$path" "${backup:-}"
+  if [[ -n "$api_key" ]]; then
+    local auth_path auth_perm
+    auth_path="$(dirname "$path")/auth.json"
+    local auth_backup=""
+    if [[ -f "$auth_path" ]]; then
+      auth_perm="$(stat -f %Lp "$auth_path" 2>/dev/null || stat -c %a "$auth_path" 2>/dev/null || echo '')"
+      auth_backup="$(backup_file "$auth_path")"
+    else
+      mkdir -p "$(dirname "$auth_path")"
+      auth_perm=""
+    fi
+    local auth_tmp
+    auth_tmp="$(mktemp)"
+    jq -n --arg key "$api_key" '{OPENAI_API_KEY: $key}' >"$auth_tmp"
+    mv "$auth_tmp" "$auth_path"
+    if [[ -n "$auth_perm" ]]; then
+      chmod "$auth_perm" "$auth_path" 2>/dev/null || true
+    fi
+    printf '%s\n%s\n' "$path" "${backup:-}"
+    printf 'AUTH:%s\n%s\n' "$auth_path" "${auth_backup:-}"
+  else
+    printf '%s\n%s\n' "$path" "${backup:-}"
+  fi
 }
 
 main() {
+  local action="start"
+  local agent_filter=""
+
+  while (( $# > 0 )); do
+    case "$1" in
+      --print-config)
+        action="print"
+        shift
+        ;;
+      --write-config)
+        action="write"
+        shift
+        ;;
+      --agent=*)
+        agent_filter="${1#--agent=}"
+        shift
+        ;;
+      --agent)
+        if (( $# < 2 )); then
+          fail "--agent 需要一个参数（逗号分隔的列表）"
+        fi
+        agent_filter="$2"
+        shift 2
+        ;;
+      -h|--help)
+        print_usage
+        exit 0
+        ;;
+      *)
+        fail "未知参数：$1（试试 --help）"
+        ;;
+    esac
+  done
+
   print_banner
-  download_router
-  start_router
+
+  # Default action: download + start only. Never touch agent config.
+  if [[ "$action" == "start" ]]; then
+    download_router
+    start_router
+    ROUTER_STARTED=1
+    info "提示：未对 agent 配置做任何改动。如需写入 mtls-router 配置："
+    info "  $0 --write-config --agent=claude,opencode,codex"
+    info "先看会写什么：$0 --print-config"
+    if [[ "${MTLS_ROUTER_SKIP_START:-}" == "1" ]]; then
+      info "（已跳过实际启动 mtls-router）"
+    fi
+    return 0
+  fi
+
   detect_agents
+
+  # --write-config 必须显式指定 --agent=。
+  # --print-config 不指定时打印所有检测到的 agent。
+  if [[ -z "$agent_filter" && "$action" == "write" ]]; then
+    fail "--write-config 需要 --agent=claude,opencode,codex 显式指定要操作的 agent。"
+  fi
+
+  # Resolve the target list.
+  local targets=()
+  if [[ -z "$agent_filter" ]]; then
+    if [[ "${#DETECTED_NAMES[@]}" -eq 0 ]]; then
+      warn "  未检测到 Claude Code、opencode 或 Codex。"
+      info "提示：用 --agent=claude,opencode,codex 显式指定目标。"
+      return 0
+    fi
+    for name in "${DETECTED_NAMES[@]}"; do
+      targets+=("$(agent_key "$name")")
+    done
+  else
+    local token
+    local seen=" "
+    local idx
+    local -a tokens
+    IFS=',' read -ra tokens <<<"$agent_filter"
+    for token in "${tokens[@]}"; do
+      token="${token// /}"
+      [[ -z "$token" ]] && continue
+      case " $seen " in
+        *" $token "*) fail "--agent 列表中有重复项：$token" ;;
+      esac
+      seen+="$token "
+
+      local idx
+      local detected=""
+      idx=-1
+      for ((i = 0; i < ${#DETECTED_NAMES[@]}; i++)); do
+        if [[ "$(agent_key "${DETECTED_NAMES[$i]}")" == "$token" ]]; then
+          idx=$i
+          break
+        fi
+      done
+      if (( idx < 0 )); then
+        if [[ "${#DETECTED_NAMES[@]}" -gt 0 ]]; then
+          detected="${DETECTED_NAMES[*]}"
+        else
+          detected="(无)"
+        fi
+        fail "未检测到 agent: $token (已检测: $detected)"
+      fi
+      targets+=("$token")
+    done
+  fi
 
   CONFIGURED_AGENT_PATHS=""
   CONFIGURED_BACKUPS=""
 
-  if [[ "${#DETECTED_NAMES[@]}" -eq 0 ]]; then
-    warn "  未检测到 Claude Code、opencode 或 Codex。mtls-router 已启动，但未写入 agent 配置。"
-  else
-    local total="${#DETECTED_NAMES[@]}"
-    local selection
-    if [[ "$total" -eq 1 ]]; then
-      printf '\n检测到 %s：%s\n' "${DETECTED_NAMES[0]}" "${DETECTED_COMMANDS[0]}"
-      printf '配置文件：%s\n' "${DETECTED_CONFIG_PATHS[0]}"
-      printf '是否备份并写入配置？[y/N] '
-      local reply
-      read -r reply || reply=""
-      if [[ "$reply" =~ ^[Yy]$ ]]; then
-        selection="1"
-      else
-        selection=""
+  local shared_api_key=""
+  if [[ "$action" == "write" ]]; then
+    local needs_api_key=0
+    for key in "${targets[@]}"; do
+      case "$key" in
+        claude|opencode|codex)
+          needs_api_key=1
+          break
+          ;;
+      esac
+    done
+    if (( needs_api_key )); then
+      shared_api_key="${MTLS_ROUTER_OPENAI_API_KEY:-}"
+      if [[ -z "$shared_api_key" && -t 0 ]]; then
+        printf '请输入 mtls-router OPENAI_API_KEY（输入隐藏）：' >&2
+        IFS= read -rs shared_api_key || true
+        printf '\n' >&2
       fi
-    else
-      printf '\n检测到多个 Agent：\n'
-      printf '0) 全部覆盖配置\n'
-      for ((i = 0; i < total; i++)); do
-        printf '%d) %s: %s -> %s\n' "$((i + 1))" "${DETECTED_NAMES[i]}" "${DETECTED_COMMANDS[i]}" "${DETECTED_CONFIG_PATHS[i]}"
-      done
-      printf '请输入编号，多个用空格分隔；直接回车则逐个询问： '
-      read -r selection || true
-      if [[ -z "$selection" ]]; then
-        local prompted_selection=""
-        local answer
-        for ((i = 0; i < total; i++)); do
-          printf '\n检测到 %s：%s\n' "${DETECTED_NAMES[i]}" "${DETECTED_COMMANDS[i]}"
-          printf '配置文件：%s\n' "${DETECTED_CONFIG_PATHS[i]}"
-          printf '是否备份并写入配置？[y/N] '
-          read -r answer || answer=""
-          if [[ "$answer" =~ ^[Yy]$ ]]; then
-            prompted_selection+="$((i + 1)) "
-          fi
-        done
-        selection="${prompted_selection% }"
+      if [[ -z "$shared_api_key" ]]; then
+        fail "写入 claude/opencode/codex 配置需要 apikey。可在 TTY 下重试，或通过 MTLS_ROUTER_OPENAI_API_KEY 环境变量传入。"
       fi
     fi
+  fi
 
-    local chosen
-    if ! chosen="$(select_targets "$selection" "${DETECTED_NAMES[@]}")"; then
-      fail "无效的 agent 选择：$selection"
+  local key
+  for key in "${targets[@]}"; do
+    name="$(agent_name_from_key "$key")"
+    local idx=-1
+    for ((i = 0; i < ${#DETECTED_NAMES[@]}; i++)); do
+      if [[ "$(agent_key "${DETECTED_NAMES[$i]}")" == "$key" ]]; then
+        idx=$i
+        break
+      fi
+    done
+    path="${DETECTED_CONFIG_PATHS[$idx]}"
+
+    if [[ "$action" == "print" ]]; then
+      case "$key" in
+        claude)
+          printf '### %s -> %s\n' "$name" "$path"
+          printf '### 把以下片段合并到 %s 的现有 settings.json 中（保留其他字段）：\n\n' "$path"
+          jq '{env: (.env + $env)}' --argjson env "$(claude_env_block)" \
+            <(printf '{"env":{}}') 2>/dev/null || claude_env_block
+          printf '\n'
+          ;;
+        opencode)
+          printf '### %s -> %s\n' "$name" "$path"
+          printf '### 把以下片段合并到 %s（写入 .provider 字段）：\n\n' "$path"
+          opencode_provider_block
+          printf '\n'
+          ;;
+        codex)
+          local auth_path
+          auth_path="$(dirname "$path")/auth.json"
+          printf '### %s -> %s\n' "$name" "$path"
+          printf '### 使用以下最小 TOML 配置 %s：\n\n' "$path"
+          cat <<'TOML'
+model_provider = "custom"
+model = "gpt-5.5"
+disable_response_storage = true
+
+[model_providers.custom]
+name = "9router"
+wire_api = "responses"
+requires_openai_auth = true
+base_url = "http://127.0.0.1:19099/v1"
+TOML
+          printf '\n### %s -> %s\n' "$name" "$auth_path"
+          printf '### 将 %s 覆盖为以下最小 JSON：\n\n' "$auth_path"
+          cat <<'JSON'
+{
+  "OPENAI_API_KEY": "{UserApiKey}"
+}
+JSON
+          printf '\n'
+          ;;
+      esac
+      continue
     fi
 
-    if [[ -z "$chosen" ]]; then
-      warn "  未选择任何 agent，跳过 agent 配置。"
-    else
-      for token in $chosen; do
-        local idx=$((token - 1))
-        local name="${DETECTED_NAMES[$idx]}"
-        local path="${DETECTED_CONFIG_PATHS[$idx]}"
-        local result
-        if [[ "$name" == "Claude Code" ]]; then
-          result="$(configure_claude "$path")"
-        elif [[ "$name" == "opencode" ]]; then
-          result="$(configure_opencode "$path")"
-        elif [[ "$name" == "Codex" ]]; then
-          result="$(configure_codex "$path")"
-        else
-          fail "未知 agent：$name"
-        fi
-        local wrote backup
-        wrote="$(printf '%s\n' "$result" | sed -n '1p')"
-        backup="$(printf '%s\n' "$result" | sed -n '2p')"
-        CONFIGURED_AGENT_PATHS+="${name}: ${wrote}"$'\n'
-        if [[ -n "$backup" ]]; then
-          CONFIGURED_BACKUPS+="${backup}"$'\n'
-        fi
-        success "  已写入 ${name} 配置：${wrote}"
-      done
+    # action=write
+    local result
+    case "$key" in
+      claude) result="$(configure_claude "$path" "$shared_api_key")" ;;
+      opencode) result="$(configure_opencode "$path" "$shared_api_key")" ;;
+      codex)
+        result="$(configure_codex "$path" "$shared_api_key")"
+        ;;
+      *) fail "未知 agent key：$key" ;;
+    esac
+    local wrote backup
+    wrote="$(printf '%s\n' "$result" | sed -n '1p')"
+    backup="$(printf '%s\n' "$result" | sed -n '2p')"
+    CONFIGURED_AGENT_PATHS+="${name}: ${wrote}"$'\n'
+    if [[ -n "$backup" ]]; then
+      CONFIGURED_BACKUPS+="${backup}"$'\n'
     fi
+    # codex also writes auth.json; the configure_codex output may include
+    # an "AUTH:<auth_path>" line followed by the auth backup. Surface it.
+    if [[ "$key" == "codex" ]]; then
+      local auth_line auth_path auth_backup
+      auth_line="$(printf '%s\n' "$result" | sed -n '3p' || true)"
+      if [[ "$auth_line" == AUTH:* ]]; then
+        auth_path="${auth_line#AUTH:}"
+        auth_backup="$(printf '%s\n' "$result" | sed -n '4p' || true)"
+        CONFIGURED_AGENT_PATHS+="${name} auth: ${auth_path}"$'\n'
+        if [[ -n "$auth_backup" ]]; then
+          CONFIGURED_BACKUPS+="${auth_backup}"$'\n'
+        fi
+        success "  已写入 ${name} auth.json：${auth_path}"
+        if [[ -n "$auth_backup" ]]; then
+          success "  备份：${auth_backup}"
+        fi
+      fi
+    fi
+    success "  已写入 ${name} 配置：${wrote}"
+    if [[ -n "$backup" ]]; then
+      success "  备份：${backup}"
+    fi
+  done
+
+  if [[ "$action" == "print" ]]; then
+    return 0
   fi
 
   print_next_steps
