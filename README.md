@@ -112,6 +112,11 @@ When `-backend` is used without `-log`, logs are written to `mtls-router.log` ne
 
 This mode is convenient for local background use. For production supervision, prefer systemd, Docker, launchd, or a Windows service wrapper so the process can be restarted and managed by the platform.
 
+When started via the one-click setup script, the log file lives outside the install directory:
+
+- macOS / Linux: `~/.mtls-router/mtls-router-<start-timestamp>.log`
+- Windows: `%LOCALAPPDATA%\mtls-router\mtls-router-<start-timestamp>.log`
+
 ## Configure agents
 
 The setup script only installs and starts `mtls-router`. It then detects Claude Code, opencode, and Codex in that order. For each detected agent it asks whether to back up the existing config and write the mtls-router provider block.

@@ -335,6 +335,7 @@ function Print-NextSteps {
     Write-Success '============================================================'
     Write-Info 'mtls-router 已在后台运行：'
     Write-Info "  $RouterBaseUrl"
+    Write-Info "  日志文件: $script:LogPath"
     if ($script:ConfiguredAgentPaths.Count -gt 0) {
         Write-Info '已写入配置：'
         foreach ($line in $script:ConfiguredAgentPaths) {
@@ -355,7 +356,13 @@ function Print-NextSteps {
 function Main {
     Show-Banner
     Download-MtlsRouter
-    Start-MtlsRouter
+
+    $logDir = Join-Path $env:LOCALAPPDATA 'mtls-router'
+    $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
+    $script:LogPath = Join-Path $logDir "mtls-router-$stamp.log"
+    New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+    & $BinaryPath -backend -log $script:LogPath
+
     Detect-Agents
 
     $script:ConfiguredAgentPaths = @()
