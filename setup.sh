@@ -511,11 +511,11 @@ main() {
   done
 
   print_banner
-  download_router
-  start_router
 
   # Default action: download + start only. Never touch agent config.
   if [[ "$action" == "start" ]]; then
+    download_router
+    start_router
     info "提示：未对 agent 配置做任何改动。如需写入 mtls-router 配置："
     info "  $0 --write-config --agent=claude,opencode,codex"
     info "先看会写什么：$0 --print-config"
@@ -523,6 +523,11 @@ main() {
       info "（已跳过实际启动 mtls-router）"
     fi
     return 0
+  fi
+
+  if [[ "$action" == "write" ]]; then
+    download_router
+    start_router
   fi
 
   detect_agents
@@ -539,7 +544,6 @@ main() {
     if [[ "${#DETECTED_NAMES[@]}" -eq 0 ]]; then
       warn "  未检测到 Claude Code、opencode 或 Codex。"
       info "提示：用 --agent=claude,opencode,codex 显式指定目标。"
-      print_next_steps
       return 0
     fi
     for name in "${DETECTED_NAMES[@]}"; do
@@ -662,6 +666,10 @@ TOML
       success "  备份：${backup}"
     fi
   done
+
+  if [[ "$action" == "print" ]]; then
+    return 0
+  fi
 
   print_next_steps
 }

@@ -29,8 +29,7 @@ build_shim() {
   cat >"$stub_script" <<'SHIM'
 #!/usr/bin/env bash
 set -euo pipefail
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SCRIPT="$ROOT/setup.sh"
+SCRIPT="__SETUP_SH_PATH__"
 shift 0 2>/dev/null || true
 # Strip the trailing `main "$@"` so we can call main ourselves after
 # defining stubs. The header pattern is the same as in
@@ -41,10 +40,22 @@ sed '/^main "\$@"$/d' "$SCRIPT" >"$SOURCED"
 source "$SOURCED"
 rm -f "$SOURCED"
 # Now override network-touching functions so the test is hermetic.
-download_router() { :; }
-start_router() { :; }
+download_router() { echo "DOWNLOAD_CALLED"; }
+start_router() { echo "START_CALLED"; }
+if [[ "${STUB_DETECTED_AGENTS:-}" == "1" ]]; then
+  detect_agents() {
+    DETECTED_NAMES=("Claude Code")
+    DETECTED_COMMANDS=("/tmp/claude")
+    DETECTED_CONFIG_PATHS=("/tmp/settings.json")
+  }
+fi
 main "$@"
 SHIM
+  python3 - <<PY
+from pathlib import Path
+p = Path('$stub_script')
+p.write_text(p.read_text().replace('__SETUP_SH_PATH__', '$SCRIPT'))
+PY
   printf '%s' "$stub_script"
 }
 
@@ -85,7 +96,18 @@ test_help() {
   assert_contains "--agent=" "$out" "--help mentions --agent="
 }
 
-# --- 3. --write-config without --agent= fails ------------------------
+# --- 3. --print-config is read-only: no download/start ----------------
+test_print_config_does_not_download_or_start() {
+  local shim out
+  shim="$(build_shim)"
+  out="$(STUB_DETECTED_AGENTS=1 bash "$shim" --print-config 2>&1)"
+  rm -f "$shim"
+  assert_contains "### Claude Code -> /tmp/settings.json" "$out" "--print-config should print config snippets"
+  assert_not_contains "DOWNLOAD_CALLED" "$out" "--print-config should not download"
+  assert_not_contains "START_CALLED" "$out" "--print-config should not start"
+}
+
+# --- 4. --write-config without --agent= fails ------------------------
 test_write_config_without_agent_fails() {
   local shim
   shim="$(build_shim)"
@@ -129,6 +151,7 @@ test_unknown_flag_fails() {
 
 test_default_invokes_no_agents
 test_help
+test_print_config_does_not_download_or_start
 test_write_config_without_agent_fails
 test_write_config_with_unknown_agent_fails
 test_write_config_with_duplicate_agent_fails

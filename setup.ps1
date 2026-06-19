@@ -444,19 +444,19 @@ function Main {
 
     Show-Banner
 
-    if ($env:MTLS_ROUTER_SKIP_DOWNLOAD -eq '1') {
-        Write-Info '[Download] skipped (MTLS_ROUTER_SKIP_DOWNLOAD=1)'
-    } else {
-        Download-MtlsRouter
-    }
-
-    if ($env:MTLS_ROUTER_SKIP_START -eq '1') {
-        Write-Info '[Start] skipped (MTLS_ROUTER_SKIP_START=1)'
-    } else {
-        Start-MtlsRouter
-    }
-
     if ($action -eq 'start') {
+        if ($env:MTLS_ROUTER_SKIP_DOWNLOAD -eq '1') {
+            Write-Info '[Download] skipped (MTLS_ROUTER_SKIP_DOWNLOAD=1)'
+        } else {
+            Download-MtlsRouter
+        }
+
+        if ($env:MTLS_ROUTER_SKIP_START -eq '1') {
+            Write-Info '[Start] skipped (MTLS_ROUTER_SKIP_START=1)'
+        } else {
+            Start-MtlsRouter
+        }
+
         Write-Info '提示：未对 agent 配置做任何改动。如需写入 mtls-router 配置：'
         Write-Info "  $PSCommandPath --write-config --agent=claude,opencode,codex"
         Write-Info "先看会写什么：$PSCommandPath --print-config"
@@ -464,6 +464,20 @@ function Main {
             Write-Info '（已跳过实际启动 mtls-router）'
         }
         return
+    }
+
+    if ($action -eq 'write') {
+        if ($env:MTLS_ROUTER_SKIP_DOWNLOAD -eq '1') {
+            Write-Info '[Download] skipped (MTLS_ROUTER_SKIP_DOWNLOAD=1)'
+        } else {
+            Download-MtlsRouter
+        }
+
+        if ($env:MTLS_ROUTER_SKIP_START -eq '1') {
+            Write-Info '[Start] skipped (MTLS_ROUTER_SKIP_START=1)'
+        } else {
+            Start-MtlsRouter
+        }
     }
 
     Detect-Agents
@@ -478,7 +492,6 @@ function Main {
         if ($DetectedAgents.Count -eq 0) {
             Write-Warn '  未检测到 Claude Code、opencode 或 Codex。'
             Write-Info '提示：用 --agent=claude,opencode,codex 显式指定目标。'
-            Print-NextSteps
             return
         }
         foreach ($agent in $DetectedAgents) {
@@ -586,6 +599,10 @@ model_reasoning_effort = "medium"
         if ($backup) { $script:ConfiguredBackups += $backup }
         Write-Success ("  已写入 {0} 配置: {1}" -f $displayName, $wrote)
         if ($backup) { Write-Success "  备份: $backup" }
+    }
+
+    if ($action -eq 'print') {
+        return
     }
 
     Print-NextSteps
