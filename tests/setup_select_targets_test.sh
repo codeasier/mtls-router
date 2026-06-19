@@ -24,8 +24,12 @@ assert_eq() {
 test_select_targets_empty_returns_all() {
   source_setup
   local got
+  # Empty input is a no-op (returns empty string). Callers in the new
+  # non-interactive flow interpret empty as "user chose nothing" and
+  # exit cleanly. Defaulting to "all" silently is exactly the bug #4
+  # this whole rewrite is fixing.
   got="$(select_targets "" "claude" "opencode" "codex")"
-  assert_eq "$got" "1 2 3" "empty -> all"
+  assert_eq "$got" "" "empty -> empty"
 }
 
 test_select_targets_zero_returns_all() {

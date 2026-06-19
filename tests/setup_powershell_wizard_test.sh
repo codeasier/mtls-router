@@ -25,21 +25,32 @@ if grep -q '^\s*claude\s*$' "$SCRIPT"; then
   fail 'setup.ps1 still launches claude'
 fi
 
-# wizard entry points expected after full alignment with setup.sh
+# the old interactive "[y/N]" prompt is gone
+assert_not_contains '是否备份并写入配置？[y/N]'
+assert_not_contains '请输入编号，多个用空格分隔；直接回车则逐个询问'
+assert_not_contains '0) 全部覆盖配置'
+
+# shared building blocks
 assert_contains 'function Detect-Agents'
-assert_contains 'function Select-Targets'
 assert_contains 'function Backup-File'
 assert_contains 'function Configure-Claude'
 assert_contains 'function Configure-Opencode'
 assert_contains 'function Remove-CodexBlock'
 assert_contains 'function Configure-Codex'
-assert_contains '0) 全部覆盖配置'
-assert_contains '请输入编号，多个用空格分隔；直接回车则逐个询问：'
-assert_contains '未检测到 Claude Code、opencode 或 Codex。mtls-router 已启动，但未写入 agent 配置。'
-assert_contains '未选择任何 agent，跳过 agent 配置。'
-assert_contains '未知 agent：'
-assert_contains '已写入配置：'
-assert_contains '已备份：'
-assert_contains '可手动启动 agent。'
+assert_contains 'function Print-NextSteps'
 
-printf 'ok: setup.ps1 exposes full agent wizard flow\n'
+# new non-interactive flag API
+assert_contains 'function Show-Usage'
+assert_contains 'function ConvertTo-AgentKey'
+assert_contains 'function ConvertFrom-AgentKey'
+assert_contains '--print-config'
+assert_contains '--write-config'
+assert_contains '--agent='
+assert_contains 'Main @args'
+assert_contains 'Download-MtlsRouter'
+assert_contains 'Start-MtlsRouter'
+
+# helpful messages
+assert_contains '未对 agent 配置做任何改动'
+
+printf 'ok: setup.ps1 exposes non-interactive flag API\n'
