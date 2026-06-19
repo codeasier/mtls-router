@@ -350,87 +350,245 @@ function Print-NextSteps {
             if ($line) { Write-Info "  $line" }
         }
     }
-    Write-Info '可手动启动 agent。'
+    Write-Info '现在可以手动启动 agent。'
+}
+
+
+function ConvertTo-AgentKey($DisplayName) {
+    switch ($DisplayName) {
+        'Claude Code' { return 'claude' }
+        'opencode' { return 'opencode' }
+        'Codex' { return 'codex' }
+        default { return $null }
+    }
+}
+
+function ConvertFrom-AgentKey($Key) {
+    switch ($Key) {
+        'claude' { return 'Claude Code' }
+        'opencode' { return 'opencode' }
+        'codex' { return 'Codex' }
+        default { return $null }
+    }
+}
+
+function Show-Usage {
+    @'
+用法: setup.ps1 [选项]
+
+默认行为：下载并启动 mtls-router，**不会修改任何 agent 配置文件**。
+
+选项:
+  --print-config [--agent=claude,opencode,codex]
+      把要写入的配置片段打印到 stdout（只输出，不动文件）。默认所有检测到的 agent。
+  --write-config [--agent=claude,opencode,codex]
+      把 mtls-router 配置写入检测到的 agent 配置文件。会先备份原文件。
+      需要先 --agent= 指定至少一个，否则报错。
+  --agent=LIST
+      逗号分隔的 agent key：claude / opencode / codex。
+      与 --print-config 或 --write-config 搭配使用。
+  -h, --help
+      显示本帮助。
+
+示例:
+  # 只下载并启动 router，不动 agent 配置
+  .\setup.ps1
+
+  # 看看会写入哪些内容（不动文件）
+  .\setup.ps1 --print-config
+
+  # 只为 Claude Code 写入配置
+  .\setup.ps1 --write-config --agent=claude
+
+  # 为 opencode 和 Codex 写入配置
+  .\setup.ps1 --write-config --agent=opencode,codex
+'@
 }
 
 function Main {
-    Show-Banner
-    Download-MtlsRouter
+    $action = 'start'
+    $agentFilter = ''
 
-    $logDir = Join-Path $env:LOCALAPPDATA 'mtls-router'
-    $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
-    $script:LogPath = Join-Path $logDir "mtls-router-$stamp.log"
-    New-Item -ItemType Directory -Force -Path $logDir | Out-Null
-    & $BinaryPath -backend -log $script:LogPath
+    $i = 0
+    while ($i -lt $args.Count) {
+        $a = $args[$i]
+        switch -Regex ($a) {
+            '^--print-config$' {
+                $action = 'print'
+                $i++
+                continue
+            }
+            '^--write-config$' {
+                $action = 'write'
+                $i++
+                continue
+            }
+            '^--agent=(.+)$' {
+                $agentFilter = $Matches[1]
+                $i++
+                continue
+            }
+            '^--agent$' {
+                if ($i + 1 -ge $args.Count) { Write-Fail '--agent needs a value (comma-separated list)' }
+                $agentFilter = $args[$i + 1]
+                $i += 2
+                continue
+            }
+            '^(-h|--help)$' {
+                Show-Usage
+                return
+            }
+            default { Write-Fail "Unknown argument: $a (try --help)" }
+        }
+    }
+
+    Show-Banner
+
+    if ($env:MTLS_ROUTER_SKIP_DOWNLOAD -eq '1') {
+        Write-Info '[Download] skipped (MTLS_ROUTER_SKIP_DOWNLOAD=1)'
+    } else {
+        Download-MtlsRouter
+    }
+
+    if ($env:MTLS_ROUTER_SKIP_START -eq '1') {
+        Write-Info '[Start] skipped (MTLS_ROUTER_SKIP_START=1)'
+    } else {
+        Start-MtlsRouter
+    }
+
+    if ($action -eq 'start') {
+        Write-Info '提示：未对 agent 配置做任何改动。如需写入 mtls-router 配置：'
+        Write-Info "  $PSCommandPath --write-config --agent=claude,opencode,codex"
+        Write-Info "先看会写什么：$PSCommandPath --print-config"
+        if ($env:MTLS_ROUTER_SKIP_START -eq '1') {
+            Write-Info '（已跳过实际启动 mtls-router）'
+        }
+        return
+    }
 
     Detect-Agents
+
+    if ([string]::IsNullOrWhiteSpace($agentFilter) -and $action -eq 'write') {
+        Write-Fail '--write-config 需要 --agent=claude,opencode,codex 显式指定要操作的 agent。'
+    }
+
+    $targets = New-Object System.Collections.Generic.List[string]
+
+    if ([string]::IsNullOrWhiteSpace($agentFilter)) {
+        if ($DetectedAgents.Count -eq 0) {
+            Write-Warn '  未检测到 Claude Code、opencode 或 Codex。'
+            Write-Info '提示：用 --agent=claude,opencode,codex 显式指定目标。'
+            Print-NextSteps
+            return
+        }
+        foreach ($agent in $DetectedAgents) {
+            $k = ConvertTo-AgentKey $agent.Name
+            if ($k) { $targets.Add($k) }
+        }
+    } else {
+        $tokens = $agentFilter -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+        $seen = @{}
+        foreach ($token in $tokens) {
+            if ($seen.ContainsKey($token)) { Write-Fail "--agent 列表中有重复项: $token" }
+            $seen[$token] = $true
+
+            $idx = -1
+            for ($j = 0; $j -lt $DetectedAgents.Count; $j++) {
+                if ((ConvertTo-AgentKey $DetectedAgents[$j].Name) -eq $token) {
+                    $idx = $j
+                    break
+                }
+            }
+            if ($idx -lt 0) {
+                $detected = if ($DetectedAgents.Count -gt 0) {
+                    ($DetectedAgents | ForEach-Object { $_.Name }) -join ' '
+                } else { '(无)' }
+                Write-Fail "未检测到 agent: $token (已检测: $detected)"
+            }
+            $targets.Add($token)
+        }
+    }
 
     $script:ConfiguredAgentPaths = @()
     $script:ConfiguredBackups = @()
 
-    if ($DetectedAgents.Count -eq 0) {
-        Write-Warn '  未检测到 Claude Code、opencode 或 Codex。mtls-router 已启动，但未写入 agent 配置。'
-    } else {
-        $selection = ''
-        $total = $DetectedAgents.Count
-        if ($total -eq 1) {
-            Write-Host ''
-            Write-Host ("检测到 {0}：{1}" -f $DetectedAgents[0].Name, $DetectedAgents[0].Command)
-            Write-Host ("配置文件：{0}" -f $DetectedAgents[0].ConfigPath)
-            $reply = Read-Host '是否备份并写入配置？[y/N]'
-            if ($reply -match '^[Yy]$') { $selection = '1' }
-        } else {
-            Write-Host ''
-            Write-Host '检测到多个 Agent：'
-            Write-Host '0) 全部覆盖配置'
-            for ($i = 0; $i -lt $total; $i++) {
-                $item = $DetectedAgents[$i]
-                Write-Host (("{0}) {1}: {2} -> {3}") -f ($i + 1), $item.Name, $item.Command, $item.ConfigPath)
+    foreach ($key in $targets) {
+        $displayName = ConvertFrom-AgentKey $key
+        if (-not $displayName) { Write-Fail "Unknown agent key: $key" }
+
+        $idx = -1
+        for ($j = 0; $j -lt $DetectedAgents.Count; $j++) {
+            if ((ConvertTo-AgentKey $DetectedAgents[$j].Name) -eq $key) {
+                $idx = $j
+                break
             }
-            $selection = Read-Host '请输入编号，多个用空格分隔；直接回车则逐个询问：'
-            if ([string]::IsNullOrWhiteSpace($selection)) {
-                $selected = New-Object System.Collections.Generic.List[string]
-                for ($i = 0; $i -lt $total; $i++) {
-                    $item = $DetectedAgents[$i]
+        }
+        if ($idx -lt 0) { Write-Fail "未检测到 agent: $key" }
+        $path = $DetectedAgents[$idx].ConfigPath
+
+        if ($action -eq 'print') {
+            Write-Host ''
+            Write-Host "### $displayName -> $path"
+            switch ($key) {
+                'claude' {
+                    Write-Host '### 把以下片段合并到现有 settings.json 中（保留其他字段）：'
                     Write-Host ''
-                    Write-Host ("检测到 {0}：{1}" -f $item.Name, $item.Command)
-                    Write-Host ("配置文件：{0}" -f $item.ConfigPath)
-                    $answer = Read-Host '是否备份并写入配置？[y/N]'
-                    if ($answer -match '^[Yy]$') {
-                        $selected.Add([string]($i + 1))
-                    }
+                    $env = Claude-EnvObject | ConvertTo-Json -Depth 20
+                    Write-Host "{`n  `"env`": $env`n}"
                 }
-                $selection = ($selected -join ' ')
+                'opencode' {
+                    Write-Host '### 把以下片段合并到 .provider 字段：'
+                    Write-Host ''
+                    Write-Host (Opencode-ProviderObject | ConvertTo-Json -Depth 20)
+                }
+                'codex' {
+                    Write-Host '### 把以下 TOML 追加到 config.toml：'
+                    Write-Host ''
+                    @'
+
+# mtls-router provider
+[model_providers.mtls-router]
+name = "mtls-router"
+base_url = "http://127.0.0.1:19099/v1"
+env_key = "{UserApiKey}"
+wire_api = "responses"
+request_max_retries = 2
+stream_max_retries = 2
+supports_websockets = false
+
+# GPT-5.5 via mtls-router
+[profiles.gpt-5-5-router]
+model = "gpt-5.5"
+model_provider = "mtls-router"
+model_reasoning_effort = "medium"
+
+# GPT-5.4 1M via mtls-router
+[profiles.gpt-5-4-1m-router]
+model = "gpt-5.4"
+model_provider = "mtls-router"
+model_reasoning_effort = "medium"
+'@
+                }
             }
+            continue
         }
 
-        $chosen = Select-Targets $selection $total
-        if ($chosen.Count -eq 0) {
-            Write-Warn '  未选择任何 agent，跳过 agent 配置。'
-        } else {
-            foreach ($token in $chosen) {
-                $idx = [int]$token - 1
-                $agent = $DetectedAgents[$idx]
-                $result = if ($agent.Name -eq 'Claude Code') {
-                    Configure-Claude $agent.ConfigPath
-                } elseif ($agent.Name -eq 'opencode') {
-                    Configure-Opencode $agent.ConfigPath
-                } elseif ($agent.Name -eq 'Codex') {
-                    Configure-Codex $agent.ConfigPath
-                } else {
-                    Write-Fail "未知 agent：$($agent.Name)"
-                }
-
-                $wrote = $result[0]
-                $backup = if ($result.Count -gt 1) { $result[1] } else { $null }
-                $script:ConfiguredAgentPaths += ("{0}: {1}" -f $agent.Name, $wrote)
-                if ($backup) { $script:ConfiguredBackups += $backup }
-                Write-Success ("  已写入 {0} 配置：{1}" -f $agent.Name, $wrote)
-            }
+        $result = switch ($key) {
+            'claude' { Configure-Claude $path }
+            'opencode' { Configure-Opencode $path }
+            'codex' { Configure-Codex $path }
+            default { Write-Fail "Unknown agent key: $key" }
         }
+
+        $wrote = $result[0]
+        $backup = if ($result.Count -gt 1) { $result[1] } else { $null }
+        $script:ConfiguredAgentPaths += ("{0}: {1}" -f $displayName, $wrote)
+        if ($backup) { $script:ConfiguredBackups += $backup }
+        Write-Success ("  已写入 {0} 配置: {1}" -f $displayName, $wrote)
+        if ($backup) { Write-Success "  备份: $backup" }
     }
 
     Print-NextSteps
 }
 
-Main
+Main @args

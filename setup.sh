@@ -85,6 +85,10 @@ detect_asset() {
 }
 
 download_router() {
+  if [[ "${MTLS_ROUTER_SKIP_DOWNLOAD:-}" == "1" ]]; then
+    info "[下载] 跳过（MTLS_ROUTER_SKIP_DOWNLOAD=1）"
+    return 0
+  fi
   info "[下载] 检测并下载最新 mtls-router..."
   require_downloader
   detect_asset
@@ -110,6 +114,10 @@ download_router() {
 }
 
 start_router() {
+  if [[ "${MTLS_ROUTER_SKIP_START:-}" == "1" ]]; then
+    info "[启动] 跳过（MTLS_ROUTER_SKIP_START=1）"
+    return 0
+  fi
   info "[启动] 启动 mtls-router 后台模式..."
   local log_dir="$HOME/.mtls-router"
   local log_path="$log_dir/mtls-router-$(date +%Y%m%d-%H%M%S).log"
@@ -130,11 +138,6 @@ select_targets() {
     return 0
   fi
   if [[ -z "$input" ]]; then
-    local out=""
-    for ((i = 1; i <= total; i++)); do
-      out+="${i} "
-    done
-    printf '%s' "${out% }"
     return 0
   fi
   local result=""
@@ -177,6 +180,59 @@ select_targets() {
   printf '%s' "${result% }"
 }
 
+# Convert an agent name to its canonical key used by --agent=...
+agent_key() {
+  case "$1" in
+    "Claude Code") printf 'claude' ;;
+    "opencode") printf 'opencode' ;;
+    "Codex") printf 'codex' ;;
+    *) return 1 ;;
+  esac
+}
+
+# Reverse: canonical key -> displayed name.
+agent_name_from_key() {
+  case "$1" in
+    claude) printf 'Claude Code' ;;
+    opencode) printf 'opencode' ;;
+    codex) printf 'Codex' ;;
+    *) return 1 ;;
+  esac
+}
+
+print_usage() {
+  cat <<'USAGE'
+用法: setup.sh [选项]
+
+默认行为：下载并启动 mtls-router，**不会修改任何 agent 配置文件**。
+
+选项:
+  --print-config [--agent=claude,opencode,codex]
+      把要写入的配置片段打印到 stdout（只输出，不动文件）。默认所有检测到的 agent。
+  --write-config [--agent=claude,opencode,codex]
+      把 mtls-router 配置写入检测到的 agent 配置文件。会先备份原文件。
+      需要先 --agent= 指定至少一个，否则报错。
+  --agent=LIST
+      逗号分隔的 agent key：claude / opencode / codex。
+      与 --print-config 或 --write-config 搭配使用。
+  -h, --help
+      显示本帮助。
+
+示例:
+  # 只下载并启动 router，不动 agent 配置
+  ./setup.sh
+
+  # 看看会写入哪些内容（不动文件）
+  ./setup.sh --print-config
+
+  # 只为 Claude Code 写入配置
+  ./setup.sh --write-config --agent=claude
+
+  # 为 opencode 和 Codex 写入配置
+  ./setup.sh --write-config --agent=opencode,codex
+USAGE
+}
+
 print_next_steps() {
   success "============================================================"
   success "配置完成。"
@@ -197,7 +253,7 @@ print_next_steps() {
       [[ -n "$line" ]] && info "  $line"
     done <<<"$CONFIGURED_BACKUPS"
   fi
-  info "可手动启动 agent。"
+  info "现在可以手动启动 agent。"
 }
 
 detect_agents() {
@@ -420,87 +476,192 @@ TOML
 }
 
 main() {
+  local action="start"
+  local agent_filter=""
+
+  while (( $# > 0 )); do
+    case "$1" in
+      --print-config)
+        action="print"
+        shift
+        ;;
+      --write-config)
+        action="write"
+        shift
+        ;;
+      --agent=*)
+        agent_filter="${1#--agent=}"
+        shift
+        ;;
+      --agent)
+        if (( $# < 2 )); then
+          fail "--agent 需要一个参数（逗号分隔的列表）"
+        fi
+        agent_filter="$2"
+        shift 2
+        ;;
+      -h|--help)
+        print_usage
+        exit 0
+        ;;
+      *)
+        fail "未知参数：$1（试试 --help）"
+        ;;
+    esac
+  done
+
   print_banner
   download_router
   start_router
+
+  # Default action: download + start only. Never touch agent config.
+  if [[ "$action" == "start" ]]; then
+    info "提示：未对 agent 配置做任何改动。如需写入 mtls-router 配置："
+    info "  $0 --write-config --agent=claude,opencode,codex"
+    info "先看会写什么：$0 --print-config"
+    if [[ "${MTLS_ROUTER_SKIP_START:-}" == "1" ]]; then
+      info "（已跳过实际启动 mtls-router）"
+    fi
+    return 0
+  fi
+
   detect_agents
+
+  # --write-config 必须显式指定 --agent=。
+  # --print-config 不指定时打印所有检测到的 agent。
+  if [[ -z "$agent_filter" && "$action" == "write" ]]; then
+    fail "--write-config 需要 --agent=claude,opencode,codex 显式指定要操作的 agent。"
+  fi
+
+  # Resolve the target list.
+  local targets=()
+  if [[ -z "$agent_filter" ]]; then
+    if [[ "${#DETECTED_NAMES[@]}" -eq 0 ]]; then
+      warn "  未检测到 Claude Code、opencode 或 Codex。"
+      info "提示：用 --agent=claude,opencode,codex 显式指定目标。"
+      print_next_steps
+      return 0
+    fi
+    for name in "${DETECTED_NAMES[@]}"; do
+      targets+=("$(agent_key "$name")")
+    done
+  else
+    local token
+    local seen=" "
+    local idx
+    local -a tokens
+    IFS=',' read -ra tokens <<<"$agent_filter"
+    for token in "${tokens[@]}"; do
+      token="${token// /}"
+      [[ -z "$token" ]] && continue
+      case " $seen " in
+        *" $token "*) fail "--agent 列表中有重复项：$token" ;;
+      esac
+      seen+="$token "
+
+      local idx
+      local detected=""
+      idx=-1
+      for ((i = 0; i < ${#DETECTED_NAMES[@]}; i++)); do
+        if [[ "$(agent_key "${DETECTED_NAMES[$i]}")" == "$token" ]]; then
+          idx=$i
+          break
+        fi
+      done
+      if (( idx < 0 )); then
+        if [[ "${#DETECTED_NAMES[@]}" -gt 0 ]]; then
+          detected="${DETECTED_NAMES[*]}"
+        else
+          detected="(无)"
+        fi
+        fail "未检测到 agent: $token (已检测: $detected)"
+      fi
+      targets+=("$token")
+    done
+  fi
 
   CONFIGURED_AGENT_PATHS=""
   CONFIGURED_BACKUPS=""
 
-  if [[ "${#DETECTED_NAMES[@]}" -eq 0 ]]; then
-    warn "  未检测到 Claude Code、opencode 或 Codex。mtls-router 已启动，但未写入 agent 配置。"
-  else
-    local total="${#DETECTED_NAMES[@]}"
-    local selection
-    if [[ "$total" -eq 1 ]]; then
-      printf '\n检测到 %s：%s\n' "${DETECTED_NAMES[0]}" "${DETECTED_COMMANDS[0]}"
-      printf '配置文件：%s\n' "${DETECTED_CONFIG_PATHS[0]}"
-      printf '是否备份并写入配置？[y/N] '
-      local reply
-      read -r reply || reply=""
-      if [[ "$reply" =~ ^[Yy]$ ]]; then
-        selection="1"
-      else
-        selection=""
+  local key
+  for key in "${targets[@]}"; do
+    name="$(agent_name_from_key "$key")"
+    local idx=-1
+    for ((i = 0; i < ${#DETECTED_NAMES[@]}; i++)); do
+      if [[ "$(agent_key "${DETECTED_NAMES[$i]}")" == "$key" ]]; then
+        idx=$i
+        break
       fi
-    else
-      printf '\n检测到多个 Agent：\n'
-      printf '0) 全部覆盖配置\n'
-      for ((i = 0; i < total; i++)); do
-        printf '%d) %s: %s -> %s\n' "$((i + 1))" "${DETECTED_NAMES[i]}" "${DETECTED_COMMANDS[i]}" "${DETECTED_CONFIG_PATHS[i]}"
-      done
-      printf '请输入编号，多个用空格分隔；直接回车则逐个询问： '
-      read -r selection || true
-      if [[ -z "$selection" ]]; then
-        local prompted_selection=""
-        local answer
-        for ((i = 0; i < total; i++)); do
-          printf '\n检测到 %s：%s\n' "${DETECTED_NAMES[i]}" "${DETECTED_COMMANDS[i]}"
-          printf '配置文件：%s\n' "${DETECTED_CONFIG_PATHS[i]}"
-          printf '是否备份并写入配置？[y/N] '
-          read -r answer || answer=""
-          if [[ "$answer" =~ ^[Yy]$ ]]; then
-            prompted_selection+="$((i + 1)) "
-          fi
-        done
-        selection="${prompted_selection% }"
-      fi
+    done
+    path="${DETECTED_CONFIG_PATHS[$idx]}"
+
+    if [[ "$action" == "print" ]]; then
+      case "$key" in
+        claude)
+          printf '### %s -> %s\n' "$name" "$path"
+          printf '### 把以下片段合并到 %s 的现有 settings.json 中（保留其他字段）：\n\n' "$path"
+          jq '{env: (.env + $env)}' --argjson env "$(claude_env_block)" \
+            <(printf '{"env":{}}') 2>/dev/null || claude_env_block
+          printf '\n'
+          ;;
+        opencode)
+          printf '### %s -> %s\n' "$name" "$path"
+          printf '### 把以下片段合并到 %s（写入 .provider 字段）：\n\n' "$path"
+          opencode_provider_block
+          printf '\n'
+          ;;
+        codex)
+          printf '### %s -> %s\n' "$name" "$path"
+          printf '### 把以下 TOML 追加到 %s：\n\n' "$path"
+          cat <<'TOML'
+
+# mtls-router provider
+[model_providers.mtls-router]
+name = "mtls-router"
+base_url = "http://127.0.0.1:19099/v1"
+env_key = "{UserApiKey}"
+wire_api = "responses"
+request_max_retries = 2
+stream_max_retries = 2
+supports_websockets = false
+
+# GPT-5.5 via mtls-router
+[profiles.gpt-5-5-router]
+model = "gpt-5.5"
+model_provider = "mtls-router"
+model_reasoning_effort = "medium"
+
+# GPT-5.4 1M via mtls-router
+[profiles.gpt-5-4-1m-router]
+model = "gpt-5.4"
+model_provider = "mtls-router"
+model_reasoning_effort = "medium"
+TOML
+          ;;
+      esac
+      continue
     fi
 
-    local chosen
-    if ! chosen="$(select_targets "$selection" "${DETECTED_NAMES[@]}")"; then
-      fail "无效的 agent 选择：$selection"
+    # action=write
+    local result
+    case "$key" in
+      claude) result="$(configure_claude "$path")" ;;
+      opencode) result="$(configure_opencode "$path")" ;;
+      codex) result="$(configure_codex "$path")" ;;
+      *) fail "未知 agent key：$key" ;;
+    esac
+    local wrote backup
+    wrote="$(printf '%s\n' "$result" | sed -n '1p')"
+    backup="$(printf '%s\n' "$result" | sed -n '2p')"
+    CONFIGURED_AGENT_PATHS+="${name}: ${wrote}"$'\n'
+    if [[ -n "$backup" ]]; then
+      CONFIGURED_BACKUPS+="${backup}"$'\n'
     fi
-
-    if [[ -z "$chosen" ]]; then
-      warn "  未选择任何 agent，跳过 agent 配置。"
-    else
-      for token in $chosen; do
-        local idx=$((token - 1))
-        local name="${DETECTED_NAMES[$idx]}"
-        local path="${DETECTED_CONFIG_PATHS[$idx]}"
-        local result
-        if [[ "$name" == "Claude Code" ]]; then
-          result="$(configure_claude "$path")"
-        elif [[ "$name" == "opencode" ]]; then
-          result="$(configure_opencode "$path")"
-        elif [[ "$name" == "Codex" ]]; then
-          result="$(configure_codex "$path")"
-        else
-          fail "未知 agent：$name"
-        fi
-        local wrote backup
-        wrote="$(printf '%s\n' "$result" | sed -n '1p')"
-        backup="$(printf '%s\n' "$result" | sed -n '2p')"
-        CONFIGURED_AGENT_PATHS+="${name}: ${wrote}"$'\n'
-        if [[ -n "$backup" ]]; then
-          CONFIGURED_BACKUPS+="${backup}"$'\n'
-        fi
-        success "  已写入 ${name} 配置：${wrote}"
-      done
+    success "  已写入 ${name} 配置：${wrote}"
+    if [[ -n "$backup" ]]; then
+      success "  备份：${backup}"
     fi
-  fi
+  done
 
   print_next_steps
 }
