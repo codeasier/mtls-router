@@ -464,6 +464,12 @@ main() {
       fi
     fi
 
+    if [[ -z "$selection" ]]; then
+      warn "  未选择任何 agent，跳过 agent 配置。"
+      print_next_steps
+      return 0
+    fi
+
     local chosen
     if ! chosen="$(select_targets "$selection" "${DETECTED_NAMES[@]}")"; then
       fail "无效的 agent 选择：$selection"

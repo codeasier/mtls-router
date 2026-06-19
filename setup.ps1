@@ -397,6 +397,12 @@ function Main {
             }
         }
 
+        if ([string]::IsNullOrWhiteSpace($selection)) {
+            Write-Warn '  未选择任何 agent，跳过 agent 配置。'
+            Print-NextSteps
+            return
+        }
+
         $chosen = Select-Targets $selection $total
         if ($chosen.Count -eq 0) {
             Write-Warn '  未选择任何 agent，跳过 agent 配置。'
