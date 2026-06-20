@@ -49,7 +49,7 @@ jobs:
           ext=""
           if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
           go build -trimpath \
-            -ldflags "-s -w -X 'main.clientCertPEM=${CLIENT_CERT_PEM}' -X 'main.clientKeyPEM=${CLIENT_KEY_PEM}' -X 'main.upstreamCAPEM=${UPSTREAM_CA_PEM}' -X 'main.upstreamURL=${UPSTREAM_URL}' -X 'main.version=${GITHUB_REF_NAME}'" \
+            -ldflags "-s -w -X 'main.clientCertPEM=${CLIENT_CERT_PEM}' -X 'main.clientKeyPEM=${CLIENT_KEY_PEM}' -X 'main.upstreamCAPEM=${UPSTREAM_CA_PEM}' -X 'main.upstreamURL=${UPSTREAM_URL}' -X 'github.com/codeasier/mtls-router/internal/version.Version=${GITHUB_REF_NAME}' -X 'github.com/codeasier/mtls-router/internal/version.Commit=${GITHUB_SHA::12}' -X 'github.com/codeasier/mtls-router/internal/version.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)'" \
             -o "dist/mtls-router-${GOOS}-${GOARCH}${ext}" .
       - uses: actions/upload-artifact@v4
         with:
