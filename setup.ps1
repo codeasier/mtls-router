@@ -443,8 +443,8 @@ function Remove-CodexRootKeys($Path) {
     $result = New-Object System.Collections.Generic.List[string]
     $inRoot = $true
     foreach ($line in $lines) {
-        if ($line -match '^\\s*\\[') { $inRoot = $false }
-        if ($inRoot -and $line -match '^\\s*(model_provider|model|disable_response_storage)\\s*=') {
+        if ($line -match '^\s*\[') { $inRoot = $false }
+        if ($inRoot -and $line -match '^\s*(model_provider|model|disable_response_storage)\s*=') {
             continue
         }
         $result.Add($line)

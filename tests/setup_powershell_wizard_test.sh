@@ -56,6 +56,12 @@ assert_contains 'function Download-MtlsRouter'
 assert_contains 'function Start-MtlsRouter'
 assert_contains '& $BinaryPath -backend'
 
+# Codex root-key cleanup regexes must use PowerShell/.NET regex escaping.
+assert_not_contains "^\\\\s*\\\\["
+assert_not_contains "^\\\\s*(model_provider|model|disable_response_storage)\\\\s*="
+assert_contains "^\\s*\\["
+assert_contains "^\\s*(model_provider|model|disable_response_storage)\\s*="
+
 # helpful messages
 assert_contains '未对 agent 配置做任何改动'
 
