@@ -19,6 +19,7 @@ import (
 	"github.com/codeasier/mtls-router/internal/health"
 	mlog "github.com/codeasier/mtls-router/internal/log"
 	"github.com/codeasier/mtls-router/internal/proxy"
+	"github.com/codeasier/mtls-router/internal/routermeta"
 	"github.com/codeasier/mtls-router/internal/version"
 )
 
@@ -96,11 +97,15 @@ func run() error {
 		Transport: transport,
 		ErrorLog:  logger,
 	})
-	handler := withAccessLog(proxy.WrapHandler(reverseProxy), logger)
+
+	mux := http.NewServeMux()
+	mux.Handle("/version", routermeta.VersionHandler(nil))
+	mux.Handle("/health", routermeta.HealthHandler(health.Probe))
+	mux.Handle("/", withAccessLog(proxy.WrapHandler(reverseProxy), logger))
 
 	server := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           handler,
+		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
