@@ -540,27 +540,35 @@ configure_opencode() {
   local path="$1"
   local api_key="${2-}"
   [[ -n "$api_key" ]] || api_key='{UserApiKey}'
+  local source_path="$path"
   if [[ "$path" == *.jsonc ]]; then
-    fail "opencode 当前选中的配置文件是 JSONC：$path（暂不支持就地合并）。请设置 OPENCODE_CONFIG 指向 JSON 文件。"
+    path="$(dirname "$path")/opencode.json"
+    if [[ ! -f "$source_path" && -f "$path" ]]; then
+      source_path="$path"
+    fi
   fi
+
   local backup=""
-  if [[ -f "$path" ]]; then
-    if ! jq empty "$path" >/dev/null 2>&1; then
-      fail "opencode 配置文件不是合法 JSON：$path"
+  if [[ -f "$source_path" ]]; then
+    if ! jq empty "$source_path" >/dev/null 2>&1; then
+      if [[ "$source_path" == *.jsonc ]]; then
+        fail "opencode JSONC 配置文件清洗后不是合法 JSON：$source_path"
+      fi
+      fail "opencode 配置文件不是合法 JSON：$source_path"
     fi
-    if ! jq -e '(.provider == null) or (.provider | type == "object")' "$path" >/dev/null 2>&1; then
+    if ! jq -e '(.provider == null) or (.provider | type == "object")' "$source_path" >/dev/null 2>&1; then
       local ptype
-      ptype="$(jq -r '.provider | type' "$path")"
-      fail "opencode 现有 .provider 字段不是对象（实际为 ${ptype}），无法合并：$path"
+      ptype="$(jq -r '.provider | type' "$source_path")"
+      fail "opencode 现有 .provider 字段不是对象（实际为 ${ptype}），无法合并：$source_path"
     fi
-    backup="$(backup_file "$path")"
+    backup="$(backup_file "$source_path")"
   else
     mkdir -p "$(dirname "$path")"
   fi
   local tmp
   tmp="$(mktemp)"
-  if [[ -f "$path" ]]; then
-    jq --argjson prov "$(opencode_provider_block "$api_key")" '.provider = ((.provider // {}) + $prov)' "$path" >"$tmp"
+  if [[ -f "$source_path" ]]; then
+    jq --argjson prov "$(opencode_provider_block "$api_key")" '.provider = ((.provider // {}) + $prov)' "$source_path" >"$tmp"
   else
     jq -n --argjson prov "$(opencode_provider_block "$api_key")" '{provider: $prov}' >"$tmp"
   fi

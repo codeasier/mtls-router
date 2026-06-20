@@ -359,25 +359,33 @@ function Convert-OpencodeJsoncToJson($JsoncPath, $JsonPath) {
 }
 
 function Configure-Opencode($Path, $ApiKey = '{UserApiKey}') {
+    $backup = $null
+    $sourcePath = $Path
     if ($Path -like '*.jsonc') {
-        Write-Fail "opencode 当前选中的配置文件是 JSONC：$Path（暂不支持就地合并）。请设置 OPENCODE_CONFIG 指向 JSON 文件。"
+        $Path = Join-Path (Split-Path -Parent $Path) 'opencode.json'
+        if (-not (Test-Path $sourcePath) -and (Test-Path $Path)) {
+            $sourcePath = $Path
+        }
     }
 
-    $backup = Backup-File $Path
     $dir = Split-Path -Parent $Path
     if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
 
     $config = [ordered]@{}
-    if (Test-Path $Path) {
+    if (Test-Path $sourcePath) {
         try {
-            $loaded = Get-Content $Path -Raw | ConvertFrom-Json -AsHashtable
+            $loaded = Get-Content $sourcePath -Raw | ConvertFrom-Json -AsHashtable
             foreach ($key in $loaded.Keys) { $config[$key] = $loaded[$key] }
         } catch {
-            Write-Fail "opencode 配置文件不是合法 JSON：$Path"
+            if ($sourcePath -like '*.jsonc') {
+                Write-Fail "opencode JSONC 配置文件清洗后不是合法 JSON：$sourcePath"
+            }
+            Write-Fail "opencode 配置文件不是合法 JSON：$sourcePath"
         }
         if ($config.Contains('provider') -and $null -ne $config['provider'] -and $config['provider'] -isnot [System.Collections.IDictionary]) {
-            Write-Fail "opencode 现有 .provider 字段不是对象（实际为 $($config['provider'].GetType().Name)），无法合并：$Path"
+            Write-Fail "opencode 现有 .provider 字段不是对象（实际为 $($config['provider'].GetType().Name)），无法合并：$sourcePath"
         }
+        $backup = Backup-File $sourcePath
     }
 
     if (-not $config.Contains('provider') -or $null -eq $config['provider']) {
