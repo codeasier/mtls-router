@@ -33,6 +33,7 @@ assert_not_contains '0) 全部覆盖配置'
 # shared building blocks
 assert_contains 'function Detect-Agents'
 assert_contains 'function Backup-File'
+assert_contains 'function Write-Utf8NoBomFile'
 assert_contains 'function Configure-Claude'
 assert_contains 'function Configure-Opencode'
 assert_contains 'function Remove-CodexBlock'
@@ -63,6 +64,12 @@ assert_contains '& $BinaryPath -backend -log $RouterLogPath'
 assert_contains 'router status'
 assert_contains 'router log'
 assert_contains 'router stop'
+
+# Codex root-key cleanup regexes must use PowerShell/.NET regex escaping.
+assert_not_contains "^\\\\s*\\\\["
+assert_not_contains "^\\\\s*(model_provider|model|disable_response_storage)\\\\s*="
+assert_contains "^\\s*\\["
+assert_contains "^\\s*(model_provider|model|disable_response_storage)\\s*="
 
 # helpful messages
 assert_contains '未对 agent 配置做任何改动'

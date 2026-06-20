@@ -156,6 +156,9 @@ start_router() {
     info "[启动] 跳过（MTLS_ROUTER_SKIP_START=1）"
     return 0
   fi
+  if [[ ! -x "$BINARY_PATH" ]]; then
+    fail "未找到已安装的 mtls-router：$BINARY_PATH。请先运行 router install 或 router setup。"
+  fi
   info "[启动] 启动 mtls-router 后台模式..."
   mkdir -p "$ROUTER_STATE_DIR"
   local output pid log_path
@@ -289,41 +292,58 @@ print_usage() {
   cat <<'USAGE'
 用法: setup.sh [router|agent] <command> [选项]
 
-默认行为：下载并启动 mtls-router，**不会修改任何 agent 配置文件**。
+默认行为：setup.sh 等价于 setup.sh router setup，下载并启动 mtls-router，**不会修改任何 agent 配置文件**。
 
-Router commands:
+子命令:
   router install
-      下载最新 mtls-router。
+      只下载/安装 mtls-router。
   router start
-      启动 mtls-router 后台模式并记录 setup-managed 状态。
+      只启动已安装的 mtls-router，并记录 setup-managed 状态；不存在时提示先 install 或 setup。
   router setup
-      下载并启动 mtls-router。
+      下载/安装并启动 mtls-router。
   router status
       显示 setup-managed router 是否仍在运行，以及 pid/listen/binary/log 信息。
   router log
       打印 setup-managed router 日志。
   router stop
       停止 setup-managed router 进程。
-
-Agent commands:
   agent print-config [--agent=claude,opencode,codex]
       把要写入的配置片段打印到 stdout（只输出，不动文件）。默认所有检测到的 agent。
   agent write-config --agent=claude,opencode,codex
       把 mtls-router 配置写入检测到的 agent 配置文件。会先备份原文件。
+      需要先 --agent= 指定至少一个，否则报错。
 
-Legacy options:
+兼容旧参数:
   --print-config [--agent=claude,opencode,codex]
+      等价于 agent print-config。
   --write-config --agent=claude,opencode,codex
+      等价于 agent write-config --agent=...。
+
+选项:
   --agent=LIST
       逗号分隔的 agent key：claude / opencode / codex。
   -h, --help
       显示本帮助。
 
 示例:
+  # 只下载并启动 router，不动 agent 配置
   ./setup.sh router setup
+
+  # 管理后台 router
   ./setup.sh router status
   ./setup.sh router log
   ./setup.sh router stop
+
+  # 只安装 router
+  ./setup.sh router install
+
+  # 只启动已安装 router
+  ./setup.sh router start
+
+  # 看看会写入哪些内容（不动文件）
+  ./setup.sh agent print-config
+
+  # 只为 Claude Code 写入配置
   ./setup.sh agent write-config --agent=claude
 USAGE
 }
@@ -620,27 +640,35 @@ configure_opencode() {
   local path="$1"
   local api_key="${2-}"
   [[ -n "$api_key" ]] || api_key='{UserApiKey}'
+  local source_path="$path"
   if [[ "$path" == *.jsonc ]]; then
-    fail "opencode 当前选中的配置文件是 JSONC：$path（暂不支持就地合并）。请设置 OPENCODE_CONFIG 指向 JSON 文件。"
+    path="$(dirname "$path")/opencode.json"
+    if [[ ! -f "$source_path" && -f "$path" ]]; then
+      source_path="$path"
+    fi
   fi
+
   local backup=""
-  if [[ -f "$path" ]]; then
-    if ! jq empty "$path" >/dev/null 2>&1; then
-      fail "opencode 配置文件不是合法 JSON：$path"
+  if [[ -f "$source_path" ]]; then
+    if ! jq empty "$source_path" >/dev/null 2>&1; then
+      if [[ "$source_path" == *.jsonc ]]; then
+        fail "opencode JSONC 配置文件清洗后不是合法 JSON：$source_path"
+      fi
+      fail "opencode 配置文件不是合法 JSON：$source_path"
     fi
-    if ! jq -e '(.provider == null) or (.provider | type == "object")' "$path" >/dev/null 2>&1; then
+    if ! jq -e '(.provider == null) or (.provider | type == "object")' "$source_path" >/dev/null 2>&1; then
       local ptype
-      ptype="$(jq -r '.provider | type' "$path")"
-      fail "opencode 现有 .provider 字段不是对象（实际为 ${ptype}），无法合并：$path"
+      ptype="$(jq -r '.provider | type' "$source_path")"
+      fail "opencode 现有 .provider 字段不是对象（实际为 ${ptype}），无法合并：$source_path"
     fi
-    backup="$(backup_file "$path")"
+    backup="$(backup_file "$source_path")"
   else
     mkdir -p "$(dirname "$path")"
   fi
   local tmp
   tmp="$(mktemp)"
-  if [[ -f "$path" ]]; then
-    jq --argjson prov "$(opencode_provider_block "$api_key")" '.provider = ((.provider // {}) + $prov)' "$path" >"$tmp"
+  if [[ -f "$source_path" ]]; then
+    jq --argjson prov "$(opencode_provider_block "$api_key")" '.provider = ((.provider // {}) + $prov)' "$source_path" >"$tmp"
   else
     jq -n --argjson prov "$(opencode_provider_block "$api_key")" '{provider: $prov}' >"$tmp"
   fi
@@ -736,46 +764,54 @@ TOML
 }
 
 main() {
-  local action="start"
+  local action="setup"
   local agent_filter=""
 
   if (( $# > 0 )); then
     case "$1" in
       router)
         shift
-        local router_command="${1:-setup}"
-        case "$router_command" in
-          install) download_router ;;
-          start) start_router ;;
-          setup) download_router; start_router ;;
-          status) router_status ;;
-          log) router_log ;;
-          stop) router_stop ;;
-          -h|--help|help) print_usage ;;
-          *) fail "未知 router 命令：$router_command（试试 --help）" ;;
+        (( $# > 0 )) || fail "router 需要子命令：install / start / setup / status / log / stop（试试 --help）"
+        case "$1" in
+          install|start|setup|status|log|stop) action="router-$1"; shift ;;
+          *) fail "未知 router 子命令：$1（可用：install / start / setup / status / log / stop）" ;;
         esac
-        return 0
         ;;
       agent)
         shift
-        local agent_command="${1:-}"
-        case "$agent_command" in
+        (( $# > 0 )) || fail "agent 需要子命令：print-config / write-config（试试 --help）"
+        case "$1" in
           print-config) action="print"; shift ;;
           write-config) action="write"; shift ;;
-          -h|--help|help|'') print_usage; return 0 ;;
-          *) fail "未知 agent 命令：$agent_command（试试 --help）" ;;
+          *) fail "未知 agent 子命令：$1（可用：print-config / write-config）" ;;
         esac
         ;;
+      --print-config)
+        action="print"
+        shift
+        ;;
+      --write-config)
+        action="write"
+        shift
+        ;;
+      -h|--help)
+        print_usage
+        exit 0
+        ;;
+      --*) ;;
+      *) fail "未知参数：$1（试试 --help）" ;;
     esac
   fi
 
   while (( $# > 0 )); do
     case "$1" in
       --print-config)
+        [[ "$action" == "setup" ]] || fail "--print-config 只能作为兼容旧参数在顶层使用"
         action="print"
         shift
         ;;
       --write-config)
+        [[ "$action" == "setup" ]] || fail "--write-config 只能作为兼容旧参数在顶层使用"
         action="write"
         shift
         ;;
@@ -802,19 +838,45 @@ main() {
 
   print_banner
 
-  # Default action: download + start only. Never touch agent config.
-  if [[ "$action" == "start" ]]; then
-    download_router
-    start_router
-    ROUTER_STARTED=1
-    info "提示：未对 agent 配置做任何改动。如需写入 mtls-router 配置："
-    info "  $0 --write-config --agent=claude,opencode,codex"
-    info "先看会写什么：$0 --print-config"
-    if [[ "${MTLS_ROUTER_SKIP_START:-}" == "1" ]]; then
-      info "（已跳过实际启动 mtls-router）"
-    fi
-    return 0
-  fi
+  case "$action" in
+    setup|router-setup)
+      download_router
+      start_router
+      ROUTER_STARTED=1
+      info "提示：未对 agent 配置做任何改动。如需写入 mtls-router 配置："
+      info "  $0 agent write-config --agent=claude,opencode,codex"
+      info "先看会写什么：$0 agent print-config"
+      if [[ "${MTLS_ROUTER_SKIP_START:-}" == "1" ]]; then
+        info "（已跳过实际启动 mtls-router）"
+      fi
+      return 0
+      ;;
+    router-install)
+      download_router
+      print_next_steps
+      return 0
+      ;;
+    router-start)
+      start_router
+      if [[ "${MTLS_ROUTER_SKIP_START:-}" != "1" ]]; then
+        ROUTER_STARTED=1
+      fi
+      print_next_steps
+      return 0
+      ;;
+    router-status)
+      router_status
+      return 0
+      ;;
+    router-log)
+      router_log
+      return 0
+      ;;
+    router-stop)
+      router_stop
+      return 0
+      ;;
+  esac
 
   detect_agents
 

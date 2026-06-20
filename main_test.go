@@ -7,6 +7,17 @@ import (
 	"testing"
 )
 
+func TestSetupPowerShellScriptHasUtf8Bom(t *testing.T) {
+	data, err := os.ReadFile("setup.ps1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bom := []byte{0xEF, 0xBB, 0xBF}
+	if !bytes.HasPrefix(data, bom) {
+		t.Fatal("setup.ps1 must include a UTF-8 BOM for Windows PowerShell 5.1")
+	}
+}
+
 func TestHandleMetaFlagsIgnoresConfigFlags(t *testing.T) {
 	output := captureStdout(t, func() {
 		handled, err := handleMetaFlags([]string{"-debug"})
@@ -34,6 +45,21 @@ func TestHandleMetaFlagsIgnoresBackendAndLogFlags(t *testing.T) {
 	})
 	if output != "" {
 		t.Fatalf("unexpected output for runtime flags: %q", output)
+	}
+}
+
+func TestHandleMetaFlagsRejectsUnexpectedPositionalArgs(t *testing.T) {
+	output := captureStdout(t, func() {
+		handled, err := handleMetaFlags([]string{"print-config"})
+		if err == nil {
+			t.Fatal("expected positional arg to be rejected")
+		}
+		if handled {
+			t.Fatal("unexpected positional arg should not be handled successfully")
+		}
+	})
+	if output != "" {
+		t.Fatalf("unexpected output for positional arg: %q", output)
 	}
 }
 
