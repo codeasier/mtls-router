@@ -77,26 +77,32 @@ JSON
   [[ "$second_line" == *.bak-* ]] || { printf 'FAIL: expected backup path, got %q\n' "$second_line" >&2; return 1; }
 )
 
-test_opencode_config_rejects_jsonc() (
+test_opencode_config_migrates_simple_jsonc() (
   source_setup
-  local home path
+  local home jsonc_path json_path
   home="$(mktemp -d)"
   trap 'rm -rf "$home"' EXIT
   mkdir -p "$home/.config/opencode"
-  path="$home/.config/opencode/opencode.jsonc"
-  echo '{}' >"$path"
-  local before
-  before="$(cat "$path")" 2>/dev/null || before=""
-  if ( configure_opencode "$path" ) >/dev/null 2>&1; then
-    printf 'FAIL: expected JSONC to be rejected\n' >&2
-    return 1
-  fi
-  local after
-  after="$(cat "$path")" 2>/dev/null || after=""
-  assert_eq "$after" "$before" "jsonc unchanged"
-  local baks
-  baks=( "$path".bak-* )
-  [[ ! -e "${baks[0]}" ]] || { printf 'FAIL: expected no backup for JSONC rejection\n' >&2; return 1; }
+  jsonc_path="$home/.config/opencode/opencode.jsonc"
+  json_path="$home/.config/opencode/opencode.json"
+  cat >"$jsonc_path" <<'JSON'
+{
+  "$schema": "https://opencode.ai/config.json"
+}
+JSON
+  local result
+  result="$(configure_opencode "$jsonc_path")"
+  local first_line
+  first_line="$(printf '%s\n' "$result" | sed -n '1p')"
+  assert_eq "$first_line" "$json_path" "migrated written path"
+  [[ -f "$json_path" ]] || { printf 'FAIL: json file not created\n' >&2; return 1; }
+  local schema has_mtls second_line
+  schema="$(jq -r '."$schema"' "$json_path")"
+  assert_eq "$schema" "https://opencode.ai/config.json" "schema preserved"
+  has_mtls="$(jq -r '.provider."mtls-router" | type' "$json_path")"
+  assert_eq "$has_mtls" "object" "mtls-router present after jsonc migration"
+  second_line="$(printf '%s\n' "$result" | sed -n '2p')"
+  [[ "$second_line" == "$jsonc_path".bak-* ]] || { printf 'FAIL: expected jsonc backup path, got %q\n' "$second_line" >&2; return 1; }
 )
 
 test_opencode_config_rejects_invalid_json() (
@@ -160,7 +166,7 @@ test_opencode_config_uses_real_api_key_when_provided() (
 
 test_opencode_config_creates_when_missing
 test_opencode_config_preserves_other_providers
-test_opencode_config_rejects_jsonc
+test_opencode_config_migrates_simple_jsonc
 test_opencode_config_rejects_invalid_json
 test_opencode_config_rejects_non_object_provider
 test_opencode_config_uses_real_api_key_when_provided
