@@ -177,6 +177,11 @@ function Backup-File($Path) {
     return $null
 }
 
+function Write-Utf8NoBomFile($Path, $Value) {
+    $encoding = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($Path, $Value, $encoding)
+}
+
 function Claude-EnvObject($ApiKey = '{UserApiKey}') {
     [ordered]@{
         ANTHROPIC_BASE_URL = 'http://127.0.0.1:19099'
@@ -347,7 +352,8 @@ base_url = "http://127.0.0.1:19099/v1"
         $authBackup = Backup-File $authPath
         $authDir = Split-Path -Parent $authPath
         if ($authDir) { New-Item -ItemType Directory -Force -Path $authDir | Out-Null }
-        [ordered]@{ OPENAI_API_KEY = $apiKey } | ConvertTo-Json -Depth 20 | Set-Content -Path $authPath -Encoding UTF8
+        $authJson = [ordered]@{ OPENAI_API_KEY = $apiKey } | ConvertTo-Json -Depth 20
+        Write-Utf8NoBomFile $authPath $authJson
         return ,@($Path, $backup, "AUTH:$authPath", $authBackup)
     }
 

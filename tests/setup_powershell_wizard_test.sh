@@ -33,6 +33,7 @@ assert_not_contains '0) 全部覆盖配置'
 # shared building blocks
 assert_contains 'function Detect-Agents'
 assert_contains 'function Backup-File'
+assert_contains 'function Write-Utf8NoBomFile'
 assert_contains 'function Configure-Claude'
 assert_contains 'function Configure-Opencode'
 assert_contains 'function Remove-CodexBlock'
