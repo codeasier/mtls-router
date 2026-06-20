@@ -7,6 +7,9 @@ ANTHROPIC_BASE_URL_VALUE="$ROUTER_BASE_URL"
 INSTALL_DIR="${MTLS_ROUTER_INSTALL_DIR:-$HOME/.local/bin}"
 BINARY_NAME="mtls-router"
 BINARY_PATH="$INSTALL_DIR/$BINARY_NAME"
+ROUTER_STATE_DIR="${MTLS_ROUTER_STATE_DIR:-$HOME/.mtls-router}"
+ROUTER_STATE_PATH="$ROUTER_STATE_DIR/setup-state"
+ROUTER_LOG_PATH="${MTLS_ROUTER_LOG_PATH:-$ROUTER_STATE_DIR/mtls-router.log}"
 
 info() { printf '\033[36m%s\033[0m\n' "$1"; }
 success() { printf '\033[32m%s\033[0m\n' "$1"; }
@@ -113,14 +116,100 @@ download_router() {
   success "  已安装 mtls-router：$BINARY_PATH"
 }
 
+write_router_state() {
+  local pid="$1"
+  local log_path="$2"
+  mkdir -p "$ROUTER_STATE_DIR"
+  cat >"$ROUTER_STATE_PATH" <<STATE
+pid=$pid
+listen_addr=$ROUTER_BASE_URL
+binary_path=$BINARY_PATH
+log_path=$log_path
+started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+STATE
+}
+
+load_router_state() {
+  [[ -f "$ROUTER_STATE_PATH" ]] || return 1
+  local line key value
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    key="${line%%=*}"
+    value="${line#*=}"
+    case "$key" in
+      pid) pid="$value" ;;
+      listen_addr) listen_addr="$value" ;;
+      binary_path) binary_path="$value" ;;
+      log_path) log_path="$value" ;;
+      started_at) started_at="$value" ;;
+    esac
+  done <"$ROUTER_STATE_PATH"
+}
+
+router_pid_running() {
+  local pid="$1"
+  [[ -n "$pid" ]] || return 1
+  kill -0 "$pid" >/dev/null 2>&1
+}
+
 start_router() {
   if [[ "${MTLS_ROUTER_SKIP_START:-}" == "1" ]]; then
     info "[启动] 跳过（MTLS_ROUTER_SKIP_START=1）"
     return 0
   fi
   info "[启动] 启动 mtls-router 后台模式..."
-  "$BINARY_PATH" -backend
+  mkdir -p "$ROUTER_STATE_DIR"
+  local output pid log_path
+  output="$("$BINARY_PATH" -backend -log "$ROUTER_LOG_PATH")"
+  printf '%s\n' "$output"
+  pid="$(printf '%s\n' "$output" | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' | tail -n 1)"
+  log_path="$(printf '%s\n' "$output" | sed -n 's/.*log=\(.*\)$/\1/p' | tail -n 1)"
+  [[ -n "$pid" ]] || fail "无法从 mtls-router 输出中读取后台 pid。"
+  [[ -n "$log_path" ]] || log_path="$ROUTER_LOG_PATH"
+  write_router_state "$pid" "$log_path"
   success "  mtls-router 已启动，监听地址通常为 $ROUTER_BASE_URL"
+}
+
+router_status() {
+  local pid="" listen_addr="" binary_path="" log_path="" started_at=""
+  if ! load_router_state; then
+    info "router not running: no setup-managed state file at $ROUTER_STATE_PATH"
+    return 0
+  fi
+  if router_pid_running "$pid"; then
+    success "router running"
+  else
+    warn "router not running"
+  fi
+  info "pid=$pid"
+  info "listen_addr=${listen_addr:-$ROUTER_BASE_URL}"
+  info "binary_path=${binary_path:-$BINARY_PATH}"
+  info "log_path=${log_path:-$ROUTER_LOG_PATH}"
+  [[ -n "${started_at:-}" ]] && info "started_at=$started_at"
+}
+
+router_log() {
+  local pid="" listen_addr="" binary_path="" log_path="" started_at=""
+  if ! load_router_state; then
+    fail "未找到 setup-managed router 状态文件：$ROUTER_STATE_PATH"
+  fi
+  [[ -n "${log_path:-}" ]] || fail "状态文件中没有 log_path：$ROUTER_STATE_PATH"
+  [[ -f "$log_path" ]] || fail "router 日志文件不存在：$log_path"
+  cat "$log_path"
+}
+
+router_stop() {
+  local pid="" listen_addr="" binary_path="" log_path="" started_at=""
+  if ! load_router_state; then
+    info "router not running: no setup-managed state file at $ROUTER_STATE_PATH"
+    return 0
+  fi
+  if router_pid_running "$pid"; then
+    kill "$pid"
+    success "router stopped"
+  else
+    warn "router not running"
+  fi
+  rm -f "$ROUTER_STATE_PATH"
 }
 
 select_targets() {
@@ -198,34 +287,44 @@ agent_name_from_key() {
 
 print_usage() {
   cat <<'USAGE'
-用法: setup.sh [选项]
+用法: setup.sh [router|agent] <command> [选项]
 
 默认行为：下载并启动 mtls-router，**不会修改任何 agent 配置文件**。
 
-选项:
-  --print-config [--agent=claude,opencode,codex]
+Router commands:
+  router install
+      下载最新 mtls-router。
+  router start
+      启动 mtls-router 后台模式并记录 setup-managed 状态。
+  router setup
+      下载并启动 mtls-router。
+  router status
+      显示 setup-managed router 是否仍在运行，以及 pid/listen/binary/log 信息。
+  router log
+      打印 setup-managed router 日志。
+  router stop
+      停止 setup-managed router 进程。
+
+Agent commands:
+  agent print-config [--agent=claude,opencode,codex]
       把要写入的配置片段打印到 stdout（只输出，不动文件）。默认所有检测到的 agent。
-  --write-config [--agent=claude,opencode,codex]
+  agent write-config --agent=claude,opencode,codex
       把 mtls-router 配置写入检测到的 agent 配置文件。会先备份原文件。
-      需要先 --agent= 指定至少一个，否则报错。
+
+Legacy options:
+  --print-config [--agent=claude,opencode,codex]
+  --write-config --agent=claude,opencode,codex
   --agent=LIST
       逗号分隔的 agent key：claude / opencode / codex。
-      与 --print-config 或 --write-config 搭配使用。
   -h, --help
       显示本帮助。
 
 示例:
-  # 只下载并启动 router，不动 agent 配置
-  ./setup.sh
-
-  # 看看会写入哪些内容（不动文件）
-  ./setup.sh --print-config
-
-  # 只为 Claude Code 写入配置
-  ./setup.sh --write-config --agent=claude
-
-  # 为 opencode 和 Codex 写入配置
-  ./setup.sh --write-config --agent=opencode,codex
+  ./setup.sh router setup
+  ./setup.sh router status
+  ./setup.sh router log
+  ./setup.sh router stop
+  ./setup.sh agent write-config --agent=claude
 USAGE
 }
 
@@ -639,6 +738,36 @@ TOML
 main() {
   local action="start"
   local agent_filter=""
+
+  if (( $# > 0 )); then
+    case "$1" in
+      router)
+        shift
+        local router_command="${1:-setup}"
+        case "$router_command" in
+          install) download_router ;;
+          start) start_router ;;
+          setup) download_router; start_router ;;
+          status) router_status ;;
+          log) router_log ;;
+          stop) router_stop ;;
+          -h|--help|help) print_usage ;;
+          *) fail "未知 router 命令：$router_command（试试 --help）" ;;
+        esac
+        return 0
+        ;;
+      agent)
+        shift
+        local agent_command="${1:-}"
+        case "$agent_command" in
+          print-config) action="print"; shift ;;
+          write-config) action="write"; shift ;;
+          -h|--help|help|'') print_usage; return 0 ;;
+          *) fail "未知 agent 命令：$agent_command（试试 --help）" ;;
+        esac
+        ;;
+    esac
+  fi
 
   while (( $# > 0 )); do
     case "$1" in
