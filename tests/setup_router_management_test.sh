@@ -42,9 +42,10 @@ while (( $# > 0 )); do
 done
 [[ -n "$log" ]] || log="$(dirname "$0")/mtls-router.log"
 mkdir -p "$(dirname "$log")"
-printf 'fake router log\n' >>"$log"
+printf 'fake router log with pid=999999 distraction\n' >>"$log"
 sleep 60 >/dev/null 2>&1 &
 pid=$!
+printf 'debug pid=111 should not be parsed\n'
 printf 'mtls-router started in background, pid=%s, log=%s\n' "$pid" "$log"
 ROUTER
   chmod +x "$dir/mtls-router"
@@ -55,12 +56,14 @@ test_router_start_writes_state() {
   tmp="$(mktemp -d)"
   build_fake_router "$tmp"
   out="$(MTLS_ROUTER_SKIP_DOWNLOAD=1 MTLS_ROUTER_INSTALL_DIR="$tmp" HOME="$tmp/home" bash "$SCRIPT" router start 2>&1)"
-  state="$tmp/home/.mtls-router/setup-state"
+  state="$tmp/home/.mtls-router/setup-state.json"
   assert_contains "mtls-router 已启动" "$out" "router start"
   [[ -f "$state" ]] || fail "router start should write state file"
-  assert_file_contains "$state" "pid=" "state file"
-  assert_file_contains "$state" "log_path=$tmp/home/.mtls-router/mtls-router.log" "state file"
-  assert_file_contains "$state" "binary_path=$tmp/mtls-router" "state file"
+  jq -e '.pid and .log_path and .binary_path and .listen_addr and .started_at' "$state" >/dev/null || fail "state file should be JSON with router fields"
+  [[ "$(stat -f %Lp "$state" 2>/dev/null || stat -c %a "$state")" == "600" ]] || fail "state file should be mode 600"
+  assert_file_contains "$state" '"log_path":' "state file"
+  assert_file_contains "$state" "$tmp/home/.mtls-router/mtls-router.log" "state file"
+  assert_file_contains "$state" "$tmp/mtls-router" "state file"
   bash "$SCRIPT" router stop >/dev/null 2>&1 || true
   rm -rf "$tmp"
 }
@@ -86,7 +89,7 @@ test_router_status_without_state_is_not_running() {
   local tmp out
   tmp="$(mktemp -d)"
   out="$(MTLS_ROUTER_INSTALL_DIR="$tmp" HOME="$tmp/home" bash "$SCRIPT" router status 2>&1)"
-  assert_contains "not running" "$out" "router status without state"
+  assert_contains "router 未运行" "$out" "router status without state"
   rm -rf "$tmp"
 }
 

@@ -67,13 +67,15 @@ function Download-MtlsRouter {
 
 function Write-RouterState($PidValue, $LogPath) {
     New-Item -ItemType Directory -Force -Path $RouterStateDir | Out-Null
+    $tmp = [System.IO.Path]::GetTempFileName()
     [ordered]@{
         pid = [int]$PidValue
         listen_addr = $RouterBaseUrl
         binary_path = $BinaryPath
         log_path = $LogPath
         started_at = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
-    } | ConvertTo-Json -Depth 5 | Set-Content -Path $RouterStatePath -Encoding UTF8
+    } | ConvertTo-Json -Depth 5 | Set-Content -Path $tmp -Encoding UTF8
+    Move-Item -Path $tmp -Destination $RouterStatePath -Force
 }
 
 function Get-RouterState {
@@ -93,13 +95,14 @@ function Test-RouterProcess($PidValue) {
 function Show-RouterStatus {
     $state = Get-RouterState
     if (-not $state) {
-        Write-Info "router not running: no setup-managed state file at $RouterStatePath"
+        Write-Info "未找到 setup-managed router 状态文件：$RouterStatePath"
+        Write-Info 'router 未运行'
         return
     }
     if (Test-RouterProcess $state.pid) {
         Write-Success 'router running'
     } else {
-        Write-Warn 'router not running'
+        Write-Warn 'router 未运行'
     }
     Write-Info "pid=$($state.pid)"
     Write-Info "listen_addr=$($state.listen_addr)"
@@ -108,32 +111,42 @@ function Show-RouterStatus {
     if ($state.started_at) { Write-Info "started_at=$($state.started_at)" }
 }
 
-function Show-RouterLog {
+function Show-RouterLog($Lines = 200) {
+    if ($Lines -notmatch '^[0-9]+$') { Write-Fail 'router log --tail 需要正整数行数。' }
     $state = Get-RouterState
     if (-not $state) { Write-Fail "未找到 setup-managed router 状态文件：$RouterStatePath" }
     if (-not $state.log_path) { Write-Fail "状态文件中没有 log_path：$RouterStatePath" }
     if (-not (Test-Path $state.log_path)) { Write-Fail "router 日志文件不存在：$($state.log_path)" }
-    Get-Content -Path $state.log_path
+    Get-Content -Path $state.log_path -Tail ([int]$Lines)
 }
 
 function Stop-Router {
     $state = Get-RouterState
     if (-not $state) {
-        Write-Info "router not running: no setup-managed state file at $RouterStatePath"
+        Write-Info "未找到 setup-managed router 状态文件：$RouterStatePath"
+        Write-Info 'router 未运行'
         return
     }
     if (Test-RouterProcess $state.pid) {
-        Stop-Process -Id $state.pid -ErrorAction Stop
+        Stop-Process -Id $state.pid -ErrorAction SilentlyContinue
+        $deadline = (Get-Date).AddSeconds(5)
+        while ((Test-RouterProcess $state.pid) -and ((Get-Date) -lt $deadline)) {
+            Start-Sleep -Milliseconds 200
+        }
+        if (Test-RouterProcess $state.pid) {
+            Write-Warn 'router 未正常退出，强制停止。'
+            Stop-Process -Id $state.pid -Force -ErrorAction SilentlyContinue
+        }
         Write-Success 'router stopped'
     } else {
-        Write-Warn 'router not running'
+        Write-Warn 'router 未运行'
     }
     Remove-Item -Path $RouterStatePath -Force -ErrorAction SilentlyContinue
 }
 
 function Start-MtlsRouter {
     if ($env:MTLS_ROUTER_SKIP_START -eq '1') {
-        Write-Info '[Start] skipped (MTLS_ROUTER_SKIP_START=1)'
+        Write-Info '[启动] 跳过（MTLS_ROUTER_SKIP_START=1）'
         return
     }
     if (-not (Test-Path $BinaryPath)) {
@@ -141,13 +154,15 @@ function Start-MtlsRouter {
     }
     Write-Info '[启动] 启动 mtls-router 后台模式...'
     New-Item -ItemType Directory -Force -Path $RouterStateDir | Out-Null
-    $output = & $BinaryPath -backend -log $RouterLogPath
+    $output = & $BinaryPath -backend -log $RouterLogPath 2>&1
+    $exitCode = $LASTEXITCODE
     $output | ForEach-Object { Write-Host $_ }
+    if ($exitCode -ne 0) { Write-Fail 'mtls-router 后台启动失败。' }
     $text = ($output | Out-String)
-    $pidMatch = [regex]::Match($text, 'pid=([0-9]+)')
-    $logMatch = [regex]::Match($text, 'log=(.+)')
+    $pidMatch = [regex]::Match($text, '(?m)^mtls-router started in background, pid=([0-9]+), log=(.*)$')
     if (-not $pidMatch.Success) { Write-Fail '无法从 mtls-router 输出中读取后台 pid。' }
-    $logPath = if ($logMatch.Success) { $logMatch.Groups[1].Value.Trim() } else { $RouterLogPath }
+    $logPath = $pidMatch.Groups[2].Value.Trim()
+    if (-not $logPath) { $logPath = $RouterLogPath }
     Write-RouterState $pidMatch.Groups[1].Value $logPath
     Write-Success "  mtls-router 已启动，监听地址通常为 $RouterBaseUrl"
 }
@@ -639,8 +654,8 @@ function Show-Usage {
       下载/安装并启动 mtls-router。
   router status
       显示 setup-managed router 是否仍在运行，以及 pid/listen/binary/log 信息。
-  router log
-      打印 setup-managed router 日志。
+  router log [--tail=N]
+      打印 setup-managed router 日志，默认显示最后 200 行。
   router stop
       停止 setup-managed router 进程。
   agent print-config [--agent=claude,opencode,codex]
@@ -688,7 +703,9 @@ function Main {
     $action = 'setup'
     $agentFilter = ''
 
-if ($args.Count -gt 0) {
+    $routerLogLines = 200
+
+    if ($args.Count -gt 0) {
         switch ($args[0]) {
             'router' {
                 if ($args.Count -lt 2) { Write-Fail 'router 需要子命令：install / start / setup / status / log / stop（试试 --help）' }
@@ -727,8 +744,6 @@ if ($args.Count -gt 0) {
             }
         }
     }
-        }
-    }
 
     $i = 0
     while ($i -lt $args.Count) {
@@ -744,6 +759,17 @@ if ($args.Count -gt 0) {
                 if ($action -ne 'setup') { Write-Fail '--write-config 只能作为兼容旧参数在顶层使用' }
                 $action = 'write'
                 $i++
+                continue
+            }
+            '^--tail=(.+)$' {
+                $routerLogLines = $Matches[1]
+                $i++
+                continue
+            }
+            '^--tail$' {
+                if ($i + 1 -ge $args.Count) { Write-Fail '--tail needs a line count' }
+                $routerLogLines = $args[$i + 1]
+                $i += 2
                 continue
             }
             '^--agent=(.+)$' {
@@ -822,7 +848,7 @@ if ($args.Count -gt 0) {
             return
         }
         'router-status' { Show-RouterStatus; return }
-        'router-log' { Show-RouterLog; return }
+        'router-log' { Show-RouterLog $routerLogLines; return }
         'router-stop' { Stop-Router; return }
     }
 

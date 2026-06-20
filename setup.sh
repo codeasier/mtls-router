@@ -8,7 +8,7 @@ INSTALL_DIR="${MTLS_ROUTER_INSTALL_DIR:-$HOME/.local/bin}"
 BINARY_NAME="mtls-router"
 BINARY_PATH="$INSTALL_DIR/$BINARY_NAME"
 ROUTER_STATE_DIR="${MTLS_ROUTER_STATE_DIR:-$HOME/.mtls-router}"
-ROUTER_STATE_PATH="$ROUTER_STATE_DIR/setup-state"
+ROUTER_STATE_PATH="$ROUTER_STATE_DIR/setup-state.json"
 ROUTER_LOG_PATH="${MTLS_ROUTER_LOG_PATH:-$ROUTER_STATE_DIR/mtls-router.log}"
 
 info() { printf '\033[36m%s\033[0m\n' "$1"; }
@@ -120,29 +120,29 @@ write_router_state() {
   local pid="$1"
   local log_path="$2"
   mkdir -p "$ROUTER_STATE_DIR"
-  cat >"$ROUTER_STATE_PATH" <<STATE
-pid=$pid
-listen_addr=$ROUTER_BASE_URL
-binary_path=$BINARY_PATH
-log_path=$log_path
-started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-STATE
+  local tmp
+  tmp="$(mktemp)"
+  jq -n \
+    --argjson pid "$pid" \
+    --arg listen_addr "$ROUTER_BASE_URL" \
+    --arg binary_path "$BINARY_PATH" \
+    --arg log_path "$log_path" \
+    --arg started_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '{pid: $pid, listen_addr: $listen_addr, binary_path: $binary_path, log_path: $log_path, started_at: $started_at}' >"$tmp"
+  chmod 600 "$tmp"
+  mv "$tmp" "$ROUTER_STATE_PATH"
 }
 
 load_router_state() {
   [[ -f "$ROUTER_STATE_PATH" ]] || return 1
-  local line key value
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    key="${line%%=*}"
-    value="${line#*=}"
-    case "$key" in
-      pid) pid="$value" ;;
-      listen_addr) listen_addr="$value" ;;
-      binary_path) binary_path="$value" ;;
-      log_path) log_path="$value" ;;
-      started_at) started_at="$value" ;;
-    esac
-  done <"$ROUTER_STATE_PATH"
+  if ! jq -e . "$ROUTER_STATE_PATH" >/dev/null 2>&1; then
+    fail "router 状态文件不是合法 JSON：$ROUTER_STATE_PATH"
+  fi
+  pid="$(jq -r '.pid // ""' "$ROUTER_STATE_PATH")"
+  listen_addr="$(jq -r '.listen_addr // ""' "$ROUTER_STATE_PATH")"
+  binary_path="$(jq -r '.binary_path // ""' "$ROUTER_STATE_PATH")"
+  log_path="$(jq -r '.log_path // ""' "$ROUTER_STATE_PATH")"
+  started_at="$(jq -r '.started_at // ""' "$ROUTER_STATE_PATH")"
 }
 
 router_pid_running() {
@@ -162,10 +162,13 @@ start_router() {
   info "[启动] 启动 mtls-router 后台模式..."
   mkdir -p "$ROUTER_STATE_DIR"
   local output pid log_path
-  output="$("$BINARY_PATH" -backend -log "$ROUTER_LOG_PATH")"
+  if ! output="$("$BINARY_PATH" -backend -log "$ROUTER_LOG_PATH" 2>&1)"; then
+    printf '%s\n' "$output" >&2
+    fail "mtls-router 后台启动失败。"
+  fi
   printf '%s\n' "$output"
-  pid="$(printf '%s\n' "$output" | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' | tail -n 1)"
-  log_path="$(printf '%s\n' "$output" | sed -n 's/.*log=\(.*\)$/\1/p' | tail -n 1)"
+  pid="$(printf '%s\n' "$output" | sed -n 's/^mtls-router started in background, pid=\([0-9][0-9]*\), log=.*/\1/p' | tail -n 1)"
+  log_path="$(printf '%s\n' "$output" | sed -n 's/^mtls-router started in background, pid=[0-9][0-9]*, log=\(.*\)$/\1/p' | tail -n 1)"
   [[ -n "$pid" ]] || fail "无法从 mtls-router 输出中读取后台 pid。"
   [[ -n "$log_path" ]] || log_path="$ROUTER_LOG_PATH"
   write_router_state "$pid" "$log_path"
@@ -175,13 +178,14 @@ start_router() {
 router_status() {
   local pid="" listen_addr="" binary_path="" log_path="" started_at=""
   if ! load_router_state; then
-    info "router not running: no setup-managed state file at $ROUTER_STATE_PATH"
+    info "未找到 setup-managed router 状态文件：$ROUTER_STATE_PATH"
+    info "router 未运行"
     return 0
   fi
   if router_pid_running "$pid"; then
     success "router running"
   else
-    warn "router not running"
+    warn "router 未运行"
   fi
   info "pid=$pid"
   info "listen_addr=${listen_addr:-$ROUTER_BASE_URL}"
@@ -191,26 +195,37 @@ router_status() {
 }
 
 router_log() {
+  local lines="${1:-200}"
   local pid="" listen_addr="" binary_path="" log_path="" started_at=""
+  [[ "$lines" =~ ^[0-9]+$ ]] || fail "router log --tail 需要正整数行数。"
   if ! load_router_state; then
     fail "未找到 setup-managed router 状态文件：$ROUTER_STATE_PATH"
   fi
   [[ -n "${log_path:-}" ]] || fail "状态文件中没有 log_path：$ROUTER_STATE_PATH"
   [[ -f "$log_path" ]] || fail "router 日志文件不存在：$log_path"
-  cat "$log_path"
+  tail -n "$lines" "$log_path"
 }
 
 router_stop() {
   local pid="" listen_addr="" binary_path="" log_path="" started_at=""
   if ! load_router_state; then
-    info "router not running: no setup-managed state file at $ROUTER_STATE_PATH"
+    info "未找到 setup-managed router 状态文件：$ROUTER_STATE_PATH"
+    info "router 未运行"
     return 0
   fi
   if router_pid_running "$pid"; then
-    kill "$pid"
+    kill "$pid" 2>/dev/null || true
+    for _ in $(seq 1 25); do
+      router_pid_running "$pid" || break
+      sleep 0.2
+    done
+    if router_pid_running "$pid"; then
+      warn "router 未正常退出，发送 SIGKILL。"
+      kill -9 "$pid" 2>/dev/null || true
+    fi
     success "router stopped"
   else
-    warn "router not running"
+    warn "router 未运行"
   fi
   rm -f "$ROUTER_STATE_PATH"
 }
@@ -303,8 +318,8 @@ print_usage() {
       下载/安装并启动 mtls-router。
   router status
       显示 setup-managed router 是否仍在运行，以及 pid/listen/binary/log 信息。
-  router log
-      打印 setup-managed router 日志。
+  router log [--tail=N]
+      打印 setup-managed router 日志，默认显示最后 200 行。
   router stop
       停止 setup-managed router 进程。
   agent print-config [--agent=claude,opencode,codex]
@@ -766,6 +781,7 @@ TOML
 main() {
   local action="setup"
   local agent_filter=""
+  local router_log_lines="200"
 
   if (( $# > 0 )); then
     case "$1" in
@@ -773,7 +789,18 @@ main() {
         shift
         (( $# > 0 )) || fail "router 需要子命令：install / start / setup / status / log / stop（试试 --help）"
         case "$1" in
-          install|start|setup|status|log|stop) action="router-$1"; shift ;;
+          install|start|setup|status) action="router-$1"; shift ;;
+          log)
+            action="router-log"
+            shift
+            if (( $# > 0 )); then
+              case "$1" in
+                --tail=*) router_log_lines="${1#--tail=}"; shift ;;
+                --tail) (( $# > 1 )) || fail "--tail 需要行数"; router_log_lines="$2"; shift 2 ;;
+              esac
+            fi
+            ;;
+          stop) action="router-stop"; shift ;;
           *) fail "未知 router 子命令：$1（可用：install / start / setup / status / log / stop）" ;;
         esac
         ;;
@@ -869,7 +896,7 @@ main() {
       return 0
       ;;
     router-log)
-      router_log
+      router_log "$router_log_lines"
       return 0
       ;;
     router-stop)
