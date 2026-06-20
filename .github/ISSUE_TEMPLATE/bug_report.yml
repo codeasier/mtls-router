@@ -1,0 +1,88 @@
+name: Bug Report
+description: Report a bug or unexpected behavior in mtls-router
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this bug. Please include enough detail for us to reproduce it.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear description of what the bug is.
+      placeholder: "When I start mtls-router with my config, it fails with ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Exact commands and configuration needed to reproduce the behavior.
+      placeholder: |
+        1. Run `mtls-router --config config.yaml`
+        2. Send a request to `https://localhost:8443/...`
+        3. See error
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened? Include logs, error messages, or stack traces if available.
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: mtls-router Version
+      description: Run `mtls-router --version` if available, or provide the commit/tag/build you are using.
+      placeholder: "v0.1.1 / e46fa03 / local build"
+    validations:
+      required: true
+
+  - type: input
+    id: go-version
+    attributes:
+      label: Go Version
+      description: If you built from source, run `go version` and paste the output.
+      placeholder: "go version go1.24.4 darwin/arm64"
+
+  - type: input
+    id: os
+    attributes:
+      label: OS / Architecture
+      description: Your operating system and architecture.
+      placeholder: "macOS 15 arm64 / Ubuntu 24.04 amd64 / Windows 11 amd64"
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant Configuration
+      description: Paste the relevant sanitized config. Remove secrets, private keys, and tokens.
+      render: yaml
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other context, certificates setup details, proxy target behavior, or screenshots that might help.

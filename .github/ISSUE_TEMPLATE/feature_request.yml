@@ -1,0 +1,44 @@
+name: Feature Request
+description: Suggest a new feature or enhancement for mtls-router
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for your suggestion. Please describe the problem first so we can evaluate the right solution.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / Motivation
+      description: What problem would this solve for mtls-router users?
+      placeholder: "I'm trying to route mTLS traffic in an environment where ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe the behavior or command/configuration you would like to see.
+      placeholder: "It would be useful if mtls-router could ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Any alternative workflows, tools, or configuration patterns you have considered.
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use Case Details
+      description: Describe your deployment environment, client/server topology, certificate requirements, or automation flow.
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any related examples, links, diagrams, or screenshots.
