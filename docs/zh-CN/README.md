@@ -20,7 +20,7 @@
 
 ## 一键安装
 
-这些脚本会下载适合当前操作系统和 CPU 架构的最新 `mtls-router` 二进制文件，以后台模式启动 `mtls-router`，然后检测 Claude Code、opencode 和 Codex，让你选择是否备份并更新对应 agent 配置。脚本不会安装或启动任何 agent。
+这些脚本会下载适合当前操作系统和 CPU 架构的最新 `mtls-router` 二进制文件，并以后台模式启动 `mtls-router`。脚本不会安装或启动任何 agent，默认安装路径也不会修改 agent 配置。
 
 macOS 或 Linux：
 
@@ -119,7 +119,29 @@ Windows PowerShell：
 
 ## 配置 agents
 
-安装脚本只负责安装并启动 `mtls-router`。之后会依次检测 Claude Code、opencode 和 Codex。对于每个检测到的 agent，脚本都会询问是否备份现有配置并写入 mtls-router provider 配置。
+安装脚本会把 router 生命周期命令和 agent 配置命令分开：
+
+```bash
+./setup.sh router install
+./setup.sh router start
+./setup.sh router setup
+./setup.sh agent print-config
+./setup.sh agent write-config --agent=claude
+```
+
+```powershell
+.\setup.ps1 router install
+.\setup.ps1 router start
+.\setup.ps1 router setup
+.\setup.ps1 agent print-config
+.\setup.ps1 agent write-config --agent=claude
+```
+
+`router install` 只下载并安装二进制。`router start` 只启动已安装的二进制；如果不存在，会明确提示先执行 `router install` 或 `router setup`。`router setup` 会安装并启动 router，等价于无参数默认行为。
+
+`agent print-config` 只打印配置片段。`agent write-config --agent=...` 只写入 agent 配置，并要求显式提供 `--agent=`。旧的顶层 `--print-config` 和 `--write-config --agent=...` 仍作为兼容别名保留。
+
+`mtls-router` 二进制本身只管理 router，不提供 `print-config` 这类 agent 配置命令。
 
 - Claude Code 会把 `env` block 写入 `~/.claude/settings.json`，或 `$CLAUDE_CONFIG_DIR/settings.json`。
 - opencode 会把 `mtls-router` provider 写入选中的 opencode.json，遵循 `OPENCODE_CONFIG`，否则回退到 `~/.config/opencode/opencode.json`。

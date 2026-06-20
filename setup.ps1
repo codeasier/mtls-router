@@ -63,6 +63,13 @@ function Download-MtlsRouter {
 }
 
 function Start-MtlsRouter {
+    if ($env:MTLS_ROUTER_SKIP_START -eq '1') {
+        Write-Info '[Start] skipped (MTLS_ROUTER_SKIP_START=1)'
+        return
+    }
+    if (-not (Test-Path $BinaryPath)) {
+        Write-Fail "未找到已安装的 mtls-router：$BinaryPath。请先运行 router install 或 router setup。"
+    }
     Write-Info '[启动] 启动 mtls-router 后台模式...'
     & $BinaryPath -backend
     Write-Success "  mtls-router 已启动，监听地址通常为 $RouterBaseUrl"
@@ -403,51 +410,106 @@ function ConvertFrom-AgentKey($Key) {
 
 function Show-Usage {
     @'
-用法: setup.ps1 [选项]
+用法: setup.ps1 [router|agent] <command> [选项]
 
-默认行为：下载并启动 mtls-router，**不会修改任何 agent 配置文件**。
+默认行为：setup.ps1 等价于 setup.ps1 router setup，下载并启动 mtls-router，**不会修改任何 agent 配置文件**。
 
-选项:
-  --print-config [--agent=claude,opencode,codex]
+子命令:
+  router install
+      只下载/安装 mtls-router。
+  router start
+      只启动已安装的 mtls-router；不存在时提示先 install 或 setup。
+  router setup
+      下载/安装并启动 mtls-router。
+  agent print-config [--agent=claude,opencode,codex]
       把要写入的配置片段打印到 stdout（只输出，不动文件）。默认所有检测到的 agent。
-  --write-config [--agent=claude,opencode,codex]
+  agent write-config --agent=claude,opencode,codex
       把 mtls-router 配置写入检测到的 agent 配置文件。会先备份原文件。
       需要先 --agent= 指定至少一个，否则报错。
+
+兼容旧参数:
+  --print-config [--agent=claude,opencode,codex]
+      等价于 agent print-config。
+  --write-config --agent=claude,opencode,codex
+      等价于 agent write-config --agent=...。
+
+选项:
   --agent=LIST
       逗号分隔的 agent key：claude / opencode / codex。
-      与 --print-config 或 --write-config 搭配使用。
   -h, --help
       显示本帮助。
 
 示例:
   # 只下载并启动 router，不动 agent 配置
-  .\setup.ps1
+  .\setup.ps1 router setup
+
+  # 只安装 router
+  .\setup.ps1 router install
+
+  # 只启动已安装 router
+  .\setup.ps1 router start
 
   # 看看会写入哪些内容（不动文件）
-  .\setup.ps1 --print-config
+  .\setup.ps1 agent print-config
 
   # 只为 Claude Code 写入配置
-  .\setup.ps1 --write-config --agent=claude
-
-  # 为 opencode 和 Codex 写入配置
-  .\setup.ps1 --write-config --agent=opencode,codex
+  .\setup.ps1 agent write-config --agent=claude
 '@
 }
 
 function Main {
-    $action = 'start'
+    $action = 'setup'
     $agentFilter = ''
+
+    if ($args.Count -gt 0) {
+        switch ($args[0]) {
+            'router' {
+                if ($args.Count -lt 2) { Write-Fail 'router 需要子命令：install / start / setup（试试 --help）' }
+                switch ($args[1]) {
+                    'install' { $action = 'router-install' }
+                    'start' { $action = 'router-start' }
+                    'setup' { $action = 'router-setup' }
+                    default { Write-Fail "未知 router 子命令：$($args[1])（可用：install / start / setup）" }
+                }
+                $args = @($args | Select-Object -Skip 2)
+            }
+            'agent' {
+                if ($args.Count -lt 2) { Write-Fail 'agent 需要子命令：print-config / write-config（试试 --help）' }
+                switch ($args[1]) {
+                    'print-config' { $action = 'print' }
+                    'write-config' { $action = 'write' }
+                    default { Write-Fail "未知 agent 子命令：$($args[1])（可用：print-config / write-config）" }
+                }
+                $args = @($args | Select-Object -Skip 2)
+            }
+            '--print-config' {
+                $action = 'print'
+                $args = @($args | Select-Object -Skip 1)
+            }
+            '--write-config' {
+                $action = 'write'
+                $args = @($args | Select-Object -Skip 1)
+            }
+            '-h' { Show-Usage; return }
+            '--help' { Show-Usage; return }
+            default {
+                if ($args[0] -notlike '--*') { Write-Fail "Unknown argument: $($args[0]) (try --help)" }
+            }
+        }
+    }
 
     $i = 0
     while ($i -lt $args.Count) {
         $a = $args[$i]
         switch -Regex ($a) {
             '^--print-config$' {
+                if ($action -ne 'setup') { Write-Fail '--print-config 只能作为兼容旧参数在顶层使用' }
                 $action = 'print'
                 $i++
                 continue
             }
             '^--write-config$' {
+                if ($action -ne 'setup') { Write-Fail '--write-config 只能作为兼容旧参数在顶层使用' }
                 $action = 'write'
                 $i++
                 continue
@@ -473,27 +535,60 @@ function Main {
 
     Show-Banner
 
-    if ($action -eq 'start') {
-        if ($env:MTLS_ROUTER_SKIP_DOWNLOAD -eq '1') {
-            Write-Info '[Download] skipped (MTLS_ROUTER_SKIP_DOWNLOAD=1)'
-        } else {
-            Download-MtlsRouter
-        }
-
-        if ($env:MTLS_ROUTER_SKIP_START -eq '1') {
-            Write-Info '[Start] skipped (MTLS_ROUTER_SKIP_START=1)'
-        } else {
+    switch ($action) {
+        'setup' {
+            if ($env:MTLS_ROUTER_SKIP_DOWNLOAD -eq '1') {
+                Write-Info '[Download] skipped (MTLS_ROUTER_SKIP_DOWNLOAD=1)'
+            } else {
+                Download-MtlsRouter
+            }
             Start-MtlsRouter
-            $script:RouterStarted = $true
+            if ($env:MTLS_ROUTER_SKIP_START -ne '1') {
+                $script:RouterStarted = $true
+            }
+            Write-Info '提示：未对 agent 配置做任何改动。如需写入 mtls-router 配置：'
+            Write-Info "  $PSCommandPath agent write-config --agent=claude,opencode,codex"
+            Write-Info "先看会写什么：$PSCommandPath agent print-config"
+            if ($env:MTLS_ROUTER_SKIP_START -eq '1') {
+                Write-Info '（已跳过实际启动 mtls-router）'
+            }
+            return
         }
-
-        Write-Info '提示：未对 agent 配置做任何改动。如需写入 mtls-router 配置：'
-        Write-Info "  $PSCommandPath --write-config --agent=claude,opencode,codex"
-        Write-Info "先看会写什么：$PSCommandPath --print-config"
-        if ($env:MTLS_ROUTER_SKIP_START -eq '1') {
-            Write-Info '（已跳过实际启动 mtls-router）'
+        'router-setup' {
+            if ($env:MTLS_ROUTER_SKIP_DOWNLOAD -eq '1') {
+                Write-Info '[Download] skipped (MTLS_ROUTER_SKIP_DOWNLOAD=1)'
+            } else {
+                Download-MtlsRouter
+            }
+            Start-MtlsRouter
+            if ($env:MTLS_ROUTER_SKIP_START -ne '1') {
+                $script:RouterStarted = $true
+            }
+            Write-Info '提示：未对 agent 配置做任何改动。如需写入 mtls-router 配置：'
+            Write-Info "  $PSCommandPath agent write-config --agent=claude,opencode,codex"
+            Write-Info "先看会写什么：$PSCommandPath agent print-config"
+            if ($env:MTLS_ROUTER_SKIP_START -eq '1') {
+                Write-Info '（已跳过实际启动 mtls-router）'
+            }
+            return
         }
-        return
+        'router-install' {
+            if ($env:MTLS_ROUTER_SKIP_DOWNLOAD -eq '1') {
+                Write-Info '[Download] skipped (MTLS_ROUTER_SKIP_DOWNLOAD=1)'
+            } else {
+                Download-MtlsRouter
+            }
+            Print-NextSteps
+            return
+        }
+        'router-start' {
+            Start-MtlsRouter
+            if ($env:MTLS_ROUTER_SKIP_START -ne '1') {
+                $script:RouterStarted = $true
+            }
+            Print-NextSteps
+            return
+        }
     }
 
     Detect-Agents

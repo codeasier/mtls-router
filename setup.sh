@@ -118,6 +118,9 @@ start_router() {
     info "[启动] 跳过（MTLS_ROUTER_SKIP_START=1）"
     return 0
   fi
+  if [[ ! -x "$BINARY_PATH" ]]; then
+    fail "未找到已安装的 mtls-router：$BINARY_PATH。请先运行 router install 或 router setup。"
+  fi
   info "[启动] 启动 mtls-router 后台模式..."
   "$BINARY_PATH" -backend
   success "  mtls-router 已启动，监听地址通常为 $ROUTER_BASE_URL"
@@ -198,34 +201,50 @@ agent_name_from_key() {
 
 print_usage() {
   cat <<'USAGE'
-用法: setup.sh [选项]
+用法: setup.sh [router|agent] <command> [选项]
 
-默认行为：下载并启动 mtls-router，**不会修改任何 agent 配置文件**。
+默认行为：setup.sh 等价于 setup.sh router setup，下载并启动 mtls-router，**不会修改任何 agent 配置文件**。
 
-选项:
-  --print-config [--agent=claude,opencode,codex]
+子命令:
+  router install
+      只下载/安装 mtls-router。
+  router start
+      只启动已安装的 mtls-router；不存在时提示先 install 或 setup。
+  router setup
+      下载/安装并启动 mtls-router。
+  agent print-config [--agent=claude,opencode,codex]
       把要写入的配置片段打印到 stdout（只输出，不动文件）。默认所有检测到的 agent。
-  --write-config [--agent=claude,opencode,codex]
+  agent write-config --agent=claude,opencode,codex
       把 mtls-router 配置写入检测到的 agent 配置文件。会先备份原文件。
       需要先 --agent= 指定至少一个，否则报错。
+
+兼容旧参数:
+  --print-config [--agent=claude,opencode,codex]
+      等价于 agent print-config。
+  --write-config --agent=claude,opencode,codex
+      等价于 agent write-config --agent=...。
+
+选项:
   --agent=LIST
       逗号分隔的 agent key：claude / opencode / codex。
-      与 --print-config 或 --write-config 搭配使用。
   -h, --help
       显示本帮助。
 
 示例:
   # 只下载并启动 router，不动 agent 配置
-  ./setup.sh
+  ./setup.sh router setup
+
+  # 只安装 router
+  ./setup.sh router install
+
+  # 只启动已安装 router
+  ./setup.sh router start
 
   # 看看会写入哪些内容（不动文件）
-  ./setup.sh --print-config
+  ./setup.sh agent print-config
 
   # 只为 Claude Code 写入配置
-  ./setup.sh --write-config --agent=claude
-
-  # 为 opencode 和 Codex 写入配置
-  ./setup.sh --write-config --agent=opencode,codex
+  ./setup.sh agent write-config --agent=claude
 USAGE
 }
 
@@ -523,16 +542,54 @@ TOML
 }
 
 main() {
-  local action="start"
+  local action="setup"
   local agent_filter=""
 
-  while (( $# > 0 )); do
+  if (( $# > 0 )); then
     case "$1" in
+      router)
+        shift
+        (( $# > 0 )) || fail "router 需要子命令：install / start / setup（试试 --help）"
+        case "$1" in
+          install|start|setup) action="router-$1"; shift ;;
+          *) fail "未知 router 子命令：$1（可用：install / start / setup）" ;;
+        esac
+        ;;
+      agent)
+        shift
+        (( $# > 0 )) || fail "agent 需要子命令：print-config / write-config（试试 --help）"
+        case "$1" in
+          print-config) action="print"; shift ;;
+          write-config) action="write"; shift ;;
+          *) fail "未知 agent 子命令：$1（可用：print-config / write-config）" ;;
+        esac
+        ;;
       --print-config)
         action="print"
         shift
         ;;
       --write-config)
+        action="write"
+        shift
+        ;;
+      -h|--help)
+        print_usage
+        exit 0
+        ;;
+      --*) ;;
+      *) fail "未知参数：$1（试试 --help）" ;;
+    esac
+  fi
+
+  while (( $# > 0 )); do
+    case "$1" in
+      --print-config)
+        [[ "$action" == "setup" ]] || fail "--print-config 只能作为兼容旧参数在顶层使用"
+        action="print"
+        shift
+        ;;
+      --write-config)
+        [[ "$action" == "setup" ]] || fail "--write-config 只能作为兼容旧参数在顶层使用"
         action="write"
         shift
         ;;
@@ -559,19 +616,33 @@ main() {
 
   print_banner
 
-  # Default action: download + start only. Never touch agent config.
-  if [[ "$action" == "start" ]]; then
-    download_router
-    start_router
-    ROUTER_STARTED=1
-    info "提示：未对 agent 配置做任何改动。如需写入 mtls-router 配置："
-    info "  $0 --write-config --agent=claude,opencode,codex"
-    info "先看会写什么：$0 --print-config"
-    if [[ "${MTLS_ROUTER_SKIP_START:-}" == "1" ]]; then
-      info "（已跳过实际启动 mtls-router）"
-    fi
-    return 0
-  fi
+  case "$action" in
+    setup|router-setup)
+      download_router
+      start_router
+      ROUTER_STARTED=1
+      info "提示：未对 agent 配置做任何改动。如需写入 mtls-router 配置："
+      info "  $0 agent write-config --agent=claude,opencode,codex"
+      info "先看会写什么：$0 agent print-config"
+      if [[ "${MTLS_ROUTER_SKIP_START:-}" == "1" ]]; then
+        info "（已跳过实际启动 mtls-router）"
+      fi
+      return 0
+      ;;
+    router-install)
+      download_router
+      print_next_steps
+      return 0
+      ;;
+    router-start)
+      start_router
+      if [[ "${MTLS_ROUTER_SKIP_START:-}" != "1" ]]; then
+        ROUTER_STARTED=1
+      fi
+      print_next_steps
+      return 0
+      ;;
+  esac
 
   detect_agents
 

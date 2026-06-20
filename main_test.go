@@ -37,6 +37,21 @@ func TestHandleMetaFlagsIgnoresBackendAndLogFlags(t *testing.T) {
 	}
 }
 
+func TestHandleMetaFlagsRejectsUnexpectedPositionalArgs(t *testing.T) {
+	output := captureStdout(t, func() {
+		handled, err := handleMetaFlags([]string{"print-config"})
+		if err == nil {
+			t.Fatal("expected positional arg to be rejected")
+		}
+		if handled {
+			t.Fatal("unexpected positional arg should not be handled successfully")
+		}
+	})
+	if output != "" {
+		t.Fatalf("unexpected output for positional arg: %q", output)
+	}
+}
+
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 	old := os.Stdout

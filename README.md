@@ -20,7 +20,7 @@ Initial release of the single-binary local reverse proxy for forwarding local HT
 
 ## One-click setup
 
-These scripts download the latest `mtls-router` binary for your operating system and CPU architecture, start `mtls-router` in backend mode, then detect Claude Code, opencode, and Codex so you can choose which agent configs to back up and update. They do not install or launch any agent.
+These scripts download the latest `mtls-router` binary for your operating system and CPU architecture and start `mtls-router` in backend mode. They do not install or launch any agent, and the default setup path does not modify agent configuration.
 
 On macOS or Linux:
 
@@ -119,7 +119,29 @@ When started via the one-click setup script, the log file lives outside the inst
 
 ## Configure agents
 
-The setup script only installs and starts `mtls-router`. It then detects Claude Code, opencode, and Codex in that order. For each detected agent it asks whether to back up the existing config and write the mtls-router provider block.
+The setup scripts separate router lifecycle commands from agent configuration commands:
+
+```bash
+./setup.sh router install
+./setup.sh router start
+./setup.sh router setup
+./setup.sh agent print-config
+./setup.sh agent write-config --agent=claude
+```
+
+```powershell
+.\setup.ps1 router install
+.\setup.ps1 router start
+.\setup.ps1 router setup
+.\setup.ps1 agent print-config
+.\setup.ps1 agent write-config --agent=claude
+```
+
+`router install` only downloads and installs the binary. `router start` only starts an already installed binary and fails with a clear message if it is missing. `router setup` installs and starts the router, matching the no-argument default behavior.
+
+`agent print-config` only prints configuration snippets. `agent write-config --agent=...` only writes agent configuration and requires an explicit `--agent=` value. The legacy top-level `--print-config` and `--write-config --agent=...` options remain compatibility aliases for the agent commands.
+
+The `mtls-router` binary itself manages the router only; it does not provide agent configuration commands such as `print-config`.
 
 - Claude Code writes the `env` block into `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR/settings.json`).
 - opencode writes the `mtls-router` provider into the chosen opencode.json (respecting `OPENCODE_CONFIG` and falling back to `~/.config/opencode/opencode.json`).
