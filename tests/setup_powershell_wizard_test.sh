@@ -47,8 +47,9 @@ assert_contains '--print-config'
 assert_contains '--write-config'
 assert_contains '--agent='
 assert_contains 'Main @args'
-assert_contains 'Download-MtlsRouter'
-assert_contains 'Start-MtlsRouter'
+assert_contains 'function Download-MtlsRouter'
+assert_contains 'function Start-MtlsRouter'
+assert_contains '& $BinaryPath -backend'
 
 # helpful messages
 assert_contains '未对 agent 配置做任何改动'

@@ -62,6 +62,12 @@ function Download-MtlsRouter {
     Write-Success "  已安装 mtls-router：$BinaryPath"
 }
 
+function Start-MtlsRouter {
+    Write-Info '[启动] 启动 mtls-router 后台模式...'
+    & $BinaryPath -backend
+    Write-Success "  mtls-router 已启动，监听地址通常为 $RouterBaseUrl"
+}
+
 function Refresh-Path {
     $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
     $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
