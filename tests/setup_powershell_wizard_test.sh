@@ -38,6 +38,11 @@ assert_contains 'function Configure-Opencode'
 assert_contains 'function Remove-CodexBlock'
 assert_contains 'function Configure-Codex'
 assert_contains 'function Print-NextSteps'
+assert_contains 'function ConvertFrom-JsoncText'
+assert_contains 'function Convert-OpencodeJsoncToJson'
+assert_contains '是否尝试备份该 JSONC，并迁移为标准 JSON opencode.json 后写入 mtls-router provider？[y/N]'
+assert_contains 'JSONC 注释和原格式不会保留'
+assert_contains '已跳过 opencode 写入。可手动创建标准 JSON，或设置 OPENCODE_CONFIG 指向 JSON 文件。'
 
 # new non-interactive flag API
 assert_contains 'function Show-Usage'
