@@ -90,6 +90,27 @@ function Set-ObjectProperty($Object, $Name, $Value) {
     }
 }
 
+function ConvertTo-Hashtable($Value) {
+    if ($Value -is [System.Collections.IDictionary]) {
+        $result = [ordered]@{}
+        foreach ($key in $Value.Keys) { $result[$key] = ConvertTo-Hashtable $Value[$key] }
+        return $result
+    }
+    if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) {
+        return @($Value | ForEach-Object { ConvertTo-Hashtable $_ })
+    }
+    if ($null -ne $Value -and $Value.PSObject.TypeNames -contains 'System.Management.Automation.PSCustomObject') {
+        $result = [ordered]@{}
+        foreach ($property in $Value.PSObject.Properties) { $result[$property.Name] = ConvertTo-Hashtable $property.Value }
+        return $result
+    }
+    return $Value
+}
+
+function Read-JsonObject($Path) {
+    ConvertTo-Hashtable (Get-Content $Path -Raw | ConvertFrom-Json)
+}
+
 function Detect-Agents {
     $script:DetectedAgents = @()
 
@@ -208,7 +229,7 @@ function Configure-Claude($Path, $ApiKey = '{UserApiKey}') {
     $settings = [ordered]@{}
     if (Test-Path $Path) {
         try {
-            $loaded = Get-Content $Path -Raw | ConvertFrom-Json -AsHashtable
+            $loaded = Read-JsonObject $Path
             foreach ($key in $loaded.Keys) {
                 if ($key -ne 'env') { $settings[$key] = $loaded[$key] }
             }
@@ -338,7 +359,7 @@ function Convert-OpencodeJsoncToJson($JsoncPath, $JsonPath) {
 
     try {
         $clean = ConvertFrom-JsoncText (Get-Content $JsoncPath -Raw)
-        $loaded = $clean | ConvertFrom-Json -AsHashtable
+        $loaded = ConvertTo-Hashtable ($clean | ConvertFrom-Json)
     } catch {
         Write-Fail "opencode JSONC 配置文件清洗后不是合法 JSON：$JsoncPath"
     }
@@ -374,7 +395,7 @@ function Configure-Opencode($Path, $ApiKey = '{UserApiKey}') {
     $config = [ordered]@{}
     if (Test-Path $sourcePath) {
         try {
-            $loaded = Get-Content $sourcePath -Raw | ConvertFrom-Json -AsHashtable
+            $loaded = Read-JsonObject $sourcePath
             foreach ($key in $loaded.Keys) { $config[$key] = $loaded[$key] }
         } catch {
             if ($sourcePath -like '*.jsonc') {
