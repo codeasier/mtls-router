@@ -4,6 +4,9 @@ $Repo = 'codeasier/mtls-router'
 $RouterBaseUrl = 'http://127.0.0.1:19099'
 $InstallDir = if ($env:MTLS_ROUTER_INSTALL_DIR) { $env:MTLS_ROUTER_INSTALL_DIR } else { Join-Path $env:USERPROFILE '.local\bin' }
 $BinaryPath = Join-Path $InstallDir 'mtls-router.exe'
+$RouterStateDir = if ($env:MTLS_ROUTER_STATE_DIR) { $env:MTLS_ROUTER_STATE_DIR } else { Join-Path $env:USERPROFILE '.mtls-router' }
+$RouterStatePath = Join-Path $RouterStateDir 'setup-state.json'
+$RouterLogPath = if ($env:MTLS_ROUTER_LOG_PATH) { $env:MTLS_ROUTER_LOG_PATH } else { Join-Path $RouterStateDir 'mtls-router.log' }
 $ConfiguredAgentPaths = @()
 $ConfiguredBackups = @()
 $DetectedAgents = @()
@@ -62,16 +65,105 @@ function Download-MtlsRouter {
     Write-Success "  已安装 mtls-router：$BinaryPath"
 }
 
+function Write-RouterState($PidValue, $LogPath) {
+    New-Item -ItemType Directory -Force -Path $RouterStateDir | Out-Null
+    $tmp = [System.IO.Path]::GetTempFileName()
+    [ordered]@{
+        pid = [int]$PidValue
+        listen_addr = $RouterBaseUrl
+        binary_path = $BinaryPath
+        log_path = $LogPath
+        started_at = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+    } | ConvertTo-Json -Depth 5 | Set-Content -Path $tmp -Encoding UTF8
+    Move-Item -Path $tmp -Destination $RouterStatePath -Force
+}
+
+function Get-RouterState {
+    if (-not (Test-Path $RouterStatePath)) { return $null }
+    try {
+        return Get-Content $RouterStatePath -Raw | ConvertFrom-Json
+    } catch {
+        Write-Fail "router 状态文件不是合法 JSON：$RouterStatePath"
+    }
+}
+
+function Test-RouterProcess($PidValue) {
+    if (-not $PidValue) { return $false }
+    return $null -ne (Get-Process -Id $PidValue -ErrorAction SilentlyContinue)
+}
+
+function Show-RouterStatus {
+    $state = Get-RouterState
+    if (-not $state) {
+        Write-Info "未找到 setup-managed router 状态文件：$RouterStatePath"
+        Write-Info 'router 未运行'
+        return
+    }
+    if (Test-RouterProcess $state.pid) {
+        Write-Success 'router running'
+    } else {
+        Write-Warn 'router 未运行'
+    }
+    Write-Info "pid=$($state.pid)"
+    Write-Info "listen_addr=$($state.listen_addr)"
+    Write-Info "binary_path=$($state.binary_path)"
+    Write-Info "log_path=$($state.log_path)"
+    if ($state.started_at) { Write-Info "started_at=$($state.started_at)" }
+}
+
+function Show-RouterLog($Lines = 200) {
+    if ($Lines -notmatch '^[0-9]+$') { Write-Fail 'router log --tail 需要正整数行数。' }
+    $state = Get-RouterState
+    if (-not $state) { Write-Fail "未找到 setup-managed router 状态文件：$RouterStatePath" }
+    if (-not $state.log_path) { Write-Fail "状态文件中没有 log_path：$RouterStatePath" }
+    if (-not (Test-Path $state.log_path)) { Write-Fail "router 日志文件不存在：$($state.log_path)" }
+    Get-Content -Path $state.log_path -Tail ([int]$Lines)
+}
+
+function Stop-Router {
+    $state = Get-RouterState
+    if (-not $state) {
+        Write-Info "未找到 setup-managed router 状态文件：$RouterStatePath"
+        Write-Info 'router 未运行'
+        return
+    }
+    if (Test-RouterProcess $state.pid) {
+        Stop-Process -Id $state.pid -ErrorAction SilentlyContinue
+        $deadline = (Get-Date).AddSeconds(5)
+        while ((Test-RouterProcess $state.pid) -and ((Get-Date) -lt $deadline)) {
+            Start-Sleep -Milliseconds 200
+        }
+        if (Test-RouterProcess $state.pid) {
+            Write-Warn 'router 未正常退出，强制停止。'
+            Stop-Process -Id $state.pid -Force -ErrorAction SilentlyContinue
+        }
+        Write-Success 'router stopped'
+    } else {
+        Write-Warn 'router 未运行'
+    }
+    Remove-Item -Path $RouterStatePath -Force -ErrorAction SilentlyContinue
+}
+
 function Start-MtlsRouter {
     if ($env:MTLS_ROUTER_SKIP_START -eq '1') {
-        Write-Info '[Start] skipped (MTLS_ROUTER_SKIP_START=1)'
+        Write-Info '[启动] 跳过（MTLS_ROUTER_SKIP_START=1）'
         return
     }
     if (-not (Test-Path $BinaryPath)) {
         Write-Fail "未找到已安装的 mtls-router：$BinaryPath。请先运行 router install 或 router setup。"
     }
     Write-Info '[启动] 启动 mtls-router 后台模式...'
-    & $BinaryPath -backend
+    New-Item -ItemType Directory -Force -Path $RouterStateDir | Out-Null
+    $output = & $BinaryPath -backend -log $RouterLogPath 2>&1
+    $exitCode = $LASTEXITCODE
+    $output | ForEach-Object { Write-Host $_ }
+    if ($exitCode -ne 0) { Write-Fail 'mtls-router 后台启动失败。' }
+    $text = ($output | Out-String)
+    $pidMatch = [regex]::Match($text, '(?m)^mtls-router started in background, pid=([0-9]+), log=(.*)$')
+    if (-not $pidMatch.Success) { Write-Fail '无法从 mtls-router 输出中读取后台 pid。' }
+    $logPath = $pidMatch.Groups[2].Value.Trim()
+    if (-not $logPath) { $logPath = $RouterLogPath }
+    Write-RouterState $pidMatch.Groups[1].Value $logPath
     Write-Success "  mtls-router 已启动，监听地址通常为 $RouterBaseUrl"
 }
 
@@ -557,9 +649,15 @@ function Show-Usage {
   router install
       只下载/安装 mtls-router。
   router start
-      只启动已安装的 mtls-router；不存在时提示先 install 或 setup。
+      只启动已安装的 mtls-router，并记录 setup-managed 状态；不存在时提示先 install 或 setup。
   router setup
       下载/安装并启动 mtls-router。
+  router status
+      显示 setup-managed router 是否仍在运行，以及 pid/listen/binary/log 信息。
+  router log [--tail=N]
+      打印 setup-managed router 日志，默认显示最后 200 行。
+  router stop
+      停止 setup-managed router 进程。
   agent print-config [--agent=claude,opencode,codex]
       把要写入的配置片段打印到 stdout（只输出，不动文件）。默认所有检测到的 agent。
   agent write-config --agent=claude,opencode,codex
@@ -582,6 +680,11 @@ function Show-Usage {
   # 只下载并启动 router，不动 agent 配置
   .\setup.ps1 router setup
 
+  # 管理后台 router
+  .\setup.ps1 router status
+  .\setup.ps1 router log
+  .\setup.ps1 router stop
+
   # 只安装 router
   .\setup.ps1 router install
 
@@ -600,15 +703,20 @@ function Main {
     $action = 'setup'
     $agentFilter = ''
 
+    $routerLogLines = 200
+
     if ($args.Count -gt 0) {
         switch ($args[0]) {
             'router' {
-                if ($args.Count -lt 2) { Write-Fail 'router 需要子命令：install / start / setup（试试 --help）' }
+                if ($args.Count -lt 2) { Write-Fail 'router 需要子命令：install / start / setup / status / log / stop（试试 --help）' }
                 switch ($args[1]) {
                     'install' { $action = 'router-install' }
                     'start' { $action = 'router-start' }
                     'setup' { $action = 'router-setup' }
-                    default { Write-Fail "未知 router 子命令：$($args[1])（可用：install / start / setup）" }
+                    'status' { $action = 'router-status' }
+                    'log' { $action = 'router-log' }
+                    'stop' { $action = 'router-stop' }
+                    default { Write-Fail "未知 router 子命令：$($args[1])（可用：install / start / setup / status / log / stop）" }
                 }
                 $args = @($args | Select-Object -Skip 2)
             }
@@ -651,6 +759,17 @@ function Main {
                 if ($action -ne 'setup') { Write-Fail '--write-config 只能作为兼容旧参数在顶层使用' }
                 $action = 'write'
                 $i++
+                continue
+            }
+            '^--tail=(.+)$' {
+                $routerLogLines = $Matches[1]
+                $i++
+                continue
+            }
+            '^--tail$' {
+                if ($i + 1 -ge $args.Count) { Write-Fail '--tail needs a line count' }
+                $routerLogLines = $args[$i + 1]
+                $i += 2
                 continue
             }
             '^--agent=(.+)$' {
@@ -728,6 +847,9 @@ function Main {
             Print-NextSteps
             return
         }
+        'router-status' { Show-RouterStatus; return }
+        'router-log' { Show-RouterLog $routerLogLines; return }
+        'router-stop' { Stop-Router; return }
     }
 
     Detect-Agents

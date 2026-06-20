@@ -55,7 +55,15 @@ assert_contains '--agent='
 assert_contains 'Main @args'
 assert_contains 'function Download-MtlsRouter'
 assert_contains 'function Start-MtlsRouter'
-assert_contains '& $BinaryPath -backend'
+assert_contains 'function Write-RouterState'
+assert_contains 'function Get-RouterState'
+assert_contains 'function Show-RouterStatus'
+assert_contains 'function Show-RouterLog'
+assert_contains 'function Stop-Router'
+assert_contains '& $BinaryPath -backend -log $RouterLogPath'
+assert_contains 'router status'
+assert_contains 'router log'
+assert_contains 'router stop'
 
 # Codex root-key cleanup regexes must use PowerShell/.NET regex escaping.
 assert_not_contains "^\\\\s*\\\\["
