@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 
 $Repo = 'codeasier/mtls-router'
 $RouterBaseUrl = 'http://127.0.0.1:19099'

@@ -7,6 +7,17 @@ import (
 	"testing"
 )
 
+func TestSetupPowerShellScriptHasUtf8Bom(t *testing.T) {
+	data, err := os.ReadFile("setup.ps1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bom := []byte{0xEF, 0xBB, 0xBF}
+	if !bytes.HasPrefix(data, bom) {
+		t.Fatal("setup.ps1 must include a UTF-8 BOM for Windows PowerShell 5.1")
+	}
+}
+
 func TestHandleMetaFlagsIgnoresConfigFlags(t *testing.T) {
 	output := captureStdout(t, func() {
 		handled, err := handleMetaFlags([]string{"-debug"})
