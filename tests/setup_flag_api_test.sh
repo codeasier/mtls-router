@@ -41,7 +41,13 @@ source "$SOURCED"
 rm -f "$SOURCED"
 # Now override network-touching functions so the test is hermetic.
 download_router() { echo "DOWNLOAD_CALLED"; }
-start_router() { echo "START_CALLED"; }
+start_router() {
+  if [[ "${MTLS_ROUTER_SKIP_START:-}" == "1" ]]; then
+    echo "[启动] 跳过（MTLS_ROUTER_SKIP_START=1）"
+    return 0
+  fi
+  echo "START_CALLED"
+}
 if [[ "${STUB_DETECTED_AGENTS:-}" == "1" ]]; then
   detect_agents() {
     local base="${STUB_CONFIG_DIR:-/tmp}"
@@ -166,6 +172,86 @@ test_unknown_flag_fails() {
   [[ "$rc" -ne 0 ]] || fail "unknown flag should fail (got rc=0)"
 }
 
+# --- 8. namespaced router setup matches default behavior ---------------
+test_router_setup_downloads_and_starts() {
+  local shim out
+  shim="$(build_shim)"
+  out="$(bash "$shim" router setup 2>&1)"
+  rm -f "$shim"
+  assert_contains "DOWNLOAD_CALLED" "$out" "router setup should download"
+  assert_contains "START_CALLED" "$out" "router setup should start"
+  assert_contains "未对 agent 配置做任何改动" "$out" "router setup should not configure agents"
+}
+
+# --- 9. router install downloads only ----------------------------------
+test_router_install_downloads_only() {
+  local shim out
+  shim="$(build_shim)"
+  out="$(bash "$shim" router install 2>&1)"
+  rm -f "$shim"
+  assert_contains "DOWNLOAD_CALLED" "$out" "router install should download"
+  assert_not_contains "START_CALLED" "$out" "router install should not start"
+  assert_contains "未启动 mtls-router" "$out" "router install should say router is not running"
+}
+
+# --- 10. router start starts only --------------------------------------
+test_router_start_starts_only() {
+  local shim out
+  shim="$(build_shim)"
+  out="$(bash "$shim" router start 2>&1)"
+  rm -f "$shim"
+  assert_not_contains "DOWNLOAD_CALLED" "$out" "router start should not download"
+  assert_contains "START_CALLED" "$out" "router start should invoke start path"
+}
+
+# --- 11. router start respects skip-start -------------------------------
+test_router_start_skip_does_not_claim_started() {
+  local shim out
+  shim="$(build_shim)"
+  out="$(MTLS_ROUTER_SKIP_START=1 bash "$shim" router start 2>&1)"
+  rm -f "$shim"
+  assert_contains "[启动] 跳过" "$out" "router start should honor skip-start"
+  assert_contains "未启动 mtls-router" "$out" "router start skip should say router is not running"
+  assert_not_contains "mtls-router 已在后台运行" "$out" "router start skip should not claim started"
+}
+
+# --- 12. agent print-config is read-only --------------------------------
+test_agent_print_config_does_not_download_or_start() {
+  local shim out
+  shim="$(build_shim)"
+  out="$(STUB_DETECTED_AGENTS=1 bash "$shim" agent print-config 2>&1)"
+  rm -f "$shim"
+  assert_contains "### Claude Code -> /tmp/settings.json" "$out" "agent print-config should print config snippets"
+  assert_not_contains "DOWNLOAD_CALLED" "$out" "agent print-config should not download"
+  assert_not_contains "START_CALLED" "$out" "agent print-config should not start"
+}
+
+# --- 12. agent write-config is config-only ------------------------------
+test_agent_write_config_does_not_download_or_start() {
+  local shim tmp out
+  shim="$(build_shim)"
+  tmp="$(mktemp -d)"
+  out="$(STUB_DETECTED_AGENTS=1 STUB_CONFIG_DIR="$tmp" MTLS_ROUTER_OPENAI_API_KEY=sk-test bash "$shim" agent write-config --agent=codex 2>&1)"
+  rm -f "$shim"
+  rm -rf "$tmp"
+  assert_contains "已写入 Codex 配置" "$out" "agent write-config should write config"
+  assert_not_contains "DOWNLOAD_CALLED" "$out" "agent write-config should not download"
+  assert_not_contains "START_CALLED" "$out" "agent write-config should not start"
+}
+
+# --- 13. invalid namespace boundaries fail ------------------------------
+test_invalid_namespaced_commands_fail() {
+  local shim cmd rc
+  for cmd in "print-config" "agent" "router" "router print-config" "agent start"; do
+    shim="$(build_shim)"
+    rc=0
+    # shellcheck disable=SC2086
+    bash "$shim" $cmd >/dev/null 2>&1 || rc=$?
+    rm -f "$shim"
+    [[ "$rc" -ne 0 ]] || fail "$cmd should fail (got rc=0)"
+  done
+}
+
 test_default_invokes_no_agents
 test_help
 test_print_config_does_not_download_or_start
@@ -174,3 +260,10 @@ test_write_config_without_agent_fails
 test_write_config_with_unknown_agent_fails
 test_write_config_with_duplicate_agent_fails
 test_unknown_flag_fails
+test_router_setup_downloads_and_starts
+test_router_install_downloads_only
+test_router_start_starts_only
+test_router_start_skip_does_not_claim_started
+test_agent_print_config_does_not_download_or_start
+test_agent_write_config_does_not_download_or_start
+test_invalid_namespaced_commands_fail

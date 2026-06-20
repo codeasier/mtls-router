@@ -170,7 +170,8 @@ func withAccessLog(next http.Handler, logger *slog.Logger) http.Handler {
 }
 
 func handleMetaFlags(args []string) (bool, error) {
-	for _, arg := range args {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
 		switch arg {
 		case "-version", "--version":
 			fmt.Fprintf(os.Stdout, "mtls-router %s\n", version)
@@ -178,6 +179,12 @@ func handleMetaFlags(args []string) (bool, error) {
 		case "-help", "--help", "-h":
 			printUsage()
 			return true, nil
+		case "-listen", "--listen", "-upstream", "--upstream", "-tls-min", "--tls-min", "-timeout", "--timeout", "-log", "--log":
+			i++
+		default:
+			if len(arg) > 0 && arg[0] != '-' {
+				return false, fmt.Errorf("unexpected argument %q; mtls-router only accepts flags", arg)
+			}
 		}
 	}
 	return false, nil
