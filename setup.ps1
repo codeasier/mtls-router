@@ -247,6 +247,110 @@ function Opencode-ProviderObject($ApiKey = '{UserApiKey}') {
     }
 }
 
+function ConvertFrom-JsoncText($Text) {
+    if ($null -eq $Text) { return $null }
+
+    $builder = [System.Text.StringBuilder]::new()
+    $i = 0
+    $inString = $false
+    $escape = $false
+    while ($i -lt $Text.Length) {
+        $ch = $Text[$i]
+        $next = if ($i + 1 -lt $Text.Length) { $Text[$i + 1] } else { [char]0 }
+        if ($inString) {
+            [void]$builder.Append($ch)
+            if ($escape) { $escape = $false }
+            elseif ($ch -eq '\') { $escape = $true }
+            elseif ($ch -eq '"') { $inString = $false }
+            $i++
+            continue
+        }
+        if ($ch -eq '"') {
+            $inString = $true
+            [void]$builder.Append($ch)
+            $i++
+            continue
+        }
+        if ($ch -eq '/' -and $next -eq '/') {
+            $i += 2
+            while ($i -lt $Text.Length -and $Text[$i] -notin "`r", "`n") { $i++ }
+            continue
+        }
+        if ($ch -eq '/' -and $next -eq '*') {
+            $i += 2
+            while ($i + 1 -lt $Text.Length -and -not ($Text[$i] -eq '*' -and $Text[$i + 1] -eq '/')) { $i++ }
+            $i = [Math]::Min($i + 2, $Text.Length)
+            continue
+        }
+        [void]$builder.Append($ch)
+        $i++
+    }
+
+    $withoutComments = $builder.ToString()
+    $builder = [System.Text.StringBuilder]::new()
+    $i = 0
+    $inString = $false
+    $escape = $false
+    while ($i -lt $withoutComments.Length) {
+        $ch = $withoutComments[$i]
+        if ($inString) {
+            [void]$builder.Append($ch)
+            if ($escape) { $escape = $false }
+            elseif ($ch -eq '\') { $escape = $true }
+            elseif ($ch -eq '"') { $inString = $false }
+            $i++
+            continue
+        }
+        if ($ch -eq '"') {
+            $inString = $true
+            [void]$builder.Append($ch)
+            $i++
+            continue
+        }
+        if ($ch -eq ',') {
+            $j = $i + 1
+            while ($j -lt $withoutComments.Length -and [char]::IsWhiteSpace($withoutComments[$j])) { $j++ }
+            if ($j -lt $withoutComments.Length -and ($withoutComments[$j] -eq '}' -or $withoutComments[$j] -eq ']')) {
+                $i++
+                continue
+            }
+        }
+        [void]$builder.Append($ch)
+        $i++
+    }
+    return $builder.ToString()
+}
+
+function Convert-OpencodeJsoncToJson($JsoncPath, $JsonPath) {
+    if ($JsoncPath -notlike '*.jsonc') {
+        Write-Fail "opencode JSONC 源文件必须是 *.jsonc：$JsoncPath"
+    }
+    if (Test-Path $JsonPath) {
+        Write-Fail "opencode JSON 目标文件已存在，拒绝覆盖：$JsonPath"
+    }
+
+    try {
+        $clean = ConvertFrom-JsoncText (Get-Content $JsoncPath -Raw)
+        $loaded = $clean | ConvertFrom-Json -AsHashtable
+    } catch {
+        Write-Fail "opencode JSONC 配置文件清洗后不是合法 JSON：$JsoncPath"
+    }
+
+    if ($loaded -isnot [System.Collections.IDictionary]) {
+        $actual = if ($null -eq $loaded) { 'null' } else { $loaded.GetType().Name }
+        Write-Fail "opencode JSONC 根节点不是对象（实际为 $actual），无法迁移：$JsoncPath"
+    }
+    if ($loaded.Contains('provider') -and $null -ne $loaded['provider'] -and $loaded['provider'] -isnot [System.Collections.IDictionary]) {
+        Write-Fail "opencode JSONC 现有 .provider 字段不是对象（实际为 $($loaded['provider'].GetType().Name)），无法迁移：$JsoncPath"
+    }
+
+    $backup = Backup-File $JsoncPath
+    $dir = Split-Path -Parent $JsonPath
+    if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+    $loaded | ConvertTo-Json -Depth 30 | Set-Content -Path $JsonPath -Encoding UTF8
+    return ,@($JsonPath, $backup)
+}
+
 function Configure-Opencode($Path, $ApiKey = '{UserApiKey}') {
     if ($Path -like '*.jsonc') {
         Write-Fail "opencode 当前选中的配置文件是 JSONC：$Path（暂不支持就地合并）。请设置 OPENCODE_CONFIG 指向 JSON 文件。"
@@ -626,7 +730,28 @@ base_url = "http://127.0.0.1:19099/v1"
 
         $result = switch ($key) {
             'claude' { Configure-Claude $path $sharedApiKey }
-            'opencode' { Configure-Opencode $path $sharedApiKey }
+            'opencode' {
+                if ($path -like '*.jsonc') {
+                    $jsonPath = Join-Path (Split-Path -Parent $path) 'opencode.json'
+                    if (-not [Console]::IsInputRedirected -and -not (Test-Path $jsonPath)) {
+                        Write-Warn "检测到 opencode 当前配置为 JSONC：$path"
+                        Write-Warn 'setup 暂不支持就地合并 JSONC。'
+                        $answer = Read-Host '是否尝试备份该 JSONC，并迁移为标准 JSON opencode.json 后写入 mtls-router provider？[y/N]'
+                        if ($answer -in @('y', 'Y', 'yes', 'YES')) {
+                            $migration = Convert-OpencodeJsoncToJson $path $jsonPath
+                            $path = $migration[0]
+                            $migrationBackup = if ($migration.Count -gt 1) { $migration[1] } else { $null }
+                            if ($migrationBackup) { $script:ConfiguredBackups += $migrationBackup }
+                            Write-Success "  已从 opencode.jsonc 迁移到 opencode.json：$path"
+                            Write-Warn "  注意：JSONC 注释和原格式不会保留，原文件已备份为 $migrationBackup"
+                        } else {
+                            Write-Warn '  已跳过 opencode 写入。可手动创建标准 JSON，或设置 OPENCODE_CONFIG 指向 JSON 文件。'
+                            continue
+                        }
+                    }
+                }
+                Configure-Opencode $path $sharedApiKey
+            }
             'codex' { Configure-Codex $path $sharedApiKey }
             default { Write-Fail "Unknown agent key: $key" }
         }

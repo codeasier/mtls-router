@@ -403,6 +403,120 @@ opencode_provider_block() {
     }'
 }
 
+
+strip_jsonc() {
+  python3 -c "$(cat <<'PYJSONC'
+import sys
+
+src = sys.stdin.read()
+out = []
+i = 0
+n = len(src)
+in_string = False
+escape = False
+line_comment = False
+block_comment = False
+
+while i < n:
+    ch = src[i]
+    nxt = src[i + 1] if i + 1 < n else ""
+
+    if line_comment:
+        if ch == "\n":
+            line_comment = False
+            out.append(ch)
+        i += 1
+        continue
+
+    if block_comment:
+        if ch == "*" and nxt == "/":
+            block_comment = False
+            i += 2
+        else:
+            i += 1
+        continue
+
+    if in_string:
+        out.append(ch)
+        if escape:
+            escape = False
+        elif ch == "\\":
+            escape = True
+        elif ch == '"':
+            in_string = False
+        i += 1
+        continue
+
+    if ch == '"':
+        in_string = True
+        out.append(ch)
+        i += 1
+        continue
+
+    if ch == "/" and nxt == "/":
+        line_comment = True
+        i += 2
+        continue
+
+    if ch == "/" and nxt == "*":
+        block_comment = True
+        i += 2
+        continue
+
+    if ch == ",":
+        j = i + 1
+        while j < n and src[j] in " \t\r\n":
+            j += 1
+        if j < n and src[j] in "]}":
+            i += 1
+            continue
+
+    out.append(ch)
+    i += 1
+
+sys.stdout.write("".join(out))
+PYJSONC
+)"
+}
+
+migrate_opencode_jsonc_to_json() {
+  local jsonc_path="$1"
+  local json_path="$2"
+
+  [[ "$jsonc_path" == *.jsonc ]] || fail "opencode JSONC 源文件必须是 .jsonc：$jsonc_path"
+  [[ ! -e "$json_path" ]] || fail "opencode JSON 目标文件已存在，拒绝覆盖：$json_path"
+  [[ -f "$jsonc_path" ]] || fail "opencode JSONC 源文件不存在：$jsonc_path"
+
+  mkdir -p "$(dirname "$json_path")"
+
+  local clean_tmp parsed_tmp backup
+  clean_tmp="$(mktemp)"
+  parsed_tmp="$(mktemp)"
+  cleanup_jsonc_migration_tmp() {
+    rm -f "$clean_tmp" "$parsed_tmp"
+  }
+  trap cleanup_jsonc_migration_tmp RETURN
+
+  strip_jsonc <"$jsonc_path" >"$clean_tmp"
+
+  if ! jq -e . "$clean_tmp" >"$parsed_tmp"; then
+    fail "opencode JSONC 清洗后仍不是合法 JSON：$jsonc_path"
+  fi
+  if ! jq -e 'type == "object"' "$parsed_tmp" >/dev/null 2>&1; then
+    fail "opencode JSONC 根节点必须是对象：$jsonc_path"
+  fi
+  if ! jq -e '(.provider == null) or (.provider | type == "object")' "$parsed_tmp" >/dev/null 2>&1; then
+    local ptype
+    ptype="$(jq -r '.provider | type' "$parsed_tmp")"
+    fail "opencode JSONC 的 .provider 字段不是对象（实际为 ${ptype}），无法迁移：$jsonc_path"
+  fi
+
+  backup="$(backup_file "$jsonc_path")"
+  mv "$parsed_tmp" "$json_path"
+  rm -f "$clean_tmp"
+  printf '%s\n%s\n' "$json_path" "$backup"
+}
+
 configure_opencode() {
   local path="$1"
   local api_key="${2-}"
@@ -714,7 +828,37 @@ JSON
     local result
     case "$key" in
       claude) result="$(configure_claude "$path" "$shared_api_key")" ;;
-      opencode) result="$(configure_opencode "$path" "$shared_api_key")" ;;
+      opencode)
+        if [[ "$path" == *.jsonc ]]; then
+          local json_path
+          json_path="$(dirname "$path")/opencode.json"
+          if [[ -t 0 && ! -e "$json_path" ]]; then
+            warn "检测到 opencode 当前配置为 JSONC：$path"
+            warn "setup 暂不支持就地合并 JSONC。"
+            printf '是否尝试备份该 JSONC，并迁移为标准 JSON opencode.json 后写入 mtls-router provider？[y/N] ' >&2
+            local migrate_answer
+            IFS= read -r migrate_answer || true
+            case "$migrate_answer" in
+              y|Y|yes|YES)
+                local migration migration_backup
+                migration="$(migrate_opencode_jsonc_to_json "$path" "$json_path")"
+                path="$(printf '%s\n' "$migration" | sed -n '1p')"
+                migration_backup="$(printf '%s\n' "$migration" | sed -n '2p')"
+                if [[ -n "$migration_backup" ]]; then
+                  CONFIGURED_BACKUPS+="${migration_backup}"$'\n'
+                fi
+                success "  已从 opencode.jsonc 迁移到 opencode.json：$path"
+                warn "  注意：JSONC 注释和原格式不会保留，原文件已备份为 ${migration_backup}"
+                ;;
+              *)
+                warn "  已跳过 opencode 写入。可手动创建标准 JSON，或设置 OPENCODE_CONFIG 指向 JSON 文件。"
+                continue
+                ;;
+            esac
+          fi
+        fi
+        result="$(configure_opencode "$path" "$shared_api_key")"
+        ;;
       codex)
         result="$(configure_codex "$path" "$shared_api_key")"
         ;;
