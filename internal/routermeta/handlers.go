@@ -15,7 +15,7 @@ import (
 
 // InfoProvider supplies extra /version body fields. The default VersionHandler
 // implementation always includes version/commit/build_date/pid/started_at;
-// a non-nil provider may add or override additional keys.
+// a non-nil provider may add or override additional keys and is called for each request.
 type InfoProvider interface {
 	Info() map[string]any
 }
@@ -25,13 +25,20 @@ type InfoProviderFunc func() map[string]any
 
 func (f InfoProviderFunc) Info() map[string]any { return f() }
 
+func writeMethodNotAllowed(w http.ResponseWriter) {
+	w.Header().Set("Allow", http.MethodGet)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusMethodNotAllowed)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": "method not allowed"})
+}
+
 // VersionHandler returns an http.Handler that responds to GET /version with
 // JSON describing the running binary and process.
 func VersionHandler(provider InfoProvider) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			w.Header().Set("Allow", http.MethodGet)
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			writeMethodNotAllowed(w)
 			return
 		}
 		info := version.Info()
@@ -60,13 +67,12 @@ func VersionHandler(provider InfoProvider) http.Handler {
 // logic unambiguous.
 func HealthHandler(probe health.ProbeFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
 		if r.Method != http.MethodGet {
-			w.Header().Set("Allow", http.MethodGet)
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			writeMethodNotAllowed(w)
 			return
 		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
 		err := probe(health.ProbeOptions{Timeout: 5 * time.Second})
 		if err == nil {
 			_ = json.NewEncoder(w).Encode(map[string]string{

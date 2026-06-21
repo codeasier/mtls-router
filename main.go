@@ -98,8 +98,11 @@ func run() error {
 		ErrorLog:  logger,
 	})
 
+	startedAt := time.Now().UTC().Format(time.RFC3339)
 	mux := http.NewServeMux()
-	mux.Handle("/version", routermeta.VersionHandler(nil))
+	mux.Handle("/version", routermeta.VersionHandler(routermeta.InfoProviderFunc(func() map[string]any {
+		return map[string]any{"started_at": startedAt}
+	})))
 	mux.Handle("/health", routermeta.HealthHandler(health.Probe))
 	mux.Handle("/", withAccessLog(proxy.WrapHandler(reverseProxy), logger))
 

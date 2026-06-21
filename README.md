@@ -121,6 +121,8 @@ When started via the one-click setup script, the log file lives outside the inst
 
 `mtls-router` exposes two management endpoints on the same listener as the reverse proxy. They are **not** forwarded to the upstream.
 
+These endpoints assume the router listens on trusted localhost. Do not expose them to the public internet in production, because `/version` includes precise build metadata such as the commit SHA.
+
 ### `GET /version`
 
 Returns JSON describing the running binary and process:

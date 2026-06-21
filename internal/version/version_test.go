@@ -18,6 +18,28 @@ func TestInfoExposesBuildMetadata(t *testing.T) {
 	}
 }
 
+func TestInfoUsesInjectedValues(t *testing.T) {
+	oldVersion, oldCommit, oldBuildDate := Version, Commit, BuildDate
+	t.Cleanup(func() {
+		Version, Commit, BuildDate = oldVersion, oldCommit, oldBuildDate
+	})
+
+	Version = "vTEST"
+	Commit = "abc123test"
+	BuildDate = "2026-06-21T00:00:00Z"
+
+	info := Info()
+	if info.Version != Version {
+		t.Fatalf("Info().Version = %q, want %q", info.Version, Version)
+	}
+	if info.Commit != Commit {
+		t.Fatalf("Info().Commit = %q, want %q", info.Commit, Commit)
+	}
+	if info.BuildDate != BuildDate {
+		t.Fatalf("Info().BuildDate = %q, want %q", info.BuildDate, BuildDate)
+	}
+}
+
 func TestInfoJSONRoundTrips(t *testing.T) {
 	b, err := InfoJSON()
 	if err != nil {
