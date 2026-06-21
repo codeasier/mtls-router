@@ -3,7 +3,8 @@
 $Repo = 'codeasier/mtls-router'
 $RouterBaseUrl = 'http://127.0.0.1:19099'
 $InstallDir = if ($env:MTLS_ROUTER_INSTALL_DIR) { $env:MTLS_ROUTER_INSTALL_DIR } else { Join-Path $env:USERPROFILE '.local\bin' }
-$DownloadBaseUrl = $env:MTLS_ROUTER_DOWNLOAD_URL
+$DefaultDownloadBaseUrl = ''
+$DownloadBaseUrl = if ($env:MTLS_ROUTER_DOWNLOAD_URL) { $env:MTLS_ROUTER_DOWNLOAD_URL } else { $DefaultDownloadBaseUrl }
 $DownloadUser = $env:MTLS_ROUTER_DOWNLOAD_USER
 $DownloadPassword = $env:MTLS_ROUTER_DOWNLOAD_PASSWORD
 $BinaryPath = Join-Path $InstallDir 'mtls-router.exe'
