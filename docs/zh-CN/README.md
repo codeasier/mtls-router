@@ -34,7 +34,7 @@ Windows PowerShell：
 irm https://raw.githubusercontent.com/codeasier/mtls-router/main/setup.ps1 | iex
 ```
 
-默认情况下，脚本会把 `mtls-router` 安装到 `~/.local/bin`。如需指定其他安装目录，请在运行脚本前设置 `MTLS_ROUTER_INSTALL_DIR`。
+默认情况下，脚本会把 `mtls-router` 安装到 `~/.local/bin`。在 Windows 上对应 `%USERPROFILE%\.local\bin`（例如 `C:\Users\<你>\.local\bin`）。如需指定其他安装目录，请在运行脚本前设置 `MTLS_ROUTER_INSTALL_DIR`。
 
 ## 手动下载
 
@@ -114,8 +114,10 @@ Windows PowerShell：
 
 通过一键安装脚本启动时，日志文件不会放在安装目录下：
 
-- macOS / Linux：`~/.mtls-router/mtls-router-<start-timestamp>.log`
-- Windows：`%LOCALAPPDATA%\mtls-router\mtls-router-<start-timestamp>.log`
+- macOS / Linux：`~/.mtls-router/mtls-router.log`
+- Windows：`%USERPROFILE%\.mtls-router\mtls-router.log`
+
+启动后，路径会写入 `setup-state.json`；也可用 `MTLS_ROUTER_LOG_PATH` 覆盖默认路径。
 
 ## 配置 agents
 
@@ -145,7 +147,7 @@ Windows PowerShell：
 
 - Claude Code 会把 `env` block 写入 `~/.claude/settings.json`，或 `$CLAUDE_CONFIG_DIR/settings.json`。
 - opencode 会把 `mtls-router` provider 写入选中的 opencode.json，遵循 `OPENCODE_CONFIG`，否则回退到 `~/.config/opencode/opencode.json`。
-- Codex CLI 会把 `[model_providers.mtls-router]` block 和 router profiles 写入 `~/.codex/config.toml`，遵循 `CODEX_HOME`。
+- Codex CLI 会把 `[model_providers.custom]` block（带 `model_provider = "custom"` 和 `name = "9router"`）写入 `~/.codex/config.toml`，遵循 `CODEX_HOME`。
 
 安装脚本不会安装任何 agent，也不会启动任何 agent。
 
