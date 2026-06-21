@@ -117,6 +117,42 @@ When started via the one-click setup script, the log file lives outside the inst
 - macOS / Linux: `~/.mtls-router/mtls-router-<start-timestamp>.log`
 - Windows: `%LOCALAPPDATA%\mtls-router\mtls-router-<start-timestamp>.log`
 
+## Management endpoints
+
+`mtls-router` exposes two management endpoints on the same listener as the reverse proxy. They are **not** forwarded to the upstream.
+
+These endpoints assume the router listens on trusted localhost. Do not expose them to the public internet in production, because `/version` includes precise build metadata such as the commit SHA.
+
+### `GET /version`
+
+Returns JSON describing the running binary and process:
+
+```json
+{
+  "version": "v0.1.1",
+  "commit": "abc1234",
+  "build_date": "2026-06-21T09:23:24Z",
+  "pid": 12345,
+  "started_at": "2026-06-21T09:23:24Z"
+}
+```
+
+`version`, `commit`, and `build_date` are set at link time via `-ldflags -X` in `.github/workflows/release.yml`, `Dockerfile`, and `scripts/build.sh`. Local builds default to `dev` / `unknown`. `started_at` is the time the current process started.
+
+### `GET /health`
+
+Returns 200 with JSON describing upstream mTLS+TCP reachability. The HTTP status is always 200; the body distinguishes `ok` from `degraded`:
+
+```json
+{"status": "ok", "upstream": "reachable"}
+```
+
+```json
+{"status": "degraded", "upstream": "unreachable", "error": "..."}
+```
+
+The setup script uses `/version` and `/health` to detect when a previously-installed router is already running on port 19099 and decide whether to upgrade, restart, or leave it alone.
+
 ## Configure agents
 
 The setup scripts separate router lifecycle commands from agent configuration commands:

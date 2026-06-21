@@ -19,6 +19,8 @@ import (
 	"github.com/codeasier/mtls-router/internal/health"
 	mlog "github.com/codeasier/mtls-router/internal/log"
 	"github.com/codeasier/mtls-router/internal/proxy"
+	"github.com/codeasier/mtls-router/internal/routermeta"
+	"github.com/codeasier/mtls-router/internal/version"
 )
 
 var (
@@ -26,7 +28,6 @@ var (
 	clientKeyPEM  string
 	upstreamCAPEM string
 	upstreamURL   string
-	version       = "dev"
 )
 
 func main() {
@@ -96,11 +97,18 @@ func run() error {
 		Transport: transport,
 		ErrorLog:  logger,
 	})
-	handler := withAccessLog(proxy.WrapHandler(reverseProxy), logger)
+
+	startedAt := time.Now().UTC().Format(time.RFC3339)
+	mux := http.NewServeMux()
+	mux.Handle("/version", routermeta.VersionHandler(routermeta.InfoProviderFunc(func() map[string]any {
+		return map[string]any{"started_at": startedAt}
+	})))
+	mux.Handle("/health", routermeta.HealthHandler(health.Probe))
+	mux.Handle("/", withAccessLog(proxy.WrapHandler(reverseProxy), logger))
 
 	server := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           handler,
+		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -174,7 +182,7 @@ func handleMetaFlags(args []string) (bool, error) {
 		arg := args[i]
 		switch arg {
 		case "-version", "--version":
-			fmt.Fprintf(os.Stdout, "mtls-router %s\n", version)
+			fmt.Fprintf(os.Stdout, "mtls-router %s\n", version.Version)
 			return true, nil
 		case "-help", "--help", "-h":
 			printUsage()
@@ -191,7 +199,7 @@ func handleMetaFlags(args []string) (bool, error) {
 }
 
 func printUsage() {
-	fmt.Fprintf(os.Stdout, "mtls-router %s\n\n", version)
+	fmt.Fprintf(os.Stdout, "mtls-router %s\n\n", version.Version)
 	fmt.Fprintln(os.Stdout, "Usage: mtls-router [flags]")
 	fmt.Fprintln(os.Stdout, "Flags:")
 	fmt.Fprintln(os.Stdout, "  -listen string    listen address (default 127.0.0.1:19099)")

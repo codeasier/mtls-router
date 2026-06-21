@@ -19,7 +19,12 @@ type ProbeOptions struct {
 	Timeout     time.Duration
 }
 
-func Probe(opts ProbeOptions) error {
+// ProbeFunc is the signature used by /health. The production code uses Probe;
+// tests pass a stub.
+type ProbeFunc func(ProbeOptions) error
+
+// Probe is the default ProbeFunc that does a real mTLS+TCP dial.
+var Probe ProbeFunc = func(opts ProbeOptions) error {
 	if _, err := url.ParseRequestURI(opts.UpstreamURL); err != nil {
 		return fmt.Errorf("invalid probe URL: %w", err)
 	}

@@ -3,8 +3,13 @@ package main
 import (
 	"bytes"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
+
+	"github.com/codeasier/mtls-router/internal/health"
+	"github.com/codeasier/mtls-router/internal/routermeta"
 )
 
 func TestSetupPowerShellScriptHasUtf8Bom(t *testing.T) {
@@ -60,6 +65,35 @@ func TestHandleMetaFlagsRejectsUnexpectedPositionalArgs(t *testing.T) {
 	})
 	if output != "" {
 		t.Fatalf("unexpected output for positional arg: %q", output)
+	}
+}
+
+func TestManagementRoutesTakePrecedenceOverProxyRoute(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.Handle("/version", routermeta.VersionHandler(routermeta.InfoProviderFunc(func() map[string]any {
+		return map[string]any{"route": "version"}
+	})))
+	mux.Handle("/health", routermeta.HealthHandler(health.ProbeFunc(func(health.ProbeOptions) error { return nil })))
+	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("proxy"))
+	}))
+
+	tests := []struct {
+		path string
+		want string
+	}{
+		{path: "/version", want: "version"},
+		{path: "/health", want: "ok"},
+		{path: "/anything-else", want: "proxy"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tt.path, nil))
+			if !bytes.Contains(rec.Body.Bytes(), []byte(tt.want)) {
+				t.Fatalf("body = %q, want to contain %q", rec.Body.String(), tt.want)
+			}
+		})
 	}
 }
 
