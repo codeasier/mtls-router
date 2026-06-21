@@ -34,7 +34,7 @@ On Windows PowerShell:
 irm https://raw.githubusercontent.com/codeasier/mtls-router/main/setup.ps1 | iex
 ```
 
-The scripts install `mtls-router` under `~/.local/bin` by default. To choose another install directory, set `MTLS_ROUTER_INSTALL_DIR` before running the script.
+The scripts install `mtls-router` under `~/.local/bin` by default. On Windows this resolves to `%USERPROFILE%\.local\bin` (for example `C:\Users\<you>\.local\bin`). To choose another install directory, set `MTLS_ROUTER_INSTALL_DIR` before running the script.
 
 ## Manual download
 
@@ -114,8 +114,10 @@ This mode is convenient for local background use. For production supervision, pr
 
 When started via the one-click setup script, the log file lives outside the install directory:
 
-- macOS / Linux: `~/.mtls-router/mtls-router-<start-timestamp>.log`
-- Windows: `%LOCALAPPDATA%\mtls-router\mtls-router-<start-timestamp>.log`
+- macOS / Linux: `~/.mtls-router/mtls-router.log`
+- Windows: `%USERPROFILE%\.mtls-router\mtls-router.log`
+
+The exact path is recorded in `setup-state.json` after each start and can be overridden with `MTLS_ROUTER_LOG_PATH`.
 
 ## Management endpoints
 
@@ -181,7 +183,7 @@ The `mtls-router` binary itself manages the router only; it does not provide age
 
 - Claude Code writes the `env` block into `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR/settings.json`).
 - opencode writes the `mtls-router` provider into the chosen opencode.json (respecting `OPENCODE_CONFIG` and falling back to `~/.config/opencode/opencode.json`).
-- Codex CLI writes the `[model_providers.mtls-router]` block and router profiles into `~/.codex/config.toml` (respecting `CODEX_HOME`).
+- Codex CLI writes the `[model_providers.custom]` block (with `model_provider = "custom"` and `name = "9router"`) into `~/.codex/config.toml` (respecting `CODEX_HOME`).
 
 The setup scripts do not install any agent and do not launch any agent.
 
