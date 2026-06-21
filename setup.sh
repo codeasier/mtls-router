@@ -5,6 +5,9 @@ REPO="codeasier/mtls-router"
 ROUTER_BASE_URL="http://127.0.0.1:19099"
 ANTHROPIC_BASE_URL_VALUE="$ROUTER_BASE_URL"
 INSTALL_DIR="${MTLS_ROUTER_INSTALL_DIR:-$HOME/.local/bin}"
+DOWNLOAD_BASE_URL="${MTLS_ROUTER_DOWNLOAD_URL:-}"
+DOWNLOAD_USER="${MTLS_ROUTER_DOWNLOAD_USER:-}"
+DOWNLOAD_PASSWORD="${MTLS_ROUTER_DOWNLOAD_PASSWORD:-}"
 BINARY_NAME="mtls-router"
 BINARY_PATH="$INSTALL_DIR/$BINARY_NAME"
 ROUTER_STATE_DIR="${MTLS_ROUTER_STATE_DIR:-$HOME/.mtls-router}"
@@ -37,9 +40,17 @@ download_to() {
   local output="$2"
 
   if [[ "$DOWNLOADER" == "curl" ]]; then
-    curl -fL --retry 3 --connect-timeout 15 -o "$output" "$url"
+    if [[ -n "$DOWNLOAD_USER" || -n "$DOWNLOAD_PASSWORD" ]]; then
+      curl -fL --retry 3 --connect-timeout 15 -u "${DOWNLOAD_USER}:${DOWNLOAD_PASSWORD}" -o "$output" "$url"
+    else
+      curl -fL --retry 3 --connect-timeout 15 -o "$output" "$url"
+    fi
   else
-    wget -O "$output" "$url"
+    if [[ -n "$DOWNLOAD_USER" || -n "$DOWNLOAD_PASSWORD" ]]; then
+      wget --user="$DOWNLOAD_USER" --password="$DOWNLOAD_PASSWORD" -O "$output" "$url"
+    else
+      wget -O "$output" "$url"
+    fi
   fi
 }
 
@@ -67,6 +78,22 @@ latest_version() {
   fi
 
   printf '%s\n' "$headers" | sed -n 's|^[Ll]ocation:[[:space:]]*.*/releases/tag/\([^[:space:]\r]*\).*|\1|p' | tail -n 1
+}
+
+download_url() {
+  local version="$1"
+  local asset="$2"
+
+  if [[ -n "$DOWNLOAD_BASE_URL" ]]; then
+    if [[ "$DOWNLOAD_BASE_URL" == */"$asset" ]]; then
+      printf '%s\n' "$DOWNLOAD_BASE_URL"
+    else
+      printf '%s/%s\n' "${DOWNLOAD_BASE_URL%/}" "$asset"
+    fi
+    return
+  fi
+
+  printf 'https://github.com/%s/releases/download/%s/%s\n' "$REPO" "$version" "$asset"
 }
 
 detect_asset() {
@@ -97,12 +124,17 @@ download_router() {
   detect_asset
 
   local version
-  version="$(latest_version)"
-  [[ -n "$version" ]] || fail "无法获取 GitHub 最新 release 版本。"
+  if [[ -n "$DOWNLOAD_BASE_URL" ]]; then
+    version="${MTLS_ROUTER_VERSION:-latest}"
+  else
+    version="$(latest_version)"
+    [[ -n "$version" ]] || fail "无法获取 GitHub 最新 release 版本。"
+  fi
 
   mkdir -p "$INSTALL_DIR"
 
-  local url="https://github.com/$REPO/releases/download/$version/$ASSET"
+  local url
+  url="$(download_url "$version" "$ASSET")"
   local tmp
   tmp="$(mktemp)"
   trap "rm -f '$tmp'" EXIT
@@ -337,6 +369,15 @@ print_usage() {
 选项:
   --agent=LIST
       逗号分隔的 agent key：claude / opencode / codex。
+  --download-url=URL
+      自定义 mtls-router 下载地址。可指向包含二进制的目录，也可指向当前平台完整二进制 URL。
+      也可用 MTLS_ROUTER_DOWNLOAD_URL 设置。
+  --download-user=USER
+      下载自定义 URL 时使用的 HTTP Basic Auth 用户名；也可用 MTLS_ROUTER_DOWNLOAD_USER 设置。
+  --download-password=PASSWORD
+      下载自定义 URL 时使用的 HTTP Basic Auth 密码；也可用 MTLS_ROUTER_DOWNLOAD_PASSWORD 设置。
+  --version=VERSION
+      自定义下载目录下的版本子目录名；默认 latest。也可用 MTLS_ROUTER_VERSION 设置。
   -h, --help
       显示本帮助。
 
@@ -851,6 +892,50 @@ main() {
           fail "--agent 需要一个参数（逗号分隔的列表）"
         fi
         agent_filter="$2"
+        shift 2
+        ;;
+      --download-url=*)
+        DOWNLOAD_BASE_URL="${1#--download-url=}"
+        shift
+        ;;
+      --download-url)
+        if (( $# < 2 )); then
+          fail "--download-url 需要一个 URL"
+        fi
+        DOWNLOAD_BASE_URL="$2"
+        shift 2
+        ;;
+      --download-user=*)
+        DOWNLOAD_USER="${1#--download-user=}"
+        shift
+        ;;
+      --download-user)
+        if (( $# < 2 )); then
+          fail "--download-user 需要一个用户名"
+        fi
+        DOWNLOAD_USER="$2"
+        shift 2
+        ;;
+      --download-password=*)
+        DOWNLOAD_PASSWORD="${1#--download-password=}"
+        shift
+        ;;
+      --download-password)
+        if (( $# < 2 )); then
+          fail "--download-password 需要一个密码"
+        fi
+        DOWNLOAD_PASSWORD="$2"
+        shift 2
+        ;;
+      --version=*)
+        MTLS_ROUTER_VERSION="${1#--version=}"
+        shift
+        ;;
+      --version)
+        if (( $# < 2 )); then
+          fail "--version 需要一个版本"
+        fi
+        MTLS_ROUTER_VERSION="$2"
         shift 2
         ;;
       -h|--help)

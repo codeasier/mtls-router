@@ -3,6 +3,9 @@
 $Repo = 'codeasier/mtls-router'
 $RouterBaseUrl = 'http://127.0.0.1:19099'
 $InstallDir = if ($env:MTLS_ROUTER_INSTALL_DIR) { $env:MTLS_ROUTER_INSTALL_DIR } else { Join-Path $env:USERPROFILE '.local\bin' }
+$DownloadBaseUrl = $env:MTLS_ROUTER_DOWNLOAD_URL
+$DownloadUser = $env:MTLS_ROUTER_DOWNLOAD_USER
+$DownloadPassword = $env:MTLS_ROUTER_DOWNLOAD_PASSWORD
 $BinaryPath = Join-Path $InstallDir 'mtls-router.exe'
 $RouterStateDir = if ($env:MTLS_ROUTER_STATE_DIR) { $env:MTLS_ROUTER_STATE_DIR } else { Join-Path $env:USERPROFILE '.mtls-router' }
 $RouterStatePath = Join-Path $RouterStateDir 'setup-state.json'
@@ -36,28 +39,53 @@ function Get-RouterAssetName {
     "mtls-router-windows-$arch.exe"
 }
 
+function Get-DownloadUrl($Version, $Asset) {
+    if ($DownloadBaseUrl) {
+        if ($DownloadBaseUrl.EndsWith("/$Asset")) {
+            return $DownloadBaseUrl
+        }
+        return (($DownloadBaseUrl.TrimEnd('/')) + "/$Asset")
+    }
+
+    return "https://github.com/$Repo/releases/download/$Version/$Asset"
+}
+
+function Invoke-Download($Url, $OutFile) {
+    $headers = @{ 'User-Agent' = 'mtls-router-setup' }
+    $parameters = @{ Uri = $Url; OutFile = $OutFile; Headers = $headers }
+    if ($DownloadUser -or $DownloadPassword) {
+        $securePassword = ConvertTo-SecureString -String ([string]$DownloadPassword) -AsPlainText -Force
+        $parameters['Credential'] = [PSCredential]::new([string]$DownloadUser, $securePassword)
+    }
+    Invoke-WebRequest @parameters
+}
+
 function Download-MtlsRouter {
     Write-Info '[下载] 检测并下载最新 mtls-router...'
     $asset = Get-RouterAssetName
 
-    try {
-        $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -Headers @{ 'User-Agent' = 'mtls-router-setup' }
-    } catch {
-        Write-Fail "无法获取 GitHub 最新 release：$($_.Exception.Message)"
+    if ($DownloadBaseUrl) {
+        $version = if ($env:MTLS_ROUTER_VERSION) { $env:MTLS_ROUTER_VERSION } else { 'latest' }
+    } else {
+        try {
+            $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -Headers @{ 'User-Agent' = 'mtls-router-setup' }
+        } catch {
+            Write-Fail "无法获取 GitHub 最新 release：$($_.Exception.Message)"
+        }
+
+        $version = $release.tag_name
+        if (-not $version) { Write-Fail '无法读取最新 release 版本。' }
     }
 
-    $version = $release.tag_name
-    if (-not $version) { Write-Fail '无法读取最新 release 版本。' }
-
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-    $url = "https://github.com/$Repo/releases/download/$version/$asset"
+    $url = Get-DownloadUrl $version $asset
 
     Write-Info "  版本：$version"
     Write-Info "  平台：$asset"
     Write-Info "  安装：$BinaryPath"
 
     try {
-        Invoke-WebRequest -Uri $url -OutFile $BinaryPath -Headers @{ 'User-Agent' = 'mtls-router-setup' }
+        Invoke-Download $url $BinaryPath
     } catch {
         Write-Fail "下载 mtls-router 失败：$($_.Exception.Message)"
     }
@@ -673,6 +701,15 @@ function Show-Usage {
 选项:
   --agent=LIST
       逗号分隔的 agent key：claude / opencode / codex。
+  --download-url=URL
+      自定义 mtls-router 下载地址。可指向包含二进制的目录，也可指向当前平台完整二进制 URL。
+      也可用 MTLS_ROUTER_DOWNLOAD_URL 设置。
+  --download-user=USER
+      下载自定义 URL 时使用的 HTTP Basic Auth 用户名；也可用 MTLS_ROUTER_DOWNLOAD_USER 设置。
+  --download-password=PASSWORD
+      下载自定义 URL 时使用的 HTTP Basic Auth 密码；也可用 MTLS_ROUTER_DOWNLOAD_PASSWORD 设置。
+  --version=VERSION
+      自定义下载目录下的版本子目录名；默认 latest。也可用 MTLS_ROUTER_VERSION 设置。
   -h, --help
       显示本帮助。
 
@@ -780,6 +817,50 @@ function Main {
             '^--agent$' {
                 if ($i + 1 -ge $args.Count) { Write-Fail '--agent needs a value (comma-separated list)' }
                 $agentFilter = $args[$i + 1]
+                $i += 2
+                continue
+            }
+            '^--download-url=(.+)$' {
+                $script:DownloadBaseUrl = $Matches[1]
+                $i++
+                continue
+            }
+            '^--download-url$' {
+                if ($i + 1 -ge $args.Count) { Write-Fail '--download-url needs a URL' }
+                $script:DownloadBaseUrl = $args[$i + 1]
+                $i += 2
+                continue
+            }
+            '^--download-user=(.*)$' {
+                $script:DownloadUser = $Matches[1]
+                $i++
+                continue
+            }
+            '^--download-user$' {
+                if ($i + 1 -ge $args.Count) { Write-Fail '--download-user needs a username' }
+                $script:DownloadUser = $args[$i + 1]
+                $i += 2
+                continue
+            }
+            '^--download-password=(.*)$' {
+                $script:DownloadPassword = $Matches[1]
+                $i++
+                continue
+            }
+            '^--download-password$' {
+                if ($i + 1 -ge $args.Count) { Write-Fail '--download-password needs a password' }
+                $script:DownloadPassword = $args[$i + 1]
+                $i += 2
+                continue
+            }
+            '^--version=(.+)$' {
+                $env:MTLS_ROUTER_VERSION = $Matches[1]
+                $i++
+                continue
+            }
+            '^--version$' {
+                if ($i + 1 -ge $args.Count) { Write-Fail '--version needs a value' }
+                $env:MTLS_ROUTER_VERSION = $args[$i + 1]
                 $i += 2
                 continue
             }
