@@ -2,6 +2,45 @@
 
 [English](../CHANGELOG.md)
 
+## v0.1.2 - 2026-06-21
+
+### 新增
+
+- 新增拆分后的安装入口命令，分别用于 router 安装和 agent 配置。
+- 新增已有 opencode JSONC 配置的交互式迁移流程。
+- 新增安装流程中的 router 生命周期管理命令，支持启动、停止、重启和状态类操作。
+- 新增全构建产物统一注入的构建元信息：
+  - version
+  - commit
+  - build date
+- 新增内部构建信息端点：`/internal/version`。
+- 新增 router listener 管理端点：
+  - `/version`
+  - `/health`
+
+### 变更
+
+- 调整 Codex CLI 安装配置，改为使用最小化 custom provider 配置。
+- 更新 opencode 安装配置，使用 `/v1` base URL，并适配 JSONC 配置格式。
+- 调整 Claude 和 opencode 目标的模型 ID，去掉 `cx/` 前缀。
+- 更新 README，使其与当前安装脚本默认行为一致，并补充管理端点说明。
+
+### 修复
+
+- 修复安装流程在仅写入配置时意外启动 router 的问题。
+- 修复默认日志位置，避免将 setup 日志写入安装目录。
+- 修复 Windows 下 router 启动行为。
+- 修复 Windows PowerShell 脚本编码和 JSON 解析行为。
+- 修复 Windows 下 Codex CLI 配置匹配和认证文件生成问题，包括无 BOM 的 `auth.json` 输出。
+- 加强安装脚本中 router 生命周期命令的稳定性。
+
+### 测试
+
+- 更新非交互式安装参数流程的 shell 测试。
+- 扩展 PowerShell JSON 处理和生命周期相关行为的安装脚本测试覆盖。
+
+---
+
 ## v0.1.1 - 2026-06-19
 
 ### 新增

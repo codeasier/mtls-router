@@ -2,6 +2,45 @@
 
 [中文](zh-CN/CHANGELOG.md)
 
+## v0.1.2 - 2026-06-21
+
+### Added
+
+- Added split setup entry points for router and agent configuration commands.
+- Added interactive migration for existing opencode JSONC configuration.
+- Added router lifecycle commands to the setup flow for start, stop, restart, and status-style management.
+- Added build metadata embedding across all build targets:
+  - version
+  - commit
+  - build date
+- Added internal build metadata endpoint at `/internal/version`.
+- Added router listener management endpoints:
+  - `/version`
+  - `/health`
+
+### Changed
+
+- Updated Codex CLI setup to use minimal custom provider configuration.
+- Updated opencode setup to use the `/v1` base URL and JSONC-based configuration handling.
+- Updated model IDs to drop the `cx/` prefix for Claude and opencode targets.
+- Updated README to match current setup script defaults and document the management endpoints.
+
+### Fixed
+
+- Fixed setup so config-writing steps do not unexpectedly start the router.
+- Fixed setup logging so logs stay out of the install directory by default.
+- Fixed Windows router startup behavior.
+- Fixed Windows PowerShell script encoding and JSON parsing behavior.
+- Fixed Windows Codex CLI config matching and auth file generation, including BOM-free `auth.json` output.
+- Hardened router lifecycle command behavior in setup scripts.
+
+### Tests
+
+- Updated shell tests for the non-interactive setup flag flow.
+- Extended setup coverage for PowerShell JSON handling and lifecycle-related behavior.
+
+---
+
 ## v0.1.1 - 2026-06-19
 
 ### Added
