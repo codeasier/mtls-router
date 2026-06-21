@@ -36,6 +36,8 @@ irm https://raw.githubusercontent.com/codeasier/mtls-router/main/setup.ps1 | iex
 
 The scripts install `mtls-router` under `~/.local/bin` by default. On Windows this resolves to `%USERPROFILE%\.local\bin` (for example `C:\Users\<you>\.local\bin`). To choose another install directory, set `MTLS_ROUTER_INSTALL_DIR` before running the script.
 
+Release-packaged `setup.sh` and `setup.ps1` may include a preconfigured default download URL for a private download host. That only sets the binary download location. If the download host requires HTTP Basic Auth, you must still provide credentials explicitly with `--download-user` / `--download-password` or `MTLS_ROUTER_DOWNLOAD_USER` / `MTLS_ROUTER_DOWNLOAD_PASSWORD`; the scripts do not embed download credentials.
+
 ## Manual download
 
 Download the binary for your platform from GitHub Releases:

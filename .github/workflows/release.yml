@@ -89,9 +89,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Stage installers
+        env:
+          DOWNLOAD_BASE_URL: http://ssh.codeasier.top:8080/${{ github.event.repository.name }}/${{ github.ref_name }}
         run: |
           mkdir -p dist-installers
           cp setup.sh setup.ps1 dist-installers/
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+
+          url = os.environ['DOWNLOAD_BASE_URL']
+          sh = Path('dist-installers/setup.sh')
+          ps1 = Path('dist-installers/setup.ps1')
+          sh.write_text(sh.read_text().replace('DEFAULT_DOWNLOAD_BASE_URL=""', f'DEFAULT_DOWNLOAD_BASE_URL="{url}"'))
+          ps1.write_text(ps1.read_text().replace("$DefaultDownloadBaseUrl = ''", f"$DefaultDownloadBaseUrl = '{url}'"))
+          PY
       - name: Ensure remote installer directory
         uses: appleboy/ssh-action@v1.2.2
         with:
