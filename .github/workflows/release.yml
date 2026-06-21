@@ -90,7 +90,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Stage installers
         env:
-          DOWNLOAD_BASE_URL: http://ssh.codeasier.top:8080/${{ github.event.repository.name }}/${{ github.ref_name }}
+          DOWNLOAD_BASE_URL: http://47.98.254.212:8080/${{ github.event.repository.name }}/${{ github.ref_name }}
         run: |
           mkdir -p dist-installers
           cp setup.sh setup.ps1 dist-installers/
