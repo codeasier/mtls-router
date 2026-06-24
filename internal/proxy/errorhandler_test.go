@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,7 +15,11 @@ func TestNewErrorHandler(t *testing.T) {
 	for _, tc := range []struct {
 		err  error
 		want int
-	}{{context.DeadlineExceeded, http.StatusGatewayTimeout}, {errors.New("x509 private key secret upstream.internal"), http.StatusBadGateway}} {
+	}{
+		{context.DeadlineExceeded, http.StatusGatewayTimeout},
+		{clientBodyReadError{err: io.ErrUnexpectedEOF}, http.StatusBadRequest},
+		{errors.New("x509 private key secret upstream.internal"), http.StatusBadGateway},
+	} {
 		rr := httptest.NewRecorder()
 		NewErrorHandler()(rr, r, tc.err)
 		if rr.Code != tc.want {
