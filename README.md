@@ -244,12 +244,12 @@ The local listener is plain HTTP on `127.0.0.1:19099` by default. The upstream c
 
 ## Streaming and SSE
 
-Request body sniffing detects JSON requests containing `"stream": true` without consuming or corrupting the body. Downstream readers still receive the original bytes.
-
-SSE responses preserve streaming behavior and use SSE-safe headers, including:
+Request bodies stream straight through to the upstream — the router does not buffer them. Responses that look like Server-Sent Events get SSE-safe headers, including:
 
 - `Content-Type: text/event-stream`
 - `Cache-Control: no-cache`
+
+The reverse proxy is configured with `FlushInterval: -1`, so upstream bytes are flushed to the local client immediately.
 
 ## Build from source
 
