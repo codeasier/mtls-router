@@ -12,13 +12,20 @@ import (
 func NewErrorHandler() func(http.ResponseWriter, *http.Request, error) {
 	return func(w http.ResponseWriter, r *http.Request, err error) {
 		status := http.StatusBadGateway
-		if isTimeout(err) {
+		if isClientBodyReadError(err) {
+			status = http.StatusBadRequest
+		} else if isTimeout(err) {
 			status = http.StatusGatewayTimeout
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": http.StatusText(status)})
 	}
+}
+
+func isClientBodyReadError(err error) bool {
+	var bodyErr clientBodyReadError
+	return errors.As(err, &bodyErr)
 }
 
 func isTimeout(err error) bool {
