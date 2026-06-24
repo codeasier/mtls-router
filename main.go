@@ -104,7 +104,7 @@ func run() error {
 		return map[string]any{"started_at": startedAt}
 	})))
 	mux.Handle("/health", routermeta.HealthHandler(health.Probe))
-	mux.Handle("/", withAccessLog(proxy.WrapHandler(reverseProxy), logger))
+	mux.Handle("/", withAccessLog(reverseProxy, logger))
 
 	server := &http.Server{
 		Addr:              cfg.ListenAddr,
