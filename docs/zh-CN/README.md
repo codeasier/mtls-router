@@ -206,12 +206,12 @@ MTLS_TLS_MIN=tls1.3 \
 
 ## Streaming 和 SSE
 
-请求体 sniffing 会检测 JSON 请求中是否包含 `"stream": true`，且不会消费或破坏请求体。下游 reader 仍会收到原始字节。
-
-SSE 响应会保留流式行为，并使用适合 SSE 的响应头，包括：
+请求体会直接流式转发到上游 —— 路由器不会对请求体做任何缓冲。识别为 Server-Sent Events 的响应会带上适合 SSE 的响应头，包括：
 
 - `Content-Type: text/event-stream`
 - `Cache-Control: no-cache`
+
+反向代理设置了 `FlushInterval: -1`，上游字节会立即 flush 到本地客户端。
 
 ## 从源码构建
 
