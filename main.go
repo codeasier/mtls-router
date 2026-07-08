@@ -103,7 +103,13 @@ func run() error {
 	mux.Handle("/version", routermeta.VersionHandler(routermeta.InfoProviderFunc(func() map[string]any {
 		return map[string]any{"started_at": startedAt}
 	})))
-	mux.Handle("/health", routermeta.HealthHandler(health.Probe))
+	mux.Handle("/health", routermeta.HealthHandler(health.Probe, health.ProbeOptions{
+		UpstreamURL: cfg.UpstreamURL,
+		ClientCert:  clientCertPEM,
+		ClientKey:   clientKeyPEM,
+		UpstreamCA:  upstreamCAPEM,
+		Timeout:     cfg.Timeout,
+	}))
 	mux.Handle("/", withAccessLog(proxy.NewBodyErrorHandler(reverseProxy), logger))
 
 	server := &http.Server{

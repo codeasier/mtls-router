@@ -65,7 +65,14 @@ func VersionHandler(provider InfoProvider) http.Handler {
 // is intentionally never changed — "connection refused = not started, 200 =
 // started (possibly degraded)" is the only way to keep the setup script's
 // logic unambiguous.
-func HealthHandler(probe health.ProbeFunc) http.Handler {
+func HealthHandler(probe health.ProbeFunc, opts ...health.ProbeOptions) http.Handler {
+	probeOpts := health.ProbeOptions{}
+	if len(opts) > 0 {
+		probeOpts = opts[0]
+	}
+	if probeOpts.Timeout <= 0 {
+		probeOpts.Timeout = 5 * time.Second
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			writeMethodNotAllowed(w)
@@ -73,7 +80,7 @@ func HealthHandler(probe health.ProbeFunc) http.Handler {
 		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
-		err := probe(health.ProbeOptions{Timeout: 5 * time.Second})
+		err := probe(probeOpts)
 		if err == nil {
 			_ = json.NewEncoder(w).Encode(map[string]string{
 				"status":   "ok",
