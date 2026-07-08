@@ -5,8 +5,10 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/codeasier/mtls-router/internal/health"
 )
@@ -90,6 +92,43 @@ func assertMethodNotAllowed(t *testing.T, rec *httptest.ResponseRecorder) {
 	}
 	if got["error"] != "method not allowed" {
 		t.Fatalf("error = %q, want method not allowed", got["error"])
+	}
+}
+
+func TestHealthHandlerPassesRuntimeProbeOptions(t *testing.T) {
+	want := health.ProbeOptions{
+		UpstreamURL: "https://upstream.example.test",
+		ClientCert:  "client-cert-pem",
+		ClientKey:   "client-key-pem",
+		UpstreamCA:  "upstream-ca-pem",
+		Timeout:     2 * time.Second,
+	}
+	var got health.ProbeOptions
+	probe := health.ProbeFunc(func(opts health.ProbeOptions) error {
+		got = opts
+		return nil
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	HealthHandler(probe, want).ServeHTTP(rec, req)
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("probe options = %+v, want %+v", got, want)
+	}
+}
+
+func TestHealthHandlerDefaultsProbeTimeoutWhenUnset(t *testing.T) {
+	var got health.ProbeOptions
+	probe := health.ProbeFunc(func(opts health.ProbeOptions) error {
+		got = opts
+		return nil
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	HealthHandler(probe, health.ProbeOptions{UpstreamURL: "https://upstream.example.test"}).ServeHTTP(rec, req)
+
+	if got.Timeout != 5*time.Second {
+		t.Fatalf("timeout = %s, want 5s", got.Timeout)
 	}
 }
 
