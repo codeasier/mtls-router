@@ -3,12 +3,17 @@ package main
 import (
 	"bytes"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/codeasier/mtls-router/internal/health"
+	"github.com/codeasier/mtls-router/internal/proxy"
 	"github.com/codeasier/mtls-router/internal/routermeta"
 )
 
@@ -92,6 +97,133 @@ func TestManagementRoutesTakePrecedenceOverProxyRoute(t *testing.T) {
 			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tt.path, nil))
 			if !bytes.Contains(rec.Body.Bytes(), []byte(tt.want)) {
 				t.Fatalf("body = %q, want to contain %q", rec.Body.String(), tt.want)
+			}
+		})
+	}
+}
+
+func TestProxyStreamsFirstChunkThroughAccessLog(t *testing.T) {
+	tests := []struct {
+		name        string
+		contentType string
+		firstChunk  string
+		secondChunk string
+	}{
+		{
+			name:        "SSE",
+			contentType: "text/event-stream; charset=utf-8",
+			firstChunk:  "data: first\n\n",
+			secondChunk: "data: second\n\n",
+		},
+		{
+			name:        "chunked",
+			contentType: "text/plain",
+			firstChunk:  "first chunk\n",
+			secondChunk: "second chunk\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			releaseUpstream := make(chan struct{})
+			upstreamFinished := make(chan struct{})
+			var releaseOnce sync.Once
+			release := func() { releaseOnce.Do(func() { close(releaseUpstream) }) }
+			defer release()
+
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				defer close(upstreamFinished)
+				w.Header().Set("Content-Type", tt.contentType)
+				_, _ = io.WriteString(w, tt.firstChunk)
+				if err := http.NewResponseController(w).Flush(); err != nil {
+					return
+				}
+				<-releaseUpstream
+				_, _ = io.WriteString(w, tt.secondChunk)
+			}))
+			t.Cleanup(upstream.Close)
+
+			upstreamURL, err := url.Parse(upstream.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+			reverseProxy := proxy.New(proxy.Options{
+				Upstream:  upstreamURL,
+				Transport: http.DefaultTransport.(*http.Transport).Clone(),
+				ErrorLog:  logger,
+			})
+			downstream := httptest.NewServer(withAccessLog(proxy.NewBodyErrorHandler(reverseProxy), logger))
+			t.Cleanup(downstream.Close)
+
+			type firstChunkResult struct {
+				response *http.Response
+				chunk    string
+				err      error
+			}
+			resultCh := make(chan firstChunkResult, 1)
+			go func() {
+				resp, err := downstream.Client().Get(downstream.URL)
+				if err != nil {
+					resultCh <- firstChunkResult{err: err}
+					return
+				}
+				buf := make([]byte, len(tt.firstChunk))
+				_, err = io.ReadFull(resp.Body, buf)
+				resultCh <- firstChunkResult{response: resp, chunk: string(buf), err: err}
+			}()
+
+			var result firstChunkResult
+			select {
+			case result = <-resultCh:
+			case <-time.After(2 * time.Second):
+				release()
+				select {
+				case result = <-resultCh:
+					t.Fatalf("first chunk did not arrive before upstream release: %v", result.err)
+				case <-time.After(2 * time.Second):
+					t.Fatal("downstream request did not finish after upstream release")
+				}
+			}
+			if result.response != nil {
+				t.Cleanup(func() { _ = result.response.Body.Close() })
+			}
+			if result.err != nil {
+				t.Fatalf("read first chunk: %v", result.err)
+			}
+			if result.chunk != tt.firstChunk {
+				t.Fatalf("first chunk = %q, want %q", result.chunk, tt.firstChunk)
+			}
+			select {
+			case <-upstreamFinished:
+				t.Fatal("upstream completed before the first chunk was observed")
+			default:
+			}
+
+			if tt.name == "SSE" {
+				if got := result.response.Header.Get("Content-Type"); got != "text/event-stream" {
+					t.Fatalf("Content-Type = %q, want text/event-stream", got)
+				}
+				if got := result.response.Header.Get("Cache-Control"); got != "no-cache" {
+					t.Fatalf("Cache-Control = %q, want no-cache", got)
+				}
+				if got := result.response.Header.Get("X-Accel-Buffering"); got != "no" {
+					t.Fatalf("X-Accel-Buffering = %q, want no", got)
+				}
+			}
+
+			release()
+			rest, err := io.ReadAll(result.response.Body)
+			if err != nil {
+				t.Fatalf("read remaining response: %v", err)
+			}
+			if string(rest) != tt.secondChunk {
+				t.Fatalf("remaining response = %q, want %q", rest, tt.secondChunk)
+			}
+			select {
+			case <-upstreamFinished:
+			case <-time.After(2 * time.Second):
+				t.Fatal("upstream did not finish after release")
 			}
 		})
 	}

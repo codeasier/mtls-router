@@ -11,12 +11,36 @@ import (
 	"time"
 )
 
+type flushWriter struct {
+	http.ResponseWriter
+	flushed bool
+}
+
+func (w *flushWriter) Flush() {
+	w.flushed = true
+}
+
 func TestResponseRecorderRecordsStatusAndBytes(t *testing.T) {
 	rr := &ResponseRecorder{ResponseWriter: httptest.NewRecorder()}
 	rr.WriteHeader(http.StatusCreated)
 	_, _ = rr.Write([]byte("abc"))
 	if rr.Status != http.StatusCreated || rr.Bytes != 3 {
 		t.Fatalf("status=%d bytes=%d", rr.Status, rr.Bytes)
+	}
+}
+
+func TestResponseRecorderUnwrapAllowsResponseControllerFlush(t *testing.T) {
+	underlying := &flushWriter{ResponseWriter: httptest.NewRecorder()}
+	recorder := &ResponseRecorder{ResponseWriter: underlying}
+
+	if _, ok := any(recorder).(http.Flusher); ok {
+		t.Fatal("ResponseRecorder must not unconditionally implement http.Flusher")
+	}
+	if err := http.NewResponseController(recorder).Flush(); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+	if !underlying.flushed {
+		t.Fatal("Flush() did not reach the underlying ResponseWriter")
 	}
 }
 
