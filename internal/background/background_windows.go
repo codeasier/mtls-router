@@ -3,6 +3,7 @@
 package background
 
 import (
+	"os"
 	"os/exec"
 	"syscall"
 
@@ -24,6 +25,7 @@ func Start(exePath string, args []string, logPath string) (int, error) {
 	defer logFile.Close()
 
 	cmd := exec.Command(exePath, args...)
+	cmd.Env = ChildEnv(os.Environ())
 	cmd.SysProcAttr = windowsSysProcAttr()
 	cmd.Stdin = nil
 	cmd.Stdout = logFile
@@ -31,5 +33,7 @@ func Start(exePath string, args []string, logPath string) (int, error) {
 	if err := cmd.Start(); err != nil {
 		return 0, err
 	}
-	return cmd.Process.Pid, nil
+	pid := cmd.Process.Pid
+	_ = cmd.Process.Release()
+	return pid, nil
 }
