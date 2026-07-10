@@ -181,6 +181,8 @@ flag > env > build-time > default
 | 后台模式 | `MTLS_BACKEND` | `-backend` | 关闭 |
 | 日志文件 | `MTLS_LOG` | `-log` | 前台为 stderr；后台为 `<binary-dir>/mtls-router.log` |
 
+上游 URL 必须使用 HTTPS。普通 HTTP 上游无法提供 mTLS，并会在没有传输加密的情况下发送请求，因此会被拒绝。
+
 额外参数：
 
 | 参数 | 说明 |

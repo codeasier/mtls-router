@@ -47,7 +47,7 @@ func (c Config) Validate() error {
 		return fmt.Errorf("upstream URL is required")
 	}
 	u, err := url.Parse(c.UpstreamURL)
-	if err != nil || u.Scheme == "" || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+	if err != nil || u.Scheme != "https" || u.Host == "" {
 		return fmt.Errorf("invalid upstream URL")
 	}
 	switch c.TLSMin {

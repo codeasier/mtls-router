@@ -32,6 +32,23 @@ func TestLoadRejectsMissingOrInvalidUpstream(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsHTTPUpstream(t *testing.T) {
+	if _, err := Load(Defaults{UpstreamURL: "http://example.test"}, nil); err == nil {
+		t.Fatal("expected HTTP upstream error")
+	}
+}
+
+func TestLoadAcceptsHTTPSUpstream(t *testing.T) {
+	const upstream = "https://user:pass@example.test/base?key=value#fragment"
+	cfg, err := Load(Defaults{UpstreamURL: upstream}, nil)
+	if err != nil {
+		t.Fatalf("expected HTTPS upstream to be valid: %v", err)
+	}
+	if cfg.UpstreamURL != upstream {
+		t.Fatalf("UpstreamURL = %q, want %q", cfg.UpstreamURL, upstream)
+	}
+}
+
 func TestLoadTLSMinValidation(t *testing.T) {
 	for _, version := range []string{"tls1.2", "tls1.3"} {
 		if _, err := Load(Defaults{UpstreamURL: "https://example.test", TLSMin: version}, nil); err != nil {

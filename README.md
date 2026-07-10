@@ -219,6 +219,8 @@ flag > env > build-time > default
 | Backend mode | `MTLS_BACKEND` | `-backend` | off |
 | Log file | `MTLS_LOG` | `-log` | stderr in foreground; `<binary-dir>/mtls-router.log` in backend mode |
 
+The upstream URL must use HTTPS. Plain HTTP upstreams are rejected because they cannot provide mTLS and would transmit requests without transport encryption.
+
 Additional flags:
 
 | Flag | Description |
