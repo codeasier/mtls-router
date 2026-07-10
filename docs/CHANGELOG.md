@@ -2,6 +2,28 @@
 
 [中文](zh-CN/CHANGELOG.md)
 
+## v0.1.3 - 2026-07-10
+
+This release focuses on release-install reliability and proxy correctness. Packaged setup scripts now point at the reachable download server by default, the proxy no longer carries unused stream-detection plumbing, client request-body failures are reported as bad requests, and `/health` now probes the configured upstream runtime target.
+
+### Changed
+
+- Simplified proxy request handling by removing the unused stream-detection pre-read path while preserving direct reverse-proxy streaming behavior.
+- Updated release-packaged setup defaults so installers download binaries from the configured release server address.
+
+### Fixed
+
+- Fixed packaged setup scripts to use the direct download server IP, avoiding hostname reachability issues in affected environments.
+- Fixed client request-body read failures so they return `400 Bad Request` instead of being classified as upstream proxy failures.
+- Fixed `/health` so runtime probe options are passed through and the handler checks the configured upstream target.
+
+### Tests
+
+- Added regression coverage for client body read error classification and health probe option propagation.
+- Kept setup script coverage aligned with release download defaults and router health behavior.
+
+---
+
 ## v0.1.2 - 2026-06-21
 
 ### Added
