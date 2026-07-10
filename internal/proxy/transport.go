@@ -2,10 +2,10 @@ package proxy
 
 import (
 	"crypto/tls"
-	"fmt"
 	"net/http"
 
 	"github.com/codeasier/mtls-router/internal/certs"
+	"github.com/codeasier/mtls-router/internal/tlspolicy"
 )
 
 type TransportOption func(*transportOptions) error
@@ -16,14 +16,11 @@ type transportOptions struct {
 
 func WithTLSMin(version string) TransportOption {
 	return func(opts *transportOptions) error {
-		switch version {
-		case "", "tls1.2":
-			opts.tlsMin = tls.VersionTLS12
-		case "tls1.3":
-			opts.tlsMin = tls.VersionTLS13
-		default:
-			return fmt.Errorf("invalid TLS minimum version: %s", version)
+		minVersion, err := tlspolicy.MinVersion(version)
+		if err != nil {
+			return err
 		}
+		opts.tlsMin = minVersion
 		return nil
 	}
 }

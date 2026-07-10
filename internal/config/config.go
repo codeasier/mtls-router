@@ -7,6 +7,8 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/codeasier/mtls-router/internal/tlspolicy"
 )
 
 type Config struct {
@@ -50,12 +52,10 @@ func (c Config) Validate() error {
 	if err != nil || u.Scheme != "https" || u.Host == "" {
 		return fmt.Errorf("invalid upstream URL")
 	}
-	switch c.TLSMin {
-	case "", "tls1.2", "tls1.3":
-		return nil
-	default:
+	if _, err := tlspolicy.MinVersion(c.TLSMin); err != nil {
 		return fmt.Errorf("invalid TLS minimum version")
 	}
+	return nil
 }
 
 func applyEnv(cfg *Config) {

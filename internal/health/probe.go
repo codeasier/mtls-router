@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/codeasier/mtls-router/internal/certs"
+	"github.com/codeasier/mtls-router/internal/tlspolicy"
 )
 
 type ProbeOptions struct {
@@ -16,6 +17,7 @@ type ProbeOptions struct {
 	ClientCert  string
 	ClientKey   string
 	UpstreamCA  string
+	TLSMin      string
 	Timeout     time.Duration
 }
 
@@ -32,6 +34,10 @@ var Probe ProbeFunc = func(opts ProbeOptions) error {
 	if err != nil {
 		return fmt.Errorf("load probe mTLS config: %w", err)
 	}
+	tlsMin, err := tlspolicy.MinVersion(opts.TLSMin)
+	if err != nil {
+		return fmt.Errorf("configure probe TLS: %w", err)
+	}
 	timeout := opts.Timeout
 	if timeout <= 0 {
 		timeout = 5 * time.Second
@@ -42,7 +48,7 @@ var Probe ProbeFunc = func(opts ProbeOptions) error {
 	if err != nil {
 		return fmt.Errorf("create probe request: %w", err)
 	}
-	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{Certificates: []tls.Certificate{*clientCert}, RootCAs: rootCAs, MinVersion: tls.VersionTLS12}}}
+	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{Certificates: []tls.Certificate{*clientCert}, RootCAs: rootCAs, MinVersion: tlsMin}}}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("probe upstream: %w", err)
