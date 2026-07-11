@@ -1,12 +1,16 @@
 ﻿$ErrorActionPreference = 'Stop'
 
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+
 $Repo = 'codeasier/mtls-router'
+$ScriptDir = $PSScriptRoot
 $RouterBaseUrl = 'http://127.0.0.1:19099'
 $InstallDir = if ($env:MTLS_ROUTER_INSTALL_DIR) { $env:MTLS_ROUTER_INSTALL_DIR } else { Join-Path $env:USERPROFILE '.local\bin' }
 $DefaultDownloadBaseUrl = ''
 $DownloadBaseUrl = if ($env:MTLS_ROUTER_DOWNLOAD_URL) { $env:MTLS_ROUTER_DOWNLOAD_URL } else { $DefaultDownloadBaseUrl }
 $DownloadUser = $env:MTLS_ROUTER_DOWNLOAD_USER
 $DownloadPassword = $env:MTLS_ROUTER_DOWNLOAD_PASSWORD
+$AllowDownload = $env:MTLS_ROUTER_ALLOW_DOWNLOAD -eq '1'
 $BinaryPath = Join-Path $InstallDir 'mtls-router.exe'
 $RouterStateDir = if ($env:MTLS_ROUTER_STATE_DIR) { $env:MTLS_ROUTER_STATE_DIR } else { Join-Path $env:USERPROFILE '.mtls-router' }
 $RouterStatePath = Join-Path $RouterStateDir 'setup-state.json'
@@ -51,7 +55,44 @@ function Get-DownloadUrl($Version, $Asset) {
     return "https://github.com/$Repo/releases/download/$Version/$Asset"
 }
 
+function Get-ChecksumUrl($Version, $Asset) {
+    if ($DownloadBaseUrl) {
+        if ($DownloadBaseUrl.EndsWith("/$Asset")) {
+            return (($DownloadBaseUrl.Substring(0, $DownloadBaseUrl.Length - $Asset.Length)).TrimEnd('/') + '/SHA256SUMS')
+        }
+        return (($DownloadBaseUrl.TrimEnd('/')) + '/SHA256SUMS')
+    }
+    return "https://github.com/$Repo/releases/download/$Version/SHA256SUMS"
+}
+
+function Get-ExpectedChecksum($ManifestPath, $Asset) {
+    $escapedAsset = [regex]::Escape($Asset)
+    $candidates = @(Get-Content -LiteralPath $ManifestPath | Where-Object { $_ -match "[\s\*]$escapedAsset$" })
+    if ($candidates.Count -ne 1) { Write-Fail "SHA256SUMS 必须包含且仅包含一条 $Asset 校验候选记录。" }
+    if ($candidates[0] -notmatch "^[0-9A-Fa-f]{64} ( |\*)$escapedAsset$") { Write-Fail "SHA256SUMS 中的 $Asset 校验记录格式无效。" }
+    return $candidates[0].Substring(0, 64).ToLowerInvariant()
+}
+
+function Test-RouterChecksum($SourcePath, $ManifestPath, $Asset) {
+    $expected = Get-ExpectedChecksum $ManifestPath $Asset
+    $actual = (Get-FileHash -LiteralPath $SourcePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actual -ne $expected) { Write-Fail "mtls-router SHA-256 校验失败：$Asset" }
+}
+
+function Install-VerifiedBinary($SourcePath) {
+    New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+    $tmp = Join-Path $InstallDir ('.mtls-router.' + [Guid]::NewGuid().ToString('N') + '.tmp')
+    try {
+        Copy-Item -LiteralPath $SourcePath -Destination $tmp
+        Move-Item -LiteralPath $tmp -Destination $BinaryPath -Force
+    } finally {
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Invoke-Download($Url, $OutFile) {
+    $uri = [Uri]$Url
+    if ($uri.Scheme -ne 'https') { Write-Fail "拒绝非 HTTPS 下载地址：$Url" }
     $headers = @{ 'User-Agent' = 'mtls-router-setup' }
     $parameters = @{ Uri = $Url; OutFile = $OutFile; Headers = $headers }
     if ($DownloadUser -or $DownloadPassword) {
@@ -62,8 +103,26 @@ function Invoke-Download($Url, $OutFile) {
 }
 
 function Download-MtlsRouter {
-    Write-Info '[下载] 检测并下载最新 mtls-router...'
     $asset = Get-RouterAssetName
+    $packagedBinary = Join-Path $ScriptDir $asset
+    if (Test-Path -LiteralPath $packagedBinary -PathType Leaf) {
+        $manifest = Join-Path $ScriptDir 'SHA256SUMS'
+        if (-not (Test-Path -LiteralPath $manifest -PathType Leaf)) { Write-Fail "随包二进制缺少 SHA256SUMS：$manifest" }
+        Test-RouterChecksum $packagedBinary $manifest $asset
+        Install-VerifiedBinary $packagedBinary
+        Write-Success "  已验证并安装随包 mtls-router：$BinaryPath"
+        return
+    }
+
+    if (-not $AllowDownload) {
+        $interactive = $false
+        try { $interactive = -not [Console]::IsInputRedirected -and $null -ne $Host.UI.RawUI } catch { $interactive = $false }
+        if (-not $interactive) { Write-Fail '未找到随包二进制；非交互安装需显式传入 --download。' }
+        $answer = Read-Host '未找到随包二进制，是否通过 HTTPS 下载？[y/N]'
+        if ($answer -notin @('y', 'Y')) { Write-Fail '已取消联网下载。' }
+    }
+
+    Write-Info '[下载] 检测并下载最新 mtls-router...'
 
     if ($DownloadBaseUrl) {
         $version = if ($env:MTLS_ROUTER_VERSION) { $env:MTLS_ROUTER_VERSION } else { 'latest' }
@@ -80,21 +139,35 @@ function Download-MtlsRouter {
 
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
     $url = Get-DownloadUrl $version $asset
+    $checksumUrl = Get-ChecksumUrl $version $asset
+    if (([Uri]$url).Scheme -ne 'https') { Write-Fail "拒绝非 HTTPS 下载地址：$url" }
+    if (([Uri]$checksumUrl).Scheme -ne 'https') { Write-Fail "拒绝非 HTTPS 校验文件地址：$checksumUrl" }
 
     Write-Info "  版本：$version"
     Write-Info "  平台：$asset"
     Write-Info "  安装：$BinaryPath"
 
+    $tmpDir = Join-Path ([IO.Path]::GetTempPath()) ('mtls-router-' + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $tmpDir | Out-Null
+    $tmpBinary = Join-Path $tmpDir $asset
+    $tmpManifest = Join-Path $tmpDir 'SHA256SUMS'
     try {
-        Invoke-Download $url $BinaryPath
+        Invoke-Download $url $tmpBinary
+        Invoke-Download $checksumUrl $tmpManifest
+        Test-RouterChecksum $tmpBinary $tmpManifest $asset
+        Install-VerifiedBinary $tmpBinary
     } catch {
         Write-Fail "下载 mtls-router 失败：$($_.Exception.Message)"
+    } finally {
+        Remove-Item -LiteralPath $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 
     Write-Success "  已安装 mtls-router：$BinaryPath"
 }
 
 function Write-RouterState($PidValue, $LogPath) {
+    $identity = Get-RouterProcessIdentity $PidValue
+    if (-not $identity) { Write-Fail "无法读取 mtls-router 进程身份：pid=$PidValue" }
     New-Item -ItemType Directory -Force -Path $RouterStateDir | Out-Null
     $tmp = [System.IO.Path]::GetTempFileName()
     [ordered]@{
@@ -103,6 +176,8 @@ function Write-RouterState($PidValue, $LogPath) {
         binary_path = $BinaryPath
         log_path = $LogPath
         started_at = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+        process_started_at = $identity.StartedAt
+        process_executable = $identity.Executable
     } | ConvertTo-Json -Depth 5 | Set-Content -Path $tmp -Encoding UTF8
     Move-Item -Path $tmp -Destination $RouterStatePath -Force
 }
@@ -116,9 +191,36 @@ function Get-RouterState {
     }
 }
 
-function Test-RouterProcess($PidValue) {
-    if (-not $PidValue) { return $false }
-    return $null -ne (Get-Process -Id $PidValue -ErrorAction SilentlyContinue)
+function Get-NormalizedPath($PathValue) {
+    if (-not $PathValue) { return $null }
+    return [IO.Path]::GetFullPath([string]$PathValue).TrimEnd([IO.Path]::DirectorySeparatorChar)
+}
+
+function Get-RouterProcessIdentity($PidValue) {
+    if (-not $PidValue) { return $null }
+    $process = Get-Process -Id $PidValue -ErrorAction SilentlyContinue
+    if (-not $process) { return $null }
+    try {
+        return [pscustomobject]@{
+            StartedAt = $process.StartTime.ToUniversalTime().ToString('o')
+            Executable = Get-NormalizedPath $process.Path
+        }
+    } catch { return $null }
+}
+
+# Returns Genuine, Absent, or Stale.
+function Get-RouterIdentityStatus($State) {
+    if (-not $State.pid) { return 'Stale' }
+    $process = Get-Process -Id $State.pid -ErrorAction SilentlyContinue
+    if (-not $process) { return 'Absent' }
+    if (-not $State.process_started_at -or -not $State.process_executable -or -not $State.binary_path) { return 'Stale' }
+    $identity = Get-RouterProcessIdentity $State.pid
+    if (-not $identity) { return 'Stale' }
+    $storedExecutable = Get-NormalizedPath $State.process_executable
+    $storedBinary = Get-NormalizedPath $State.binary_path
+    if ($identity.StartedAt -ceq [string]$State.process_started_at -and
+        $identity.Executable -ieq $storedExecutable -and $storedExecutable -ieq $storedBinary) { return 'Genuine' }
+    return 'Stale'
 }
 
 function Show-RouterStatus {
@@ -128,8 +230,11 @@ function Show-RouterStatus {
         Write-Info 'router 未运行'
         return
     }
-    if (Test-RouterProcess $state.pid) {
+    $identityStatus = Get-RouterIdentityStatus $state
+    if ($identityStatus -eq 'Genuine') {
         Write-Success 'router running'
+    } elseif ($identityStatus -eq 'Stale') {
+        Write-Warn 'router state stale'
     } else {
         Write-Warn 'router 未运行'
     }
@@ -138,6 +243,8 @@ function Show-RouterStatus {
     Write-Info "binary_path=$($state.binary_path)"
     Write-Info "log_path=$($state.log_path)"
     if ($state.started_at) { Write-Info "started_at=$($state.started_at)" }
+    if ($state.process_started_at) { Write-Info "process_started_at=$($state.process_started_at)" }
+    if ($state.process_executable) { Write-Info "process_executable=$($state.process_executable)" }
 }
 
 function Show-RouterLog($Lines = 200) {
@@ -156,21 +263,28 @@ function Stop-Router {
         Write-Info 'router 未运行'
         return
     }
-    if (Test-RouterProcess $state.pid) {
+    $identityStatus = Get-RouterIdentityStatus $state
+    if ($identityStatus -eq 'Genuine') {
         Stop-Process -Id $state.pid -ErrorAction SilentlyContinue
         $deadline = (Get-Date).AddSeconds(5)
-        while ((Test-RouterProcess $state.pid) -and ((Get-Date) -lt $deadline)) {
+        while ((Get-RouterIdentityStatus $state) -eq 'Genuine' -and ((Get-Date) -lt $deadline)) {
             Start-Sleep -Milliseconds 200
         }
-        if (Test-RouterProcess $state.pid) {
+        $identityStatus = Get-RouterIdentityStatus $state
+        if ($identityStatus -eq 'Genuine') {
             Write-Warn 'router 未正常退出，强制停止。'
             Stop-Process -Id $state.pid -Force -ErrorAction SilentlyContinue
+        } elseif ($identityStatus -eq 'Stale') {
+            Write-Warn 'router state stale；pid 已被复用，未强制停止。'
+            return
         }
         Write-Success 'router stopped'
+        Remove-Item -Path $RouterStatePath -Force -ErrorAction SilentlyContinue
+    } elseif ($identityStatus -eq 'Stale') {
+        Write-Warn 'router state stale；未发送信号。'
     } else {
         Write-Warn 'router 未运行'
     }
-    Remove-Item -Path $RouterStatePath -Force -ErrorAction SilentlyContinue
 }
 
 function Start-MtlsRouter {
@@ -702,6 +816,8 @@ function Show-Usage {
 选项:
   --agent=LIST
       逗号分隔的 agent key：claude / opencode / codex。
+  --download
+      未找到随包二进制时，显式允许通过 HTTPS 下载；也可用 MTLS_ROUTER_ALLOW_DOWNLOAD=1。
   --download-url=URL
       自定义 mtls-router 下载地址。可指向包含二进制的目录，也可指向当前平台完整二进制 URL。
       也可用 MTLS_ROUTER_DOWNLOAD_URL 设置。
@@ -819,6 +935,12 @@ function Main {
                 if ($i + 1 -ge $args.Count) { Write-Fail '--agent needs a value (comma-separated list)' }
                 $agentFilter = $args[$i + 1]
                 $i += 2
+                continue
+            }
+            '^--download$' {
+                if ($action -notin @('setup', 'router-install', 'router-setup')) { Write-Fail '--download 仅适用于 router install 或 router setup' }
+                $script:AllowDownload = $true
+                $i++
                 continue
             }
             '^--download-url=(.+)$' {

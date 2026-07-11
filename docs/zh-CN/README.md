@@ -20,21 +20,29 @@
 
 ## 一键安装
 
-这些脚本会下载适合当前操作系统和 CPU 架构的最新 `mtls-router` 二进制文件，并以后台模式启动 `mtls-router`。脚本不会安装或启动任何 agent，默认安装路径也不会修改 agent 配置。
+Release 安装优先使用平台包。请从 [GitHub Releases](https://github.com/codeasier/mtls-router/releases) 选择适合当前操作系统和 CPU 架构的压缩包（macOS/Linux 使用 `.tar.gz`，Windows 使用 `.zip`），解压后运行其中的安装脚本。每个压缩包都包含安装脚本、同目录的平台二进制文件和 `SHA256SUMS`。
 
 macOS 或 Linux：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/codeasier/mtls-router/main/setup.sh | bash
+tar -xzf mtls-router-darwin-arm64.tar.gz
+./setup.sh router setup
 ```
 
 Windows PowerShell：
 
 ```powershell
-irm https://raw.githubusercontent.com/codeasier/mtls-router/main/setup.ps1 | iex
+Expand-Archive .\mtls-router-windows-amd64.zip -DestinationPath .\mtls-router
+.\mtls-router\setup.ps1 router setup
 ```
 
-默认情况下，脚本会把 `mtls-router` 安装到 `~/.local/bin`。在 Windows 上对应 `%USERPROFILE%\.local\bin`（例如 `C:\Users\<你>\.local\bin`）。如需指定其他安装目录，请在运行脚本前设置 `MTLS_ROUTER_INSTALL_DIR`。
+安装脚本会选择适合当前平台的同目录二进制文件，并要求它在同目录 `SHA256SUMS` 中存在唯一、完全匹配的校验记录。校验记录缺失、格式错误、重复或哈希不匹配都会导致硬失败：已有的已安装二进制会被保留，脚本绝不会回退到联网下载。
+
+如果同目录二进制缺失，交互式安装会询问是否下载二进制文件和 `SHA256SUMS`。非交互式安装默认安全失败，除非通过 `router install --download`、`router setup --download` 或 `MTLS_ROUTER_ALLOW_DOWNLOAD=1` 显式授权下载。下载的 payload 在安装前执行相同的 SHA-256 校验。
+
+通过 `--download-url` 或 `MTLS_ROUTER_DOWNLOAD_URL` 指定的自定义来源必须使用 HTTPS；在调用下载器或使用凭据之前，普通 HTTP URL 就会被拒绝。Release 包中的脚本可以预配置私有主机的 HTTPS URL。认证仍需通过 `--download-user` / `--download-password` 或 `MTLS_ROUTER_DOWNLOAD_USER` / `MTLS_ROUTER_DOWNLOAD_PASSWORD` 显式提供；脚本不会内嵌凭据。
+
+默认情况下，脚本会把 `mtls-router` 安装到 `~/.local/bin`。在 Windows 上对应 `%USERPROFILE%\.local\bin`（例如 `C:\Users\<你>\.local\bin`）。如需指定其他安装目录，请在运行脚本前设置 `MTLS_ROUTER_INSTALL_DIR`。脚本不会安装或启动任何 agent，默认安装路径也不会修改 agent 配置。
 
 ## 手动下载
 
@@ -118,6 +126,10 @@ Windows PowerShell：
 - Windows：`%USERPROFILE%\.mtls-router\mtls-router.log`
 
 启动后，路径会写入 `setup-state.json`；也可用 `MTLS_ROUTER_LOG_PATH` 覆盖默认路径。
+
+安装脚本管理的 `router status` 和 `router stop` 不会只信任 PID。它们会同时校验 PID、记录的操作系统进程启动标识和可执行文件路径，并确认可执行文件与受管理的二进制一致。标识缺失或不匹配会报告为 stale state（陈旧状态）；该状态会保留用于诊断，`router stop` 不会向对应进程发送信号。停止期间以及强制终止前还会再次校验完整标识，避免向 PID 复用后的其他进程发送信号。
+
+旧版安装脚本创建的状态文件不包含这些进程标识。因此升级安装脚本后，旧版已运行的 router 会被报告为 stale，且不会被自动停止。请先人工确认并停止该进程，删除旧的 `setup-state.json`，再运行 `router start` 创建包含进程标识的新状态。
 
 ## 配置 agents
 
