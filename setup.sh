@@ -2,6 +2,7 @@
 set -euo pipefail
 
 REPO="codeasier/mtls-router"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 ROUTER_BASE_URL="http://127.0.0.1:19099"
 ANTHROPIC_BASE_URL_VALUE="$ROUTER_BASE_URL"
 INSTALL_DIR="${MTLS_ROUTER_INSTALL_DIR:-$HOME/.local/bin}"
@@ -9,6 +10,7 @@ DEFAULT_DOWNLOAD_BASE_URL=""
 DOWNLOAD_BASE_URL="${MTLS_ROUTER_DOWNLOAD_URL:-$DEFAULT_DOWNLOAD_BASE_URL}"
 DOWNLOAD_USER="${MTLS_ROUTER_DOWNLOAD_USER:-}"
 DOWNLOAD_PASSWORD="${MTLS_ROUTER_DOWNLOAD_PASSWORD:-}"
+ALLOW_DOWNLOAD="${MTLS_ROUTER_ALLOW_DOWNLOAD:-0}"
 BINARY_NAME="mtls-router"
 BINARY_PATH="$INSTALL_DIR/$BINARY_NAME"
 ROUTER_STATE_DIR="${MTLS_ROUTER_STATE_DIR:-$HOME/.mtls-router}"
@@ -97,6 +99,67 @@ download_url() {
   printf 'https://github.com/%s/releases/download/%s/%s\n' "$REPO" "$version" "$asset"
 }
 
+checksum_url() {
+  local version="$1"
+  local asset="$2"
+
+  if [[ -n "$DOWNLOAD_BASE_URL" ]]; then
+    if [[ "$DOWNLOAD_BASE_URL" == */"$asset" ]]; then
+      printf '%s/SHA256SUMS\n' "${DOWNLOAD_BASE_URL%/*}"
+    else
+      printf '%s/SHA256SUMS\n' "${DOWNLOAD_BASE_URL%/}"
+    fi
+    return
+  fi
+
+  printf 'https://github.com/%s/releases/download/%s/SHA256SUMS\n' "$REPO" "$version"
+}
+
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | cut -d' ' -f1
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | cut -d' ' -f1
+  else
+    fail "未找到 SHA-256 校验工具（sha256sum 或 shasum）。"
+  fi
+}
+
+expected_checksum() {
+  local manifest="$1"
+  local asset="$2"
+  local candidates candidate
+  candidates="$(awk -v asset="$asset" 'substr($0, length($0) - length(asset) + 1) == asset && substr($0, length($0) - length(asset), 1) ~ /[[:space:]\*]/ { print }' "$manifest")"
+  [[ "$(printf '%s\n' "$candidates" | awk 'NF { count++ } END { print count+0 }')" == "1" ]] ||
+    fail "SHA256SUMS 必须包含且仅包含一条 $asset 校验候选记录。"
+  candidate="$candidates"
+  [[ "$candidate" =~ ^[[:xdigit:]]{64}[[:space:]]([[:space:]]|\*)$asset$ ]] ||
+    fail "SHA256SUMS 中的 $asset 校验记录格式无效。"
+  printf '%s\n' "${candidate:0:64}" | tr '[:upper:]' '[:lower:]'
+}
+
+verify_checksum() {
+  local source="$1"
+  local manifest="$2"
+  local asset="$3"
+  local expected actual
+  expected="$(expected_checksum "$manifest" "$asset")"
+  actual="$(sha256_file "$source" | tr '[:upper:]' '[:lower:]')"
+  [[ "$actual" == "$expected" ]] || fail "mtls-router SHA-256 校验失败：$asset"
+}
+
+install_verified_binary() {
+  local source="$1"
+  mkdir -p "$INSTALL_DIR"
+  local tmp
+  tmp="$(mktemp "$INSTALL_DIR/.mtls-router.XXXXXX")"
+  trap 'rm -f "${tmp:-}"' RETURN
+  cp "$source" "$tmp"
+  chmod 0755 "$tmp"
+  mv -f "$tmp" "$BINARY_PATH"
+  trap - RETURN
+}
+
 detect_asset() {
   local os arch
 
@@ -120,38 +183,69 @@ download_router() {
     info "[下载] 跳过（MTLS_ROUTER_SKIP_DOWNLOAD=1）"
     return 0
   fi
-  info "[下载] 检测并下载最新 mtls-router..."
-  require_downloader
   detect_asset
+
+  local packaged_binary="$SCRIPT_DIR/$ASSET"
+  if [[ -f "$packaged_binary" ]]; then
+    [[ -f "$SCRIPT_DIR/SHA256SUMS" ]] || fail "随包二进制缺少 SHA256SUMS：$SCRIPT_DIR/SHA256SUMS"
+    verify_checksum "$packaged_binary" "$SCRIPT_DIR/SHA256SUMS" "$ASSET"
+    install_verified_binary "$packaged_binary"
+    success "  已验证并安装随包 mtls-router：$BINARY_PATH"
+    return 0
+  fi
+
+  if [[ "$ALLOW_DOWNLOAD" != "1" ]]; then
+    if [[ -t 0 && -t 2 ]]; then
+      local answer
+      read -r -p "未找到随包二进制，是否通过 HTTPS 下载？[y/N] " answer
+      [[ "$answer" =~ ^[Yy]$ ]] || fail "已取消联网下载。"
+    else
+      fail "未找到随包二进制；非交互安装需显式传入 --download。"
+    fi
+  fi
+
+  info "[下载] 检测并下载最新 mtls-router..."
 
   local version
   if [[ -n "$DOWNLOAD_BASE_URL" ]]; then
     version="${MTLS_ROUTER_VERSION:-latest}"
   else
+    require_downloader
     version="$(latest_version)"
     [[ -n "$version" ]] || fail "无法获取 GitHub 最新 release 版本。"
   fi
 
-  mkdir -p "$INSTALL_DIR"
-
-  local url
+  local url manifest_url
   url="$(download_url "$version" "$ASSET")"
-  local tmp
-  tmp="$(mktemp)"
-  trap "rm -f '$tmp'" EXIT
+  manifest_url="$(checksum_url "$version" "$ASSET")"
+  [[ "$url" == https://* ]] || fail "拒绝非 HTTPS 下载地址：$url"
+  [[ "$manifest_url" == https://* ]] || fail "拒绝非 HTTPS 校验文件地址：$manifest_url"
+  require_downloader
+
+  local tmp_dir tmp manifest
+  tmp_dir="$(mktemp -d)"
+  tmp="$tmp_dir/$ASSET"
+  manifest="$tmp_dir/SHA256SUMS"
+  trap 'rm -rf "${tmp_dir:-}"' RETURN
 
   info "  版本：$version"
   info "  平台：$ASSET"
   info "  安装：$BINARY_PATH"
   download_to "$url" "$tmp"
-  chmod +x "$tmp"
-  mv "$tmp" "$BINARY_PATH"
+  download_to "$manifest_url" "$manifest"
+  verify_checksum "$tmp" "$manifest" "$ASSET"
+  install_verified_binary "$tmp"
+  rm -rf "$tmp_dir"
+  trap - RETURN
   success "  已安装 mtls-router：$BINARY_PATH"
 }
 
 write_router_state() {
   local pid="$1"
   local log_path="$2"
+  local process_started_at process_executable
+  process_started_at="$(router_process_started_at "$pid")" || fail "无法读取 mtls-router 进程启动标识：pid=$pid"
+  process_executable="$(router_process_executable "$pid")" || fail "无法读取 mtls-router 进程可执行文件：pid=$pid"
   mkdir -p "$ROUTER_STATE_DIR"
   local tmp
   tmp="$(mktemp)"
@@ -161,7 +255,9 @@ write_router_state() {
     --arg binary_path "$BINARY_PATH" \
     --arg log_path "$log_path" \
     --arg started_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    '{pid: $pid, listen_addr: $listen_addr, binary_path: $binary_path, log_path: $log_path, started_at: $started_at}' >"$tmp"
+    --arg process_started_at "$process_started_at" \
+    --arg process_executable "$process_executable" \
+    '{pid: $pid, listen_addr: $listen_addr, binary_path: $binary_path, log_path: $log_path, started_at: $started_at, process_started_at: $process_started_at, process_executable: $process_executable}' >"$tmp"
   chmod 600 "$tmp"
   mv "$tmp" "$ROUTER_STATE_PATH"
 }
@@ -176,12 +272,60 @@ load_router_state() {
   binary_path="$(jq -r '.binary_path // ""' "$ROUTER_STATE_PATH")"
   log_path="$(jq -r '.log_path // ""' "$ROUTER_STATE_PATH")"
   started_at="$(jq -r '.started_at // ""' "$ROUTER_STATE_PATH")"
+  process_started_at="$(jq -r '.process_started_at // ""' "$ROUTER_STATE_PATH")"
+  process_executable="$(jq -r '.process_executable // ""' "$ROUTER_STATE_PATH")"
 }
 
-router_pid_running() {
+normalize_path() {
+  local path="$1" dir base
+  [[ -n "$path" ]] || return 1
+  dir="$(dirname "$path")"
+  base="$(basename "$path")"
+  [[ -d "$dir" ]] || return 1
+  printf '%s/%s\n' "$(cd -- "$dir" && pwd -P)" "$base"
+}
+
+router_process_started_at() {
   local pid="$1"
-  [[ -n "$pid" ]] || return 1
-  kill -0 "$pid" >/dev/null 2>&1
+  case "$(uname -s)" in
+    Linux)
+      [[ -r "/proc/$pid/stat" ]] || return 1
+      local stat
+      stat="$(<"/proc/$pid/stat")"
+      stat="${stat##*) }"
+      printf '%s\n' "$stat" | awk '{print $20}'
+      ;;
+    Darwin)
+      ps -p "$pid" -o lstart= 2>/dev/null | xargs
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+router_process_executable() {
+  local pid="$1" path
+  case "$(uname -s)" in
+    Linux)
+      path="$(readlink "/proc/$pid/exe" 2>/dev/null)" || return 1
+      path="${path% (deleted)}"
+      ;;
+    Darwin) path="$(ps -p "$pid" -o comm= 2>/dev/null | xargs)" || return 1 ;;
+    *) return 1 ;;
+  esac
+  normalize_path "$path"
+}
+
+# Returns 0 for genuine, 1 for absent, and 2 for stale/mismatched state.
+validate_router_identity() {
+  [[ "${pid:-}" =~ ^[0-9]+$ ]] || return 2
+  kill -0 "$pid" >/dev/null 2>&1 || return 1
+  [[ -n "${process_started_at:-}" && -n "${process_executable:-}" && -n "${binary_path:-}" ]] || return 2
+  local live_started_at live_executable stored_executable stored_binary
+  live_started_at="$(router_process_started_at "$pid")" || return 2
+  live_executable="$(router_process_executable "$pid")" || return 2
+  stored_executable="$(normalize_path "$process_executable")" || return 2
+  stored_binary="$(normalize_path "$binary_path")" || return 2
+  [[ "$process_started_at" == "$live_started_at" && "$stored_executable" == "$live_executable" && "$stored_executable" == "$stored_binary" ]] || return 2
 }
 
 start_router() {
@@ -209,22 +353,25 @@ start_router() {
 }
 
 router_status() {
-  local pid="" listen_addr="" binary_path="" log_path="" started_at=""
+  local pid="" listen_addr="" binary_path="" log_path="" started_at="" process_started_at="" process_executable="" identity
   if ! load_router_state; then
     info "未找到 setup-managed router 状态文件：$ROUTER_STATE_PATH"
     info "router 未运行"
     return 0
   fi
-  if router_pid_running "$pid"; then
+  if validate_router_identity; then
     success "router running"
   else
-    warn "router 未运行"
+    identity=$?
+    if [[ "$identity" -eq 1 ]]; then warn "router 未运行"; else warn "router state stale"; fi
   fi
   info "pid=$pid"
   info "listen_addr=${listen_addr:-$ROUTER_BASE_URL}"
   info "binary_path=${binary_path:-$BINARY_PATH}"
   info "log_path=${log_path:-$ROUTER_LOG_PATH}"
   [[ -n "${started_at:-}" ]] && info "started_at=$started_at"
+  [[ -n "${process_started_at:-}" ]] && info "process_started_at=$process_started_at"
+  [[ -n "${process_executable:-}" ]] && info "process_executable=$process_executable"
 }
 
 router_log() {
@@ -240,27 +387,34 @@ router_log() {
 }
 
 router_stop() {
-  local pid="" listen_addr="" binary_path="" log_path="" started_at=""
+  local pid="" listen_addr="" binary_path="" log_path="" started_at="" process_started_at="" process_executable="" identity
   if ! load_router_state; then
     info "未找到 setup-managed router 状态文件：$ROUTER_STATE_PATH"
     info "router 未运行"
     return 0
   fi
-  if router_pid_running "$pid"; then
+  if validate_router_identity; then
     kill "$pid" 2>/dev/null || true
     for _ in $(seq 1 25); do
-      router_pid_running "$pid" || break
+      validate_router_identity || break
       sleep 0.2
     done
-    if router_pid_running "$pid"; then
+    if validate_router_identity; then
       warn "router 未正常退出，发送 SIGKILL。"
       kill -9 "$pid" 2>/dev/null || true
+    else
+      identity=$?
+      if [[ "$identity" -eq 2 ]]; then
+        warn "router state stale；pid 已被复用，未发送 SIGKILL。"
+        return 0
+      fi
     fi
     success "router stopped"
+    rm -f "$ROUTER_STATE_PATH"
   else
-    warn "router 未运行"
+    identity=$?
+    if [[ "$identity" -eq 1 ]]; then warn "router 未运行"; else warn "router state stale；未发送信号。"; fi
   fi
-  rm -f "$ROUTER_STATE_PATH"
 }
 
 select_targets() {
@@ -370,6 +524,8 @@ print_usage() {
 选项:
   --agent=LIST
       逗号分隔的 agent key：claude / opencode / codex。
+  --download
+      未找到随包二进制时，显式允许通过 HTTPS 下载；也可用 MTLS_ROUTER_ALLOW_DOWNLOAD=1。
   --download-url=URL
       自定义 mtls-router 下载地址。可指向包含二进制的目录，也可指向当前平台完整二进制 URL。
       也可用 MTLS_ROUTER_DOWNLOAD_URL 设置。
@@ -894,6 +1050,12 @@ main() {
         fi
         agent_filter="$2"
         shift 2
+        ;;
+      --download)
+        [[ "$action" == "setup" || "$action" == "router-install" || "$action" == "router-setup" ]] ||
+          fail "--download 仅适用于 router install 或 router setup"
+        ALLOW_DOWNLOAD=1
+        shift
         ;;
       --download-url=*)
         DOWNLOAD_BASE_URL="${1#--download-url=}"

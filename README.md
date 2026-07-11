@@ -20,23 +20,29 @@ Initial release of the single-binary local reverse proxy for forwarding local HT
 
 ## One-click setup
 
-These scripts download the latest `mtls-router` binary for your operating system and CPU architecture and start `mtls-router` in backend mode. They do not install or launch any agent, and the default setup path does not modify agent configuration.
+Release installation is package-first. From [GitHub Releases](https://github.com/codeasier/mtls-router/releases), select the archive for your operating system and CPU architecture (`.tar.gz` for macOS/Linux or `.zip` for Windows), extract it, and run the setup script from the extracted directory. Each archive contains the setup script, its sibling platform binary, and `SHA256SUMS`.
 
 On macOS or Linux:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/codeasier/mtls-router/main/setup.sh | bash
+tar -xzf mtls-router-darwin-arm64.tar.gz
+./setup.sh router setup
 ```
 
 On Windows PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/codeasier/mtls-router/main/setup.ps1 | iex
+Expand-Archive .\mtls-router-windows-amd64.zip -DestinationPath .\mtls-router
+.\mtls-router\setup.ps1 router setup
 ```
 
-The scripts install `mtls-router` under `~/.local/bin` by default. On Windows this resolves to `%USERPROFILE%\.local\bin` (for example `C:\Users\<you>\.local\bin`). To choose another install directory, set `MTLS_ROUTER_INSTALL_DIR` before running the script.
+The setup script selects the sibling binary for the current platform and requires its exact entry in the sibling `SHA256SUMS` manifest to match. A missing, malformed, duplicate, or mismatched checksum is a hard failure: the existing installed binary is preserved and the script never falls back to a network download.
 
-Release-packaged `setup.sh` and `setup.ps1` may include a preconfigured default download URL for a private download host. That only sets the binary download location. If the download host requires HTTP Basic Auth, you must still provide credentials explicitly with `--download-user` / `--download-password` or `MTLS_ROUTER_DOWNLOAD_USER` / `MTLS_ROUTER_DOWNLOAD_PASSWORD`; the scripts do not embed download credentials.
+If the sibling binary is missing, an interactive setup asks whether to download the binary and `SHA256SUMS`. Non-interactive setup fails closed unless downloading is explicitly authorized with `router install --download`, `router setup --download`, or `MTLS_ROUTER_ALLOW_DOWNLOAD=1`. Downloaded payloads receive the same SHA-256 verification before installation.
+
+Custom sources set with `--download-url` or `MTLS_ROUTER_DOWNLOAD_URL` must use HTTPS; plain HTTP URLs are rejected before any credentials or downloader are used. Release-packaged scripts may include a preconfigured HTTPS URL for a private host. Authentication remains explicit through `--download-user` / `--download-password` or `MTLS_ROUTER_DOWNLOAD_USER` / `MTLS_ROUTER_DOWNLOAD_PASSWORD`; the scripts do not embed credentials.
+
+The scripts install `mtls-router` under `~/.local/bin` by default. On Windows this resolves to `%USERPROFILE%\.local\bin` (for example `C:\Users\<you>\.local\bin`). To choose another install directory, set `MTLS_ROUTER_INSTALL_DIR` before running the script. They do not install or launch any agent, and the default setup path does not modify agent configuration.
 
 ## Manual download
 
@@ -120,6 +126,8 @@ When started via the one-click setup script, the log file lives outside the inst
 - Windows: `%USERPROFILE%\.mtls-router\mtls-router.log`
 
 The exact path is recorded in `setup-state.json` after each start and can be overridden with `MTLS_ROUTER_LOG_PATH`.
+
+Setup-managed `router status` and `router stop` do not trust a PID alone. They validate the PID together with the recorded OS process start identity and executable path, including that the executable matches the managed binary. Missing or mismatched identity is reported as stale state; the state is retained for diagnosis, and `router stop` sends no signal to that process. Identity is checked again while stopping and immediately before any forced termination, preventing a reused PID from being signaled.
 
 ## Management endpoints
 
