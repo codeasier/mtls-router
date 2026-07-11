@@ -43,21 +43,40 @@ test_router_start_writes_state() {
   rm -rf "$tmp"
 }
 
-test_stale_state_never_signals_unrelated_pid() {
-  local tmp sleeper status_out stop_out
-  tmp="$(mktemp -d)"
-  mkdir -p "$tmp/home/.mtls-router"
-  sleep 60 & sleeper=$!
-  jq -n --argjson pid "$sleeper" --arg binary "$tmp/mtls-router" '{pid:$pid,binary_path:$binary,process_started_at:"forged",process_executable:$binary}' >"$tmp/home/.mtls-router/setup-state.json"
+assert_stale_state_does_not_stop_router() {
+  local tmp="$1" label="$2" pid status_out stop_out
+  pid="$(jq -r '.pid' "$tmp/home/.mtls-router/setup-state.json")"
   status_out="$(MTLS_ROUTER_INSTALL_DIR="$tmp" HOME="$tmp/home" bash "$SCRIPT" router status 2>&1)"
   stop_out="$(MTLS_ROUTER_INSTALL_DIR="$tmp" HOME="$tmp/home" bash "$SCRIPT" router stop 2>&1)"
-  assert_contains "stale" "$status_out" "stale router status"
-  [[ "$status_out" != *"router running"* ]] || fail "stale status reported running"
-  assert_contains "stale" "$stop_out" "stale router stop"
-  kill -0 "$sleeper" || fail "router stop signaled unrelated process"
-  [[ -f "$tmp/home/.mtls-router/setup-state.json" ]] || fail "stale state should be retained"
-  kill "$sleeper"; wait "$sleeper" 2>/dev/null || true
+  assert_contains "stale" "$status_out" "$label status"
+  [[ "$status_out" != *"router running"* ]] || fail "$label reported running"
+  assert_contains "stale" "$stop_out" "$label stop"
+  kill -0 "$pid" || fail "$label stop signaled the live process"
+  [[ -f "$tmp/home/.mtls-router/setup-state.json" ]] || fail "$label state should be retained"
+  kill "$pid"; wait "$pid" 2>/dev/null || true
   rm -rf "$tmp"
+}
+
+test_start_identity_mismatch_never_signals_live_process() {
+  local tmp state
+  tmp="$(mktemp -d)"
+  build_fake_router "$tmp"
+  MTLS_ROUTER_SKIP_DOWNLOAD=1 MTLS_ROUTER_INSTALL_DIR="$tmp" HOME="$tmp/home" bash "$SCRIPT" router start >/dev/null 2>&1
+  state="$tmp/home/.mtls-router/setup-state.json"
+  jq '.process_started_at = "reused-pid-start-identity"' "$state" >"$state.tmp"
+  mv "$state.tmp" "$state"
+  assert_stale_state_does_not_stop_router "$tmp" "start identity mismatch"
+}
+
+test_executable_mismatch_never_signals_live_process() {
+  local tmp state
+  tmp="$(mktemp -d)"
+  build_fake_router "$tmp"
+  MTLS_ROUTER_SKIP_DOWNLOAD=1 MTLS_ROUTER_INSTALL_DIR="$tmp" HOME="$tmp/home" bash "$SCRIPT" router start >/dev/null 2>&1
+  state="$tmp/home/.mtls-router/setup-state.json"
+  jq --arg executable "$tmp/unrelated-router" '.process_executable = $executable' "$state" >"$state.tmp"
+  mv "$state.tmp" "$state"
+  assert_stale_state_does_not_stop_router "$tmp" "executable mismatch"
 }
 
 test_missing_process_is_not_running() {
@@ -120,6 +139,7 @@ test_router_status_without_state_is_not_running() {
 test_router_start_writes_state
 test_router_status_log_stop_use_state
 test_router_status_without_state_is_not_running
-test_stale_state_never_signals_unrelated_pid
+test_start_identity_mismatch_never_signals_live_process
+test_executable_mismatch_never_signals_live_process
 test_missing_process_is_not_running
 test_replaced_running_binary_remains_managed_on_linux

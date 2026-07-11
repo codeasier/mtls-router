@@ -129,6 +129,8 @@ The exact path is recorded in `setup-state.json` after each start and can be ove
 
 Setup-managed `router status` and `router stop` do not trust a PID alone. They validate the PID together with the recorded OS process start identity and executable path, including that the executable matches the managed binary. Missing or mismatched identity is reported as stale state; the state is retained for diagnosis, and `router stop` sends no signal to that process. Identity is checked again while stopping and immediately before any forced termination, preventing a reused PID from being signaled.
 
+State files created by older setup scripts do not contain this process identity. After upgrading the setup script, an older running router is therefore reported as stale and is not stopped automatically. Confirm and stop that process manually, remove the old `setup-state.json`, then run `router start` again to create identity-aware state.
+
 ## Management endpoints
 
 `mtls-router` exposes two management endpoints on the same listener as the reverse proxy. They are **not** forwarded to the upstream.

@@ -317,7 +317,11 @@ router_process_executable() {
 
 # Returns 0 for genuine, 1 for absent, and 2 for stale/mismatched state.
 validate_router_identity() {
-  [[ "${pid:-}" =~ ^[0-9]+$ ]] || return 2
+  local pid="$1"
+  local process_started_at="$2"
+  local process_executable="$3"
+  local binary_path="$4"
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 2
   kill -0 "$pid" >/dev/null 2>&1 || return 1
   [[ -n "${process_started_at:-}" && -n "${process_executable:-}" && -n "${binary_path:-}" ]] || return 2
   local live_started_at live_executable stored_executable stored_binary
@@ -359,7 +363,7 @@ router_status() {
     info "router 未运行"
     return 0
   fi
-  if validate_router_identity; then
+  if validate_router_identity "$pid" "$process_started_at" "$process_executable" "$binary_path"; then
     success "router running"
   else
     identity=$?
@@ -393,13 +397,13 @@ router_stop() {
     info "router 未运行"
     return 0
   fi
-  if validate_router_identity; then
+  if validate_router_identity "$pid" "$process_started_at" "$process_executable" "$binary_path"; then
     kill "$pid" 2>/dev/null || true
     for _ in $(seq 1 25); do
-      validate_router_identity || break
+      validate_router_identity "$pid" "$process_started_at" "$process_executable" "$binary_path" || break
       sleep 0.2
     done
-    if validate_router_identity; then
+    if validate_router_identity "$pid" "$process_started_at" "$process_executable" "$binary_path"; then
       warn "router 未正常退出，发送 SIGKILL。"
       kill -9 "$pid" 2>/dev/null || true
     else
