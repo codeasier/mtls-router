@@ -78,13 +78,15 @@ func run() error {
 		return err
 	}
 
-	if err := health.Probe(health.ProbeOptions{
+	probeOptions := health.ProbeOptions{
 		UpstreamURL: cfg.UpstreamURL,
 		ClientCert:  clientCertPEM,
 		ClientKey:   clientKeyPEM,
 		UpstreamCA:  upstreamCAPEM,
+		TLSMin:      cfg.TLSMin,
 		Timeout:     cfg.Timeout,
-	}); err != nil {
+	}
+	if err := health.Probe(probeOptions); err != nil {
 		return err
 	}
 
@@ -103,13 +105,7 @@ func run() error {
 	mux.Handle("/version", routermeta.VersionHandler(routermeta.InfoProviderFunc(func() map[string]any {
 		return map[string]any{"started_at": startedAt}
 	})))
-	mux.Handle("/health", routermeta.HealthHandler(health.Probe, health.ProbeOptions{
-		UpstreamURL: cfg.UpstreamURL,
-		ClientCert:  clientCertPEM,
-		ClientKey:   clientKeyPEM,
-		UpstreamCA:  upstreamCAPEM,
-		Timeout:     cfg.Timeout,
-	}))
+	mux.Handle("/health", routermeta.HealthHandler(health.Probe, probeOptions))
 	mux.Handle("/", withAccessLog(proxy.NewBodyErrorHandler(reverseProxy), logger))
 
 	server := &http.Server{

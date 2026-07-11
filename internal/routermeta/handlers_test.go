@@ -101,6 +101,7 @@ func TestHealthHandlerPassesRuntimeProbeOptions(t *testing.T) {
 		ClientCert:  "client-cert-pem",
 		ClientKey:   "client-key-pem",
 		UpstreamCA:  "upstream-ca-pem",
+		TLSMin:      "tls1.3",
 		Timeout:     2 * time.Second,
 	}
 	var got health.ProbeOptions
