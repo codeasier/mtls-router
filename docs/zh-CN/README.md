@@ -2,7 +2,7 @@
 
 [English](../../README.md)
 
-`mtls-router` 是一个单二进制、跨平台的本地反向代理。它接收来自 Claude Code、Codex CLI 等本地客户端的 plain HTTP 请求，然后使用内嵌的客户端证书、私钥、上游 CA 和上游 URL，将请求转发到公开的上游 mTLS 服务。
+`mtls-router` 二进制是一个单二进制、跨平台的本地反向代理。它接收来自 Claude Code、Codex CLI 等本地客户端的 plain HTTP 请求，然后使用内嵌的客户端证书、私钥、上游 CA 和上游 URL，将请求转发到公开的上游 mTLS 服务。本项目还会分发 Go manager 和 Tauri 桌面应用。
 
 代理会透明转发请求体和 Server-Sent Events 响应。它不做协议转换：本地流量是 HTTP，上游流量是带 mTLS 的 HTTPS。
 
@@ -18,9 +18,15 @@
 
 首个发布版本，提供单二进制本地反向代理，用于将本地 HTTP 流量转发到上游 HTTPS mTLS 服务。
 
+## 桌面应用
+
+Tauri 桌面应用提供当前用户 router 控制、托盘操作、默认登录时启动、健康/日志视图，以及 Claude Code、opencode 和 Codex 的显式预览/写入流程。它把 manager 和 router 作为经过验证的 sidecar 打包，首次启动绝不会修改 Agent 文件。
+
+当前仓库中的 CI 和 release workflow 会构建六个原生桌面包：Windows x86_64/arm64 NSIS 安装器、macOS Intel/Apple Silicon DMG，以及 Linux x86_64/arm64 AppImage。每个匹配的目标 runner 都会检查对应包的内容、架构、版本/deployment 身份、sidecar 哈希和可执行权限。Release job 仅在签名凭据完整时签名 Windows 和 macOS 包，仅在额外 Apple 凭据完整时 notarize 并 staple macOS 应用，并为每个目标发布一个明确的签名状态文件。包检查不会安装或启动应用，因此在把桌面 release 视为完整验证之前，仍需单独提供目标 runner 上成功安装/启动的证据。安装、首次启动、Agent、凭据和卸载行为见[桌面应用](DESKTOP.md)，恢复指导见[桌面应用故障排查](TROUBLESHOOTING.md)，精确证据边界见[构建与发布](BUILD.md)。
+
 ## 一键安装
 
-Release 安装优先使用平台包。请从 [GitHub Releases](https://github.com/codeasier/mtls-router/releases) 选择适合当前操作系统和 CPU 架构的压缩包（macOS/Linux 使用 `.tar.gz`，Windows 使用 `.zip`），解压后运行其中的安装脚本。每个压缩包都包含安装脚本、同目录的平台二进制文件和 `SHA256SUMS`。
+Release 安装优先使用平台包。请从 [GitHub Releases](https://github.com/codeasier/mtls-router/releases) 选择适合当前操作系统和 CPU 架构的压缩包（macOS/Linux 使用 `.tar.gz`，Windows 使用 `.zip`），解压后运行其中的安装脚本。每个压缩包都包含安装脚本、当前平台的 `mtls-router` 和 `mtls-router-manager` 二进制文件，以及两者在 `SHA256SUMS` 中的校验记录。
 
 macOS 或 Linux：
 
@@ -36,13 +42,13 @@ Expand-Archive .\mtls-router-windows-amd64.zip -DestinationPath .\mtls-router
 .\mtls-router\setup.ps1 router setup
 ```
 
-安装脚本会选择适合当前平台的同目录二进制文件，并要求它在同目录 `SHA256SUMS` 中存在唯一、完全匹配的校验记录。校验记录缺失、格式错误、重复或哈希不匹配都会导致硬失败：已有的已安装二进制会被保留，脚本绝不会回退到联网下载。
+安装脚本会选择适合当前平台的两个同目录二进制文件，并要求它们各自在同目录 `SHA256SUMS` 中存在唯一、完全匹配的校验记录。只要目录里出现任一平台 payload，另一个二进制或 manifest 缺失、校验记录格式错误、重复或哈希不匹配都会导致硬失败：已有的已安装二进制对会被保留，脚本绝不会回退到联网下载。
 
-如果同目录二进制缺失，交互式安装会询问是否下载二进制文件和 `SHA256SUMS`。非交互式安装默认安全失败，除非通过 `router install --download`、`router setup --download` 或 `MTLS_ROUTER_ALLOW_DOWNLOAD=1` 显式授权下载。下载的 payload 在安装前执行相同的 SHA-256 校验。
+如果同目录没有任何平台 payload，交互式安装会询问是否下载两个二进制文件和 `SHA256SUMS`。非交互式安装默认安全失败，除非通过 `router install --download`、`router setup --download` 或 `MTLS_ROUTER_ALLOW_DOWNLOAD=1` 显式授权下载。三个文件先下载到同一个临时目录，并在替换任一安装路径前完成两个二进制的 SHA-256 校验。
 
 通过 `--download-url` 或 `MTLS_ROUTER_DOWNLOAD_URL` 指定的自定义来源必须使用 HTTPS；在调用下载器或使用凭据之前，普通 HTTP URL 就会被拒绝。Release 包中的脚本可以预配置私有主机的 HTTPS URL。认证仍需通过 `--download-user` / `--download-password` 或 `MTLS_ROUTER_DOWNLOAD_USER` / `MTLS_ROUTER_DOWNLOAD_PASSWORD` 显式提供；脚本不会内嵌凭据。
 
-默认情况下，脚本会把 `mtls-router` 安装到 `~/.local/bin`。在 Windows 上对应 `%USERPROFILE%\.local\bin`（例如 `C:\Users\<你>\.local\bin`）。如需指定其他安装目录，请在运行脚本前设置 `MTLS_ROUTER_INSTALL_DIR`。脚本不会安装或启动任何 agent，默认安装路径也不会修改 agent 配置。
+默认情况下，脚本会把 `mtls-router` 和 `mtls-router-manager` 一起安装到 `~/.local/bin`。在 Windows 上对应 `%USERPROFILE%\.local\bin`（例如 `C:\Users\<你>\.local\bin`）。如需指定其他安装目录，请在运行脚本前设置 `MTLS_ROUTER_INSTALL_DIR`。安装过程使用仅当前用户可读写的 pending marker、上一代备份、两个固定路径替换、安装后哈希验证和原子提交的 receipt。每个 setup 命令在执行已安装二进制前都会协调未完成事务，因此不会执行混合代。脚本不会安装或启动任何 agent，默认安装路径也不会修改 agent 配置。
 
 ## 手动下载
 
@@ -131,6 +137,44 @@ Windows PowerShell：
 
 旧版安装脚本创建的状态文件不包含这些进程标识。因此升级安装脚本后，旧版已运行的 router 会被报告为 stale，且不会被自动停止。请先人工确认并停止该进程，删除旧的 `setup-state.json`，再运行 `router start` 创建包含进程标识的新状态。
 
+## 管理端点
+
+`mtls-router` 在反向代理的同一个 listener 上提供两个管理端点，它们**不会**被转发到上游。
+
+这些端点假设 router 只监听可信 localhost。不要在生产环境中把它们暴露到公网，因为 `/version` 包含 commit SHA 等精确构建信息。
+
+### `GET /version`
+
+返回描述当前二进制和进程的 JSON：
+
+```json
+{
+  "version": "v0.1.1",
+  "commit": "abc1234",
+  "build_date": "2026-06-21T09:23:24Z",
+  "deployment_id": "production-service",
+  "management_protocol_version": "1",
+  "pid": 12345,
+  "started_at": "2026-06-21T09:23:24Z"
+}
+```
+
+`version`、`commit`、`build_date` 和 `deployment_id` 会通过 `.github/workflows/release.yml`、`Dockerfile` 和 `scripts/build.sh` 中的 `-ldflags -X` 在 link time 设置。`management_protocol_version` 是代码内兼容性 ID。本地构建默认使用 `dev` / `unknown`；生产 release preflight 要求非默认 deployment ID。`started_at` 是当前进程的启动时间。
+
+### `GET /health`
+
+返回 HTTP 200 和描述上游 mTLS+TCP 可达性的 JSON。HTTP status 始终为 200，由响应体区分 `ok` 和 `degraded`：
+
+```json
+{"status": "ok", "upstream": "reachable"}
+```
+
+```json
+{"status": "degraded", "upstream": "unreachable", "error": "..."}
+```
+
+安装脚本使用 `/version` 和 `/health` 检测端口 19099 上是否已有以前安装的 router，并决定升级、重启还是保持不变。
+
 ## 配置 agents
 
 安装脚本会把 router 生命周期命令和 agent 配置命令分开：
@@ -153,7 +197,9 @@ Windows PowerShell：
 
 `router install` 只下载并安装二进制。`router start` 只启动已安装的二进制；如果不存在，会明确提示先执行 `router install` 或 `router setup`。`router setup` 会安装并启动 router，等价于无参数默认行为。
 
-`agent print-config` 只打印配置片段。`agent write-config --agent=...` 只写入 agent 配置，并要求显式提供 `--agent=`。旧的顶层 `--print-config` 和 `--write-config --agent=...` 仍作为兼容别名保留。
+`agent print-config` 会在 manager 验证无密钥变更预览后，继续打印原有的 key-placeholder 配置片段。`agent write-config --agent=...` 只写入 agent 配置，并要求显式提供 `--agent=` 和隐藏交互输入的 key。旧的顶层 `--print-config` 和 `--write-config --agent=...` 仍作为兼容别名保留。Agent 命令只会执行经 checksum 验证的同目录 manager，或经安装 receipt 验证的 manager；绝不会隐式下载 manager。
+
+由于环境变量不是安全的 secret 传输方式，`MTLS_ROUTER_OPENAI_API_KEY` 已移除，不再提供 key。非交互自动化必须调用已验证并安装的 `mtls-router-manager serve`，先取得 `agent.preview` revision token，再只通过后续单行 `agent.write` stdin 请求发送 `api_key`。manager 只向 stdout 写协议响应，并串行处理请求直到 stdin EOF。不要把 key 放入命令行参数、环境变量、日志、shell history 或临时请求文件。精确的隐藏输入跨平台示例见 [stdin manager 自动化](DESKTOP.md#stdin-manager-自动化)。
 
 `mtls-router` 二进制本身只管理 router，不提供 `print-config` 这类 agent 配置命令。
 
@@ -257,7 +303,7 @@ nssm install mtls-router
 
 ## 设计
 
-见 `docs/superpowers/specs/2026-06-17-mtls-router-design.md`。
+见[设计规范](../superpowers/specs/2026-06-17-mtls-router-design.md)。
 
 ## License
 

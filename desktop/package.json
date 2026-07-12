@@ -1,0 +1,50 @@
+{
+  "name": "mtls-router-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "npm@11.6.2",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "tauri": "npm run sidecars:build && tauri",
+    "sidecars:build": "./scripts/build-sidecars.sh",
+    "package:verify": "./scripts/verify-package.sh",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "static:check": "eslint . && prettier --check .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "tsc --noEmit && vite build",
+    "rust:format": "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check",
+    "rust:test": "cargo test --manifest-path src-tauri/Cargo.toml --locked",
+    "verify": "npm run static:check && npm run typecheck && npm test && npm run build && npm run rust:format && npm run rust:test"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.11.1",
+    "react": "19.2.7",
+    "react-dom": "19.2.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@tauri-apps/cli": "2.11.4",
+    "@testing-library/jest-dom": "6.9.1",
+    "@testing-library/react": "16.3.2",
+    "@types/node": "24.3.1",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.3",
+    "eslint": "10.0.1",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "eslint-plugin-react-refresh": "0.5.3",
+    "globals": "17.7.0",
+    "jsdom": "29.1.1",
+    "prettier": "3.9.5",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.63.0",
+    "vite": "8.1.4",
+    "vitest": "4.1.10"
+  }
+}

@@ -2,12 +2,15 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -99,6 +102,46 @@ func TestManagementRoutesTakePrecedenceOverProxyRoute(t *testing.T) {
 				t.Fatalf("body = %q, want to contain %q", rec.Body.String(), tt.want)
 			}
 		})
+	}
+}
+
+func TestStartupLogsSanitizeUpstreamAndFailureDetails(t *testing.T) {
+	const (
+		userCanary     = "auth-user-canary"
+		passwordCanary = "sk-password-canary"
+		pathCanary     = "private-path-canary"
+		queryCanary    = "sk-query-canary"
+		errorCanary    = "upstream-error-canary"
+	)
+	upstream, err := url.Parse("https://" + userCanary + ":" + passwordCanary + "@upstream.example:8443/" + pathCanary + "?api_key=" + queryCanary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(t.TempDir(), "router.log")
+	writer, closeLog, err := logWriter(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logger := slog.New(slog.NewTextHandler(writer, nil))
+
+	logListening(logger, "127.0.0.1:19099", upstream)
+	logRunFailure(logger, errors.New("probe failed: "+upstream.String()+": "+errorCanary))
+	closeLog()
+
+	rawLog, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(rawLog)
+	for _, want := range []string{"msg=listening", "addr=127.0.0.1:19099", "upstream=https://upstream.example:8443", "msg=fatal", "reason=router_failure"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("startup log missing %q: %s", want, out)
+		}
+	}
+	for _, canary := range []string{userCanary, passwordCanary, pathCanary, queryCanary, errorCanary, "api_key"} {
+		if strings.Contains(out, canary) {
+			t.Fatalf("startup log leaked %q: %s", canary, out)
+		}
 	}
 }
 

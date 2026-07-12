@@ -16,3 +16,10 @@
 
 # Go
 /vendor/
+
+# Desktop
+/desktop/node_modules/
+/desktop/dist/
+/desktop/src-tauri/gen/
+/desktop/src-tauri/target/
+/desktop/release-artifacts/

@@ -28,15 +28,15 @@ type ProbeFunc func(ProbeOptions) error
 // Probe is the default ProbeFunc that does a real mTLS+TCP dial.
 var Probe ProbeFunc = func(opts ProbeOptions) error {
 	if _, err := url.ParseRequestURI(opts.UpstreamURL); err != nil {
-		return fmt.Errorf("invalid probe URL: %w", err)
+		return fmt.Errorf("invalid probe URL")
 	}
 	clientCert, rootCAs, err := certs.LoadFromStrings(opts.ClientCert, opts.ClientKey, opts.UpstreamCA)
 	if err != nil {
-		return fmt.Errorf("load probe mTLS config: %w", err)
+		return fmt.Errorf("load probe mTLS config")
 	}
 	tlsMin, err := tlspolicy.MinVersion(opts.TLSMin)
 	if err != nil {
-		return fmt.Errorf("configure probe TLS: %w", err)
+		return fmt.Errorf("configure probe TLS")
 	}
 	timeout := opts.Timeout
 	if timeout <= 0 {
@@ -46,12 +46,12 @@ var Probe ProbeFunc = func(opts ProbeOptions) error {
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, opts.UpstreamURL, nil)
 	if err != nil {
-		return fmt.Errorf("create probe request: %w", err)
+		return fmt.Errorf("create probe request")
 	}
 	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{Certificates: []tls.Certificate{*clientCert}, RootCAs: rootCAs, MinVersion: tlsMin}}}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("probe upstream: %w", err)
+		return fmt.Errorf("probe upstream failed")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= http.StatusInternalServerError {

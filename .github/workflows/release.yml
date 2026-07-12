@@ -5,6 +5,11 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      version:
+        description: Desktop SemVer for a validation-only build
+        required: true
+        default: 0.1.0-dev
 
 permissions:
   contents: write
@@ -44,31 +49,281 @@ jobs:
           CLIENT_KEY_PEM: ${{ secrets.CLIENT_KEY_PEM }}
           UPSTREAM_CA_PEM: ${{ secrets.UPSTREAM_CA_PEM }}
           UPSTREAM_URL: ${{ vars.UPSTREAM_URL }}
+          DEPLOYMENT_ID: ${{ vars.DEPLOYMENT_ID }}
         run: |
+          case "${DEPLOYMENT_ID:-}" in ""|dev|unknown) echo "DEPLOYMENT_ID must be a non-default production identifier" >&2; exit 1;; esac
+          test -n "$CLIENT_CERT_PEM" && test -n "$CLIENT_KEY_PEM" && test -n "$UPSTREAM_CA_PEM"
+          case "${UPSTREAM_URL:-}" in https://*) ;; *) echo "UPSTREAM_URL must use HTTPS" >&2; exit 1;; esac
           mkdir -p dist
           ext=""
           if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
           go build -trimpath \
-            -ldflags "-s -w -X 'main.clientCertPEM=${CLIENT_CERT_PEM}' -X 'main.clientKeyPEM=${CLIENT_KEY_PEM}' -X 'main.upstreamCAPEM=${UPSTREAM_CA_PEM}' -X 'main.upstreamURL=${UPSTREAM_URL}' -X 'github.com/codeasier/mtls-router/internal/version.Version=${GITHUB_REF_NAME}' -X 'github.com/codeasier/mtls-router/internal/version.Commit=${GITHUB_SHA::12}' -X 'github.com/codeasier/mtls-router/internal/version.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)'" \
-            -o "dist/mtls-router-${GOOS}-${GOARCH}${ext}" .
+            -ldflags "-s -w -X 'main.clientCertPEM=${CLIENT_CERT_PEM}' -X 'main.clientKeyPEM=${CLIENT_KEY_PEM}' -X 'main.upstreamCAPEM=${UPSTREAM_CA_PEM}' -X 'main.upstreamURL=${UPSTREAM_URL}' -X 'github.com/codeasier/mtls-router/internal/version.Version=${GITHUB_REF_NAME}' -X 'github.com/codeasier/mtls-router/internal/version.Commit=${GITHUB_SHA::12}' -X 'github.com/codeasier/mtls-router/internal/version.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)' -X 'github.com/codeasier/mtls-router/internal/version.DeploymentID=${DEPLOYMENT_ID}'" \
+             -o "dist/mtls-router-${GOOS}-${GOARCH}${ext}" .
+          go build -trimpath \
+            -ldflags "-s -w -X 'github.com/codeasier/mtls-router/internal/version.Version=${GITHUB_REF_NAME}' -X 'github.com/codeasier/mtls-router/internal/version.Commit=${GITHUB_SHA::12}' -X 'github.com/codeasier/mtls-router/internal/version.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)' -X 'github.com/codeasier/mtls-router/internal/version.DeploymentID=${DEPLOYMENT_ID}'" \
+            -o "dist/mtls-router-manager-${GOOS}-${GOARCH}${ext}" ./cmd/mtls-router-manager
       - uses: actions/upload-artifact@v4
         with:
-          name: mtls-router-${{ matrix.goos }}-${{ matrix.goarch }}
+          name: mtls-router-cli-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/*
+          if-no-files-found: error
+
+  desktop:
+    name: Desktop ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            os: windows
+            arch: amd64
+            bundles: nsis
+          - runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            os: windows
+            arch: arm64
+            bundles: nsis
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            os: darwin
+            arch: amd64
+            bundles: dmg
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            os: darwin
+            arch: arm64
+            bundles: dmg
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            os: linux
+            arch: amd64
+            bundles: appimage
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            os: linux
+            arch: arm64
+            bundles: appimage
+    env:
+      CLIENT_CERT_PEM: ${{ secrets.CLIENT_CERT_PEM }}
+      CLIENT_KEY_PEM: ${{ secrets.CLIENT_KEY_PEM }}
+      UPSTREAM_CA_PEM: ${{ secrets.UPSTREAM_CA_PEM }}
+      UPSTREAM_URL: ${{ vars.UPSTREAM_URL }}
+      DEPLOYMENT_ID: ${{ vars.DEPLOYMENT_ID }}
+      MANAGEMENT_PROTOCOL_VERSION: '1'
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+          key: release-${{ matrix.target }}
+      - name: Install Linux package dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libappindicator3-dev librsvg2-dev libwebkit2gtk-4.1-dev
+      - run: npm ci
+        working-directory: desktop
+      - name: Prepare release version
+        id: version
+        shell: bash
+        env:
+          DISPATCH_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="$DISPATCH_VERSION"
+          fi
+          ./desktop/scripts/prepare-version.sh "$version"
+          printf 'version=%s\n' "$version" >>"$GITHUB_OUTPUT"
+          printf 'VERSION=%s\n' "$version" >>"$GITHUB_ENV"
+      - name: Validate production inputs and build credential-injected sidecars
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          RELEASE_BUILD: '1'
+        run: ./desktop/scripts/build-sidecars.sh
+      - name: Import Windows signing certificate
+        if: runner.os == 'Windows' && env.WINDOWS_CERTIFICATE != '' && env.WINDOWS_CERTIFICATE_PASSWORD != ''
+        shell: pwsh
+        run: |
+          $bytes = [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
+          $path = Join-Path $env:RUNNER_TEMP 'mtls-router-signing.pfx'
+          [IO.File]::WriteAllBytes($path, $bytes)
+          $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          $certificate = Import-PfxCertificate -FilePath $path -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          if (-not $certificate.Thumbprint) { throw 'Windows certificate import produced no thumbprint' }
+          "WINDOWS_CERTIFICATE_THUMBPRINT=$($certificate.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $router = "desktop/src-tauri/binaries/mtls-router-${{ matrix.target }}.exe"
+          $manager = "desktop/src-tauri/binaries/mtls-router-manager-${{ matrix.target }}.exe"
+          & signtool sign /sha1 $certificate.Thumbprint /fd sha256 /tr https://timestamp.digicert.com /td sha256 $router $manager
+          if ($LASTEXITCODE -ne 0) { throw 'sidecar signing failed' }
+      - name: Build unsigned Linux package
+        if: runner.os == 'Linux'
+        working-directory: desktop
+        run: npm exec tauri -- build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --no-sign --ci
+      - name: Build unsigned Windows package
+        if: runner.os == 'Windows' && (env.WINDOWS_CERTIFICATE == '' || env.WINDOWS_CERTIFICATE_PASSWORD == '')
+        working-directory: desktop
+        run: npm exec tauri -- build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --no-sign --ci
+      - name: Build signed Windows package
+        if: runner.os == 'Windows' && env.WINDOWS_CERTIFICATE != '' && env.WINDOWS_CERTIFICATE_PASSWORD != ''
+        shell: pwsh
+        run: |
+          Push-Location desktop
+          npm exec tauri -- build --target ${{ matrix.target }} --no-bundle --no-sign --ci
+          Pop-Location
+          $desktop = "desktop/src-tauri/target/${{ matrix.target }}/release/mtls-router-desktop.exe"
+          & signtool sign /sha1 $env:WINDOWS_CERTIFICATE_THUMBPRINT /fd sha256 /tr https://timestamp.digicert.com /td sha256 $desktop
+          if ($LASTEXITCODE -ne 0) { throw 'desktop executable signing failed' }
+          Push-Location desktop
+          npm exec tauri -- bundle --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --no-sign --ci
+          Pop-Location
+          $package = Get-ChildItem desktop/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*-setup.exe
+          & signtool sign /sha1 $env:WINDOWS_CERTIFICATE_THUMBPRINT /fd sha256 /tr https://timestamp.digicert.com /td sha256 $package
+          if ($LASTEXITCODE -ne 0) { throw 'installer signing failed' }
+      - name: Build unsigned macOS package
+        if: runner.os == 'macOS' && (env.APPLE_CERTIFICATE == '' || env.APPLE_CERTIFICATE_PASSWORD == '')
+        working-directory: desktop
+        run: npm exec tauri -- build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --no-sign --ci
+      - name: Import macOS signing certificate and pre-sign sidecars
+        if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != '' && env.APPLE_CERTIFICATE_PASSWORD != ''
+        shell: bash
+        run: |
+          certificate="$RUNNER_TEMP/mtls-router-signing.p12"
+          keychain="$RUNNER_TEMP/mtls-router-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode >"$certificate"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security import "$certificate" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain"
+          identity="$(security find-identity -v -p codesigning "$keychain" | awk -F'"' '/Developer ID Application/{print $2; exit}')"
+          test -n "$identity"
+          printf 'APPLE_SIGNING_IDENTITY=%s\n' "$identity" >>"$GITHUB_ENV"
+          printf 'APPLE_SIGNING_KEYCHAIN=%s\n' "$keychain" >>"$GITHUB_ENV"
+          codesign --force --options runtime --timestamp --keychain "$keychain" --sign "$identity" desktop/src-tauri/binaries/mtls-router-${{ matrix.target }}
+          codesign --force --options runtime --timestamp --keychain "$keychain" --sign "$identity" desktop/src-tauri/binaries/mtls-router-manager-${{ matrix.target }}
+      - name: Create signed macOS package
+        if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != '' && env.APPLE_CERTIFICATE_PASSWORD != ''
+        shell: bash
+        run: |
+          cd desktop
+          npm exec tauri -- build --target ${{ matrix.target }} --bundles app --no-sign --ci
+          app=src-tauri/target/${{ matrix.target }}/release/bundle/macos/mtls-router.app
+          codesign --force --options runtime --timestamp --keychain "$APPLE_SIGNING_KEYCHAIN" --sign "$APPLE_SIGNING_IDENTITY" "$app/Contents/MacOS/mtls-router-desktop"
+          codesign --force --options runtime --timestamp --keychain "$APPLE_SIGNING_KEYCHAIN" --sign "$APPLE_SIGNING_IDENTITY" "$app"
+          if [[ -n "$APPLE_ID" && -n "$APPLE_PASSWORD" && -n "$APPLE_TEAM_ID" ]]; then
+            ditto -c -k --keepParent "$app" "$RUNNER_TEMP/mtls-router-notarization.zip"
+            xcrun notarytool submit "$RUNNER_TEMP/mtls-router-notarization.zip" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+            xcrun stapler staple "$app"
+          fi
+          mkdir -p src-tauri/target/${{ matrix.target }}/release/bundle/dmg
+          hdiutil create -volname mtls-router -srcfolder "$app" -ov -format UDZO "src-tauri/target/${{ matrix.target }}/release/bundle/dmg/mtls-router_${VERSION}.dmg"
+          codesign --force --timestamp --keychain "$APPLE_SIGNING_KEYCHAIN" --sign "$APPLE_SIGNING_IDENTITY" "src-tauri/target/${{ matrix.target }}/release/bundle/dmg/mtls-router_${VERSION}.dmg"
+      - name: Inspect package and sidecars
+        shell: bash
+        env:
+          PACKAGE_OUTPUT_DIR: ${{ github.workspace }}/desktop/release-artifacts
+        run: ./desktop/scripts/verify-package.sh ${{ matrix.target }}
+      - name: Record Linux signing status
+        if: runner.os == 'Linux'
+        shell: bash
+        run: printf '%s\n' 'unsigned (Linux package signing is not configured)' >desktop/release-artifacts/signing-status-${{ matrix.os }}-${{ matrix.arch }}.txt
+      - name: Validate and record unsigned Windows status
+        if: runner.os == 'Windows' && (env.WINDOWS_CERTIFICATE == '' || env.WINDOWS_CERTIFICATE_PASSWORD == '')
+        shell: pwsh
+        run: |
+          $package = Get-ChildItem desktop/release-artifacts/mtls-router-desktop-windows-${{ matrix.arch }}.exe
+          if ((Get-AuthenticodeSignature $package).Status -eq 'Valid') { throw 'unsigned build unexpectedly has a valid signature' }
+          $status="unsigned (credentials unavailable)"
+          Set-Content desktop/release-artifacts/signing-status-${{ matrix.os }}-${{ matrix.arch }}.txt $status
+      - name: Validate and record signed Windows status
+        if: runner.os == 'Windows' && env.WINDOWS_CERTIFICATE != '' && env.WINDOWS_CERTIFICATE_PASSWORD != ''
+        shell: pwsh
+        run: |
+          $package = Get-ChildItem desktop/release-artifacts/mtls-router-desktop-windows-${{ matrix.arch }}.exe
+          if ((Get-AuthenticodeSignature $package).Status -ne 'Valid') { throw 'signed Windows package failed Authenticode validation' }
+          $inspection = Join-Path $env:RUNNER_TEMP 'signed-package'
+          7z x -y "-o$inspection" $package | Out-Null
+          foreach ($name in @('mtls-router-desktop.exe', 'mtls-router.exe', 'mtls-router-manager.exe')) {
+            $binary = Get-ChildItem $inspection -Recurse -File -Filter $name | Select-Object -First 1
+            if (-not $binary -or (Get-AuthenticodeSignature $binary).Status -ne 'Valid') { throw "$name failed Authenticode validation" }
+          }
+          $status="signed"
+          Set-Content desktop/release-artifacts/signing-status-${{ matrix.os }}-${{ matrix.arch }}.txt $status
+      - name: Validate and record unsigned macOS status
+        if: runner.os == 'macOS' && (env.APPLE_CERTIFICATE == '' || env.APPLE_CERTIFICATE_PASSWORD == '')
+        shell: bash
+        run: |
+          status="unsigned (credentials unavailable)"
+          printf '%s\n' "$status" >desktop/release-artifacts/signing-status-${{ matrix.os }}-${{ matrix.arch }}.txt
+      - name: Validate and record signed macOS status
+        if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != '' && env.APPLE_CERTIFICATE_PASSWORD != '' && (env.APPLE_ID == '' || env.APPLE_PASSWORD == '' || env.APPLE_TEAM_ID == '')
+        shell: bash
+        run: |
+          codesign --verify --deep --strict desktop/src-tauri/target/${{ matrix.target }}/release/bundle/macos/mtls-router.app
+          codesign --verify --strict desktop/release-artifacts/mtls-router-desktop-darwin-${{ matrix.arch }}.dmg
+          status="signed (notarization credentials unavailable)"
+          printf '%s\n' "$status" >desktop/release-artifacts/signing-status-${{ matrix.os }}-${{ matrix.arch }}.txt
+      - name: Validate and record signed and notarized macOS status
+        if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != '' && env.APPLE_CERTIFICATE_PASSWORD != '' && env.APPLE_ID != '' && env.APPLE_PASSWORD != '' && env.APPLE_TEAM_ID != ''
+        shell: bash
+        run: |
+          app=desktop/src-tauri/target/${{ matrix.target }}/release/bundle/macos/mtls-router.app
+          codesign --verify --deep --strict "$app"
+          codesign --verify --strict desktop/release-artifacts/mtls-router-desktop-darwin-${{ matrix.arch }}.dmg
+          spctl --assess --type execute "$app"
+          xcrun stapler validate "$app"
+          status="signed and notarized"
+          printf '%s\n' "$status" >desktop/release-artifacts/signing-status-${{ matrix.os }}-${{ matrix.arch }}.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mtls-router-desktop-${{ matrix.os }}-${{ matrix.arch }}
+          path: desktop/release-artifacts/*
           if-no-files-found: error
 
   release:
     name: Package and publish release
     if: startsWith(github.ref, 'refs/tags/')
-    needs: build
+    needs: [build, desktop]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Download all binaries
         uses: actions/download-artifact@v4
         with:
-          pattern: mtls-router-*
+          pattern: mtls-router-cli-*
           path: binaries
+          merge-multiple: true
+      - name: Download all desktop packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: mtls-router-desktop-*
+          path: desktop-packages
           merge-multiple: true
       - name: Preflight and package
         env:
@@ -83,9 +338,9 @@ jobs:
 
           mkdir -p release packages stage
           cp binaries/mtls-router-* release/
-          test "$(find release -maxdepth 1 -type f -name 'mtls-router-*' | wc -l)" -eq 6
+          test "$(find release -maxdepth 1 -type f -name 'mtls-router-*' | wc -l)" -eq 12
           LC_ALL=C sha256sum release/mtls-router-* | sed 's#  release/#  #' | LC_ALL=C sort -k2 >release/SHA256SUMS
-          test "$(awk '$1 ~ /^[0-9a-f]{64}$/ && $2 ~ /^mtls-router-(linux|darwin)-(amd64|arm64)$/ || $1 ~ /^[0-9a-f]{64}$/ && $2 ~ /^mtls-router-windows-(amd64|arm64)\.exe$/ { print $2 }' release/SHA256SUMS | sort -u | wc -l)" -eq 6
+          test "$(awk '$1 ~ /^[0-9a-f]{64}$/ && $2 ~ /^mtls-router(-manager)?-(linux|darwin)-(amd64|arm64)$/ || $1 ~ /^[0-9a-f]{64}$/ && $2 ~ /^mtls-router(-manager)?-windows-(amd64|arm64)\.exe$/ { print $2 }' release/SHA256SUMS | sort -u | wc -l)" -eq 12
 
           cp setup.sh stage/setup.sh
           cp setup.ps1 stage/setup.ps1
@@ -108,32 +363,39 @@ jobs:
           test "$(od -An -tx1 -N3 stage/setup.ps1 | tr -d ' \n')" = efbbbf
           chmod 0755 stage/setup.sh
 
-          while read -r os arch asset; do
+          while read -r os arch router manager; do
             package="mtls-router-${os}-${arch}"
             rm -rf "stage/$package"
             mkdir "stage/$package"
-            cp "release/$asset" release/SHA256SUMS "stage/$package/"
+            cp "release/$router" "release/$manager" release/SHA256SUMS "stage/$package/"
             if [ "$os" = windows ]; then
               cp stage/setup.ps1 "stage/$package/"
               touch -d @0 "stage/$package"/*
-              (cd "stage/$package" && LC_ALL=C zip -X -q "../../../packages/$package.zip" SHA256SUMS setup.ps1 "$asset")
-              test "$(unzip -Z1 "packages/$package.zip" | wc -l)" -eq 3
+              (cd "stage/$package" && LC_ALL=C zip -X -q "../../../packages/$package.zip" SHA256SUMS setup.ps1 "$router" "$manager")
+              test "$(unzip -Z1 "packages/$package.zip" | wc -l)" -eq 4
             else
               cp stage/setup.sh "stage/$package/"
-              chmod 0755 "stage/$package/setup.sh" "stage/$package/$asset"
+              chmod 0755 "stage/$package/setup.sh" "stage/$package/$router" "stage/$package/$manager"
               tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -czf "packages/$package.tar.gz" -C "stage/$package" .
-              test "$(tar -tzf "packages/$package.tar.gz" | grep -Evc '^\./?$')" -eq 3
+              test "$(tar -tzf "packages/$package.tar.gz" | grep -Evc '^\./?$')" -eq 4
             fi
           done <<'TARGETS'
-          linux amd64 mtls-router-linux-amd64
-          linux arm64 mtls-router-linux-arm64
-          darwin amd64 mtls-router-darwin-amd64
-          darwin arm64 mtls-router-darwin-arm64
-          windows amd64 mtls-router-windows-amd64.exe
-          windows arm64 mtls-router-windows-arm64.exe
+          linux amd64 mtls-router-linux-amd64 mtls-router-manager-linux-amd64
+          linux arm64 mtls-router-linux-arm64 mtls-router-manager-linux-arm64
+          darwin amd64 mtls-router-darwin-amd64 mtls-router-manager-darwin-amd64
+          darwin arm64 mtls-router-darwin-arm64 mtls-router-manager-darwin-arm64
+          windows amd64 mtls-router-windows-amd64.exe mtls-router-manager-windows-amd64.exe
+          windows arm64 mtls-router-windows-arm64.exe mtls-router-manager-windows-arm64.exe
           TARGETS
           cp packages/* release/
-          test "$(find release -maxdepth 1 -type f | wc -l)" -eq 13
+          test "$(find release -maxdepth 1 -type f | wc -l)" -eq 19
+          (cd desktop-packages && sha256sum -c mtls-router-desktop-*.sha256)
+          cp desktop-packages/mtls-router-desktop-* release/
+          cp desktop-packages/signing-status-* release/
+          test "$(find release -maxdepth 1 -type f -name 'mtls-router-desktop-*' | wc -l)" -eq 12
+          test "$(find release -maxdepth 1 -type f -name 'signing-status-*' | wc -l)" -eq 6
+          find release -maxdepth 1 -type f ! -name SHA256SUMS ! -name 'signing-status-*' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sed 's#  release/#  #' >release/SHA256SUMS
+          test "$(awk '$1 ~ /^[0-9a-f]{64}$/ { print $2 }' release/SHA256SUMS | sort -u | wc -l)" -eq 30
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:

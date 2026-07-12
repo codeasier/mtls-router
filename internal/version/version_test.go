@@ -16,6 +16,12 @@ func TestInfoExposesBuildMetadata(t *testing.T) {
 	if info.BuildDate == "" {
 		t.Fatal("Info().BuildDate should not be empty (defaults to \"unknown\")")
 	}
+	if info.DeploymentID == "" {
+		t.Fatal("Info().DeploymentID should not be empty")
+	}
+	if info.ManagementProtocolVersion == "" {
+		t.Fatal("Info().ManagementProtocolVersion must be a non-empty code-owned constant")
+	}
 }
 
 func TestInfoUsesInjectedValues(t *testing.T) {
@@ -49,7 +55,7 @@ func TestInfoJSONRoundTrips(t *testing.T) {
 	if err := json.Unmarshal(b, &decoded); err != nil {
 		t.Fatalf("InfoJSON() not valid JSON: %v", err)
 	}
-	for _, key := range []string{"version", "commit", "build_date"} {
+	for _, key := range []string{"version", "commit", "build_date", "deployment_id", "management_protocol_version"} {
 		if _, ok := decoded[key]; !ok {
 			t.Fatalf("InfoJSON() missing key %q (got %s)", key, b)
 		}

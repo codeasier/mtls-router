@@ -2,6 +2,34 @@
 
 [中文](zh-CN/CHANGELOG.md)
 
+## Unreleased
+
+### Added
+
+- Added a Tauri 2 desktop control panel for current-user router lifecycle, separate process/upstream health, tray operation, default launch-at-login, bounded logs, diagnostics, settings, and Chinese/English UI.
+- Added verified architecture-specific `mtls-router-manager` and credential-injected `mtls-router` desktop sidecars with build-time/runtime hash and architecture checks plus manager version/target/deployment/protocol handshake.
+- Added safe external CLI-router reuse, strict unknown-port conflict behavior on `127.0.0.1:19099`, stale identity protection, and degraded/stale health presentation.
+- Added Claude Code, opencode, and Codex detection, structured preview, sensitive backups, atomic transactional writes, stale-preview rejection, and rollback/recovery through the shared Go manager.
+- Added bilingual desktop operation and troubleshooting guides, including install, first launch, Agent safety boundaries, uninstall, credential rotation, and package verification.
+
+### Changed
+
+- Extracted router lifecycle and Agent file management into `mtls-router-manager serve`, a sequential line-delimited JSON stdin/stdout protocol shared by the desktop and setup wrappers.
+- Changed CLI release installation to stage, verify, install, and receipt-track the router and manager as one matched pair.
+- Removed `MTLS_ROUTER_OPENAI_API_KEY`. Interactive setup reads the key without echo; automation must preview and send `agent.write` with the transient key only through manager stdin.
+
+### Security
+
+- Desktop/manager state, logs, diagnostics, protocol responses, process arguments, and environment variables do not intentionally retain Agent API keys. Agent-owned files and explicitly approved recovery backups remain the persistence boundary and must be protected as sensitive data.
+- Documented that the router's shared embedded client private key is extractable from distributed binaries and must be rotated through a complete replacement release plus server-side revocation.
+- Uninstall preserves Agent files, sensitive backups, logs, and state. Windows installer integration must remove current-user autostart; macOS/Linux users must run **Prepare for uninstall**, wait for exit, then delete the application.
+
+### Release status
+
+- CI and release workflows now build native desktop packages for all six targets: Windows x86_64/arm64 NSIS, macOS Intel/Apple Silicon DMG, and Linux x86_64/arm64 AppImage. Each matching target runner performs mandatory package inspection. Release jobs sign Windows/macOS packages only when signing credentials are complete, notarize/staple macOS applications only when the additional Apple credentials are complete, and emit one explicit status file per target. Package inspection does not install or launch the application, so separate successful target-runner install/launch evidence remains a release gate.
+
+---
+
 ## v0.1.3 - 2026-07-10
 
 This release focuses on release-install reliability and proxy correctness. Packaged setup scripts now point at the reachable download server by default, the proxy no longer carries unused stream-detection plumbing, client request-body failures are reported as bad requests, and `/health` now probes the configured upstream runtime target.

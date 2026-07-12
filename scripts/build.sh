@@ -26,6 +26,7 @@ fi
 
 echo ">> building mtls-router"
 VERSION="${VERSION:-dev}"
+DEPLOYMENT_ID="${DEPLOYMENT_ID:-dev}"
 if command -v git >/dev/null 2>&1 && git rev-parse --short HEAD >/dev/null 2>&1; then
   COMMIT="$(git rev-parse --short HEAD)"
 else
@@ -41,8 +42,18 @@ go build -trimpath \
     -X 'main.upstreamURL=https://upstream.placeholder.invalid' \
     -X 'github.com/codeasier/mtls-router/internal/version.Version=${VERSION}' \
     -X 'github.com/codeasier/mtls-router/internal/version.Commit=${COMMIT}' \
-    -X 'github.com/codeasier/mtls-router/internal/version.BuildDate=${BUILD_DATE}'" \
+    -X 'github.com/codeasier/mtls-router/internal/version.BuildDate=${BUILD_DATE}' \
+    -X 'github.com/codeasier/mtls-router/internal/version.DeploymentID=${DEPLOYMENT_ID}'" \
   -o mtls-router .
 
+go build -trimpath \
+  -ldflags "-s -w \
+    -X 'github.com/codeasier/mtls-router/internal/version.Version=${VERSION}' \
+    -X 'github.com/codeasier/mtls-router/internal/version.Commit=${COMMIT}' \
+    -X 'github.com/codeasier/mtls-router/internal/version.BuildDate=${BUILD_DATE}' \
+    -X 'github.com/codeasier/mtls-router/internal/version.DeploymentID=${DEPLOYMENT_ID}'" \
+  -o mtls-router-manager ./cmd/mtls-router-manager
+
 echo ">> built: ./mtls-router"
+echo ">> built: ./mtls-router-manager"
 echo ">> run hint: ./mtls-router will fail fast because the placeholder upstream URL is not real"
