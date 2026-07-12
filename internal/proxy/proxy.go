@@ -14,8 +14,12 @@ type Options struct {
 }
 
 func New(opts Options) *httputil.ReverseProxy {
+	director := NewDirector(opts.Upstream)
 	rp := &httputil.ReverseProxy{
-		Director:       NewDirector(opts.Upstream),
+		Director: func(r *http.Request) {
+			wrapBodyReadErrors(r)
+			director(r)
+		},
 		ModifyResponse: NewModifyResponse(),
 		ErrorHandler:   NewErrorHandler(),
 		FlushInterval:  -1,

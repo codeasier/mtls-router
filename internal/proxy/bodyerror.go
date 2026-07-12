@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httputil"
 )
 
 type clientBodyReadError struct {
@@ -31,11 +30,8 @@ func (b bodyErrorReadCloser) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func NewBodyErrorHandler(rp *httputil.ReverseProxy) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Body != nil {
-			r.Body = bodyErrorReadCloser{ReadCloser: r.Body}
-		}
-		rp.ServeHTTP(w, r)
-	})
+func wrapBodyReadErrors(r *http.Request) {
+	if r.Body != nil {
+		r.Body = bodyErrorReadCloser{ReadCloser: r.Body}
+	}
 }

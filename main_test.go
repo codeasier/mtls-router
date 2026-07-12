@@ -153,7 +153,7 @@ func TestProxyStreamsFirstChunkThroughAccessLog(t *testing.T) {
 				Transport: http.DefaultTransport.(*http.Transport).Clone(),
 				ErrorLog:  logger,
 			})
-			downstream := httptest.NewServer(withAccessLog(proxy.NewBodyErrorHandler(reverseProxy), logger))
+			downstream := httptest.NewServer(withAccessLog(reverseProxy, logger))
 			t.Cleanup(downstream.Close)
 
 			type firstChunkResult struct {

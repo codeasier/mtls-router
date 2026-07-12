@@ -74,6 +74,7 @@ Runtime includes transparent request/SSE streaming, startup upstream probing, ba
 - Do not expose management endpoints publicly; `/version` includes precise commit/build metadata.
 - Do not pass `-backend` under service managers such as NSSM/systemd/Docker; those supervisors own process backgrounding.
 - Do not buffer entire request bodies in memory; let `httputil.ReverseProxy` stream them to the upstream.
+- Do not add pass-through request-pipeline wrappers in `internal/proxy`; compose request-side hooks at the mux call site or in a dedicated middleware package.
 - Do not leak upstream/certificate/private-key details in proxy error JSON; tests assert sanitization.
 - Do not make `/health` fail at the HTTP layer for degraded upstream state; it returns HTTP 200 with `status` in the body.
 - Do not partially overwrite `secrets/` in `scripts/build.sh`; all three files must exist or all three placeholders are generated.
