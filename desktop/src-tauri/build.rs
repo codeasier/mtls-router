@@ -80,7 +80,7 @@ fn main() {
 
 fn object_format(target: &str) -> BinaryFormat {
     if target.contains("windows") {
-        BinaryFormat::Coff
+        BinaryFormat::Pe
     } else if target.contains("apple-darwin") {
         BinaryFormat::MachO
     } else {

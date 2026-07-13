@@ -82,7 +82,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libappindicator3-dev librsvg2-dev libwebkit2gtk-4.1-dev
+          sudo apt-get install -y libappindicator3-dev librsvg2-dev libwebkit2gtk-4.1-dev xdg-utils
       - name: Build host sidecars
         shell: bash
         run: ./desktop/scripts/build-sidecars.sh
@@ -149,7 +149,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libappindicator3-dev librsvg2-dev libwebkit2gtk-4.1-dev
+          sudo apt-get install -y libappindicator3-dev librsvg2-dev libwebkit2gtk-4.1-dev xdg-utils
       - run: npm ci
         working-directory: desktop
       - name: Build target sidecars

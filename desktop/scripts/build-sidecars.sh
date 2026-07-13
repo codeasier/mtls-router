@@ -61,7 +61,7 @@ if [[ "$present" -eq 0 ]]; then
   cp "$cert" "$ca"
 fi
 
-version="${VERSION:-$(node -p "require('$desktop_dir/package.json').version")}"
+version="${VERSION:-$(cd "$desktop_dir" && node -p "require('./package.json').version")}"
 deployment_id="${DEPLOYMENT_ID:-dev}"
 management_protocol_version="${MANAGEMENT_PROTOCOL_VERSION:-1}"
 [[ "$management_protocol_version" == 1 ]] || {

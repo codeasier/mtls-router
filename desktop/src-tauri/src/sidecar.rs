@@ -62,7 +62,7 @@ fn validate_native(bytes: &[u8], label: &str) -> Result<()> {
     let format = if cfg!(target_os = "macos") {
         BinaryFormat::MachO
     } else if cfg!(windows) {
-        BinaryFormat::Coff
+        BinaryFormat::Pe
     } else {
         BinaryFormat::Elf
     };

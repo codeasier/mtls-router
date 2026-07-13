@@ -8,11 +8,12 @@ version="${1:-}"
   exit 1
 }
 
-VERSION="$version" DESKTOP_DIR="$desktop_dir" node <<'NODE'
+cd "$desktop_dir"
+VERSION="$version" node <<'NODE'
 import fs from "node:fs";
 import path from "node:path";
 
-const root = process.env.DESKTOP_DIR;
+const root = process.cwd();
 const version = process.env.VERSION;
 for (const name of ["package.json", "package-lock.json", "src-tauri/tauri.conf.json"]) {
   const file = path.join(root, name);

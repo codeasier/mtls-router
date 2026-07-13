@@ -3,7 +3,7 @@ set -euo pipefail
 
 desktop_dir="$(cd "$(dirname "$0")/.." && pwd)"
 target="${1:-${TAURI_ENV_TARGET_TRIPLE:-${TARGET:-$(rustc --print host-tuple)}}}"
-expected_version="${VERSION:-$(node -p "require('$desktop_dir/package.json').version")}"
+expected_version="${VERSION:-$(cd "$desktop_dir" && node -p "require('./package.json').version")}"
 expected_deployment="${DEPLOYMENT_ID:-dev}"
 expected_protocol="${MANAGEMENT_PROTOCOL_VERSION:-1}"
 bundle_root="$desktop_dir/src-tauri/target/$target/release/bundle"

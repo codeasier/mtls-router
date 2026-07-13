@@ -7,6 +7,7 @@ RELEASE="$ROOT/.github/workflows/release.yml"
 PACKAGE="$ROOT/desktop/package.json"
 LOCK="$ROOT/desktop/package-lock.json"
 SIDECARS="$ROOT/desktop/scripts/build-sidecars.sh"
+PREPARE="$ROOT/desktop/scripts/prepare-version.sh"
 CONFIG="$ROOT/desktop/src-tauri/tauri.conf.json"
 HOOKS="$ROOT/desktop/src-tauri/windows/uninstall-hooks.nsh"
 
@@ -58,6 +59,8 @@ for command in 'npm run static:check' 'npm run typecheck' 'npm test' 'npm run bu
   'cargo test --manifest-path desktop/src-tauri/Cargo.toml --locked'; do
   contains "$CI" "$command"
 done
+contains "$CI" 'sudo apt-get install -y libappindicator3-dev librsvg2-dev libwebkit2gtk-4.1-dev xdg-utils'
+contains "$RELEASE" 'sudo apt-get install -y libappindicator3-dev librsvg2-dev libwebkit2gtk-4.1-dev xdg-utils'
 contains "$CI" 'npm exec tauri -- build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --no-sign --ci'
 contains "$CI" './desktop/scripts/verify-package.sh ${{ matrix.target }}'
 for metadata in 'VERSION: 0.1.0' 'DEPLOYMENT_ID: dev' "MANAGEMENT_PROTOCOL_VERSION: '1'"; do
@@ -69,8 +72,23 @@ contains "$ROOT/desktop/scripts/verify-package.sh" '"$packaged_desktop" --verify
 contains "$ROOT/desktop/src-tauri/src/main.rs" '"--verify-manager-handshake"'
 contains "$ROOT/desktop/src-tauri/src/main.rs" 'verify_manager_handshake()'
 contains "$ROOT/desktop/scripts/build-sidecars.sh" 'management_protocol_version="${MANAGEMENT_PROTOCOL_VERSION:-1}"'
-contains "$ROOT/desktop/scripts/build-sidecars.sh" 'version="${VERSION:-$(node -p'
+contains "$ROOT/desktop/scripts/build-sidecars.sh" 'node -p "require('\''./package.json'\'').version"'
+contains "$ROOT/desktop/scripts/verify-package.sh" 'node -p "require('\''./package.json'\'').version"'
+contains "$PREPARE" 'const root = process.cwd();'
 contains "$ROOT/desktop/scripts/verify-package.sh" 'expected_protocol="${MANAGEMENT_PROTOCOL_VERSION:-1}"'
+contains "$ROOT/desktop/src-tauri/build.rs" 'BinaryFormat::Pe'
+contains "$ROOT/desktop/src-tauri/src/sidecar.rs" 'BinaryFormat::Pe'
+if grep -Fq 'BinaryFormat::Coff' "$ROOT/desktop/src-tauri/build.rs" "$ROOT/desktop/src-tauri/src/sidecar.rs"; then
+  fail 'Windows sidecar validation must recognize PE executables'
+fi
+for script in "$ROOT/desktop/scripts/build-sidecars.sh" "$ROOT/desktop/scripts/verify-package.sh" "$PREPARE"; do
+  if grep -Fq '$desktop_dir/package.json' "$script"; then
+    fail "$(basename "$script") must not pass a Git Bash path to Node"
+  fi
+done
+if grep -Fq 'DESKTOP_DIR="$desktop_dir"' "$PREPARE"; then
+  fail 'prepare-version.sh must not pass a Git Bash path to Node'
+fi
 
 placeholder_req="$(awk '/openssl req -x509/{print; count++} END{if (count != 1) exit 1}' "$SIDECARS")" || \
   fail 'sidecar script must have one placeholder openssl req invocation'
