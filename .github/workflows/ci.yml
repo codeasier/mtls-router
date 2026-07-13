@@ -9,9 +9,80 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
+  scope:
+    name: Scope and workflow assertions
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      ci: ${{ steps.filter.outputs.ci }}
+      go: ${{ steps.filter.outputs.go }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      rust: ${{ steps.filter.outputs.rust }}
+      package: ${{ steps.filter.outputs.package }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
+        id: filter
+        with:
+          filters: |
+            ci:
+              - '.github/workflows/ci.yml'
+              - 'Makefile'
+            go:
+              - '*.go'
+              - 'cmd/**/*.go'
+              - 'internal/**/*.go'
+              - 'go.mod'
+              - 'go.sum'
+              - 'setup.sh'
+              - 'setup.ps1'
+              - 'scripts/**'
+              - 'tests/setup_*.sh'
+              - 'Dockerfile'
+              - 'systemd/**'
+            frontend:
+              - 'desktop/src/**'
+              - 'desktop/package.json'
+              - 'desktop/package-lock.json'
+              - 'desktop/.npmrc'
+              - 'desktop/.prettierignore'
+              - 'desktop/index.html'
+              - 'desktop/app-icon.svg'
+              - 'desktop/src-tauri/tauri.conf.json'
+              - 'desktop/src-tauri/capabilities/default.json'
+              - 'desktop/eslint.config.js'
+              - 'desktop/tsconfig.json'
+              - 'desktop/vite.config.ts'
+            rust:
+              - 'desktop/src-tauri/**'
+              - 'desktop/scripts/build-sidecars.sh'
+              - 'cmd/mtls-router-manager/**'
+              - 'internal/background/**'
+              - 'internal/manager/**'
+              - 'internal/version/**'
+              - 'go.mod'
+              - 'go.sum'
+            package:
+              - 'desktop/**'
+              - 'cmd/mtls-router-manager/**'
+              - 'internal/background/**'
+              - 'internal/manager/**'
+              - 'internal/version/**'
+              - 'go.mod'
+              - 'go.sum'
+      - run: make test-workflows
+
   go-shell:
     name: Go and shell
+    needs: scope
+    if: needs.scope.outputs.go == 'true' || needs.scope.outputs.ci == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,6 +101,8 @@ jobs:
 
   frontend:
     name: Frontend static, type, test, and build
+    needs: scope
+    if: github.event_name == 'pull_request' && (needs.scope.outputs.frontend == 'true' || needs.scope.outputs.ci == 'true')
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -55,6 +128,8 @@ jobs:
 
   rust:
     name: Rust (${{ matrix.os }})
+    needs: scope
+    if: github.event_name == 'pull_request' && (needs.scope.outputs.rust == 'true' || needs.scope.outputs.ci == 'true')
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -93,6 +168,8 @@ jobs:
 
   desktop-package:
     name: Package ${{ matrix.target }}
+    needs: scope
+    if: github.event_name == 'pull_request' && (needs.scope.outputs.package == 'true' || needs.scope.outputs.ci == 'true')
     runs-on: ${{ matrix.runner }}
     env:
       VERSION: 0.1.0
@@ -105,18 +182,6 @@ jobs:
           - runner: windows-2025
             target: x86_64-pc-windows-msvc
             bundles: nsis
-          - runner: windows-11-arm
-            target: aarch64-pc-windows-msvc
-            bundles: nsis
-          - runner: macos-15-intel
-            target: x86_64-apple-darwin
-            bundles: dmg
-          - runner: macos-15
-            target: aarch64-apple-darwin
-            bundles: dmg
-          - runner: ubuntu-24.04
-            target: x86_64-unknown-linux-gnu
-            bundles: appimage
           - runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             bundles: appimage
@@ -163,10 +228,3 @@ jobs:
       - name: Inspect package and sidecars
         shell: bash
         run: ./desktop/scripts/verify-package.sh ${{ matrix.target }}
-
-  workflow-static:
-    name: Workflow static assertions
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: make test-workflows
