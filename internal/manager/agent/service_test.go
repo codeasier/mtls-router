@@ -50,7 +50,7 @@ func TestPreviewIsStructuredKeyFreeAndDoesNotWrite(t *testing.T) {
 	if openCode.Files[0].Operation != OperationCreate || openCode.Files[0].Format != FormatJSON || !openCode.Files[0].Backup.Required {
 		t.Fatalf("opencode migration = %#v", openCode.Files[0])
 	}
-	if !strings.Contains(openCode.Files[0].Warning, "comments and formatting") || openCode.Files[0].Backup.Pattern == "" {
+	if openCode.Files[0].Warning != jsoncMigrationWarning || openCode.Files[0].Backup.Pattern == "" {
 		t.Fatalf("opencode warning/backup = %#v", openCode.Files[0])
 	}
 	if len(preview.Agents[2].Files) != 2 || !preview.Agents[2].Files[1].ContainsAPIKey {
@@ -146,18 +146,64 @@ func TestPreviewMissingInvalidConflictAndAlreadyConfigured(t *testing.T) {
 		assertNoBackupFiles(t, home)
 	})
 
-	t.Run("unsafe JSONC target conflict", func(t *testing.T) {
+	t.Run("explicit JSONC override is normalized in place", func(t *testing.T) {
 		home := t.TempDir()
 		dir := filepath.Join(home, "opencode")
 		jsoncPath := filepath.Join(dir, "custom.jsonc")
-		writeFile(t, jsoncPath, `{}`)
-		writeFile(t, filepath.Join(dir, "opencode.json"), `{"sentinel":"do-not-overwrite"}`)
+		jsonPath := filepath.Join(dir, "opencode.json")
+		original := `{
+  // preserve this in the backup only
+  "model": "keep",
+  "provider": {
+    "anthropic": {"options": {"literal": "/* value */"}},
+  },
+}`
+		sibling := "{\"sentinel\":\"do-not-overwrite\",\"spacing\":[1,2]}\n"
+		writeFile(t, jsoncPath, original)
+		writeFile(t, jsonPath, sibling)
 		env := map[string]string{"OPENCODE_CONFIG": jsoncPath}
 		service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"opencode": true}, env)
-		_, err := service.Preview(context.Background(), []Kind{OpenCode})
-		assertCode(t, err, CodeConfigInvalid)
-		if got := readString(t, filepath.Join(dir, "opencode.json")); !strings.Contains(got, "do-not-overwrite") {
-			t.Fatalf("conflicting JSON was modified: %q", got)
+		preview, err := service.Preview(context.Background(), []Kind{OpenCode})
+		if err != nil {
+			t.Fatal(err)
+		}
+		file := preview.Agents[0].Files[0]
+		if file.Path != jsoncPath || file.SourcePath != "" || file.Format != FormatJSON || file.Operation != OperationReplace || !file.Backup.Required || file.Warning != jsoncOverrideWarning {
+			t.Fatalf("explicit JSONC preview = %#v", file)
+		}
+		if len(file.Preserves) == 0 {
+			t.Fatalf("explicit JSONC preview did not describe preserved settings: %#v", file)
+		}
+		if got := readString(t, jsonPath); got != sibling {
+			t.Fatalf("sibling changed during preview: %q", got)
+		}
+		result, err := service.Write(context.Background(), WriteRequest{Agents: []Kind{OpenCode}, RevisionToken: preview.RevisionToken, APIKey: testAPIKey})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(result.Agents[0].Backups) != 1 {
+			t.Fatalf("explicit JSONC write backups = %#v", result)
+		}
+		configured := readJSONObject(t, jsoncPath)
+		providers := rawObject(t, configured["provider"])
+		anthropic := rawObject(t, providers["anthropic"])
+		options := rawObject(t, anthropic["options"])
+		if jsonString(t, configured["model"]) != "keep" || jsonString(t, options["literal"]) != "/* value */" {
+			t.Fatalf("unrelated explicit JSONC settings were not preserved: %s", readString(t, jsoncPath))
+		}
+		router := rawObject(t, providers["mtls-router"])
+		routerOptions := rawObject(t, router["options"])
+		if jsonString(t, routerOptions["apiKey"]) != testAPIKey {
+			t.Fatalf("explicit JSONC provider was not configured: %s", readString(t, jsoncPath))
+		}
+		if strings.Contains(readString(t, jsoncPath), "preserve this in the backup only") {
+			t.Fatal("explicit JSONC comments survived strict JSON normalization")
+		}
+		if got := readString(t, jsonPath); got != sibling {
+			t.Fatalf("sibling changed during explicit JSONC write: %q", got)
+		}
+		if got := readString(t, result.Agents[0].Backups[0]); got != original {
+			t.Fatalf("explicit JSONC backup = %q, want original bytes %q", got, original)
 		}
 	})
 
@@ -324,28 +370,59 @@ func TestWriteMigratesJSONCAndRetainsSensitiveBackup(t *testing.T) {
 	}
 }
 
-func TestOpenCodeMissingJSONCOverrideUsesExistingSiblingJSON(t *testing.T) {
+func TestOpenCodeMissingJSONCOverrideCreatesExactPath(t *testing.T) {
 	home := t.TempDir()
 	dir := filepath.Join(home, "custom-opencode")
 	jsoncPath := filepath.Join(dir, "profile.jsonc")
 	jsonPath := filepath.Join(dir, "opencode.json")
-	writeFile(t, jsonPath, `{"sentinel":"existing-json"}`)
+	sibling := `{"sentinel":"existing-json"}`
+	writeFile(t, jsonPath, sibling)
 	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"opencode": true}, map[string]string{"OPENCODE_CONFIG": jsoncPath})
 	preview, err := service.Preview(context.Background(), []Kind{OpenCode})
 	if err != nil {
 		t.Fatal(err)
 	}
 	file := preview.Agents[0].Files[0]
-	if file.Path != jsonPath || file.SourcePath != "" || file.Operation != OperationReplace || file.Warning != "" {
-		t.Fatalf("fallback preview = %#v", file)
+	if file.Path != jsoncPath || file.SourcePath != "" || file.Format != FormatJSON || file.Operation != OperationCreate || file.Backup.Required || file.Warning != "" {
+		t.Fatalf("missing explicit JSONC preview = %#v", file)
 	}
 	result, err := service.Write(context.Background(), WriteRequest{Agents: []Kind{OpenCode}, RevisionToken: preview.RevisionToken, APIKey: testAPIKey})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Agents[0].Backups) != 1 || !strings.Contains(readString(t, jsonPath), "existing-json") {
-		t.Fatalf("fallback write = %#v content=%s", result, readString(t, jsonPath))
+	if len(result.Agents[0].Backups) != 0 || !isRegularFile(jsoncPath) {
+		t.Fatalf("missing explicit JSONC write = %#v", result)
 	}
+	if got := readString(t, jsonPath); got != sibling {
+		t.Fatalf("sibling changed during missing explicit JSONC write: %q", got)
+	}
+	root := readJSONObject(t, jsoncPath)
+	providers := rawObject(t, root["provider"])
+	router := rawObject(t, providers["mtls-router"])
+	options := rawObject(t, router["options"])
+	if jsonString(t, options["apiKey"]) != testAPIKey {
+		t.Fatalf("exact explicit JSONC path was not configured: %s", readString(t, jsoncPath))
+	}
+}
+
+func TestOpenCodeExplicitJSONCRejectsStalePreview(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, "custom-opencode")
+	jsoncPath := filepath.Join(dir, "profile.jsonc")
+	writeFile(t, jsoncPath, "{\n  // preview bytes\n  \"sentinel\": \"before\",\n}\n")
+	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"opencode": true}, map[string]string{"OPENCODE_CONFIG": jsoncPath})
+	preview, err := service.Preview(context.Background(), []Kind{OpenCode})
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := "{\"sentinel\":\"changed-after-preview\"}\n"
+	writeFile(t, jsoncPath, changed)
+	_, err = service.Write(context.Background(), WriteRequest{Agents: []Kind{OpenCode}, RevisionToken: preview.RevisionToken, APIKey: testAPIKey})
+	assertCode(t, err, CodePreviewStale)
+	if got := readString(t, jsoncPath); got != changed {
+		t.Fatalf("stale explicit JSONC was modified: %q", got)
+	}
+	assertNoBackupFiles(t, home)
 }
 
 func TestWriteRejectsStalePreviewBeforeBackupOrMutation(t *testing.T) {

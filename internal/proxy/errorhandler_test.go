@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -84,5 +85,40 @@ func TestReverseProxySanitizesStandardLibraryErrorLog(t *testing.T) {
 	}
 	if strings.Contains(out, upstreamCanary) {
 		t.Fatalf("proxy stream log leaked upstream error: %s", out)
+	}
+}
+
+func TestReverseProxyWithoutStructuredLoggerUsesSanitizedStandardLogger(t *testing.T) {
+	const upstreamCanary = "sk-nil-logger-stream-error-canary"
+	var buf bytes.Buffer
+	oldWriter := log.Writer()
+	oldFlags := log.Flags()
+	oldPrefix := log.Prefix()
+	defer func() {
+		log.SetOutput(oldWriter)
+		log.SetFlags(oldFlags)
+		log.SetPrefix(oldPrefix)
+	}()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	log.SetPrefix("")
+
+	if n, err := (sanitizedProxyLogWriter{}).Write([]byte("raw stream-copy error")); n != len("raw stream-copy error") || err != nil {
+		t.Fatalf("nil logger writer = (%d, %v), want (%d, nil)", n, err, len("raw stream-copy error"))
+	}
+	buf.Reset()
+
+	upstream, err := url.Parse("https://upstream.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rp := New(Options{Upstream: upstream})
+	rp.ErrorLog.Printf("httputil: ReverseProxy read error during body copy: %s", upstreamCanary)
+
+	if out := buf.String(); out != "proxy stream failed\n" {
+		t.Fatalf("nil logger fallback = %q, want %q", out, "proxy stream failed\n")
+	}
+	if strings.Contains(buf.String(), upstreamCanary) || strings.Contains(buf.String(), "body copy") {
+		t.Fatalf("nil logger fallback leaked raw stream error: %q", buf.String())
 	}
 }

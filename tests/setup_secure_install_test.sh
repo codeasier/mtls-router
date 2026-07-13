@@ -5,6 +5,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 sha256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }
+file_mode() {
+  case "$(uname -s)" in
+    Darwin) stat -f '%Lp' "$1" ;;
+    *) stat -c '%a' "$1" ;;
+  esac
+}
 
 platform="$(case "$(uname -s)" in Linux) printf linux;; Darwin) printf darwin;; *) fail unsupported;; esac)-$(case "$(uname -m)" in x86_64|amd64) printf amd64;; arm64|aarch64) printf arm64;; *) fail unsupported;; esac)"
 router_asset="mtls-router-$platform"
@@ -32,7 +38,8 @@ else
   jq -cn --arg id "\$id" '{id:\$id,result:{}}'
 fi
 MANAGER
-  chmod +x "$dir/setup.sh" "$dir/$router_asset" "$dir/$manager_asset"
+  chmod +x "$dir/setup.sh"
+  chmod 0555 "$dir/$router_asset" "$dir/$manager_asset"
   {
     printf '%s  %s\n' "$(sha256 "$dir/$router_asset")" "$router_asset"
     printf '%s  %s\n' "$(sha256 "$dir/$manager_asset")" "$manager_asset"
@@ -52,15 +59,22 @@ package="$tmp/package"
 install="$tmp/install"
 home="$tmp/home"
 write_pair "$package" v2
+source_router_mode="$(file_mode "$package/$router_asset")"
+source_manager_mode="$(file_mode "$package/$manager_asset")"
+[[ "$source_router_mode" == 555 && "$source_manager_mode" == 555 ]] || fail "package payloads are not mode 0555"
 run_install "$package" "$install" "$home" >/dev/null
 [[ "$($install/mtls-router --version)" == 'mtls-router v2' ]] || fail "router was not installed"
 [[ -x "$install/mtls-router-manager" ]] || fail "manager was not installed"
+[[ "$(file_mode "$install/mtls-router")" == 755 ]] || fail "installed router is not mode 0755"
+[[ "$(file_mode "$install/mtls-router-manager")" == 755 ]] || fail "installed manager is not mode 0755"
+[[ "$(file_mode "$package/$router_asset")" == "$source_router_mode" ]] || fail "router package source mode changed"
+[[ "$(file_mode "$package/$manager_asset")" == "$source_manager_mode" ]] || fail "manager package source mode changed"
 receipt="$home/state/install-receipt.json"
 jq -e --arg router "$install/mtls-router" --arg manager "$install/mtls-router-manager" '
   .schema_version == 1 and .deployment_id == "test-deployment" and
   .management_protocol_version == "1" and .router.path == $router and
   .manager.path == $manager and .router.version == "v2" and .manager.version == "v2"' "$receipt" >/dev/null || fail "receipt metadata is incomplete"
-[[ "$(stat -f %Lp "$receipt" 2>/dev/null || stat -c %a "$receipt")" == 600 ]] || fail "receipt is not private"
+[[ "$(file_mode "$receipt")" == 600 ]] || fail "receipt is not mode 0600"
 
 for missing in "$router_asset" "$manager_asset" SHA256SUMS; do
   rm -rf "$package"
@@ -104,6 +118,8 @@ rm -rf "$package" "$tmp/remote" "$tmp/bin"
 mkdir -p "$package" "$tmp/remote" "$tmp/bin"
 cp "$ROOT/setup.sh" "$package/setup.sh"
 write_pair "$tmp/remote" network-v4
+chmod 0644 "$tmp/remote/$router_asset" "$tmp/remote/$manager_asset"
+[[ "$(file_mode "$tmp/remote/$router_asset")" == 644 && "$(file_mode "$tmp/remote/$manager_asset")" == 644 ]] || fail "network fixtures are not mode 0644"
 cat >"$tmp/bin/curl" <<'CURL'
 #!/usr/bin/env bash
 set -euo pipefail

@@ -76,8 +76,9 @@ Open Logs, preserve the diagnostic summary, then restart the desktop once. Reins
 
 1. Open the path shown by detection.
 2. Fix its syntax with the owning Agent stopped if that Agent may write concurrently.
-3. For opencode JSONC, also check whether an existing `opencode.json` conflicts with the proposed JSONC-to-JSON migration.
-4. Refresh detection and generate a new preview.
+3. For canonical `~/.config/opencode/opencode.jsonc` with no explicit `OPENCODE_CONFIG`, check whether an existing sibling `opencode.json` conflicts with the proposed JSONC-to-JSON migration.
+4. For an explicit `.jsonc` `OPENCODE_CONFIG`, check that the exact override path and its parent are writable; the sibling `opencode.json` is unrelated and is not a fallback.
+5. Refresh detection and generate a new preview.
 
 The manager preserves unrelated supported settings, but it does not attempt to guess repairs for invalid syntax.
 
@@ -85,7 +86,7 @@ The manager preserves unrelated supported settings, but it does not attempt to g
 
 `PREVIEW_STALE` means a selected target changed after preview. The write is rejected before mutation.
 
-Return to detection, generate a new preview, review all paths and warnings again, then re-enter the key. Do not retry with an old revision token. The desktop clears transient key input when the stale preview is handled.
+Return to detection, generate a new preview, review all paths and warnings again, then re-enter the key. For an explicit `OPENCODE_CONFIG`, verify that the exact override path was not changed after preview. Do not retry with an old revision token. The desktop clears transient key input when the stale preview is handled.
 
 ## Write or rollback failed
 

@@ -693,11 +693,12 @@ func lastLines(value string, limit int) []string {
 }
 
 var (
-	pemPattern        = regexp.MustCompile(`(?s)-----BEGIN [^-\r\n]+-----.*?(?:-----END [^-\r\n]+-----|$)`)
-	authHeaderPattern = regexp.MustCompile(`(?i)((?:authorization|proxy-authorization|authentication)\s*[:=]\s*)[^\r\n]*`)
-	keyPattern        = regexp.MustCompile(`(?i)((?:api[_-]?key|auth(?:entication|orization)?|token|secret|password)["']?\s*[:=]\s*["']?)([^"'\s,}]+)`)
-	skPattern         = regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{8,}\b`)
-	urlPattern        = regexp.MustCompile(`(https?://[^\s?"']+)\?[^\s"']+`)
+	pemPattern         = regexp.MustCompile(`(?s)-----BEGIN [^-\r\n]+-----.*?(?:-----END [^-\r\n]+-----|$)`)
+	authHeaderPattern  = regexp.MustCompile(`(?i)((?:authorization|proxy-authorization|authentication)\s*[:=]\s*)[^\r\n]*`)
+	keyPattern         = regexp.MustCompile(`(?i)((?:api[_-]?key|auth(?:entication|orization)?|token|secret|password)["']?\s*[:=]\s*["']?)([^"'\s,}]+)`)
+	skPattern          = regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{8,}\b`)
+	urlUserinfoPattern = regexp.MustCompile(`(?i)(https?://)[^/\s?#"']+@`)
+	urlPattern         = regexp.MustCompile(`(?i)(https?://[^\s?"']+)\?[^\s"']+`)
 )
 
 func sanitizeText(value string) string {
@@ -705,6 +706,7 @@ func sanitizeText(value string) string {
 	value = authHeaderPattern.ReplaceAllString(value, `${1}[REDACTED]`)
 	value = keyPattern.ReplaceAllString(value, `${1}[REDACTED]`)
 	value = skPattern.ReplaceAllString(value, "[REDACTED KEY]")
+	value = urlUserinfoPattern.ReplaceAllString(value, `${1}[REDACTED]@`)
 	return urlPattern.ReplaceAllString(value, `${1}?[REDACTED]`)
 }
 

@@ -204,7 +204,7 @@ The setup scripts separate router lifecycle commands from agent configuration co
 The `mtls-router` binary itself manages the router only; it does not provide agent configuration commands such as `print-config`.
 
 - Claude Code writes the `env` block into `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR/settings.json`).
-- opencode writes the `mtls-router` provider into the chosen opencode.json (respecting `OPENCODE_CONFIG` and falling back to `~/.config/opencode/opencode.json`).
+- opencode writes the `mtls-router` provider into the selected configuration path. With no explicit `OPENCODE_CONFIG`, an existing canonical `~/.config/opencode/opencode.jsonc` is migrated to sibling `opencode.json`; an explicit `.jsonc` override is normalized in place at that exact path. Both operations lose comments and formatting.
 - Codex CLI writes the `[model_providers.custom]` block (with `model_provider = "custom"` and `name = "9router"`) into `~/.codex/config.toml` (respecting `CODEX_HOME`).
 
 The setup scripts do not install any agent and do not launch any agent.

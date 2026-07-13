@@ -37,6 +37,8 @@ type sanitizedProxyLogWriter struct {
 func (w sanitizedProxyLogWriter) Write(p []byte) (int, error) {
 	if w.logger != nil {
 		w.logger.Error("proxy stream failed")
+	} else {
+		log.Print("proxy stream failed")
 	}
 	return len(p), nil
 }

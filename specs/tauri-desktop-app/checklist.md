@@ -152,7 +152,8 @@ verification on the stated platform.
 ## Agent Detection and Preview
 
 - [x] Claude Code detection respects `CLAUDE_CONFIG_DIR`.
-- [x] opencode detection respects `OPENCODE_CONFIG` and JSON/JSONC fallback.
+- [x] opencode detection respects `OPENCODE_CONFIG` and canonical JSON/JSONC
+  fallback.
 - [x] Codex detection respects `CODEX_HOME` and desktop home-directory
   detection.
 - [x] Detection reports path, existence, format, writability, and state.
@@ -162,6 +163,9 @@ verification on the stated platform.
 - [x] Preview lists every affected path and backup plan.
 - [x] Preview distinguishes create, replace, and preserve operations.
 - [x] opencode JSONC migration explicitly warns about comment/format loss.
+- [x] Explicit `.jsonc` `OPENCODE_CONFIG` previews as exact-path strict JSON
+  normalization with an in-place warning and a required backup for existing
+  content.
 - [x] Codex preview separately shows `config.toml` and `auth.json` effects.
 - [x] Preview never renders an API-key value.
 
@@ -199,7 +203,10 @@ verification on the stated platform.
   `env` block.
 - [x] opencode preserves unrelated root fields and providers.
 - [x] opencode writes current `mtls-router` provider/model definitions.
-- [x] JSONC migration refuses to overwrite an existing `opencode.json`.
+- [x] Canonical JSONC migration refuses to overwrite an existing sibling
+  `opencode.json`.
+- [x] Explicit `.jsonc` `OPENCODE_CONFIG` writes only its exact path and does
+  not read, overwrite, or fall back to a sibling `opencode.json`.
 - [x] Codex preserves unrelated root keys and sections.
 - [x] Codex replaces managed root model keys and
   `[model_providers.custom]` exactly once.

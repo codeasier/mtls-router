@@ -76,8 +76,9 @@ Router 意外退出后不会进入无限重启循环。manager 退出时，桌�
 
 1. 打开检测结果显示的路径。
 2. 修复语法；如果对应 Agent 可能并发写入，请先停止它。
-3. 对 opencode JSONC，还要检查已有 `opencode.json` 是否与 JSONC 到 JSON 迁移冲突。
-4. 刷新检测并生成新预览。
+3. 对没有显式 `OPENCODE_CONFIG` 的标准 `~/.config/opencode/opencode.jsonc`，检查同目录已有的 sibling `opencode.json` 是否与 JSONC 到 JSON 迁移冲突。
+4. 对显式 `.jsonc` `OPENCODE_CONFIG`，检查精确覆盖路径及其父目录可写；sibling `opencode.json` 与此无关，也不会作为回退路径。
+5. 刷新检测并生成新预览。
 
 manager 会保留受支持的无关设置，但不会猜测如何修复无效语法。
 
@@ -85,7 +86,7 @@ manager 会保留受支持的无关设置，但不会猜测如何修复无效语
 
 `PREVIEW_STALE` 表示所选目标在预览后发生变化。写入会在修改前被拒绝。
 
-请返回检测、生成新预览、重新审查所有路径和警告，然后再次输入 key。不要用旧 revision token 重试。处理陈旧预览时，桌面应用会清除临时 key 输入。
+请返回检测、生成新预览、重新审查所有路径和警告，然后再次输入 key。对于显式 `OPENCODE_CONFIG`，确认精确覆盖路径在预览后没有发生变化。不要用旧 revision token 重试。处理陈旧预览时，桌面应用会清除临时 key 输入。
 
 ## 写入或回滚失败
 

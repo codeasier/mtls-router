@@ -449,11 +449,21 @@ containing affected paths, create/replace/preserve operations, backup plan,
 format migration warnings, and a revision token derived from the current file
 state. Preview MUST NOT write files or expose API-key values.
 
-#### Scenario: opencode JSONC
+#### Scenario: canonical opencode JSONC
 
-Given opencode uses `opencode.jsonc`, when preview runs, then it explicitly
-shows migration to `opencode.json`, warns that comments/formatting are not
-preserved, and identifies the JSONC backup that will be created.
+Given `OPENCODE_CONFIG` is empty and opencode uses the canonical
+`~/.config/opencode/opencode.jsonc`, when preview runs, then it explicitly
+shows migration to sibling `opencode.json`, warns that comments/formatting are
+not preserved, and identifies the JSONC backup that will be created. An
+existing sibling `opencode.json` is a migration collision and is not replaced.
+
+#### Scenario: explicit opencode JSONC
+
+Given `OPENCODE_CONFIG` explicitly names a `.jsonc` file, when preview and
+write run, then the exact configured path is normalized to strict JSON in
+place, an existing file is backed up, and comments/formatting are not
+preserved. A missing path is created there without a backup, and any sibling
+`opencode.json` remains unrelated and byte-identical.
 
 #### Scenario: Codex preview
 
@@ -526,7 +536,11 @@ The manager MUST preserve these current behaviors:
   approved mtls-router environment block.
 - opencode preserves other root fields and providers and writes the
   `mtls-router` provider and current model definitions.
-- JSONC migration refuses to overwrite an existing `opencode.json` target.
+- With no explicit `OPENCODE_CONFIG`, canonical JSONC migration refuses to
+  overwrite an existing sibling `opencode.json` target.
+- With an explicit `.jsonc` `OPENCODE_CONFIG`, the exact path is normalized in
+  place as strict JSON; existing content is backed up and a missing path is
+  created without reading or changing a sibling `opencode.json`.
 - Codex preserves unrelated root keys and sections while replacing managed root
   model keys and `[model_providers.custom]`.
 - Codex writes `auth.json` with only `OPENAI_API_KEY` when a key is supplied.

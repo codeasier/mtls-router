@@ -57,7 +57,7 @@ if [[ "$present" -eq 0 ]]; then
   cert="$tmp_dir/client.pem"
   key="$tmp_dir/client.key"
   ca="$tmp_dir/upstream-ca.pem"
-  openssl req -x509 -newkey rsa:2048 -nodes -days 1 -keyout "$key" -out "$cert" -subj /CN=mtls-router-placeholder 2>/dev/null
+  MSYS2_ARG_CONV_EXCL='/CN=' openssl req -x509 -newkey rsa:2048 -nodes -days 1 -keyout "$key" -out "$cert" -subj /CN=mtls-router-placeholder 2>/dev/null
   cp "$cert" "$ca"
 fi
 

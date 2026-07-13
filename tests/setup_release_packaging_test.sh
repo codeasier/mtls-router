@@ -32,9 +32,65 @@ contains "test \"\$(od -An -tx1 -N3 setup.ps1 | tr -d ' \\n')\" = efbbbf"
 contains 'test "$(find release -maxdepth 1 -type f -name '\''mtls-router-*'\'' | wc -l)" -eq 12'
 contains 'test "$(find release -maxdepth 1 -type f | wc -l)" -eq 19'
 contains 'pattern: mtls-router-cli-*'
-contains 'pattern: CodeasierRouter-*'
 contains 'test "$(find release -maxdepth 1 -type f -name '\''CodeasierRouter-*'\'' | wc -l)" -eq 12'
 contains 'test "$(find release -maxdepth 1 -type f -name '\''signing-status-*'\'' | wc -l)" -eq 6'
+
+desktop_upload_template="$(awk '
+  /^[[:space:]]+name: / && /matrix\.os/ && /matrix\.arch/ {
+    sub(/^[[:space:]]+name: /, "")
+    print
+    exit
+  }
+' "$WORKFLOW")"
+[[ "$desktop_upload_template" == 'mtls-router-desktop-${{ matrix.os }}-${{ matrix.arch }}' ]] || \
+  fail "desktop upload name template changed: $desktop_upload_template"
+
+desktop_download_glob="$(awk '
+  /^      - name: Download all desktop packages$/ { capture=1; next }
+  capture && /^      - name:/ { exit }
+  capture && /^[[:space:]]+pattern: / {
+    sub(/^[[:space:]]+pattern: /, "")
+    print
+    exit
+  }
+' "$WORKFLOW")"
+[[ "$desktop_download_glob" == 'mtls-router-desktop-*' ]] || \
+  fail "desktop aggregation glob is not mtls-router-desktop-*: $desktop_download_glob"
+
+desktop_matrix_entries="$(awk '
+  /^  desktop:$/ { capture=1; next }
+  capture && /^  release:$/ { exit }
+  capture && /^[[:space:]]+os: (windows|darwin|linux)$/ { os=$2; next }
+  capture && os != "" && /^[[:space:]]+arch: (amd64|arm64)$/ {
+    print os, $2
+    os=""
+  }
+' "$WORKFLOW")"
+[[ "$(printf '%s\n' "$desktop_matrix_entries" | awk 'NF == 2 {n++} END{print n+0}')" -eq 6 ]] || \
+  fail 'desktop release matrix must contain six os/arch producers'
+for expected in \
+  'windows amd64' 'windows arm64' \
+  'darwin amd64' 'darwin arm64' \
+  'linux amd64' 'linux arm64'; do
+  if ! printf '%s\n' "$desktop_matrix_entries" | awk -v expected="$expected" '$0 == expected {found=1} END{exit !found}'; then
+    fail "desktop release matrix is missing producer: $expected"
+  fi
+done
+
+while read -r os arch; do
+  producer_name="$(printf '%s\n' "$desktop_upload_template" | awk -v os="$os" -v arch="$arch" '{
+    gsub(/\$\{\{ matrix\.os \}\}/, os)
+    gsub(/\$\{\{ matrix\.arch \}\}/, arch)
+    print
+  }')"
+  expected_name="mtls-router-desktop-${os}-${arch}"
+  [[ "$producer_name" == "$expected_name" ]] || \
+    fail "desktop upload template produced $producer_name, expected $expected_name"
+  case "$producer_name" in
+    $desktop_download_glob) ;;
+    *) fail "desktop producer $producer_name does not match $desktop_download_glob" ;;
+  esac
+done <<< "$desktop_matrix_entries"
 
 if grep -Fq 'http://' "$WORKFLOW"; then
   fail "workflow contains a plaintext HTTP URL"

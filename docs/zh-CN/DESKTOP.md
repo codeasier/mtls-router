@@ -58,7 +58,7 @@ Agent 配置必须显式执行以下步骤：
 
 1. 刷新检测，只选择有效且可写的 Agent。
 2. 生成结构化预览。预览只读文件，不执行写入。
-3. 审查每个创建、替换、保留、迁移和备份操作。opencode JSONC 迁移会创建 `opencode.json`，且不保留注释和格式。Codex 可能同时修改 `config.toml` 和 `auth.json`。
+3. 审查每个创建、替换、保留、迁移和备份操作。不设置显式 `OPENCODE_CONFIG` 时，标准 `~/.config/opencode/opencode.jsonc` 会迁移到同目录的 `opencode.json`；已有同名 sibling 会构成迁移冲突。显式 `OPENCODE_CONFIG` 指定 `.jsonc` 文件时，只会在该精确路径原地替换为 strict JSON；已有文件会备份，并且不会触碰 sibling `opencode.json`。两种 JSONC 操作都会丢失注释和格式。Codex 可能同时修改 `config.toml` 和 `auth.json`。
 4. 批准预览，然后在密码输入框中输入 API key。
 5. 写入所选 Agent，并检查修改和备份路径。
 

@@ -38,6 +38,8 @@ type State struct {
 	Writable   bool   `json:"writable"`
 	Configured bool   `json:"configured"`
 	Invalid    bool   `json:"invalid"`
+
+	pathOverridden bool
 }
 
 // Detector permits deterministic environment and executable lookup in tests.
@@ -78,7 +80,8 @@ func (d Detector) Detect() ([]State, error) {
 	codexCommand, codexCLI := lookup(lookPath, "codex")
 
 	claudePaths := ClaudePaths(home, getenv("CLAUDE_CONFIG_DIR"))
-	openCodePaths := OpenCodePaths(home, getenv("OPENCODE_CONFIG"))
+	openCodeOverride := getenv("OPENCODE_CONFIG")
+	openCodePaths := OpenCodePaths(home, openCodeOverride)
 	codexHome := getenv("CODEX_HOME")
 	codexPaths := CodexPaths(home, codexHome)
 	if codexHome == "" {
@@ -95,6 +98,7 @@ func (d Detector) Detect() ([]State, error) {
 		openCodeFormat = FormatJSONC
 	}
 	openCode := inspectJSONState(OpenCode, "opencode", openCodeDetected, openCodeCommand, openCodePaths, openCodeFormat, inspectOpenCode)
+	openCode.pathOverridden = openCodeOverride != ""
 	codex := inspectCodex(codexDetected, codexCommand, codexPaths)
 
 	return []State{claude, openCode, codex}, nil

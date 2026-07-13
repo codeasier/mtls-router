@@ -22,7 +22,11 @@ import (
 	"github.com/codeasier/mtls-router/internal/manager/state"
 )
 
-const integrationKey = "sk-manager-integration-canary-9f3c"
+const (
+	integrationKey         = "sk-manager-integration-canary-9f3c"
+	integrationURLUsername = "manager-url-username-canary-7a8b"
+	integrationURLPassword = "manager-url-password-canary-9c0d"
+)
 
 type fakeLifecycle struct {
 	start   func(context.Context, protocol.RouterOwner) (state.RouterState, *lifecycle.Error)
@@ -61,7 +65,7 @@ func (f *fakeAgent) Write(ctx context.Context, request agent.WriteRequest) (agen
 func TestServeWiresEveryMethodSequentiallyAndSanitizesOutput(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "router.log")
-	rawLog := "ok line\napi_key=" + integrationKey + "\nAuthorization: Bearer bearer-header-canary\nGET https://example.test/v1?token=" + integrationKey + "\n-----BEGIN PRIVATE KEY-----\nprivate-canary\n-----END PRIVATE KEY-----\n"
+	rawLog := "ok line\napi_key=" + integrationKey + "\nAuthorization: Bearer bearer-header-canary\nGET https://example.test/v1?token=" + integrationKey + "\nGET https://" + integrationURLUsername + ":" + integrationURLPassword + "@example.test/v1\n-----BEGIN PRIVATE KEY-----\nprivate-canary\n-----END PRIVATE KEY-----\n"
 	if err := os.WriteFile(logPath, []byte(rawLog), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +129,7 @@ func TestServeWiresEveryMethodSequentiallyAndSanitizesOutput(t *testing.T) {
 	if err := manager.Serve(context.Background(), strings.NewReader(strings.Join(requests, "\n")+"\n"), &output); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(output.String(), integrationKey) || strings.Contains(output.String(), "bearer-header-canary") || strings.Contains(output.String(), "private-canary") {
+	if strings.Contains(output.String(), integrationKey) || strings.Contains(output.String(), integrationURLUsername) || strings.Contains(output.String(), integrationURLPassword) || strings.Contains(output.String(), "bearer-header-canary") || strings.Contains(output.String(), "private-canary") {
 		t.Fatalf("protocol output contains sensitive input: %s", output.String())
 	}
 	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
@@ -145,6 +149,51 @@ func TestServeWiresEveryMethodSequentiallyAndSanitizesOutput(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "[REDACTED") || !strings.Contains(output.String(), `"commit":"abc123"`) {
 		t.Fatalf("output lacks sanitized logs or version metadata: %s", output.String())
+	}
+}
+
+func TestSanitizeTextRedactsURLUserinfoBeforeQueryValues(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "credentials without query",
+			input: "http://alice:secret@example.test:8080/v1",
+			want:  "http://[REDACTED]@example.test:8080/v1",
+		},
+		{
+			name:  "credentials with query",
+			input: "https://alice:secret@example.test:8443/v1?token=query-secret",
+			want:  "https://[REDACTED]@example.test:8443/v1?[REDACTED]",
+		},
+		{
+			name:  "username only",
+			input: "http://alice@example.test/v1",
+			want:  "http://[REDACTED]@example.test/v1",
+		},
+		{
+			name:  "percent encoded userinfo",
+			input: "https://alice%40example:secret%2Fvalue@example.test/v1",
+			want:  "https://[REDACTED]@example.test/v1",
+		},
+		{
+			name:  "uppercase scheme",
+			input: "HtTpS://alice:secret@example.test:9443/v1?token=query-secret",
+			want:  "HtTpS://[REDACTED]@example.test:9443/v1?[REDACTED]",
+		},
+		{
+			name:  "at sign in path",
+			input: "https://example.test/users/alice@example.test",
+			want:  "https://example.test/users/alice@example.test",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sanitizeText(tc.input); got != tc.want {
+				t.Fatalf("sanitizeText(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
 	}
 }
 

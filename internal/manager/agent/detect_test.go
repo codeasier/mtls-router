@@ -42,6 +42,29 @@ func TestDetectReturnsAllAgentsAndRespectsEnvironmentPaths(t *testing.T) {
 	if !states[1].Detected || states[1].Path != openCodePath || states[1].Format != FormatJSONC {
 		t.Fatalf("opencode state = %#v", states[1])
 	}
+	if !states[1].pathOverridden {
+		t.Fatal("opencode override provenance was not retained")
+	}
+	withoutOverride := env["OPENCODE_CONFIG"]
+	env["OPENCODE_CONFIG"] = ""
+	canonical := mustDetect(t, detector)
+	if canonical[1].pathOverridden {
+		t.Fatal("empty opencode override retained provenance")
+	}
+	env["OPENCODE_CONFIG"] = withoutOverride
+	publicState := states[1]
+	publicState.pathOverridden = false
+	gotJSON, err := json.Marshal(states[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantJSON, err := json.Marshal(publicState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotJSON) != string(wantJSON) {
+		t.Fatalf("override provenance changed serialized state: got %s want %s", gotJSON, wantJSON)
+	}
 	if states[2].Detected || states[2].Path != filepath.Join(codexHome, "config.toml") {
 		t.Fatalf("Codex state = %#v", states[2])
 	}

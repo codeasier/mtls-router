@@ -11,6 +11,7 @@ import (
 
 const (
 	jsoncMigrationWarning = "opencode.jsonc will be migrated to opencode.json; comments and formatting will not be preserved"
+	jsoncOverrideWarning  = "OPENCODE_CONFIG JSONC will be normalized to strict JSON in place; comments and formatting will not be preserved"
 	backupWarning         = "Backups are sensitive recovery artifacts and may contain a previous API key"
 )
 
@@ -111,19 +112,22 @@ func planOpenCode(state State) ([]plannedFile, error) {
 	sourcePath := state.Path
 	targetPath := state.Path
 	format := state.Format
-	if filepath.Ext(sourcePath) == ".jsonc" {
-		targetPath = filepath.Join(filepath.Dir(sourcePath), "opencode.json")
+	isJSONC := filepath.Ext(sourcePath) == ".jsonc"
+	if isJSONC {
 		format = FormatJSON
-		if _, sourceErr := os.Lstat(sourcePath); os.IsNotExist(sourceErr) {
-			if info, targetErr := os.Stat(targetPath); targetErr == nil && info.Mode().IsRegular() {
-				sourcePath = targetPath
-			} else if targetErr != nil && !os.IsNotExist(targetErr) {
-				return nil, operationError(CodeConfigInvalid, "opencode target cannot be inspected")
+		if !state.pathOverridden {
+			targetPath = filepath.Join(filepath.Dir(sourcePath), "opencode.json")
+			if _, sourceErr := os.Lstat(sourcePath); os.IsNotExist(sourceErr) {
+				if info, targetErr := os.Stat(targetPath); targetErr == nil && info.Mode().IsRegular() {
+					sourcePath = targetPath
+				} else if targetErr != nil && !os.IsNotExist(targetErr) {
+					return nil, operationError(CodeConfigInvalid, "opencode target cannot be inspected")
+				}
+			} else if sourceErr != nil {
+				return nil, operationError(CodeConfigInvalid, "opencode JSONC source cannot be inspected")
+			} else if _, targetErr := os.Lstat(targetPath); targetErr == nil || !os.IsNotExist(targetErr) {
+				return nil, operationError(CodeConfigInvalid, "opencode JSONC migration target already exists")
 			}
-		} else if sourceErr != nil {
-			return nil, operationError(CodeConfigInvalid, "opencode JSONC source cannot be inspected")
-		} else if _, targetErr := os.Lstat(targetPath); targetErr == nil || !os.IsNotExist(targetErr) {
-			return nil, operationError(CodeConfigInvalid, "opencode JSONC migration target already exists")
 		}
 	}
 	if err := ensureWritable(sourcePath); err != nil {
@@ -137,7 +141,7 @@ func planOpenCode(state State) ([]plannedFile, error) {
 		return nil, operationError(CodeConfigInvalid, "opencode configuration cannot be read")
 	}
 	parsed := sourceContent
-	if filepath.Ext(sourcePath) == ".jsonc" && sourceRevision.Exists {
+	if isJSONC && sourceRevision.Exists {
 		parsed, err = stripJSONC(sourceContent)
 		if err != nil {
 			return nil, operationError(CodeConfigInvalid, "opencode JSONC configuration is invalid")
@@ -165,8 +169,12 @@ func planOpenCode(state State) ([]plannedFile, error) {
 		operation = OperationReplace
 	}
 	warning := ""
-	if filepath.Ext(sourcePath) == ".jsonc" && sourcePath != targetPath {
-		warning = jsoncMigrationWarning
+	if isJSONC && sourceRevision.Exists {
+		if state.pathOverridden {
+			warning = jsoncOverrideWarning
+		} else if sourcePath != targetPath {
+			warning = jsoncMigrationWarning
+		}
 	}
 	file := plannedFile{
 		agent: OpenCode, format: format, sourcePath: sourcePath, targetPath: targetPath,

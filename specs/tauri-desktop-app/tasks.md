@@ -94,10 +94,12 @@ must not begin until this specification package is approved.
     and Codex auth JSON.
   - Include affected paths, create/replace/preserve operations, backup plans,
     migration warnings, and revision tokens.
-  - Preserve existing configuration semantics and reject unsafe JSONC target
-    conflicts.
-  - Add fixtures for missing, valid, invalid, conflicting, and already
-    configured files.
+  - Preserve existing configuration semantics: canonical opencode JSONC with
+    no explicit override migrates to sibling `opencode.json` and rejects an
+    existing target, while an explicit `.jsonc` override is normalized in
+    place without reading or changing a sibling JSON file.
+  - Add fixtures for missing, valid, invalid, canonical-conflicting, explicit,
+    and already configured files.
   - Verification: `go test ./...`.
 
 - [ ] **1.8 Implement transactional Agent writes**
@@ -276,7 +278,8 @@ must not begin until this specification package is approved.
 
 - [x] **3.2 Implement structured preview UI**
   - Show files, create/replace/preserve operations, backups, and risk warnings.
-  - Show explicit opencode JSONC migration and Codex two-file effects.
+  - Show canonical opencode JSONC migration or explicit JSONC in-place
+    normalization, plus Codex two-file effects.
   - Never render API-key values from current files or preview data.
   - Require explicit confirmation before moving to API-key input.
   - Verification: frontend tests and sanitized snapshot/DOM assertions.
@@ -298,8 +301,9 @@ must not begin until this specification package is approved.
   - Verification: frontend and Rust integration tests.
 
 - [ ] **3.4 Add end-to-end Agent configuration fixtures**
-  - Exercise create, merge, JSONC migration, Codex auth write, stale preview,
-    invalid config, and transaction rollback from the Tauri command boundary.
+  - Exercise create, merge, canonical JSONC migration, explicit JSONC
+    normalization, Codex auth write, stale preview, invalid config, and
+    transaction rollback from the Tauri command boundary.
   - Verify unrelated content and original backups are preserved.
   - Verification: desktop integration test suite.
 

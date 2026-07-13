@@ -58,7 +58,7 @@ Agent configuration is an explicit sequence:
 
 1. Refresh detection and select only valid, writable Agents.
 2. Generate a structured preview. Preview reads files but writes nothing.
-3. Review every create, replace, preserve, migration, and backup operation. opencode JSONC migration creates `opencode.json` and does not preserve comments or formatting. Codex may change both `config.toml` and `auth.json`.
+3. Review every create, replace, preserve, migration, and backup operation. With no explicit `OPENCODE_CONFIG`, the canonical `~/.config/opencode/opencode.jsonc` is migrated to sibling `opencode.json`; an existing sibling is a migration collision. When `OPENCODE_CONFIG` explicitly names a `.jsonc` file, the exact path is replaced in place as strict JSON, backed up when it exists, and isolated from any sibling `opencode.json`. Both JSONC operations lose comments and formatting. Codex may change both `config.toml` and `auth.json`.
 4. Approve the preview and enter the API key in the password field.
 5. Write the selected Agents and review changed and backup paths.
 

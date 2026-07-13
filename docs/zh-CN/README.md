@@ -204,7 +204,7 @@ Windows PowerShell：
 `mtls-router` 二进制本身只管理 router，不提供 `print-config` 这类 agent 配置命令。
 
 - Claude Code 会把 `env` block 写入 `~/.claude/settings.json`，或 `$CLAUDE_CONFIG_DIR/settings.json`。
-- opencode 会把 `mtls-router` provider 写入选中的 opencode.json，遵循 `OPENCODE_CONFIG`，否则回退到 `~/.config/opencode/opencode.json`。
+- opencode 会把 `mtls-router` provider 写入选中的配置路径。不设置显式 `OPENCODE_CONFIG` 时，已有的标准 `~/.config/opencode/opencode.jsonc` 会迁移到同目录的 `opencode.json`；显式指定 `.jsonc` 覆盖路径时，则会在该精确路径原地规范化。两种操作都会丢失注释和格式。
 - Codex CLI 会把 `[model_providers.custom]` block（带 `model_provider = "custom"` 和 `name = "9router"`）写入 `~/.codex/config.toml`，遵循 `CODEX_HOME`。
 
 安装脚本不会安装任何 agent，也不会启动任何 agent。

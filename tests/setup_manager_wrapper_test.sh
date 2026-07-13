@@ -4,6 +4,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 sha256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }
+file_mode() {
+  case "$(uname -s)" in
+    Darwin) stat -f '%Lp' "$1" ;;
+    *) stat -c '%a' "$1" ;;
+  esac
+}
 
 platform="$(case "$(uname -s)" in Linux) printf linux;; Darwin) printf darwin;; *) fail unsupported;; esac)-$(case "$(uname -m)" in x86_64|amd64) printf amd64;; arm64|aarch64) printf arm64;; *) fail unsupported;; esac)"
 router_asset="mtls-router-$platform"
@@ -22,6 +28,7 @@ exit 0
 ROUTER
 chmod +x "$package/setup.sh" "$package/$router_asset"
 go build -trimpath -ldflags "-X github.com/codeasier/mtls-router/internal/version.Version=wrapper-test -X github.com/codeasier/mtls-router/internal/version.DeploymentID=wrapper-test-deployment" -o "$package/$manager_asset" "$ROOT/cmd/mtls-router-manager"
+chmod 0555 "$package/$router_asset" "$package/$manager_asset"
 for command in claude opencode codex; do printf '#!/usr/bin/env bash\nexit 0\n' >"$bin/$command"; chmod +x "$bin/$command"; done
 {
   printf '%s  %s\n' "$(sha256 "$package/$router_asset")" "$router_asset"
@@ -34,6 +41,12 @@ common=(env PATH="$bin:$PATH" HOME="$home" CODEX_HOME="$home/codex" CLAUDE_CONFI
 MTLS_ROUTER_SKIP_START=1 "${common[@]}" bash "$package/setup.sh" >/dev/null
 [[ -x "$install/mtls-router" && -x "$install/mtls-router-manager" ]] || fail "no-arg setup did not install pair"
 [[ ! -e "$home/claude/settings.json" && ! -e "$home/opencode.json" && ! -e "$home/codex/config.toml" ]] || fail "no-arg setup changed Agent files"
+[[ "$(file_mode "$package/$router_asset")" == 555 && "$(file_mode "$package/$manager_asset")" == 555 ]] || fail "package payloads are not mode 0555 after install"
+
+sibling_preview="$("${common[@]}" bash "$package/setup.sh" agent print-config --agent=claude,opencode,codex 2>&1)"
+[[ "$sibling_preview" == *"Claude Code"* && "$sibling_preview" == *"opencode"* && "$sibling_preview" == *"Codex"* ]] || fail "sibling preview omitted selected Agent"
+[[ "$(file_mode "$package/$router_asset")" == 555 && "$(file_mode "$package/$manager_asset")" == 555 ]] || fail "sibling preview changed package payload modes"
+
 cp "$ROOT/setup.sh" "$clean/setup.sh"
 
 preview="$("${common[@]}" bash "$clean/setup.sh" agent print-config --agent=claude,opencode,codex 2>&1)"

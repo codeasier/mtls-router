@@ -175,7 +175,6 @@ install_pair() {
   local source_router="$1" source_manager="$2" router_hash manager_hash info_json router_version pending previous=false
   router_hash="$(sha256_file "$source_router" | tr '[:upper:]' '[:lower:]')"
   manager_hash="$(sha256_file "$source_manager" | tr '[:upper:]' '[:lower:]')"
-  chmod 0755 "$source_router" "$source_manager"
   info_json="$(manager_info_from "$source_manager" "$source_router")"
   router_version="$(binary_version "$source_router")"
   [[ "$router_version" == "$(printf '%s' "$info_json" | jq -r .result.version)" ]] ||
@@ -303,6 +302,7 @@ install_router_pair() {
   download_to "$manifest_url" "$tmp_dir/SHA256SUMS"
   verify_checksum "$tmp_dir/$ROUTER_ASSET" "$tmp_dir/SHA256SUMS" "$ROUTER_ASSET"
   verify_checksum "$tmp_dir/$MANAGER_ASSET" "$tmp_dir/SHA256SUMS" "$MANAGER_ASSET"
+  chmod 0700 "$tmp_dir/$ROUTER_ASSET" "$tmp_dir/$MANAGER_ASSET"
   install_pair "$tmp_dir/$ROUTER_ASSET" "$tmp_dir/$MANAGER_ASSET"
   rm -rf "$tmp_dir"; trap - RETURN
   success "  已安装 mtls-router 与 manager：$INSTALL_DIR"
@@ -320,7 +320,6 @@ resolve_manager() {
     verify_checksum "$sibling_manager" "$manifest" "$MANAGER_ASSET"
     RESOLVED_MANAGER="$sibling_manager"
     RESOLVED_ROUTER="$sibling_router"
-    chmod 0755 "$RESOLVED_MANAGER" "$RESOLVED_ROUTER"
     return
   fi
   receipt_is_valid || fail "未找到 receipt 验证的 manager/router；Agent 命令不会隐式下载。请先运行 router install。"

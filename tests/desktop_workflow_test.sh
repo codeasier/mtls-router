@@ -4,11 +4,41 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CI="$ROOT/.github/workflows/ci.yml"
 RELEASE="$ROOT/.github/workflows/release.yml"
+PACKAGE="$ROOT/desktop/package.json"
+LOCK="$ROOT/desktop/package-lock.json"
+SIDECARS="$ROOT/desktop/scripts/build-sidecars.sh"
 CONFIG="$ROOT/desktop/src-tauri/tauri.conf.json"
 HOOKS="$ROOT/desktop/src-tauri/windows/uninstall-hooks.nsh"
 
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 contains() { grep -Fq -- "$2" "$1" || fail "$(basename "$1") missing: $2"; }
+
+node - "$PACKAGE" "$LOCK" <<'NODE' || fail 'desktop package and lockfile metadata is inconsistent'
+const fs = require('node:fs');
+
+const [packagePath, lockPath] = process.argv.slice(2);
+const packageJSON = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+const lockJSON = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+const expected = {
+  '@emnapi/core': '1.11.2',
+  '@emnapi/runtime': '1.11.2',
+};
+
+if (packageJSON.packageManager !== 'npm@11.6.2') {
+  throw new Error('package.json must declare npm@11.6.2');
+}
+for (const [name, version] of Object.entries(expected)) {
+  if (packageJSON.devDependencies?.[name] !== version) {
+    throw new Error(`${name} is not an exact package.json devDependency`);
+  }
+  if (lockJSON.packages?.['']?.devDependencies?.[name] !== version) {
+    throw new Error(`${name} is missing from root lockfile metadata`);
+  }
+  if (lockJSON.packages?.[`node_modules/${name}`]?.version !== version) {
+    throw new Error(`${name} is missing its exact top-level lockfile record`);
+  }
+}
+NODE
 
 for target in \
   x86_64-pc-windows-msvc aarch64-pc-windows-msvc \
@@ -42,7 +72,78 @@ contains "$ROOT/desktop/scripts/build-sidecars.sh" 'management_protocol_version=
 contains "$ROOT/desktop/scripts/build-sidecars.sh" 'version="${VERSION:-$(node -p'
 contains "$ROOT/desktop/scripts/verify-package.sh" 'expected_protocol="${MANAGEMENT_PROTOCOL_VERSION:-1}"'
 
-ci_package_block="$(awk '/^  desktop-package:/{capture=1} capture{print} /^  workflow-static:/{exit}' "$CI")"
+placeholder_req="$(awk '/openssl req -x509/{print; count++} END{if (count != 1) exit 1}' "$SIDECARS")" || \
+  fail 'sidecar script must have one placeholder openssl req invocation'
+[[ "$placeholder_req" == *"MSYS2_ARG_CONV_EXCL='/CN=' openssl req"* ]] || \
+  fail 'MSYS2_ARG_CONV_EXCL must be command-scoped to placeholder openssl req'
+[[ "$placeholder_req" == *'-keyout "$key" -out "$cert" -subj /CN=mtls-router-placeholder'* ]] || \
+  fail 'placeholder openssl output paths or subject changed unexpectedly'
+[[ "$(awk '/MSYS2_ARG_CONV_EXCL=/{n++} END{print n+0}' "$SIDECARS")" -eq 1 ]] || \
+  fail 'sidecar script must set MSYS2_ARG_CONV_EXCL only once'
+if awk '/MSYS2_ARG_CONV_EXCL=/ && /\*/{found=1} END{exit !found}' "$SIDECARS"; then
+  fail 'sidecar script must not use wildcard MSYS2 conversion exclusion'
+fi
+
+job_block() {
+  local workflow=$1
+  local job=$2
+  awk -v job="$job" '
+    $0 == "  " job ":" { capture=1; start=NR }
+    capture && NR > start && $0 ~ /^  [A-Za-z0-9_-]+:/ { exit }
+    capture { print }
+  ' "$workflow"
+}
+
+assert_npm_job() {
+  local label=$1
+  local block=$2
+  local setup_line activation_line ci_line activation_block
+
+  [[ "$(printf '%s\n' "$block" | awk '/uses: actions\/setup-node@/{n++} END{print n+0}')" -eq 1 ]] || \
+    fail "$label must set up Node exactly once"
+  [[ "$(printf '%s\n' "$block" | awk '/name: Use declared npm version/{n++} END{print n+0}')" -eq 1 ]] || \
+    fail "$label must activate npm exactly once"
+  [[ "$(printf '%s\n' "$block" | awk '/^[[:space:]]+- run: npm ci$/{n++} END{print n+0}')" -eq 1 ]] || \
+    fail "$label must run npm ci exactly once"
+
+  setup_line="$(printf '%s\n' "$block" | awk '/uses: actions\/setup-node@/{print NR; exit}')"
+  activation_line="$(printf '%s\n' "$block" | awk '/name: Use declared npm version/{print NR; exit}')"
+  ci_line="$(printf '%s\n' "$block" | awk '/^[[:space:]]+- run: npm ci$/{print NR; exit}')"
+  [[ "$setup_line" -lt "$activation_line" && "$activation_line" -lt "$ci_line" ]] || \
+    fail "$label npm activation must be after setup-node and before npm ci"
+
+  activation_block="$(printf '%s\n' "$block" | awk '
+    /- name: Use declared npm version$/ { capture=1; seen=0 }
+    capture && seen && /^[[:space:]]+- name:/ { exit }
+    capture { print; seen=1 }
+  ')"
+  [[ "$activation_block" == *'packageManager'* ]] || \
+    fail "$label npm activation must derive its version from packageManager"
+  [[ "$activation_block" == *'npm install --global "npm@${npm_version}"'* ]] || \
+    fail "$label npm activation must install the declared version exactly"
+  [[ "$activation_block" == *'test "$(npm --version)" = "$npm_version"'* ]] || \
+    fail "$label npm activation must verify its exact version"
+
+  if [[ "$label" == frontend ]]; then
+    [[ "$block" == *'working-directory: desktop'* ]] || \
+      fail 'frontend npm activation must run in the desktop context'
+  else
+    [[ "$activation_block" == *'working-directory: desktop'* ]] || \
+      fail "$label npm activation must set working-directory: desktop"
+  fi
+}
+
+ci_frontend_block="$(job_block "$CI" frontend)"
+ci_package_block="$(job_block "$CI" desktop-package)"
+release_desktop_block="$(job_block "$RELEASE" desktop)"
+[[ "$(awk '/^[[:space:]]+- run: npm ci$/{n++} END{print n+0}' "$CI")" -eq 2 ]] || \
+  fail 'CI must contain exactly two npm ci commands'
+[[ "$(awk '/^[[:space:]]+- run: npm ci$/{n++} END{print n+0}' "$RELEASE")" -eq 1 ]] || \
+  fail 'release must contain exactly one npm ci command'
+assert_npm_job frontend "$ci_frontend_block"
+assert_npm_job desktop-package "$ci_package_block"
+assert_npm_job release-desktop "$release_desktop_block"
+
 for metadata in 'VERSION: 0.1.0' 'DEPLOYMENT_ID: dev' "MANAGEMENT_PROTOCOL_VERSION: '1'"; do
   [[ "$ci_package_block" == *"$metadata"* ]] || fail "desktop-package job missing inherited $metadata"
 done
@@ -50,7 +151,6 @@ if [[ "$(printf '%s' "$ci_package_block" | grep -Fc 'VERSION: 0.1.0')" -ne 1 ]];
   fail 'CI desktop VERSION must be defined once at package job scope'
 fi
 
-release_desktop_block="$(awk '/^  desktop:/{capture=1} capture{print} /^  release:/{exit}' "$RELEASE")"
 for metadata in 'DEPLOYMENT_ID: ${{ vars.DEPLOYMENT_ID }}' "MANAGEMENT_PROTOCOL_VERSION: '1'"; do
   [[ "$release_desktop_block" == *"$metadata"* ]] || fail "release desktop job missing inherited $metadata"
 done
