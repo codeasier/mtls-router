@@ -4,18 +4,30 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
 )
 
-func NewErrorHandler() func(http.ResponseWriter, *http.Request, error) {
+func NewErrorHandler(logger *slog.Logger) func(http.ResponseWriter, *http.Request, error) {
 	return func(w http.ResponseWriter, r *http.Request, err error) {
 		status := http.StatusBadGateway
+		reason := "upstream_failure"
 		if isClientBodyReadError(err) {
 			status = http.StatusBadRequest
+			reason = "client_body_read_failure"
 		} else if isTimeout(err) {
 			status = http.StatusGatewayTimeout
+			reason = "upstream_timeout"
+		}
+		if logger != nil {
+			logger.Error("proxy request failed",
+				"method", r.Method,
+				"path", r.URL.EscapedPath(),
+				"status", status,
+				"reason", reason,
+			)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)

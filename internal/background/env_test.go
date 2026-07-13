@@ -52,3 +52,11 @@ func TestChildArgsAndEnvRemoveBackendConfiguration(t *testing.T) {
 		t.Fatalf("ChildEnv() = %#v, want %#v", gotEnv, wantEnv)
 	}
 }
+
+func TestDesktopChildEnvStripsAllMTLSVariables(t *testing.T) {
+	env := []string{"PATH=/usr/bin", "MTLS_UPSTREAM_URL=https://unsafe", "mtls_debug=true", "MTLS_BACKEND=true", "OTHER=value"}
+	want := []string{"PATH=/usr/bin", "OTHER=value"}
+	if got := DesktopChildEnv(env); !reflect.DeepEqual(got, want) {
+		t.Fatalf("DesktopChildEnv() = %#v, want %#v", got, want)
+	}
+}

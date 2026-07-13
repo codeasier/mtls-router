@@ -31,10 +31,13 @@ func TestVersionHandlerReturnsJSON(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("body not JSON: %v (body=%q)", err, rec.Body.String())
 	}
-	for _, key := range []string{"version", "commit", "build_date", "pid", "started_at"} {
+	for _, key := range []string{"version", "commit", "build_date", "deployment_id", "management_protocol_version", "pid", "started_at"} {
 		if _, ok := got[key]; !ok {
 			t.Fatalf("/version body missing %q (got %s)", key, rec.Body.String())
 		}
+	}
+	if got["management_protocol_version"] == "" {
+		t.Fatal("management_protocol_version must not be empty")
 	}
 }
 
@@ -56,6 +59,24 @@ func TestVersionHandlerProviderCanKeepStartedAtStable(t *testing.T) {
 		if got["started_at"] != "2026-06-21T00:00:00Z" {
 			t.Fatalf("started_at = %q, want stable provider value", got["started_at"])
 		}
+	}
+}
+
+func TestVersionHandlerProviderCannotOverrideBuildOrProcessIdentity(t *testing.T) {
+	rec := httptest.NewRecorder()
+	VersionHandler(InfoProviderFunc(func() map[string]any {
+		return map[string]any{
+			"pid":                         -1,
+			"deployment_id":               "forged",
+			"management_protocol_version": "forged",
+		}
+	})).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/version", nil))
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["pid"] == float64(-1) || got["deployment_id"] == "forged" || got["management_protocol_version"] == "forged" {
+		t.Fatalf("provider overrode trusted identity: %+v", got)
 	}
 }
 
@@ -152,7 +173,10 @@ func TestHealthHandlerReturnsOKWhenProbeSucceeds(t *testing.T) {
 }
 
 func TestHealthHandlerReturnsDegradedButStill200WhenProbeFails(t *testing.T) {
-	probe := health.ProbeFunc(func(health.ProbeOptions) error { return errors.New("upstream down") })
+	const upstreamCanary = "https://user:auth-canary@upstream.example/private?api_key=sk-health-canary"
+	probe := health.ProbeFunc(func(health.ProbeOptions) error {
+		return errors.New("probe failed for " + upstreamCanary)
+	})
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	HealthHandler(probe).ServeHTTP(rec, req)
@@ -167,7 +191,13 @@ func TestHealthHandlerReturnsDegradedButStill200WhenProbeFails(t *testing.T) {
 	if got["status"] != "degraded" {
 		t.Fatalf("status = %q, want degraded", got["status"])
 	}
-	if !strings.Contains(got["error"], "upstream down") {
-		t.Fatalf("error = %q, want to contain %q", got["error"], "upstream down")
+	if got["upstream"] != "unreachable" {
+		t.Fatalf("upstream = %q, want unreachable", got["upstream"])
+	}
+	if got["error"] != "upstream probe failed" {
+		t.Fatalf("error = %q, want sanitized probe failure", got["error"])
+	}
+	if strings.Contains(rec.Body.String(), upstreamCanary) || strings.Contains(rec.Body.String(), "sk-health-canary") {
+		t.Fatalf("health response leaked upstream detail: %q", rec.Body.String())
 	}
 }

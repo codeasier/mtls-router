@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -70,6 +71,27 @@ func TestProbeFails(t *testing.T) {
 	defer slow.Close()
 	if err := Probe(ProbeOptions{UpstreamURL: slow.URL, ClientCert: slowCerts.clientCert, ClientKey: slowCerts.clientKey, UpstreamCA: slowCerts.ca, Timeout: time.Nanosecond}); err == nil {
 		t.Fatal("expected timeout error")
+	}
+}
+
+func TestProbeErrorDoesNotExposeUpstreamURL(t *testing.T) {
+	const queryCanary = "sk-health-probe-query-canary"
+	server, certs := newMTLSServer(t, http.StatusNoContent, 0, 0)
+	upstreamURL := server.URL + "/private-path?api_key=" + queryCanary
+	server.Close()
+
+	err := Probe(ProbeOptions{
+		UpstreamURL: upstreamURL,
+		ClientCert:  certs.clientCert,
+		ClientKey:   certs.clientKey,
+		UpstreamCA:  certs.ca,
+		Timeout:     time.Second,
+	})
+	if err == nil {
+		t.Fatal("expected probe failure")
+	}
+	if strings.Contains(err.Error(), queryCanary) || strings.Contains(err.Error(), upstreamURL) || strings.Contains(err.Error(), "private-path") {
+		t.Fatalf("probe error exposed upstream detail: %q", err)
 	}
 }
 

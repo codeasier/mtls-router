@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-window",
+  "description": "The main window may call only named Rust application commands.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

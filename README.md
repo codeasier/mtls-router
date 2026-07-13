@@ -2,7 +2,7 @@
 
 [中文](docs/zh-CN/README.md)
 
-`mtls-router` is a single-binary, cross-platform local reverse proxy. It accepts plain HTTP from local clients such as Claude Code or Codex CLI, then forwards requests to a public upstream mTLS server using an embedded client certificate, private key, upstream CA, and upstream URL.
+The `mtls-router` binary is a single-binary, cross-platform local reverse proxy. It accepts plain HTTP from local clients such as Claude Code or Codex CLI, then forwards requests to a public upstream mTLS server using an embedded client certificate, private key, upstream CA, and upstream URL. The project also ships a Go manager and a Tauri desktop application.
 
 The proxy streams request bodies and Server-Sent Events responses transparently. It does not perform protocol conversion: local traffic is HTTP, and upstream traffic is HTTPS with mTLS.
 
@@ -18,9 +18,15 @@ Adds one-click setup scripts, background mode, log file support, agent configura
 
 Initial release of the single-binary local reverse proxy for forwarding local HTTP traffic to an upstream HTTPS mTLS endpoint.
 
+## Desktop application
+
+The Tauri desktop application provides current-user router control, tray operation, default launch-at-login, health/log views, and explicit preview/write flows for Claude Code, opencode, and Codex. It packages the manager and router as verified sidecars and never changes Agent files on first launch.
+
+The checked-in CI and release workflows build six native desktop packages: Windows x86_64/arm64 NSIS installers, macOS Intel/Apple Silicon DMGs, and Linux x86_64/arm64 AppImages. Each matching target runner inspects its package contents, architecture, version/deployment identity, sidecar hashes, and executable permissions. Release jobs sign Windows and macOS packages only when signing credentials are complete, notarize and staple macOS applications only when the additional Apple credentials are complete, and publish one explicit signing-status file per target. Package inspection does not install or launch the application, so separate successful target-runner install/launch evidence is still required before a desktop release is considered fully validated. See [Desktop Application](docs/DESKTOP.md) for installation, first-launch, Agent, credential, and uninstall behavior, [Desktop Troubleshooting](docs/TROUBLESHOOTING.md) for recovery guidance, and [Build and Release](docs/BUILD.md) for the exact evidence boundary.
+
 ## One-click setup
 
-Release installation is package-first. From [GitHub Releases](https://github.com/codeasier/mtls-router/releases), select the archive for your operating system and CPU architecture (`.tar.gz` for macOS/Linux or `.zip` for Windows), extract it, and run the setup script from the extracted directory. Each archive contains the setup script, its sibling platform binary, and `SHA256SUMS`.
+Release installation is package-first. From [GitHub Releases](https://github.com/codeasier/mtls-router/releases), select the archive for your operating system and CPU architecture (`.tar.gz` for macOS/Linux or `.zip` for Windows), extract it, and run the setup script from the extracted directory. Each archive contains the setup script, the exact-platform `mtls-router` and `mtls-router-manager` binaries, and `SHA256SUMS` entries for both binaries.
 
 On macOS or Linux:
 
@@ -36,13 +42,13 @@ Expand-Archive .\mtls-router-windows-amd64.zip -DestinationPath .\mtls-router
 .\mtls-router\setup.ps1 router setup
 ```
 
-The setup script selects the sibling binary for the current platform and requires its exact entry in the sibling `SHA256SUMS` manifest to match. A missing, malformed, duplicate, or mismatched checksum is a hard failure: the existing installed binary is preserved and the script never falls back to a network download.
+The setup script selects both sibling binaries for the current platform and requires one exact valid entry for each in the sibling `SHA256SUMS` manifest. If any packaged platform payload is present, a missing sibling, manifest, malformed/duplicate entry, or hash mismatch is a hard failure: the existing installed pair is preserved and the script never falls back to a network download.
 
-If the sibling binary is missing, an interactive setup asks whether to download the binary and `SHA256SUMS`. Non-interactive setup fails closed unless downloading is explicitly authorized with `router install --download`, `router setup --download`, or `MTLS_ROUTER_ALLOW_DOWNLOAD=1`. Downloaded payloads receive the same SHA-256 verification before installation.
+If no sibling payload is present, interactive setup asks whether to download both binaries and `SHA256SUMS`. Non-interactive setup fails closed unless downloading is explicitly authorized with `router install --download`, `router setup --download`, or `MTLS_ROUTER_ALLOW_DOWNLOAD=1`. All three files are downloaded into one temporary directory, and both binaries are SHA-256 verified before either installed path is replaced.
 
 Custom sources set with `--download-url` or `MTLS_ROUTER_DOWNLOAD_URL` must use HTTPS; plain HTTP URLs are rejected before any credentials or downloader are used. Release-packaged scripts may include a preconfigured HTTPS URL for a private host. Authentication remains explicit through `--download-user` / `--download-password` or `MTLS_ROUTER_DOWNLOAD_USER` / `MTLS_ROUTER_DOWNLOAD_PASSWORD`; the scripts do not embed credentials.
 
-The scripts install `mtls-router` under `~/.local/bin` by default. On Windows this resolves to `%USERPROFILE%\.local\bin` (for example `C:\Users\<you>\.local\bin`). To choose another install directory, set `MTLS_ROUTER_INSTALL_DIR` before running the script. They do not install or launch any agent, and the default setup path does not modify agent configuration.
+The scripts install `mtls-router` and `mtls-router-manager` together under `~/.local/bin` by default. On Windows this resolves to `%USERPROFILE%\.local\bin` (for example `C:\Users\<you>\.local\bin`). To choose another install directory, set `MTLS_ROUTER_INSTALL_DIR` before running the script. Installation uses a private pending marker, previous-generation backup, fixed-path replacements, installed-hash verification, and an atomic committed receipt. Every setup command reconciles an interrupted transaction before executing an installed binary, so a mixed generation is never used. The scripts do not install or launch any agent, and the default setup path does not modify agent configuration.
 
 ## Manual download
 
@@ -146,12 +152,14 @@ Returns JSON describing the running binary and process:
   "version": "v0.1.1",
   "commit": "abc1234",
   "build_date": "2026-06-21T09:23:24Z",
+  "deployment_id": "production-service",
+  "management_protocol_version": "1",
   "pid": 12345,
   "started_at": "2026-06-21T09:23:24Z"
 }
 ```
 
-`version`, `commit`, and `build_date` are set at link time via `-ldflags -X` in `.github/workflows/release.yml`, `Dockerfile`, and `scripts/build.sh`. Local builds default to `dev` / `unknown`. `started_at` is the time the current process started.
+`version`, `commit`, `build_date`, and `deployment_id` are set at link time via `-ldflags -X` in `.github/workflows/release.yml`, `Dockerfile`, and `scripts/build.sh`. `management_protocol_version` is a code-owned compatibility ID. Local builds default to `dev` / `unknown`; production release preflight requires a non-default deployment ID. `started_at` is the time the current process started.
 
 ### `GET /health`
 
@@ -189,12 +197,14 @@ The setup scripts separate router lifecycle commands from agent configuration co
 
 `router install` only downloads and installs the binary. `router start` only starts an already installed binary and fails with a clear message if it is missing. `router setup` installs and starts the router, matching the no-argument default behavior.
 
-`agent print-config` only prints configuration snippets. `agent write-config --agent=...` only writes agent configuration and requires an explicit `--agent=` value. The legacy top-level `--print-config` and `--write-config --agent=...` options remain compatibility aliases for the agent commands.
+`agent print-config` prints the established key-placeholder configuration snippets after the manager validates a key-free change preview. `agent write-config --agent=...` only writes agent configuration and requires an explicit `--agent=` value plus hidden interactive key input. The legacy top-level `--print-config` and `--write-config --agent=...` options remain compatibility aliases for the agent commands. Agent commands only execute a checksum-verified sibling manager or a receipt-verified installed manager; they never download a manager implicitly.
+
+`MTLS_ROUTER_OPENAI_API_KEY` has been removed because environment variables are an unsafe secret transport. It no longer supplies a key. Noninteractive automation must invoke the verified installed `mtls-router-manager serve`, obtain an `agent.preview` revision token, and send `api_key` only in a subsequent line-delimited `agent.write` request on stdin. The manager writes protocol responses only to stdout and processes requests sequentially until stdin EOF. Do not put the key in command-line arguments, environment variables, logs, shell history, or temporary request files. See the exact hidden-input, cross-platform [stdin manager automation](docs/DESKTOP.md#stdin-manager-automation).
 
 The `mtls-router` binary itself manages the router only; it does not provide agent configuration commands such as `print-config`.
 
 - Claude Code writes the `env` block into `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR/settings.json`).
-- opencode writes the `mtls-router` provider into the chosen opencode.json (respecting `OPENCODE_CONFIG` and falling back to `~/.config/opencode/opencode.json`).
+- opencode writes the `mtls-router` provider into the selected configuration path. With no explicit `OPENCODE_CONFIG`, an existing canonical `~/.config/opencode/opencode.jsonc` is migrated to sibling `opencode.json`; an explicit `.jsonc` override is normalized in place at that exact path. Both operations lose comments and formatting.
 - Codex CLI writes the `[model_providers.custom]` block (with `model_provider = "custom"` and `name = "9router"`) into `~/.codex/config.toml` (respecting `CODEX_HOME`).
 
 The setup scripts do not install any agent and do not launch any agent.
@@ -293,7 +303,7 @@ Do not pass `-backend` under NSSM because NSSM manages the background process.
 
 ## Design
 
-See `docs/superpowers/specs/2026-06-17-mtls-router-design.md`.
+See the [design specification](docs/superpowers/specs/2026-06-17-mtls-router-design.md).
 
 ## License
 

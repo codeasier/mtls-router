@@ -1,0 +1,101 @@
+# 桌面应用故障排查
+
+[English](../TROUBLESHOOTING.md)
+
+删除状态前，先使用 Router、日志和设置页面。诊断摘要和界面日志会经过安全过滤，但原始本地文件仍应按内部诊断数据处理。未经 API key 检查，不要附上 Agent 配置或备份内容。
+
+## 包被阻止或 release 状态不明确
+
+Workflow 会构建六个原生桌面包，并在匹配的目标 runner 上检查每个包，但签名是有条件的，而且包检查不会安装或启动应用。
+
+1. 确认包与操作系统和架构匹配：Windows x86_64/arm64 NSIS、macOS Intel/Apple Silicon DMG，或 Linux x86_64/arm64 AppImage。
+2. 使用配套 `.sha256` 文件验证包。
+3. 阅读匹配的 `signing-status-<os>-<arch>.txt`。签名凭据不可用时，Windows 和 macOS 包可能未签名；notarization 凭据不可用时，macOS 包可能已签名但未 notarize。Linux 状态会明确报告未配置包签名。
+4. 向分发方索取匹配目标 runner 上成功安装/启动的独立证据。成功的包检查 job 或状态文件不属于启动证据。
+
+除非已经审查包 checksum、记录状态、分发策略和所需目标平台启动证据，否则不要绕过操作系统警告。详见[桌面应用](DESKTOP.md#安装)和[构建与发布](BUILD.md#包验证)。
+
+## Sidecar 校验失败
+
+常见现象包括 `SIDECAR_MISSING`、`SIDECAR_INVALID`、架构错误或提示重新安装。
+
+1. 退出应用。
+2. 确认桌面包与操作系统和 CPU 架构匹配。
+3. 从可信 release 来源重新安装完整包。
+4. 不要单独下载 manager/router、把 CLI 二进制复制到应用内、把修改执行权限当作绕过方式，也不要关闭完整性检查。
+
+桌面应用不会独立修复或下载 sidecar。如果重新安装已验证包后仍失败，请保留错误和包标识并交给维护者。
+
+## 端口 19099 被占用
+
+桌面应用固定使用 `127.0.0.1:19099`，绝不会选择其他端口，也不会终止未知占用者。
+
+1. 使用可信安装包中的 `./setup.sh router status` 或 `.\setup.ps1 router status` 检查是否有 CLI 管理的 router。
+2. 如果桌面应用报告兼容外部 router，复用属于预期行为；桌面应用不会拥有或停止它。
+3. 如果报告未知占用者，请使用操作系统工具识别 listener，并且只有在确认所有权后才停止或重新配置它。
+4. 端口释放后在 Router 页面重试。
+
+手工启动的 router 会被有意视为未知，除非完整 CLI setup 状态能够证明其进程身份以及 deployment/protocol 兼容性。
+
+## Router 状态陈旧
+
+Stale 表示记录的 PID、进程启动标识或可执行文件标识不再匹配。manager 会保留状态用于诊断，且不会发送信号。
+
+1. 独立检查报告的 PID 和可执行文件。
+2. 如果真实 router 仍在运行，请使用拥有它的工具停止；只有确认身份后才能人工停止。
+3. 原因不清楚时保留状态和日志；不要通过修改 PID 让状态看似有效。
+4. 确认进程消失后重启桌面应用。如果 stale 持续出现，请联系维护者。
+
+## 运行中但上游不可用
+
+该状态表示本地 router 进程可用，但最新上游 mTLS 检查失败。超过 30 秒的健康结果会显示为 stale，而不是健康。
+
+1. 选择重试健康检查。
+2. 检查本地网络、DNS、proxy/VPN 策略、时钟和上游可用性。
+3. 打开日志并复制安全过滤后的诊断摘要。
+4. 不要手工替换内嵌证书。凭据或 deployment 轮换需要完整替代 release。
+
+Router 进程状态和上游健康彼此独立。仅因短暂上游检查降级，不需要停止健康的本地进程。
+
+## Router 退出或 manager 不可用
+
+Router 意外退出后不会进入无限重启循环。manager 退出时，桌面应用最多尝试一次有界恢复；恢复失败会禁用生命周期命令，直到应用重启。
+
+打开日志、保留诊断摘要，然后只重启一次桌面应用。如果错误指向 sidecar 校验问题，请重新安装。不要通过在其他端口启动另一个 router 来绕过。
+
+## 未检测到 Agent 或不可写
+
+- 检测只支持 Claude Code、opencode 和 Codex；桌面应用不会安装或启动它们。
+- 确认 Agent 或预期 home 目录存在，然后刷新检测。
+- 启动桌面应用前，确认 `CLAUDE_CONFIG_DIR`、`OPENCODE_CONFIG` 或 `CODEX_HOME` 指向预期的当前用户位置。
+- 恢复当前用户对配置文件及其目录的写权限。不要以 administrator 或 root 运行桌面应用来绕过所有权问题。
+
+## Agent 配置无效
+
+`CONFIG_INVALID` 表示无法安全解析现有 JSON、JSONC、TOML 或 Codex auth JSON。不会修改任何文件。
+
+1. 打开检测结果显示的路径。
+2. 修复语法；如果对应 Agent 可能并发写入，请先停止它。
+3. 对没有显式 `OPENCODE_CONFIG` 的标准 `~/.config/opencode/opencode.jsonc`，检查同目录已有的 sibling `opencode.json` 是否与 JSONC 到 JSON 迁移冲突。
+4. 对显式 `.jsonc` `OPENCODE_CONFIG`，检查精确覆盖路径及其父目录可写；sibling `opencode.json` 与此无关，也不会作为回退路径。
+5. 刷新检测并生成新预览。
+
+manager 会保留受支持的无关设置，但不会猜测如何修复无效语法。
+
+## 预览已陈旧
+
+`PREVIEW_STALE` 表示所选目标在预览后发生变化。写入会在修改前被拒绝。
+
+请返回检测、生成新预览、重新审查所有路径和警告，然后再次输入 key。对于显式 `OPENCODE_CONFIG`，确认精确覆盖路径在预览后没有发生变化。不要用旧 revision token 重试。处理陈旧预览时，桌面应用会清除临时 key 输入。
+
+## 写入或回滚失败
+
+多 Agent 写入是事务性的。后续操作失败时，已经替换的目标会恢复，并保留诊断备份。`ROLLBACK_FAILED` 表示无法证明恢复完成，因此会禁用后续 Agent 写入。
+
+调查期间不要删除备份或 manager 事务状态。记录结果中的修改、备份和 rollback-backup 路径，退出拥有这些文件的 Agent，然后联系维护者。备份可能含旧 API key，不能未经脱敏直接附上。
+
+## 登录启动或卸载准备失败
+
+设置变更只作用于当前用户，不应要求提权。如果**准备卸载**无法确认登录启动已禁用，应用会保持打开，此时不能继续删除。
+
+macOS/Linux 上请重试**准备卸载**，确认应用退出后再删除。Windows 上应使用生产安装器的卸载器，由它负责删除当前用户注册。卸载不会删除 Agent 文件、备份、日志或状态。

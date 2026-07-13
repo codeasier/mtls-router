@@ -2,6 +2,34 @@
 
 [English](../CHANGELOG.md)
 
+## 未发布
+
+### 新增
+
+- 新增 Tauri 2 桌面控制面板，提供当前用户 router 生命周期管理、独立进程/上游健康状态、托盘操作、默认登录时启动、有界日志、诊断、设置和中英文界面。
+- 新增经过验证的架构专用 `mtls-router-manager` 和凭据注入 `mtls-router` 桌面 sidecar，提供构建期/运行时哈希与架构校验，以及 manager version/target/deployment/protocol handshake。
+- 新增安全的外部 CLI router 复用、`127.0.0.1:19099` 未知占用冲突处理、stale 进程身份保护和 degraded/stale 健康显示。
+- 新增 Claude Code、opencode 和 Codex 检测、结构化预览、敏感备份、原子事务写入、陈旧预览拒绝，以及共享 Go manager 提供的回滚/恢复。
+- 新增双语桌面操作和故障排查指南，覆盖安装、首次启动、Agent 安全边界、卸载、凭据轮换和包验证。
+
+### 变更
+
+- 将 router 生命周期和 Agent 文件管理提取到 `mtls-router-manager serve`，由桌面应用和安装脚本 wrapper 共享串行 line-delimited JSON stdin/stdout protocol。
+- CLI release 安装改为把 router 和 manager 作为一组匹配二进制共同 staging、验证、安装并记录 receipt。
+- 移除 `MTLS_ROUTER_OPENAI_API_KEY`。交互式 setup 隐藏读取 key；自动化必须先预览，再只通过 manager stdin 发送携带临时 key 的 `agent.write`。
+
+### 安全
+
+- 桌面/manager 状态、日志、诊断、protocol 响应、进程参数和环境变量不会有意保留 Agent API key。Agent 自有文件和显式批准的恢复备份仍是持久化边界，必须按敏感数据保护。
+- 明确记录分发二进制中共享内嵌客户端私钥可被提取，必须通过完整替代 release 和服务端吊销进行轮换。
+- 卸载会保留 Agent 文件、敏感备份、日志和状态。Windows 安装器集成必须移除当前用户 autostart；macOS/Linux 用户必须执行**准备卸载**、等待应用退出，再删除应用。
+
+### Release 状态
+
+- CI 和 release workflow 现在会为全部六个目标构建原生桌面包：Windows x86_64/arm64 NSIS、macOS Intel/Apple Silicon DMG，以及 Linux x86_64/arm64 AppImage。每个匹配的目标 runner 都会执行强制包检查。Release job 仅在签名凭据完整时签名 Windows/macOS 包，仅在额外 Apple 凭据完整时 notarize/staple macOS 应用，并为每个目标生成一个明确的状态文件。包检查不会安装或启动应用，因此目标 runner 上成功安装/启动的独立证据仍是 release gate。
+
+---
+
 ## v0.1.3 - 2026-07-10
 
 本次发布重点提升 release 安装可靠性和代理行为正确性。打包后的安装脚本默认指向可访问的下载服务器；代理移除了不再使用的流式检测预读路径；客户端请求体读取失败会正确返回 bad request；`/health` 现在会按运行时配置探测实际上游目标。

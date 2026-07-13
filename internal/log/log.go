@@ -32,14 +32,16 @@ func (r *ResponseRecorder) Write(p []byte) (int, error) {
 	return n, err
 }
 
-func AccessLog(logger *slog.Logger, req *http.Request, rec *ResponseRecorder, start time.Time, err error) {
+func AccessLog(logger *slog.Logger, req *http.Request, rec *ResponseRecorder, start time.Time) {
 	status := rec.Status
 	if status == 0 {
 		status = http.StatusOK
 	}
-	attrs := []any{"method", req.Method, "path", req.URL.RequestURI(), "status", status, "bytes", rec.Bytes, "latency", time.Since(start).String()}
-	if err != nil {
-		attrs = append(attrs, "error", err.Error())
-	}
-	logger.Info("access", attrs...)
+	logger.Info("access",
+		"method", req.Method,
+		"path", req.URL.EscapedPath(),
+		"status", status,
+		"bytes", rec.Bytes,
+		"latency", time.Since(start).String(),
+	)
 }

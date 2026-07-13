@@ -4,90 +4,138 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
-
-sha256() {
-  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi
+sha256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }
+file_mode() {
+  case "$(uname -s)" in
+    Darwin) stat -f '%Lp' "$1" ;;
+    *) stat -c '%a' "$1" ;;
+  esac
 }
 
-new_package() {
-  local dir="$1" asset="$2"
+platform="$(case "$(uname -s)" in Linux) printf linux;; Darwin) printf darwin;; *) fail unsupported;; esac)-$(case "$(uname -m)" in x86_64|amd64) printf amd64;; arm64|aarch64) printf arm64;; *) fail unsupported;; esac)"
+router_asset="mtls-router-$platform"
+manager_asset="mtls-router-manager-$platform"
+
+write_pair() {
+  local dir="$1" generation="$2"
   mkdir -p "$dir"
   cp "$ROOT/setup.sh" "$dir/setup.sh"
-  printf 'new-binary\n' >"$dir/$asset"
-  printf '%s  %s\n' "$(sha256 "$dir/$asset")" "$asset" >"$dir/SHA256SUMS"
+  cat >"$dir/$router_asset" <<ROUTER
+#!/usr/bin/env bash
+if [[ "\${1:-}" == --version || "\${1:-}" == -version ]]; then printf 'mtls-router $generation\\n'; exit; fi
+exit 0
+ROUTER
+  cat >"$dir/$manager_asset" <<MANAGER
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "\${1:-}" == serve ]] || exit 1
+IFS= read -r request
+id="\$(printf '%s' "\$request" | jq -r '.id // empty')"
+method="\$(printf '%s' "\$request" | jq -r '.method // empty')"
+if [[ "\$method" == manager.info ]]; then
+  jq -cn --arg id "\$id" '{id:\$id,result:{version:"$generation",commit:"test",build_date:"test",target:"test/test",deployment_id:"test-deployment",management_protocol_version:"1"}}'
+else
+  jq -cn --arg id "\$id" '{id:\$id,result:{}}'
+fi
+MANAGER
+  chmod +x "$dir/setup.sh"
+  chmod 0555 "$dir/$router_asset" "$dir/$manager_asset"
+  {
+    printf '%s  %s\n' "$(sha256 "$dir/$router_asset")" "$router_asset"
+    printf '%s  %s\n' "$(sha256 "$dir/$manager_asset")" "$manager_asset"
+  } >"$dir/SHA256SUMS"
 }
 
 run_install() {
-  local package="$1" install="$2"
-  shift 2
-  (cd / && MTLS_ROUTER_INSTALL_DIR="$install" MTLS_ROUTER_SKIP_START=1 bash "$package/setup.sh" router install "$@")
+  local package="$1" install="$2" home="$3"
+  shift 3
+  MTLS_ROUTER_INSTALL_DIR="$install" MTLS_ROUTER_STATE_DIR="$home/state" HOME="$home" \
+    bash "$package/setup.sh" router install "$@"
 }
 
-asset="mtls-router-$(case "$(uname -s)" in Linux) printf linux;; Darwin) printf darwin;; *) fail unsupported;; esac)-$(case "$(uname -m)" in x86_64|amd64) printf amd64;; arm64|aarch64) printf arm64;; *) fail unsupported;; esac)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
-
 package="$tmp/package"
 install="$tmp/install"
-new_package "$package" "$asset"
-run_install "$package" "$install"
-[[ "$(cat "$install/mtls-router")" == "new-binary" ]] || fail "sibling payload was not installed"
-[[ -x "$install/mtls-router" ]] || fail "installed payload is not executable"
+home="$tmp/home"
+write_pair "$package" v2
+source_router_mode="$(file_mode "$package/$router_asset")"
+source_manager_mode="$(file_mode "$package/$manager_asset")"
+[[ "$source_router_mode" == 555 && "$source_manager_mode" == 555 ]] || fail "package payloads are not mode 0555"
+run_install "$package" "$install" "$home" >/dev/null
+[[ "$($install/mtls-router --version)" == 'mtls-router v2' ]] || fail "router was not installed"
+[[ -x "$install/mtls-router-manager" ]] || fail "manager was not installed"
+[[ "$(file_mode "$install/mtls-router")" == 755 ]] || fail "installed router is not mode 0755"
+[[ "$(file_mode "$install/mtls-router-manager")" == 755 ]] || fail "installed manager is not mode 0755"
+[[ "$(file_mode "$package/$router_asset")" == "$source_router_mode" ]] || fail "router package source mode changed"
+[[ "$(file_mode "$package/$manager_asset")" == "$source_manager_mode" ]] || fail "manager package source mode changed"
+receipt="$home/state/install-receipt.json"
+jq -e --arg router "$install/mtls-router" --arg manager "$install/mtls-router-manager" '
+  .schema_version == 1 and .deployment_id == "test-deployment" and
+  .management_protocol_version == "1" and .router.path == $router and
+  .manager.path == $manager and .router.version == "v2" and .manager.version == "v2"' "$receipt" >/dev/null || fail "receipt metadata is incomplete"
+[[ "$(file_mode "$receipt")" == 600 ]] || fail "receipt is not mode 0600"
 
-for mode in missing duplicate malformed mismatch valid-plus-malformed valid-plus-single-space; do
-  rm -rf "$package" "$install"
-  new_package "$package" "$asset"
-  mkdir -p "$install"
-  printf 'old-binary\n' >"$install/mtls-router"
-  case "$mode" in
-    missing) rm "$package/SHA256SUMS" ;;
-    duplicate) cat "$package/SHA256SUMS" >>"$package/SHA256SUMS.copy"; cat "$package/SHA256SUMS.copy" >>"$package/SHA256SUMS" ;;
-    malformed) printf '%s %s\n' "$(sha256 "$package/$asset")" "$asset" >"$package/SHA256SUMS" ;;
-    mismatch) printf '%064d  %s\n' 0 "$asset" >"$package/SHA256SUMS" ;;
-    valid-plus-malformed) printf 'not-a-checksum  %s\n' "$asset" >>"$package/SHA256SUMS" ;;
-    valid-plus-single-space) printf '%s %s\n' "$(sha256 "$package/$asset")" "$asset" >>"$package/SHA256SUMS" ;;
-  esac
-  if run_install "$package" "$install" >/dev/null 2>&1; then fail "$mode manifest should fail"; fi
-  [[ "$(cat "$install/mtls-router")" == "old-binary" ]] || fail "$mode failure replaced installed binary"
+for missing in "$router_asset" "$manager_asset" SHA256SUMS; do
+  rm -rf "$package"
+  write_pair "$package" v3
+  rm "$package/$missing"
+  if run_install "$package" "$install" "$home" --download >/dev/null 2>&1; then fail "partial sibling package missing $missing should fail"; fi
+  [[ "$($install/mtls-router --version)" == 'mtls-router v2' ]] || fail "partial package replaced router"
+  [[ "$($install/mtls-router-manager serve <<< '{"id":"x","method":"manager.info"}' | jq -r .result.version)" == v2 ]] || fail "partial package replaced manager"
 done
 
-rm -rf "$package" "$install"
-mkdir -p "$package" "$install" "$tmp/bin" "$tmp/remote"
+for mode in duplicate malformed mismatch; do
+  rm -rf "$package"
+  write_pair "$package" v3
+  case "$mode" in
+    duplicate) printf '%s  %s\n' "$(sha256 "$package/$router_asset")" "$router_asset" >>"$package/SHA256SUMS" ;;
+    malformed) printf 'not-a-checksum  %s\n' "$manager_asset" >>"$package/SHA256SUMS" ;;
+    mismatch) printf '%064d  %s\n' 0 "$manager_asset" >"$package/SHA256SUMS" ;;
+  esac
+  if run_install "$package" "$install" "$home" >/dev/null 2>&1; then fail "$mode manifest should fail"; fi
+  [[ "$($install/mtls-router --version)" == 'mtls-router v2' ]] || fail "$mode changed committed pair"
+done
+
+for point in after-router after-manager before-receipt; do
+  rm -rf "$package"
+  write_pair "$package" "crash-$point"
+  if MTLS_ROUTER_INSTALL_CRASH_POINT="$point" run_install "$package" "$install" "$home" >/dev/null 2>&1; then fail "$point should simulate a crash"; fi
+  [[ -f "$home/state/install-pending.json" ]] || fail "$point did not leave pending marker"
+  MTLS_ROUTER_INSTALL_DIR="$install" MTLS_ROUTER_STATE_DIR="$home/state" HOME="$home" \
+    bash "$package/setup.sh" router status >/dev/null
+  [[ ! -e "$home/state/install-pending.json" ]] || fail "$point was not reconciled before execution"
+  router_version="$($install/mtls-router --version)"
+  manager_version="$($install/mtls-router-manager serve <<< '{"id":"x","method":"manager.info"}' | jq -r .result.version)"
+  case "$point" in
+    after-router) [[ "$router_version" == 'mtls-router v2' && "$manager_version" == v2 ]] || fail "$point did not restore previous generation" ;;
+    *) [[ "$router_version" == "mtls-router crash-$point" && "$manager_version" == "crash-$point" ]] || fail "$point did not commit complete new generation" ;;
+  esac
+done
+
+# Network mode must fetch and verify router, manager, and one manifest before replacement.
+rm -rf "$package" "$tmp/remote" "$tmp/bin"
+mkdir -p "$package" "$tmp/remote" "$tmp/bin"
 cp "$ROOT/setup.sh" "$package/setup.sh"
-printf 'old-binary\n' >"$install/mtls-router"
-printf 'remote-binary\n' >"$tmp/remote/$asset"
-printf '%s  %s\n' "$(sha256 "$tmp/remote/$asset")" "$asset" >"$tmp/remote/SHA256SUMS"
+write_pair "$tmp/remote" network-v4
+chmod 0644 "$tmp/remote/$router_asset" "$tmp/remote/$manager_asset"
+[[ "$(file_mode "$tmp/remote/$router_asset")" == 644 && "$(file_mode "$tmp/remote/$manager_asset")" == 644 ]] || fail "network fixtures are not mode 0644"
 cat >"$tmp/bin/curl" <<'CURL'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$FAKE_CURL_LOG"
 out=""; url=""
-while (( $# )); do
-  case "$1" in -o) out="$2"; shift 2;; http*) url="$1"; shift;; *) shift;; esac
-done
+while (($#)); do case "$1" in -o) out="$2"; shift 2;; https://*) url="$1"; shift;; *) shift;; esac; done
 cp "$FAKE_REMOTE_DIR/${url##*/}" "$out"
 CURL
 chmod +x "$tmp/bin/curl"
-
-common=(env PATH="$tmp/bin:$PATH" FAKE_CURL_LOG="$tmp/curl.log" FAKE_REMOTE_DIR="$tmp/remote" MTLS_ROUTER_INSTALL_DIR="$install" MTLS_ROUTER_DOWNLOAD_URL="https://downloads.example.test" MTLS_ROUTER_VERSION=v1 MTLS_ROUTER_SKIP_START=1)
-if "${common[@]}" bash "$package/setup.sh" router install >/dev/null 2>&1; then fail "non-interactive fallback without authorization should fail"; fi
-[[ ! -e "$tmp/curl.log" ]] || fail "unauthorized fallback invoked downloader"
-
+common=(env PATH="$tmp/bin:$PATH" FAKE_CURL_LOG="$tmp/curl.log" FAKE_REMOTE_DIR="$tmp/remote" MTLS_ROUTER_INSTALL_DIR="$install" MTLS_ROUTER_STATE_DIR="$home/state" HOME="$home" MTLS_ROUTER_DOWNLOAD_URL="https://downloads.example.test" MTLS_ROUTER_VERSION=v4)
 "${common[@]}" bash "$package/setup.sh" router install --download >/dev/null
-[[ "$(cat "$install/mtls-router")" == "remote-binary" ]] || fail "--download did not install verified remote payload"
-
-printf 'old-binary\n' >"$install/mtls-router"
-rm -f "$tmp/curl.log"
-MTLS_ROUTER_ALLOW_DOWNLOAD=1 "${common[@]}" bash "$package/setup.sh" router install >/dev/null
-[[ "$(cat "$install/mtls-router")" == "remote-binary" ]] || fail "environment authorization did not install payload"
-
-printf 'old-binary\n' >"$install/mtls-router"
-printf '%064d  %s\n' 0 "$asset" >"$tmp/remote/SHA256SUMS"
-if "${common[@]}" bash "$package/setup.sh" router install --download >/dev/null 2>&1; then fail "remote mismatch should fail"; fi
-[[ "$(cat "$install/mtls-router")" == "old-binary" ]] || fail "remote mismatch replaced installed binary"
+[[ "$($install/mtls-router --version)" == 'mtls-router network-v4' ]] || fail "network router was not installed"
+[[ "$(wc -l <"$tmp/curl.log" | tr -d ' ')" == 3 ]] || fail "network install did not download exactly both binaries and manifest"
 
 rm -f "$tmp/curl.log"
-if env PATH="$tmp/bin:$PATH" FAKE_CURL_LOG="$tmp/curl.log" FAKE_REMOTE_DIR="$tmp/remote" MTLS_ROUTER_INSTALL_DIR="$install" MTLS_ROUTER_DOWNLOAD_URL="http://downloads.example.test" MTLS_ROUTER_VERSION=v1 MTLS_ROUTER_SKIP_START=1 bash "$package/setup.sh" router install --download >/dev/null 2>&1; then fail "HTTP fallback should fail"; fi
-[[ ! -e "$tmp/curl.log" ]] || fail "HTTP fallback invoked downloader"
+if "${common[@]}" MTLS_ROUTER_DOWNLOAD_URL=http://downloads.example.test bash "$package/setup.sh" router install --download >/dev/null 2>&1; then fail "HTTP download should fail"; fi
+[[ ! -e "$tmp/curl.log" ]] || fail "HTTP rejection invoked downloader"
 
-printf 'PASS: secure Unix installation\n'
+printf 'PASS: secure pair installation and reconciliation\n'

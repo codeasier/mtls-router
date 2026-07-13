@@ -1,0 +1,546 @@
+package lifecycle
+
+import (
+	"context"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/codeasier/mtls-router/internal/manager/discovery"
+	"github.com/codeasier/mtls-router/internal/manager/process"
+	"github.com/codeasier/mtls-router/internal/manager/protocol"
+	"github.com/codeasier/mtls-router/internal/manager/state"
+)
+
+func TestDesktopStartUsesControlledForegroundLaunchAndWritesVerifiedState(t *testing.T) {
+	fixture := newFixture(t)
+	var args, env []string
+	fixture.deps.Environ = func() []string {
+		return []string{"PATH=/bin", "MTLS_UPSTREAM_URL=https://unsafe", "mtls_backend=true", "OTHER=ok"}
+	}
+	fixture.deps.LaunchDesktop = func(_ string, gotArgs, gotEnv []string, output io.Writer) (foregroundProcess, error) {
+		args, env = gotArgs, gotEnv
+		_, _ = output.Write([]byte("started\n"))
+		return &fakeChild{pid: 101, wait: make(chan error)}, nil
+	}
+	value, protocolErr := fixture.manager().Start(context.Background(), protocol.RouterOwnerDesktop)
+	if protocolErr != nil {
+		t.Fatal(protocolErr)
+	}
+	if value.PID != 101 || value.Owner != "desktop" || value.DesktopSessionID != "session" || value.DeploymentID != "prod-a" {
+		t.Fatalf("state = %+v", value)
+	}
+	if containsArg(args, "-backend") || containsArg(args, "--backend") {
+		t.Fatalf("desktop args contain backend mode: %#v", args)
+	}
+	for _, want := range []string{"-listen", "127.0.0.1:19099", "-log", fixture.config.DesktopLogPath, "-tls-min", "tls1.2", "-timeout", "10s", "-debug=false"} {
+		if !containsArg(args, want) {
+			t.Fatalf("args %#v missing %q", args, want)
+		}
+	}
+	if !reflect.DeepEqual(env, []string{"PATH=/bin", "OTHER=ok"}) {
+		t.Fatalf("environment = %#v", env)
+	}
+	if fixture.writes != 1 {
+		t.Fatalf("state writes = %d, want 1", fixture.writes)
+	}
+	if got := fixture.managerState; got.PID != 101 || got.ProcessStartedAt == "" || got.ManagerProcessStartedAt == "" {
+		t.Fatalf("persisted incomplete state: %+v", got)
+	}
+}
+
+func TestCLIStartUsesDetachedLaunchAndPersistsOnlyAfterVerification(t *testing.T) {
+	fixture := newFixture(t)
+	fixture.discovered = discovery.Result{Classification: discovery.Absent}
+	var args []string
+	fixture.deps.LaunchDetached = func(_ string, got []string, log string) (int, error) {
+		args = got
+		if fixture.writes != 0 {
+			t.Fatal("state written before child verification")
+		}
+		if log != fixture.config.CLILogPath {
+			t.Fatalf("log = %q", log)
+		}
+		return 202, nil
+	}
+	value, protocolErr := fixture.manager().Start(context.Background(), protocol.RouterOwnerCLI)
+	if protocolErr != nil {
+		t.Fatal(protocolErr)
+	}
+	if value.PID != 202 || value.Owner != "cli" {
+		t.Fatalf("state = %+v", value)
+	}
+	if containsArg(args, "-backend") {
+		t.Fatalf("manager detached child must not recursively backend: %#v", args)
+	}
+	if fixture.cliState.PID != 202 || fixture.writes != 1 {
+		t.Fatalf("CLI state = %+v, writes=%d", fixture.cliState, fixture.writes)
+	}
+}
+
+func TestRepeatedDesktopStartDoesNotLaunchSecondChild(t *testing.T) {
+	fixture := newFixture(t)
+	fixture.managerState = fixture.desktopState(101)
+	fixture.managerState.ManagerPID = fixture.config.ManagerIdentity.PID
+	fixture.managerState.ManagerProcessStartedAt = fixture.config.ManagerIdentity.StartedAt
+	fixture.managerState.ManagerProcessExecutable = fixture.config.ManagerIdentity.Executable
+	fixture.deps.LaunchDesktop = func(string, []string, []string, io.Writer) (foregroundProcess, error) {
+		t.Fatal("repeated start launched another child")
+		return nil, nil
+	}
+	value, protocolErr := fixture.manager().Start(context.Background(), protocol.RouterOwnerDesktop)
+	if protocolErr != nil {
+		t.Fatal(protocolErr)
+	}
+	if value.PID != 101 {
+		t.Fatalf("PID = %d", value.PID)
+	}
+}
+
+func TestFailedAndTimedOutStartCleanUpWithoutWritingState(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		verify    func(context.Context, string, int, string, string) (discovery.Version, discovery.Health, error)
+		want      protocol.ErrorCode
+		wantKills int
+	}{
+		{name: "not ready", verify: func(context.Context, string, int, string, string) (discovery.Version, discovery.Health, error) {
+			return discovery.Version{}, discovery.Health{}, errors.New("not ready")
+		}, want: protocol.CodeRouterNotReady, wantKills: 1},
+		{name: "identity mismatch", verify: func(context.Context, string, int, string, string) (discovery.Version, discovery.Health, error) {
+			return discovery.Version{PID: 101}, discovery.Health{Status: "ok"}, nil
+		}, want: protocol.CodeRouterStateStale},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fixture := newFixture(t)
+			fixture.config.StartupTimeout = time.Millisecond
+			fixture.deps.Verify = tt.verify
+			if tt.name == "identity mismatch" {
+				fixture.validate = func(process.Identity, string) (process.Status, error) { return process.StatusStale, nil }
+			}
+			fixture.deps.Sleep = func(context.Context, time.Duration) error { return context.DeadlineExceeded }
+			_, protocolErr := fixture.manager().Start(context.Background(), protocol.RouterOwnerDesktop)
+			if protocolErr == nil || protocolErr.Code != tt.want {
+				t.Fatalf("error = %v, want %s", protocolErr, tt.want)
+			}
+			if fixture.writes != 0 {
+				t.Fatalf("state writes = %d", fixture.writes)
+			}
+			if fixture.killSignals != tt.wantKills {
+				t.Fatalf("cleanup kill signals = %d, want %d", fixture.killSignals, tt.wantKills)
+			}
+			if !fixture.lockClosed {
+				t.Fatal("failed start retained ownership lock")
+			}
+		})
+	}
+}
+
+func TestDegradedStartPersistsUsableChild(t *testing.T) {
+	fixture := newFixture(t)
+	fixture.deps.Verify = func(context.Context, string, int, string, string) (discovery.Version, discovery.Health, error) {
+		return discovery.Version{Version: "v1", PID: 101}, discovery.Health{Status: "degraded"}, nil
+	}
+	value, protocolErr := fixture.manager().Start(context.Background(), protocol.RouterOwnerDesktop)
+	if protocolErr == nil || protocolErr.Code != protocol.CodeRouterDegraded {
+		t.Fatalf("error = %v", protocolErr)
+	}
+	if value.PID != 101 || fixture.writes != 1 || fixture.killSignals != 0 {
+		t.Fatalf("state=%+v writes=%d kills=%d", value, fixture.writes, fixture.killSignals)
+	}
+}
+
+func TestStopGracefulAndForcedAreIdentitySafe(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		statuses    []process.Status
+		wantSignals int
+	}{
+		{name: "graceful", statuses: []process.Status{process.StatusGenuine, process.StatusAbsent}, wantSignals: 1},
+		{name: "forced", statuses: []process.Status{process.StatusGenuine, process.StatusGenuine, process.StatusGenuine, process.StatusAbsent}, wantSignals: 2},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fixture := newFixture(t)
+			fixture.managerState = fixture.desktopState(101)
+			fixture.ownState()
+			index := 0
+			fixture.validate = func(process.Identity, string) (process.Status, error) {
+				if index >= len(tt.statuses) {
+					return tt.statuses[len(tt.statuses)-1], nil
+				}
+				status := tt.statuses[index]
+				index++
+				return status, nil
+			}
+			fixture.deps.Sleep = func(context.Context, time.Duration) error {
+				if tt.name == "forced" && index < 3 {
+					return context.DeadlineExceeded
+				}
+				return nil
+			}
+			manager := fixture.manager()
+			if protocolErr := manager.Stop(context.Background()); protocolErr != nil {
+				t.Fatal(protocolErr)
+			}
+			if fixture.signals != tt.wantSignals {
+				t.Fatalf("signals = %d, want %d", fixture.signals, tt.wantSignals)
+			}
+			if !fixture.removed {
+				t.Fatal("stopped state was not removed")
+			}
+		})
+	}
+}
+
+func TestStopCLIRouterUsesCLIStateAndIdentityValidation(t *testing.T) {
+	fixture := newFixture(t)
+	fixture.config.SessionID = ""
+	fixture.cliState = state.RouterState{
+		PID: 202, Owner: "cli", BinaryPath: "/router", ProcessStartedAt: "router-start", ProcessExecutable: "/router",
+	}
+	statuses := []process.Status{process.StatusGenuine, process.StatusAbsent}
+	fixture.validate = func(process.Identity, string) (process.Status, error) {
+		status := statuses[0]
+		statuses = statuses[1:]
+		return status, nil
+	}
+	if protocolErr := fixture.manager().Stop(context.Background()); protocolErr != nil {
+		t.Fatal(protocolErr)
+	}
+	if fixture.signals != 1 || !fixture.removed {
+		t.Fatalf("signals=%d removed=%t", fixture.signals, fixture.removed)
+	}
+}
+
+func TestStopRejectsExternalAndStaleWithoutSignal(t *testing.T) {
+	for _, tt := range []struct {
+		name, owner string
+		status      process.Status
+		want        protocol.ErrorCode
+	}{
+		{name: "external", owner: "cli", status: process.StatusGenuine, want: protocol.CodeRouterNotOwned},
+		{name: "stale", owner: "desktop", status: process.StatusStale, want: protocol.CodeRouterStateStale},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fixture := newFixture(t)
+			fixture.managerState = fixture.desktopState(101)
+			fixture.managerState.Owner = tt.owner
+			fixture.ownState()
+			fixture.validate = func(process.Identity, string) (process.Status, error) { return tt.status, nil }
+			protocolErr := fixture.manager().Stop(context.Background())
+			if protocolErr == nil || protocolErr.Code != tt.want {
+				t.Fatalf("error = %v", protocolErr)
+			}
+			if fixture.signals != 0 {
+				t.Fatalf("signals = %d", fixture.signals)
+			}
+		})
+	}
+}
+
+func TestStopRejectsAnotherDesktopManagerSession(t *testing.T) {
+	fixture := newFixture(t)
+	fixture.managerState = fixture.desktopState(101)
+	protocolErr := fixture.manager().Stop(context.Background())
+	if protocolErr == nil || protocolErr.Code != protocol.CodeRouterNotOwned {
+		t.Fatalf("error = %v", protocolErr)
+	}
+	if fixture.signals != 0 {
+		t.Fatalf("signals = %d", fixture.signals)
+	}
+}
+
+func TestReclaimRequiresLockAbsentManagerSessionAndRouterIdentity(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		session  string
+		statuses []process.Status
+		lockErr  error
+		wantOK   bool
+	}{
+		{name: "success", session: "session", statuses: []process.Status{process.StatusAbsent, process.StatusGenuine}, wantOK: true},
+		{name: "competing manager lock", session: "session", lockErr: state.ErrLocked},
+		{name: "previous manager alive", session: "session", statuses: []process.Status{process.StatusGenuine}},
+		{name: "wrong session", session: "other"},
+		{name: "stale router", session: "session", statuses: []process.Status{process.StatusAbsent, process.StatusStale}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fixture := newFixture(t)
+			fixture.config.SessionID = tt.session
+			fixture.managerState = fixture.desktopState(101)
+			fixture.deps.AcquireLock = func(string) (io.Closer, error) {
+				if tt.lockErr != nil {
+					return nil, tt.lockErr
+				}
+				fixture.lockHeld = true
+				return closerFunc(func() error { fixture.lockClosed = true; return nil }), nil
+			}
+			index := 0
+			fixture.validate = func(process.Identity, string) (process.Status, error) {
+				if index >= len(tt.statuses) {
+					return process.StatusStale, nil
+				}
+				status := tt.statuses[index]
+				index++
+				return status, nil
+			}
+			value, protocolErr := fixture.manager().Reclaim()
+			if tt.wantOK {
+				if protocolErr != nil {
+					t.Fatal(protocolErr)
+				}
+				if value.ManagerPID != fixture.config.ManagerIdentity.PID || value.ManagerProcessStartedAt != fixture.config.ManagerIdentity.StartedAt || value.ManagerProcessExecutable != fixture.config.ManagerIdentity.Executable || fixture.writes != 1 {
+					t.Fatalf("value=%+v writes=%d", value, fixture.writes)
+				}
+				if fixture.lockClosed {
+					t.Fatal("successful reclaim released ownership lock")
+				}
+			} else if protocolErr == nil {
+				t.Fatal("reclaim unexpectedly succeeded")
+			} else {
+				if fixture.writes != 0 || fixture.signals != 0 || fixture.desktopLaunches != 0 {
+					t.Fatalf("failed reclaim writes=%d signals=%d launches=%d", fixture.writes, fixture.signals, fixture.desktopLaunches)
+				}
+			}
+		})
+	}
+}
+
+func TestMonitorParentStopsOnCompleteIdentityMismatch(t *testing.T) {
+	fixture := newFixture(t)
+	fixture.managerState = fixture.desktopState(101)
+	fixture.ownState()
+	call := 0
+	fixture.validate = func(identity process.Identity, _ string) (process.Status, error) {
+		call++
+		if identity.PID == fixture.config.ParentIdentity.PID {
+			return process.StatusStale, nil
+		}
+		if call > 2 {
+			return process.StatusAbsent, nil
+		}
+		return process.StatusGenuine, nil
+	}
+	protocolErr := fixture.manager().MonitorParent(context.Background())
+	if protocolErr != nil {
+		t.Fatal(protocolErr)
+	}
+	if fixture.signals != 1 {
+		t.Fatalf("signals = %d, want graceful router stop", fixture.signals)
+	}
+}
+
+func TestUnexpectedExitAndRecentOutputAreBounded(t *testing.T) {
+	fixture := newFixture(t)
+	fixture.config.RecentOutputBytes = 8
+	wait := make(chan error, 1)
+	fixture.deps.LaunchDesktop = func(_ string, _ []string, _ []string, output io.Writer) (foregroundProcess, error) {
+		_, _ = output.Write([]byte("0123456789"))
+		return &fakeChild{pid: 101, wait: wait}, nil
+	}
+	manager := fixture.manager()
+	if _, protocolErr := manager.Start(context.Background(), protocol.RouterOwnerDesktop); protocolErr != nil {
+		t.Fatal(protocolErr)
+	}
+	wait <- errors.New("crashed")
+	select {
+	case event := <-manager.UnexpectedExit():
+		if event.Err == nil || !strings.Contains(event.Err.Error(), "crashed") || event.Identity.PID != 101 {
+			t.Fatalf("exit = %+v", event)
+		}
+		if event.RecentOutput != "23456789" {
+			t.Fatalf("event recent output = %q", event.RecentOutput)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("unexpected exit was not reported")
+	}
+	if got := manager.RecentOutput(); got != "23456789" {
+		t.Fatalf("recent output = %q", got)
+	}
+}
+
+func TestStartupFailureAndIntentionalStopDoNotReportUnexpectedExit(t *testing.T) {
+	t.Run("startup failure", func(t *testing.T) {
+		fixture := newFixture(t)
+		wait := make(chan error, 1)
+		fixture.deps.LaunchDesktop = func(string, []string, []string, io.Writer) (foregroundProcess, error) {
+			wait <- errors.New("startup crash")
+			return &fakeChild{pid: 101, wait: wait}, nil
+		}
+		fixture.deps.Verify = func(context.Context, string, int, string, string) (discovery.Version, discovery.Health, error) {
+			return discovery.Version{}, discovery.Health{}, errors.New("not ready")
+		}
+		manager := fixture.manager()
+		if _, protocolErr := manager.Start(context.Background(), protocol.RouterOwnerDesktop); protocolErr == nil || protocolErr.Code != protocol.CodeRouterStartFailed {
+			t.Fatalf("start error = %v", protocolErr)
+		}
+		select {
+		case event := <-manager.UnexpectedExit():
+			t.Fatalf("startup failure reported as unexpected: %+v", event)
+		default:
+		}
+	})
+
+	t.Run("intentional stop", func(t *testing.T) {
+		fixture := newFixture(t)
+		wait := make(chan error, 1)
+		fixture.deps.LaunchDesktop = func(string, []string, []string, io.Writer) (foregroundProcess, error) {
+			return &fakeChild{pid: 101, wait: wait}, nil
+		}
+		statuses := []process.Status{process.StatusGenuine, process.StatusGenuine, process.StatusAbsent}
+		fixture.validate = func(process.Identity, string) (process.Status, error) {
+			if len(statuses) == 0 {
+				return process.StatusAbsent, nil
+			}
+			status := statuses[0]
+			statuses = statuses[1:]
+			return status, nil
+		}
+		manager := fixture.manager()
+		if _, protocolErr := manager.Start(context.Background(), protocol.RouterOwnerDesktop); protocolErr != nil {
+			t.Fatal(protocolErr)
+		}
+		fixture.managerState = fixture.desktopState(101)
+		fixture.ownState()
+		fixture.deps.Signal = func(process.Identity, string, os.Signal) error {
+			wait <- nil
+			return nil
+		}
+		// Stop uses the dependencies captured when Manager was constructed.
+		manager.deps.Signal = fixture.deps.Signal
+		if protocolErr := manager.Stop(context.Background()); protocolErr != nil {
+			t.Fatal(protocolErr)
+		}
+		select {
+		case event := <-manager.UnexpectedExit():
+			t.Fatalf("intentional stop reported as unexpected: %+v", event)
+		case <-time.After(20 * time.Millisecond):
+		}
+	})
+}
+
+type fixture struct {
+	t                             *testing.T
+	config                        Config
+	deps                          Dependencies
+	discovered                    discovery.Result
+	managerState                  state.RouterState
+	cliState                      state.RouterState
+	writes, signals, killSignals  int
+	desktopLaunches               int
+	removed, lockHeld, lockClosed bool
+	validate                      func(process.Identity, string) (process.Status, error)
+	mu                            sync.Mutex
+}
+
+func newFixture(t *testing.T) *fixture {
+	t.Helper()
+	dir := t.TempDir()
+	f := &fixture{t: t}
+	f.config = Config{
+		RouterPath: "/router", ListenAddr: "127.0.0.1:19099", DesktopStatePath: filepath.Join(dir, "desktop.json"),
+		CLIStatePath: filepath.Join(dir, "cli.json"), DesktopLockPath: filepath.Join(dir, "owner.lock"), DesktopLogPath: filepath.Join(dir, "desktop.log"),
+		CLILogPath: filepath.Join(dir, "cli.log"), SessionID: "session", ManagerIdentity: process.Identity{PID: 7, StartedAt: "manager-new", Executable: "/manager"},
+		ParentIdentity: process.Identity{PID: 8, StartedAt: "parent-start", Executable: "/desktop"}, ManagerVersion: "v1", DeploymentID: "prod-a",
+		ManagementProtocolVersion: "1", PollInterval: time.Millisecond,
+	}
+	f.discovered = discovery.Result{Classification: discovery.Absent}
+	f.validate = func(process.Identity, string) (process.Status, error) { return process.StatusGenuine, nil }
+	f.deps = Dependencies{
+		Discover: func(context.Context) discovery.Result { return f.discovered },
+		Inspect: func(pid int) (process.Identity, error) {
+			return process.Identity{PID: pid, StartedAt: "router-start", Executable: "/router"}, nil
+		},
+		Validate: func(identity process.Identity, binary string) (process.Status, error) {
+			return f.validate(identity, binary)
+		},
+		Signal: func(_ process.Identity, _ string, signal os.Signal) error {
+			f.signals++
+			if signal == os.Kill {
+				f.killSignals++
+			}
+			return nil
+		},
+		LaunchDesktop: func(string, []string, []string, io.Writer) (foregroundProcess, error) {
+			f.desktopLaunches++
+			return &fakeChild{pid: 101, wait: make(chan error)}, nil
+		},
+		LaunchDetached: func(string, []string, string) (int, error) { return 202, nil },
+		ReadState: func(path string) (state.RouterState, error) {
+			if path == f.config.DesktopStatePath && f.managerState.PID != 0 {
+				return f.managerState, nil
+			}
+			if path == f.config.CLIStatePath && f.cliState.PID != 0 {
+				return f.cliState, nil
+			}
+			return state.RouterState{}, os.ErrNotExist
+		},
+		WriteState: func(path string, value state.RouterState) error {
+			if f.lockHeld && f.lockClosed {
+				t.Fatal("state written after ownership lock was released")
+			}
+			f.writes++
+			if path == f.config.DesktopStatePath {
+				f.managerState = value
+			} else {
+				f.cliState = value
+			}
+			return nil
+		},
+		RemoveState: func(string) error { f.removed = true; return nil },
+		AcquireLock: func(string) (io.Closer, error) {
+			f.lockHeld = true
+			return closerFunc(func() error { f.lockClosed = true; return nil }), nil
+		},
+		Environ: func() []string { return []string{"PATH=/bin"} },
+		OpenLog: func(string) (*os.File, error) {
+			return os.OpenFile(filepath.Join(dir, "output.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+		},
+		Verify: func(context.Context, string, int, string, string) (discovery.Version, discovery.Health, error) {
+			return discovery.Version{Version: "v1", PID: 101}, discovery.Health{Status: "ok"}, nil
+		},
+		Sleep: func(context.Context, time.Duration) error { return nil },
+		Now:   func() time.Time { return time.Date(2026, 7, 12, 0, 0, 0, 0, time.UTC) },
+	}
+	return f
+}
+
+func (f *fixture) manager() *Manager { return New(f.config, f.deps) }
+func (f *fixture) desktopState(pid int) state.RouterState {
+	return state.RouterState{PID: pid, Owner: "desktop", ListenAddr: "http://127.0.0.1:19099", BinaryPath: "/router", LogPath: f.config.DesktopLogPath,
+		ProcessStartedAt: "router-start", ProcessExecutable: "/router", DesktopSessionID: "session", ManagerPID: 6,
+		ManagerProcessStartedAt: "manager-old", ManagerProcessExecutable: "/manager", ManagerVersion: "v1", RouterVersion: "v1", DeploymentID: "prod-a", ManagementProtocolVersion: "1"}
+}
+
+func (f *fixture) ownState() {
+	f.managerState.DesktopSessionID = f.config.SessionID
+	f.managerState.ManagerPID = f.config.ManagerIdentity.PID
+	f.managerState.ManagerProcessStartedAt = f.config.ManagerIdentity.StartedAt
+	f.managerState.ManagerProcessExecutable = f.config.ManagerIdentity.Executable
+}
+
+type fakeChild struct {
+	pid  int
+	wait chan error
+}
+
+func (p *fakeChild) PID() int    { return p.pid }
+func (p *fakeChild) Wait() error { return <-p.wait }
+
+type closerFunc func() error
+
+func (f closerFunc) Close() error { return f() }
+func containsArg(args []string, want string) bool {
+	for _, arg := range args {
+		if arg == want {
+			return true
+		}
+	}
+	return false
+}

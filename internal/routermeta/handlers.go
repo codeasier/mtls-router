@@ -15,7 +15,8 @@ import (
 
 // InfoProvider supplies extra /version body fields. The default VersionHandler
 // implementation always includes version/commit/build_date/pid/started_at;
-// a non-nil provider may add or override additional keys and is called for each request.
+// a non-nil provider may add or override non-identity keys and is called for
+// each request.
 type InfoProvider interface {
 	Info() map[string]any
 }
@@ -43,10 +44,6 @@ func VersionHandler(provider InfoProvider) http.Handler {
 		}
 		info := version.Info()
 		payload := map[string]any{
-			"version":    info.Version,
-			"commit":     info.Commit,
-			"build_date": info.BuildDate,
-			"pid":        os.Getpid(),
 			"started_at": time.Now().UTC().Format(time.RFC3339),
 		}
 		if provider != nil {
@@ -54,6 +51,13 @@ func VersionHandler(provider InfoProvider) http.Handler {
 				payload[k] = v
 			}
 		}
+		// Build and process identity cannot be overridden by a provider.
+		payload["version"] = info.Version
+		payload["commit"] = info.Commit
+		payload["build_date"] = info.BuildDate
+		payload["deployment_id"] = info.DeploymentID
+		payload["management_protocol_version"] = info.ManagementProtocolVersion
+		payload["pid"] = os.Getpid()
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
 		_ = json.NewEncoder(w).Encode(payload)
@@ -91,7 +95,7 @@ func HealthHandler(probe health.ProbeFunc, opts ...health.ProbeOptions) http.Han
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"status":   "degraded",
 			"upstream": "unreachable",
-			"error":    err.Error(),
+			"error":    "upstream probe failed",
 		})
 	})
 }

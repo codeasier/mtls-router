@@ -32,9 +32,14 @@ var (
 
 func main() {
 	if err := run(); err != nil {
-		slog.Error("fatal", "err", err)
+		logRunFailure(slog.Default(), err)
 		os.Exit(1)
 	}
+}
+
+// Startup errors can embed configured URLs and raw transport details.
+func logRunFailure(logger *slog.Logger, _ error) {
+	logger.Error("fatal", "reason", "router_failure")
 }
 
 func run() error {
@@ -116,7 +121,7 @@ func run() error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("listening", "addr", cfg.ListenAddr, "upstream", cfg.UpstreamURL)
+		logListening(logger, cfg.ListenAddr, parsedUpstream)
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
@@ -142,6 +147,11 @@ func run() error {
 	return server.Shutdown(ctx)
 }
 
+func logListening(logger *slog.Logger, addr string, upstream *url.URL) {
+	origin := (&url.URL{Scheme: upstream.Scheme, Host: upstream.Host}).String()
+	logger.Info("listening", "addr", addr, "upstream", origin)
+}
+
 func startBackend(logPath string) error {
 	exePath, err := os.Executable()
 	if err != nil {
@@ -163,11 +173,11 @@ func logWriter(logPath string) (io.Writer, func(), error) {
 	if logPath == "" {
 		return os.Stderr, func() {}, nil
 	}
-	f, err := background.OpenLogFile(logPath)
+	writer, closeLog, err := background.OpenBoundedLogWriter(logPath, background.DefaultMaxLogBytes)
 	if err != nil {
 		return nil, nil, err
 	}
-	return f, func() { _ = f.Close() }, nil
+	return writer, closeLog, nil
 }
 
 func withAccessLog(next http.Handler, logger *slog.Logger) http.Handler {
@@ -175,7 +185,7 @@ func withAccessLog(next http.Handler, logger *slog.Logger) http.Handler {
 		start := time.Now()
 		recorder := &mlog.ResponseRecorder{ResponseWriter: w}
 		next.ServeHTTP(recorder, r)
-		mlog.AccessLog(logger, r, recorder, start, nil)
+		mlog.AccessLog(logger, r, recorder, start)
 	})
 }
 

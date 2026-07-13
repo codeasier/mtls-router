@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"log"
 	"log/slog"
 	"net/http"
 	"net/http/httputil"
@@ -21,12 +22,23 @@ func New(opts Options) *httputil.ReverseProxy {
 			director(r)
 		},
 		ModifyResponse: NewModifyResponse(),
-		ErrorHandler:   NewErrorHandler(),
+		ErrorHandler:   NewErrorHandler(opts.ErrorLog),
 		FlushInterval:  -1,
 		Transport:      opts.Transport,
-	}
-	if opts.ErrorLog != nil {
-		rp.ErrorLog = slog.NewLogLogger(opts.ErrorLog.Handler(), slog.LevelError)
+		ErrorLog:       log.New(sanitizedProxyLogWriter{logger: opts.ErrorLog}, "", 0),
 	}
 	return rp
+}
+
+type sanitizedProxyLogWriter struct {
+	logger *slog.Logger
+}
+
+func (w sanitizedProxyLogWriter) Write(p []byte) (int, error) {
+	if w.logger != nil {
+		w.logger.Error("proxy stream failed")
+	} else {
+		log.Print("proxy stream failed")
+	}
+	return len(p), nil
 }
