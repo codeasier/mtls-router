@@ -40,6 +40,18 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Prepare release version
+        shell: bash
+        env:
+          DISPATCH_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="$DISPATCH_VERSION"
+          fi
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
+          printf 'RELEASE_VERSION=%s\n' "$version" >>"$GITHUB_ENV"
       - name: Build
         env:
           GOOS: ${{ matrix.goos }}
@@ -58,10 +70,10 @@ jobs:
           ext=""
           if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
           go build -trimpath \
-            -ldflags "-s -w -X 'main.clientCertPEM=${CLIENT_CERT_PEM}' -X 'main.clientKeyPEM=${CLIENT_KEY_PEM}' -X 'main.upstreamCAPEM=${UPSTREAM_CA_PEM}' -X 'main.upstreamURL=${UPSTREAM_URL}' -X 'github.com/codeasier/mtls-router/internal/version.Version=${GITHUB_REF_NAME}' -X 'github.com/codeasier/mtls-router/internal/version.Commit=${GITHUB_SHA::12}' -X 'github.com/codeasier/mtls-router/internal/version.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)' -X 'github.com/codeasier/mtls-router/internal/version.DeploymentID=${DEPLOYMENT_ID}'" \
+            -ldflags "-s -w -X 'main.clientCertPEM=${CLIENT_CERT_PEM}' -X 'main.clientKeyPEM=${CLIENT_KEY_PEM}' -X 'main.upstreamCAPEM=${UPSTREAM_CA_PEM}' -X 'main.upstreamURL=${UPSTREAM_URL}' -X 'github.com/codeasier/mtls-router/internal/version.Version=${RELEASE_VERSION}' -X 'github.com/codeasier/mtls-router/internal/version.Commit=${GITHUB_SHA::12}' -X 'github.com/codeasier/mtls-router/internal/version.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)' -X 'github.com/codeasier/mtls-router/internal/version.DeploymentID=${DEPLOYMENT_ID}'" \
              -o "dist/mtls-router-${GOOS}-${GOARCH}${ext}" .
           go build -trimpath \
-            -ldflags "-s -w -X 'github.com/codeasier/mtls-router/internal/version.Version=${GITHUB_REF_NAME}' -X 'github.com/codeasier/mtls-router/internal/version.Commit=${GITHUB_SHA::12}' -X 'github.com/codeasier/mtls-router/internal/version.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)' -X 'github.com/codeasier/mtls-router/internal/version.DeploymentID=${DEPLOYMENT_ID}'" \
+            -ldflags "-s -w -X 'github.com/codeasier/mtls-router/internal/version.Version=${RELEASE_VERSION}' -X 'github.com/codeasier/mtls-router/internal/version.Commit=${GITHUB_SHA::12}' -X 'github.com/codeasier/mtls-router/internal/version.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)' -X 'github.com/codeasier/mtls-router/internal/version.DeploymentID=${DEPLOYMENT_ID}'" \
             -o "dist/mtls-router-manager-${GOOS}-${GOARCH}${ext}" ./cmd/mtls-router-manager
       - uses: actions/upload-artifact@v4
         with:
@@ -264,7 +276,7 @@ jobs:
         if: runner.os == 'Windows' && (env.WINDOWS_CERTIFICATE == '' || env.WINDOWS_CERTIFICATE_PASSWORD == '')
         shell: pwsh
         run: |
-          $package = Get-ChildItem desktop/release-artifacts/mtls-router-desktop-windows-${{ matrix.arch }}.exe
+          $package = Get-ChildItem desktop/release-artifacts/CodeasierRouter-windows-${{ matrix.arch }}.exe
           if ((Get-AuthenticodeSignature $package).Status -eq 'Valid') { throw 'unsigned build unexpectedly has a valid signature' }
           $status="unsigned (credentials unavailable)"
           Set-Content desktop/release-artifacts/signing-status-${{ matrix.os }}-${{ matrix.arch }}.txt $status
@@ -272,7 +284,7 @@ jobs:
         if: runner.os == 'Windows' && env.WINDOWS_CERTIFICATE != '' && env.WINDOWS_CERTIFICATE_PASSWORD != ''
         shell: pwsh
         run: |
-          $package = Get-ChildItem desktop/release-artifacts/mtls-router-desktop-windows-${{ matrix.arch }}.exe
+          $package = Get-ChildItem desktop/release-artifacts/CodeasierRouter-windows-${{ matrix.arch }}.exe
           if ((Get-AuthenticodeSignature $package).Status -ne 'Valid') { throw 'signed Windows package failed Authenticode validation' }
           $inspection = Join-Path $env:RUNNER_TEMP 'signed-package'
           7z x -y "-o$inspection" $package | Out-Null

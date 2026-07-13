@@ -34,6 +34,20 @@ contains 'test "$(find release -maxdepth 1 -type f | wc -l)" -eq 19'
 contains 'pattern: mtls-router-cli-*'
 contains 'test "$(find release -maxdepth 1 -type f -name '\''CodeasierRouter-*'\'' | wc -l)" -eq 12'
 contains 'test "$(find release -maxdepth 1 -type f -name '\''signing-status-*'\'' | wc -l)" -eq 6'
+[[ "$(grep -Fc 'version="${GITHUB_REF_NAME#v}"' "$WORKFLOW")" -eq 2 ]] || \
+  fail 'CLI and desktop jobs must derive tag versions without the v prefix'
+[[ "$(grep -Fc 'version="$DISPATCH_VERSION"' "$WORKFLOW")" -eq 2 ]] || \
+  fail 'CLI and desktop jobs must use the dispatch version for validation builds'
+[[ "$(grep -Fc "Version=\${RELEASE_VERSION}" "$WORKFLOW")" -eq 2 ]] || \
+  fail 'both CLI binaries must use the derived release version'
+if grep -Fq 'Version=${GITHUB_REF_NAME}' "$WORKFLOW"; then
+  fail 'CLI binaries must not use the branch name as their validation version'
+fi
+[[ "$(grep -Fc 'desktop/release-artifacts/CodeasierRouter-windows-${{ matrix.arch }}.exe' "$WORKFLOW")" -eq 2 ]] || \
+  fail 'Windows signing checks must use the normalized desktop package name'
+if grep -Fq 'desktop/release-artifacts/mtls-router-desktop-windows-' "$WORKFLOW"; then
+  fail 'Windows signing checks contain the obsolete desktop package name'
+fi
 
 desktop_upload_template="$(awk '
   /^[[:space:]]+name: / && /matrix\.os/ && /matrix\.arch/ {
