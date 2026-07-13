@@ -14,11 +14,13 @@ enum FirstLaunchAction {
     None,
     MarkInitialized,
     EnableAndMark,
+    RefreshEnabled,
 }
 
 fn first_launch_action(marker_exists: bool, enabled: bool) -> FirstLaunchAction {
     match (marker_exists, enabled) {
-        (true, _) => FirstLaunchAction::None,
+        (true, true) => FirstLaunchAction::RefreshEnabled,
+        (true, false) => FirstLaunchAction::None,
         (false, true) => FirstLaunchAction::MarkInitialized,
         (false, false) => FirstLaunchAction::EnableAndMark,
     }
@@ -43,6 +45,14 @@ pub fn initialize_default(app: &App) -> Result<(), String> {
                 .enable()
                 .map_err(|_| "could not enable current-user autostart".to_string())?;
             write_marker(&marker)
+        }
+        FirstLaunchAction::RefreshEnabled => {
+            manager
+                .disable()
+                .map_err(|_| "could not refresh current-user autostart".to_string())?;
+            manager
+                .enable()
+                .map_err(|_| "could not refresh current-user autostart".to_string())
         }
     }
 }
@@ -150,6 +160,14 @@ mod tests {
     #[test]
     fn later_launch_preserves_an_explicitly_disabled_registration() {
         assert_eq!(first_launch_action(true, false), FirstLaunchAction::None);
+    }
+
+    #[test]
+    fn later_launch_refreshes_an_enabled_registration_path() {
+        assert_eq!(
+            first_launch_action(true, true),
+            FirstLaunchAction::RefreshEnabled
+        );
     }
 
     #[test]

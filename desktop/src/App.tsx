@@ -58,7 +58,7 @@ function AppContent({ api }: { api: DesktopApi }) {
             MR
           </span>
           <span>
-            <strong>mtls-router</strong>
+            <strong>CodeasierRouter</strong>
             <small>{t("app.controlDesk")}</small>
           </span>
         </a>

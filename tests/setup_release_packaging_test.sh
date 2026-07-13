@@ -32,8 +32,8 @@ contains "test \"\$(od -An -tx1 -N3 setup.ps1 | tr -d ' \\n')\" = efbbbf"
 contains 'test "$(find release -maxdepth 1 -type f -name '\''mtls-router-*'\'' | wc -l)" -eq 12'
 contains 'test "$(find release -maxdepth 1 -type f | wc -l)" -eq 19'
 contains 'pattern: mtls-router-cli-*'
-contains 'pattern: mtls-router-desktop-*'
-contains 'test "$(find release -maxdepth 1 -type f -name '\''mtls-router-desktop-*'\'' | wc -l)" -eq 12'
+contains 'pattern: CodeasierRouter-*'
+contains 'test "$(find release -maxdepth 1 -type f -name '\''CodeasierRouter-*'\'' | wc -l)" -eq 12'
 contains 'test "$(find release -maxdepth 1 -type f -name '\''signing-status-*'\'' | wc -l)" -eq 6'
 
 if grep -Fq 'http://' "$WORKFLOW"; then

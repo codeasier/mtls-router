@@ -77,7 +77,6 @@ export function SettingsPage({ api }: { api: DesktopApi }) {
   const versionRows = [
     ["A", t("router.desktop"), versions?.desktop],
     ["B", t("router.manager"), versions?.manager],
-    ["C", t("router.router"), versions?.router],
   ];
 
   return (
@@ -113,21 +112,26 @@ export function SettingsPage({ api }: { api: DesktopApi }) {
               <strong>{t("settings.language")}</strong>
               <small>{t("settings.languageDescription")}</small>
             </span>
-            <select
-              value={language}
-              onChange={(event) =>
-                setLanguage(event.target.value === "en" ? "en" : "zh-CN")
-              }
-            >
-              <option value="zh-CN">{t("settings.chinese")}</option>
-              <option value="en">{t("settings.english")}</option>
-            </select>
+            <span className="language-select">
+              <select
+                value={language}
+                onChange={(event) =>
+                  setLanguage(event.target.value === "en" ? "en" : "zh-CN")
+                }
+              >
+                <option value="zh-CN">{t("settings.chinese")}</option>
+                <option value="en">{t("settings.english")}</option>
+              </select>
+            </span>
           </label>
         </section>
 
         <section className="settings-block settings-block--versions">
           <h3>{t("settings.components")}</h3>
-          <ol className="settings-version-list">
+          <ol
+            className="settings-version-list"
+            aria-label={t("settings.components")}
+          >
             {versionRows.map(([index, label, version]) => (
               <li key={index}>
                 <span>{index}</span>

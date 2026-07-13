@@ -67,7 +67,7 @@ case "$os" in
     mounted_dmg="$work/dmg"
     mkdir "$mounted_dmg"
     hdiutil attach -readonly -nobrowse -mountpoint "$mounted_dmg" "$package" >/dev/null
-    app="$mounted_dmg/mtls-router.app"
+    app="$mounted_dmg/CodeasierRouter.app"
     [[ -d "$app" ]] || { printf 'DMG is missing the app bundle\n' >&2; exit 1; }
     packaged_dir="$app/Contents/MacOS"
     packaged_desktop="$packaged_dir/mtls-router-desktop"
@@ -163,8 +163,8 @@ NODE
 
 mkdir -p "$output_dir"
 case "$package_kind" in dmg) suffix=dmg ;; appimage) suffix=AppImage ;; nsis) suffix=exe ;; esac
-artifact="$output_dir/mtls-router-desktop-$os-$arch.$suffix"
+artifact="$output_dir/CodeasierRouter-$os-$arch.$suffix"
 cp "$package" "$artifact"
 hash="$(sha256 "$artifact")"
-printf '%s  %s\n' "$hash" "$(basename "$artifact")" >"$output_dir/mtls-router-desktop-$os-$arch.sha256"
+printf '%s  %s\n' "$hash" "$(basename "$artifact")" >"$output_dir/CodeasierRouter-$os-$arch.sha256"
 printf 'validated target=%s version=%s deployment_id=%s protocol=%s package=%s\n' "$target" "$expected_version" "$expected_deployment" "$expected_protocol" "$(basename "$artifact")"

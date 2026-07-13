@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
@@ -15,13 +21,18 @@ async function openSettings(api = createMockApi()) {
 beforeEach(() => localStorage.clear());
 
 describe("SettingsPage", () => {
-  it("shows autostart, versions, and application locations without sensitive controls", async () => {
+  it("shows autostart, desktop and manager versions, and application locations without sensitive controls", async () => {
     await openSettings();
 
     expect(screen.getByRole("switch", { name: /开机时启动/ })).toBeChecked();
     expect(screen.getByText("desktop-v1")).toBeInTheDocument();
     expect(screen.getByText("manager-v1")).toBeInTheDocument();
-    expect(screen.getByText("router-v1")).toBeInTheDocument();
+    expect(screen.queryByText("router-v1")).not.toBeInTheDocument();
+    expect(
+      within(screen.getByRole("list", { name: "组件版本" })).getAllByRole(
+        "listitem",
+      ),
+    ).toHaveLength(2);
     expect(screen.getByText("/safe/app-data")).toBeInTheDocument();
     expect(
       screen.getByText("/safe/app-data/mtls-router.log"),
@@ -45,8 +56,11 @@ describe("SettingsPage", () => {
   it("defaults to Chinese, switches to English, and stores only language", async () => {
     const api = await openSettings();
     const setItem = vi.spyOn(localStorage, "setItem");
+    const languageSelect = screen.getByRole("combobox", { name: /界面语言/ });
 
-    fireEvent.change(screen.getByRole("combobox", { name: /界面语言/ }), {
+    expect(languageSelect.parentElement).toHaveClass("language-select");
+
+    fireEvent.change(languageSelect, {
       target: { value: "en" },
     });
 

@@ -80,7 +80,7 @@ contains "$RELEASE" 'status="signed and notarized"'
 contains "$RELEASE" 'status="signed"'
 contains "$RELEASE" 'status="unsigned (credentials unavailable)"'
 contains "$RELEASE" 'needs: [build, desktop]'
-contains "$RELEASE" '(cd desktop-packages && sha256sum -c mtls-router-desktop-*.sha256)'
+contains "$RELEASE" '(cd desktop-packages && sha256sum -c CodeasierRouter-*.sha256)'
 
 if grep -Eqi 'dmg.*(uninstall hook|delete hook)|appimage.*(uninstall hook|delete hook)' "$RELEASE" "$CONFIG"; then
   fail 'DMG/AppImage configuration claims an unavailable uninstall hook'

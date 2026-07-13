@@ -233,7 +233,7 @@ jobs:
         run: |
           cd desktop
           npm exec tauri -- build --target ${{ matrix.target }} --bundles app --no-sign --ci
-          app=src-tauri/target/${{ matrix.target }}/release/bundle/macos/mtls-router.app
+          app=src-tauri/target/${{ matrix.target }}/release/bundle/macos/CodeasierRouter.app
           codesign --force --options runtime --timestamp --keychain "$APPLE_SIGNING_KEYCHAIN" --sign "$APPLE_SIGNING_IDENTITY" "$app/Contents/MacOS/mtls-router-desktop"
           codesign --force --options runtime --timestamp --keychain "$APPLE_SIGNING_KEYCHAIN" --sign "$APPLE_SIGNING_IDENTITY" "$app"
           if [[ -n "$APPLE_ID" && -n "$APPLE_PASSWORD" && -n "$APPLE_TEAM_ID" ]]; then
@@ -242,8 +242,8 @@ jobs:
             xcrun stapler staple "$app"
           fi
           mkdir -p src-tauri/target/${{ matrix.target }}/release/bundle/dmg
-          hdiutil create -volname mtls-router -srcfolder "$app" -ov -format UDZO "src-tauri/target/${{ matrix.target }}/release/bundle/dmg/mtls-router_${VERSION}.dmg"
-          codesign --force --timestamp --keychain "$APPLE_SIGNING_KEYCHAIN" --sign "$APPLE_SIGNING_IDENTITY" "src-tauri/target/${{ matrix.target }}/release/bundle/dmg/mtls-router_${VERSION}.dmg"
+          hdiutil create -volname CodeasierRouter -srcfolder "$app" -ov -format UDZO "src-tauri/target/${{ matrix.target }}/release/bundle/dmg/CodeasierRouter_${VERSION}.dmg"
+          codesign --force --timestamp --keychain "$APPLE_SIGNING_KEYCHAIN" --sign "$APPLE_SIGNING_IDENTITY" "src-tauri/target/${{ matrix.target }}/release/bundle/dmg/CodeasierRouter_${VERSION}.dmg"
       - name: Inspect package and sidecars
         shell: bash
         env:
@@ -285,17 +285,17 @@ jobs:
         if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != '' && env.APPLE_CERTIFICATE_PASSWORD != '' && (env.APPLE_ID == '' || env.APPLE_PASSWORD == '' || env.APPLE_TEAM_ID == '')
         shell: bash
         run: |
-          codesign --verify --deep --strict desktop/src-tauri/target/${{ matrix.target }}/release/bundle/macos/mtls-router.app
-          codesign --verify --strict desktop/release-artifacts/mtls-router-desktop-darwin-${{ matrix.arch }}.dmg
+          codesign --verify --deep --strict desktop/src-tauri/target/${{ matrix.target }}/release/bundle/macos/CodeasierRouter.app
+          codesign --verify --strict desktop/release-artifacts/CodeasierRouter-darwin-${{ matrix.arch }}.dmg
           status="signed (notarization credentials unavailable)"
           printf '%s\n' "$status" >desktop/release-artifacts/signing-status-${{ matrix.os }}-${{ matrix.arch }}.txt
       - name: Validate and record signed and notarized macOS status
         if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != '' && env.APPLE_CERTIFICATE_PASSWORD != '' && env.APPLE_ID != '' && env.APPLE_PASSWORD != '' && env.APPLE_TEAM_ID != ''
         shell: bash
         run: |
-          app=desktop/src-tauri/target/${{ matrix.target }}/release/bundle/macos/mtls-router.app
+          app=desktop/src-tauri/target/${{ matrix.target }}/release/bundle/macos/CodeasierRouter.app
           codesign --verify --deep --strict "$app"
-          codesign --verify --strict desktop/release-artifacts/mtls-router-desktop-darwin-${{ matrix.arch }}.dmg
+          codesign --verify --strict desktop/release-artifacts/CodeasierRouter-darwin-${{ matrix.arch }}.dmg
           spctl --assess --type execute "$app"
           xcrun stapler validate "$app"
           status="signed and notarized"
@@ -322,7 +322,7 @@ jobs:
       - name: Download all desktop packages
         uses: actions/download-artifact@v4
         with:
-          pattern: mtls-router-desktop-*
+          pattern: CodeasierRouter-*
           path: desktop-packages
           merge-multiple: true
       - name: Preflight and package
@@ -389,10 +389,10 @@ jobs:
           TARGETS
           cp packages/* release/
           test "$(find release -maxdepth 1 -type f | wc -l)" -eq 19
-          (cd desktop-packages && sha256sum -c mtls-router-desktop-*.sha256)
-          cp desktop-packages/mtls-router-desktop-* release/
+          (cd desktop-packages && sha256sum -c CodeasierRouter-*.sha256)
+          cp desktop-packages/CodeasierRouter-* release/
           cp desktop-packages/signing-status-* release/
-          test "$(find release -maxdepth 1 -type f -name 'mtls-router-desktop-*' | wc -l)" -eq 12
+          test "$(find release -maxdepth 1 -type f -name 'CodeasierRouter-*' | wc -l)" -eq 12
           test "$(find release -maxdepth 1 -type f -name 'signing-status-*' | wc -l)" -eq 6
           find release -maxdepth 1 -type f ! -name SHA256SUMS ! -name 'signing-status-*' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sed 's#  release/#  #' >release/SHA256SUMS
           test "$(awk '$1 ~ /^[0-9a-f]{64}$/ { print $2 }' release/SHA256SUMS | sort -u | wc -l)" -eq 30

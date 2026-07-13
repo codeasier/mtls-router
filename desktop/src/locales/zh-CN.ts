@@ -1,5 +1,5 @@
 export const zhCN = {
-  "app.homeAria": "mtls-router 首页",
+  "app.homeAria": "CodeasierRouter 首页",
   "app.navigationAria": "主导航",
   "app.localMode": "本地模式",
   "app.safeControlPlane": "安全控制平面",
@@ -149,7 +149,7 @@ export const zhCN = {
     "移除当前用户的开机启动项并退出应用。退出后再删除应用。不会更改 Agent 配置、备份、日志或诊断状态。",
   "settings.prepareAction": "准备卸载并退出",
   "settings.prepareConfirm":
-    "将移除当前用户的开机启动项并退出 mtls-router。是否继续？",
+    "将移除当前用户的开机启动项并退出 CodeasierRouter。是否继续？",
   "agents.operation.create": "创建",
   "agents.operation.replace": "替换",
   "agents.operation.preserve": "保留未托管配置",

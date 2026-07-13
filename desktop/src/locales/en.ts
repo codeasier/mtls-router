@@ -1,7 +1,7 @@
 import type { TranslationKey } from "./zh-CN";
 
 export const en: Record<TranslationKey, string> = {
-  "app.homeAria": "mtls-router home",
+  "app.homeAria": "CodeasierRouter home",
   "app.navigationAria": "Main navigation",
   "app.localMode": "Local mode",
   "app.safeControlPlane": "Safe control plane",
@@ -163,7 +163,7 @@ export const en: Record<TranslationKey, string> = {
     "Remove current-user autostart and exit the application. Delete the application only after it exits. Agent configurations, backups, logs, and diagnostic state are not changed.",
   "settings.prepareAction": "Prepare and exit",
   "settings.prepareConfirm":
-    "This will remove current-user autostart and exit mtls-router. Continue?",
+    "This will remove current-user autostart and exit CodeasierRouter. Continue?",
   "agents.operation.create": "Create",
   "agents.operation.replace": "Replace",
   "agents.operation.preserve": "Preserve unmanaged configuration",

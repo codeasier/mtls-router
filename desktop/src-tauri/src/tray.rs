@@ -115,7 +115,7 @@ struct NativeStrings {
 fn native_strings(language: NativeLanguage) -> NativeStrings {
     match language {
         NativeLanguage::ZhCn => NativeStrings {
-            window_title: "mtls-router 控制台",
+            window_title: "CodeasierRouter 控制台",
             open: "打开控制台",
             start: "启动路由",
             stop: "停止路由",
@@ -123,7 +123,7 @@ fn native_strings(language: NativeLanguage) -> NativeStrings {
             quit: "退出",
         },
         NativeLanguage::En => NativeStrings {
-            window_title: "mtls-router Console",
+            window_title: "CodeasierRouter Console",
             open: "Open",
             start: "Start router",
             stop: "Stop router",
@@ -228,6 +228,7 @@ pub fn setup(
         .show_menu_on_left_click(false)
         .tooltip(initial_status)
         .icon(status_icon(Severity::Warning))
+        .icon_as_template(cfg!(target_os = "macos"))
         .on_menu_event(handle_menu_event)
         .on_tray_icon_event(|tray, event| {
             if matches!(
@@ -590,20 +591,59 @@ impl From<RouterStatus> for RouterSnapshot {
 }
 
 fn status_icon(severity: Severity) -> Image<'static> {
-    let color = match severity {
-        Severity::Normal => [39, 174, 96, 255],
-        Severity::Warning => [240, 173, 34, 255],
-        Severity::Error => [210, 62, 62, 255],
-    };
-    const SIZE: usize = 18;
+    const SIZE: usize = 20;
     let mut rgba = vec![0; SIZE * SIZE * 4];
-    for y in 0..SIZE {
-        for x in 0..SIZE {
-            let dx = x as isize - 8;
-            let dy = y as isize - 8;
-            if dx * dx + dy * dy <= 49 {
-                let offset = (y * SIZE + x) * 4;
-                rgba[offset..offset + 4].copy_from_slice(&color);
+    let mut pixel = |x: usize, y: usize| {
+        let offset = (y * SIZE + x) * 4;
+        rgba[offset..offset + 4].copy_from_slice(&[0, 0, 0, 255]);
+    };
+
+    // Compact CR monogram that remains legible as a macOS template image.
+    for y in 3..15 {
+        for x in 2..5 {
+            pixel(x, y);
+        }
+    }
+    for x in 4..9 {
+        pixel(x, 3);
+        pixel(x, 14);
+    }
+    for y in 4..7 {
+        pixel(8, y);
+    }
+    for y in 3..15 {
+        pixel(11, y);
+    }
+    for x in 12..16 {
+        pixel(x, 3);
+        pixel(x, 8);
+    }
+    for y in 4..8 {
+        pixel(16, y);
+    }
+    for step in 0..6 {
+        pixel(12 + step.min(3), 9 + step);
+    }
+
+    match severity {
+        Severity::Normal => {
+            for y in 16..19 {
+                for x in 15..18 {
+                    pixel(x, y);
+                }
+            }
+        }
+        Severity::Warning => {
+            for y in 15..19 {
+                pixel(16, y);
+            }
+            pixel(15, 18);
+            pixel(17, 18);
+        }
+        Severity::Error => {
+            for step in 0..4 {
+                pixel(14 + step, 15 + step);
+                pixel(17 - step, 15 + step);
             }
         }
     }
@@ -673,11 +713,11 @@ mod tests {
     #[test]
     fn status_icons_are_opaque_only_inside_the_indicator() {
         let icon = status_icon(Severity::Normal);
-        assert_eq!(icon.width(), 18);
-        assert_eq!(icon.height(), 18);
+        assert_eq!(icon.width(), 20);
+        assert_eq!(icon.height(), 20);
         assert_eq!(icon.rgba()[3], 0);
-        let center = (8 * 18 + 8) * 4;
-        assert_eq!(&icon.rgba()[center..center + 4], &[39, 174, 96, 255]);
+        let monogram = (8 * 20 + 11) * 4;
+        assert_eq!(&icon.rgba()[monogram..monogram + 4], &[0, 0, 0, 255]);
     }
 
     #[test]
@@ -690,7 +730,7 @@ mod tests {
     #[test]
     fn native_strings_cover_chinese_and_english() {
         let chinese = native_strings(NativeLanguage::ZhCn);
-        assert_eq!(chinese.window_title, "mtls-router 控制台");
+        assert_eq!(chinese.window_title, "CodeasierRouter 控制台");
         assert_eq!(chinese.start, "启动路由");
         assert_eq!(
             status_text(NativeLanguage::ZhCn, StatusText::UpstreamUnavailable),
@@ -698,7 +738,7 @@ mod tests {
         );
 
         let english = native_strings(NativeLanguage::En);
-        assert_eq!(english.window_title, "mtls-router Console");
+        assert_eq!(english.window_title, "CodeasierRouter Console");
         assert_eq!(english.start, "Start router");
         assert_eq!(
             status_text(NativeLanguage::En, StatusText::UpstreamUnavailable),

@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "mtls-router",
+  "productName": "CodeasierRouter",
   "version": "0.1.0",
   "identifier": "com.mtls-router.desktop",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "mtls-router 控制台",
+        "title": "CodeasierRouter 控制台",
         "width": 1120,
         "height": 760,
         "minWidth": 360,
