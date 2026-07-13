@@ -2,7 +2,9 @@
 
 [English](../CHANGELOG.md)
 
-## 未发布
+## v0.1.4 - 2026-07-13
+
+本次发布引入 CodeasierRouter，即基于 Tauri 2 的桌面控制面板和共享管理服务，同时强化 CLI router 的 TLS、流式传输、后台进程、安装和进程身份行为。Release tooling 现在会为全部六个受支持的操作系统/架构目标构建并检查原生桌面包及匹配的 router/manager 产物。
 
 ### 新增
 
@@ -18,11 +20,23 @@
 - CLI release 安装改为把 router 和 manager 作为一组匹配二进制共同 staging、验证、安装并记录 receipt。
 - 移除 `MTLS_ROUTER_OPENAI_API_KEY`。交互式 setup 隐藏读取 key；自动化必须先预览，再只通过 manager stdin 发送携带临时 key 的 `agent.write`。
 
+### 修复
+
+- 拒绝非 HTTPS upstream URL，并将配置的最低 TLS 版本一致应用于启动探测、`/health` 和代理上游流量。
+- 保持访问日志链路中的即时响应流式传输，并让代理请求处理继续使用 reverse proxy 的直接流式链路，不引入透传 request body wrapper。
+- 防止 detached 子进程继承 backend 模式并递归创建进程。
+- 强化 router 停止和安装事务对缺失、陈旧或不匹配的进程身份与 release 产物状态的 reconciliation。
+- 新的健康快照到达后清除可恢复的桌面 router 错误提示，同时保持 sidecar 完整性失败的 fail-closed 行为。
+
 ### 安全
 
 - 桌面/manager 状态、日志、诊断、protocol 响应、进程参数和环境变量不会有意保留 Agent API key。Agent 自有文件和显式批准的恢复备份仍是持久化边界，必须按敏感数据保护。
 - 明确记录分发二进制中共享内嵌客户端私钥可被提取，必须通过完整替代 release 和服务端吊销进行轮换。
 - 卸载会保留 Agent 文件、敏感备份、日志和状态。Windows 安装器集成必须移除当前用户 autostart；macOS/Linux 用户必须执行**准备卸载**、等待应用退出，再删除应用。
+
+### 测试
+
+- 扩展 Go、shell、React、Rust 和 workflow 覆盖，验证 TLS policy、流式传输、后台子进程状态、进程身份、manager protocol、Agent 配置事务、桌面编排、包检查和签名状态报告。
 
 ### Release 状态
 

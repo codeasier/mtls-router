@@ -2,7 +2,9 @@
 
 [中文](zh-CN/CHANGELOG.md)
 
-## Unreleased
+## v0.1.4 - 2026-07-13
+
+This release introduces CodeasierRouter, a Tauri 2 desktop control panel and shared management service, while hardening the CLI router's TLS, streaming, background-process, installation, and process-identity behavior. Release tooling now builds and inspects native desktop packages and matched router/manager artifacts across all six supported OS/architecture targets.
 
 ### Added
 
@@ -18,11 +20,23 @@
 - Changed CLI release installation to stage, verify, install, and receipt-track the router and manager as one matched pair.
 - Removed `MTLS_ROUTER_OPENAI_API_KEY`. Interactive setup reads the key without echo; automation must preview and send `agent.write` with the transient key only through manager stdin.
 
+### Fixed
+
+- Rejected non-HTTPS upstream URLs and applied the configured minimum TLS version consistently to startup probes, `/health`, and proxied upstream traffic.
+- Preserved immediate response streaming through access logging and kept proxy request handling on the reverse proxy's direct streaming pipeline without pass-through body wrappers.
+- Prevented detached child processes from inheriting backend mode and recursively spawning.
+- Hardened router stop and install reconciliation against missing, stale, or mismatched process identity and release artifact state.
+- Cleared recoverable desktop router error alerts after a newer healthy snapshot while keeping sidecar integrity failures fail-closed.
+
 ### Security
 
 - Desktop/manager state, logs, diagnostics, protocol responses, process arguments, and environment variables do not intentionally retain Agent API keys. Agent-owned files and explicitly approved recovery backups remain the persistence boundary and must be protected as sensitive data.
 - Documented that the router's shared embedded client private key is extractable from distributed binaries and must be rotated through a complete replacement release plus server-side revocation.
 - Uninstall preserves Agent files, sensitive backups, logs, and state. Windows installer integration must remove current-user autostart; macOS/Linux users must run **Prepare for uninstall**, wait for exit, then delete the application.
+
+### Tests
+
+- Expanded Go, shell, React, Rust, and workflow coverage for TLS policy, streaming, background child state, process identity, manager protocol, Agent configuration transactions, desktop orchestration, package verification, and signing-status reporting.
 
 ### Release status
 
