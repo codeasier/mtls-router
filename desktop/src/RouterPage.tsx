@@ -11,6 +11,13 @@ import type {
 import { sanitizeSensitiveText } from "./ipc";
 
 type Operation = "starting" | "stopping" | null;
+type RouterMessage =
+  | ""
+  | "router.error.load"
+  | "router.error.start"
+  | "router.error.stop"
+  | "router.error.health"
+  | "router.error.sidecarReinstall";
 export const MAX_FAILURE_LOG_LINES = 20;
 type HealthState = "unknown" | "checking" | "healthy" | "degraded" | "stale";
 type ViewState =
@@ -199,17 +206,26 @@ function ownerLabel(status: RouterStatus | null, t: Translator): string {
   return t("router.owner.none");
 }
 
-function safeActionError(
+function actionErrorKey(
   action: "load" | "start" | "stop" | "health",
-  t: Translator,
-): string {
+): RouterMessage {
   const messages = {
-    load: t("router.error.load"),
-    start: t("router.error.start"),
-    stop: t("router.error.stop"),
-    health: t("router.error.health"),
-  };
+    load: "router.error.load",
+    start: "router.error.start",
+    stop: "router.error.stop",
+    health: "router.error.health",
+  } as const;
   return messages[action];
+}
+
+function clearRecoveredStatusMessage(
+  current: RouterMessage,
+  status: RouterStatus,
+): RouterMessage {
+  if (current === "router.error.load") return "";
+  if (current === "router.error.start" && isAvailable(status)) return "";
+  if (current === "router.error.stop" && status.state === "absent") return "";
+  return current;
 }
 
 function errorCode(error: unknown): string {
@@ -236,7 +252,7 @@ export function RouterPage({
   const [versions, setVersions] = useState<ComponentVersions | null>(null);
   const [operation, setOperation] = useState<Operation>(null);
   const [failed, setFailed] = useState(false);
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState<RouterMessage>("");
   const [checkingHealth, setCheckingHealth] = useState(false);
   const [snapshotRevision, setSnapshotRevision] = useState(-1);
   const [now, setNow] = useState(0);
@@ -289,6 +305,11 @@ export function RouterPage({
       if (snapshot.status) {
         setStatus(snapshot.status);
         setFailed(false);
+        if (!snapshot.status_error) {
+          setMessage((current) =>
+            clearRecoveredStatusMessage(current, snapshot.status!),
+          );
+        }
         void refreshComponentVersions(snapshot.status);
       } else if (desiredVersionIdentity.current === null) {
         void refreshComponentVersions(null);
@@ -296,6 +317,11 @@ export function RouterPage({
       if (snapshot.health) {
         setHealth(snapshot.health);
         setHealthFailed(false);
+        if (!snapshot.health_error) {
+          setMessage((current) =>
+            current === "router.error.health" ? "" : current,
+          );
+        }
       }
       if (snapshot.status && !isAvailable(snapshot.status)) {
         setHealth(null);
@@ -304,17 +330,17 @@ export function RouterPage({
       const statusCode = snapshot.status_error?.code ?? "";
       if (sidecarError(statusCode)) {
         setReinstallRequired(true);
-        setMessage(t("router.error.sidecarReinstall"));
+        setMessage("router.error.sidecarReinstall");
       } else if (statusCode) {
         setFailed(true);
-        setMessage(safeActionError("load", t));
+        setMessage(actionErrorKey("load"));
       }
       if (snapshot.health_error) {
         setHealthFailed(true);
-        setMessage(safeActionError("health", t));
+        setMessage(actionErrorKey("health"));
       }
     },
-    [refreshComponentVersions, t],
+    [refreshComponentVersions],
   );
 
   useEffect(() => {
@@ -340,10 +366,10 @@ export function RouterPage({
         const code = errorCode(error);
         if (sidecarError(code)) {
           setReinstallRequired(true);
-          setMessage(t("router.error.sidecarReinstall"));
+          setMessage("router.error.sidecarReinstall");
         } else {
           setFailed(true);
-          setMessage(safeActionError("load", t));
+          setMessage(actionErrorKey("load"));
         }
       }
     }
@@ -352,7 +378,7 @@ export function RouterPage({
       current = false;
       unlisten?.();
     };
-  }, [api, applySnapshot, t]);
+  }, [api, applySnapshot]);
 
   useEffect(() => {
     if (!health) return;
@@ -421,10 +447,10 @@ export function RouterPage({
       }
       if (sidecarError(errorCode(error))) {
         setReinstallRequired(true);
-        setMessage(t("router.error.sidecarReinstall"));
+        setMessage("router.error.sidecarReinstall");
       } else {
         setFailed(true);
-        setMessage(safeActionError("start", t));
+        setMessage(actionErrorKey("start"));
       }
     }
   }
@@ -441,7 +467,7 @@ export function RouterPage({
       setOperation(null);
     } catch {
       setOperation(null);
-      setMessage(safeActionError("stop", t));
+      setMessage(actionErrorKey("stop"));
     }
   }
 
@@ -455,7 +481,7 @@ export function RouterPage({
       await refreshSnapshot();
     } catch {
       setHealthFailed(true);
-      setMessage(safeActionError("health", t));
+      setMessage(actionErrorKey("health"));
     } finally {
       setCheckingHealth(false);
     }
@@ -507,7 +533,7 @@ export function RouterPage({
 
         {message && (
           <p className="inline-alert" role="alert">
-            {message}
+            {t(message)}
           </p>
         )}
 

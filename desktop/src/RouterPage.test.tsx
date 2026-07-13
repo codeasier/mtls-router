@@ -169,6 +169,51 @@ describe("RouterPage states", () => {
     expect(screen.getByText("路由运行正常")).toBeInTheDocument();
   });
 
+  it("clears a router status alert after a newer successful snapshot", async () => {
+    let observer: ((snapshot: PollSnapshot) => void) | undefined;
+    const api = createMockApi({
+      getPollSnapshot: vi.fn().mockResolvedValue({
+        revision: 1,
+        status: { state: "desktop_owned", owner: "desktop" },
+        health: freshHealthy,
+      }),
+      subscribePollSnapshots: vi.fn(async (listener) => {
+        observer = listener;
+        return () => undefined;
+      }),
+    });
+    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    expect(
+      await screen.findByRole("heading", { name: "路由运行正常" }),
+    ).toBeInTheDocument();
+
+    act(() =>
+      observer?.({ revision: 2, status_error: { code: "MANAGER_FAILED" } }),
+    );
+    expect(
+      await screen.findByText(
+        "无法读取路由状态。请重新启动桌面应用或查看日志。",
+      ),
+    ).toBeInTheDocument();
+
+    act(() =>
+      observer?.({
+        revision: 3,
+        status: { state: "desktop_owned", owner: "desktop" },
+        health: freshHealthy,
+      }),
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText("无法读取路由状态。请重新启动桌面应用或查看日志。"),
+      ).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.getByRole("heading", { name: "路由运行正常" }),
+    ).toBeInTheDocument();
+  });
+
   it("refreshes versions when polling observes a different router PID", async () => {
     let observer: ((snapshot: PollSnapshot) => void) | undefined;
     const getComponentVersions = vi
