@@ -77,6 +77,31 @@ if grep -Fq 'DESKTOP_DIR="$desktop_dir"' "$PREPARE"; then
   fail 'prepare-version.sh must not pass a Git Bash path to Node'
 fi
 
+prepare_work="$(mktemp -d)"
+trap 'rm -rf "$prepare_work"' EXIT
+mkdir -p "$prepare_work/desktop/scripts" "$prepare_work/desktop/src-tauri" "$prepare_work/bin"
+cp "$PREPARE" "$prepare_work/desktop/scripts/prepare-version.sh"
+for file in package.json package-lock.json src-tauri/tauri.conf.json; do
+  printf '%s\n' '{"version":"0.1.0","packages":{"":{"version":"0.1.0"}}}' >"$prepare_work/desktop/$file"
+done
+printf '%s\r\n' '[package]' 'name = "mtls-router-desktop"' 'version = "0.1.0"' >"$prepare_work/desktop/src-tauri/Cargo.toml"
+printf '%s\r\n' '[[package]]' 'name = "mtls-router-desktop"' 'version = "0.1.0"' >"$prepare_work/desktop/src-tauri/Cargo.lock"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$prepare_work/bin/npm"
+chmod +x "$prepare_work/bin/npm"
+PATH="$prepare_work/bin:$PATH" bash "$prepare_work/desktop/scripts/prepare-version.sh" 9.8.7 || \
+  fail 'prepare-version.sh must update CRLF Cargo metadata'
+node - "$prepare_work/desktop/src-tauri/Cargo.toml" "$prepare_work/desktop/src-tauri/Cargo.lock" <<'NODE' || \
+  fail 'prepare-version.sh changed CRLF Cargo metadata incorrectly'
+const fs = require('node:fs');
+
+for (const file of process.argv.slice(2)) {
+  const content = fs.readFileSync(file, 'utf8');
+  if (!content.includes('version = "9.8.7"')) throw new Error(`${file} version was not updated`);
+  if (!content.includes('\r\n')) throw new Error(`${file} lost CRLF line endings`);
+  if (content.replace(/\r\n/g, '').includes('\n')) throw new Error(`${file} contains mixed line endings`);
+}
+NODE
+
 placeholder_req="$(awk '/openssl req -x509/{print; count++} END{if (count != 1) exit 1}' "$SIDECARS")" || \
   fail 'sidecar script must have one placeholder openssl req invocation'
 [[ "$placeholder_req" == *"MSYS2_ARG_CONV_EXCL='/CN=' openssl req"* ]] || \
