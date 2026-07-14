@@ -68,3 +68,4 @@ test "$(find release -maxdepth 1 -type f -name 'CodeasierRouter-*' | wc -l)" -eq
 test "$(find release -maxdepth 1 -type f -name 'signing-status-*' | wc -l)" -eq 6
 find release -maxdepth 1 -type f ! -name SHA256SUMS ! -name 'signing-status-*' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sed 's#  release/#  #' >release/SHA256SUMS
 test "$(awk '$1 ~ /^[0-9a-f]{64}$/ { print $2 }' release/SHA256SUMS | sort -u | wc -l)" -eq 30
+test "$(find release -maxdepth 1 -type f | wc -l)" -eq 37
