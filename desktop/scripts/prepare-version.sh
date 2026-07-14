@@ -29,8 +29,8 @@ for (const name of ["src-tauri/Cargo.toml", "src-tauri/Cargo.lock"]) {
   const file = path.join(root, name);
   let content = fs.readFileSync(file, "utf8");
   const pattern = name.endsWith("Cargo.toml")
-    ? /^(\[package\]\nname = "mtls-router-desktop"\nversion = ")[^"]+/m
-    : /(\[\[package\]\]\nname = "mtls-router-desktop"\nversion = ")[^"]+/;
+    ? /^(\[package\]\r?\nname = "mtls-router-desktop"\r?\nversion = ")[^"]+/m
+    : /(\[\[package\]\]\r?\nname = "mtls-router-desktop"\r?\nversion = ")[^"]+/;
   if (!pattern.test(content)) throw new Error(`desktop package entry not found in ${name}`);
   const updated = content.replace(pattern, `$1${version}`);
   fs.writeFileSync(file, updated);
