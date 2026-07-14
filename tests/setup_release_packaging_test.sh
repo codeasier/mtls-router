@@ -148,6 +148,7 @@ for value in \
   'releases/$release_id/assets?name=$(basename "$asset")' \
   'releases/assets/$asset_id' \
   'cmp expected-assets.txt actual-assets.txt' \
+  'RELEASE_ID: ${{ steps.prepare-release.outputs.release_id }}' \
   'SOURCE: release/' \
   'Update latest symlink' \
   '-F draft=false -F make_latest=true'; do
