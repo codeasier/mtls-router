@@ -138,17 +138,18 @@ for value in \
   'head_sha == tag_sha' \
   'conclusion == "failure"' \
   'assert release["draft"] is True' \
-  'gh api --silent "$release_endpoint"' \
+  'releases?per_page=100" --slurp' \
   'run-id: ${{ inputs.source_run_id }}' \
   'github-token: ${{ github.token }}' \
   './scripts/package-release.sh' \
   'gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"' \
-  'gh release upload "$RELEASE_TAG" release/* --repo "$GITHUB_REPOSITORY"' \
+  'hostname uploads.github.com' \
+  'releases/$release_id/assets?name=$(basename "$asset")' \
   'releases/assets/$asset_id' \
   "-eq 31" \
   'SOURCE: release/' \
   'Update latest symlink' \
-  '--draft=false --latest'; do
+  '-F draft=false -F make_latest=true'; do
   grep -Fq -- "$value" "$RECOVERY" || fail "recovery workflow missing: $value"
 done
 
