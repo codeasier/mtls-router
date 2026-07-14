@@ -164,6 +164,7 @@ jobs:
           name: recovered-release-${{ inputs.release_tag }}
           path: release
       - name: Revalidate tag and prepare draft Release
+        id: prepare-release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
@@ -212,6 +213,7 @@ jobs:
           done
           gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" --jq '.[].name' | LC_ALL=C sort >actual-assets.txt
           cmp expected-assets.txt actual-assets.txt
+          printf 'release_id=%s\n' "$release_id" >>"$GITHUB_OUTPUT"
       - name: Ensure remote release directory
         uses: appleboy/ssh-action@v1.2.2
         with:
@@ -253,10 +255,9 @@ jobs:
       - name: Publish draft Release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_ID: ${{ steps.prepare-release.outputs.release_id }}
         run: |
           set -euo pipefail
-          release_id="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --slurp --jq \
-            '[.[][] | select(.tag_name == env.RELEASE_TAG and .draft == true and .prerelease == false)] | if length == 1 then .[0].id else error("expected exactly one draft Release") end')"
-          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+          test -n "$RELEASE_ID"
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
             -F draft=false -F make_latest=true >/dev/null
