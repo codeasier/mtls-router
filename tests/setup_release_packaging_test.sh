@@ -37,6 +37,7 @@ package_contains 'test "$(find release -maxdepth 1 -type f | wc -l)" -eq 19'
 contains 'pattern: mtls-router-cli-*'
 package_contains 'test "$(find release -maxdepth 1 -type f -name '\''CodeasierRouter-*'\'' | wc -l)" -eq 12'
 package_contains 'test "$(find release -maxdepth 1 -type f -name '\''signing-status-*'\'' | wc -l)" -eq 6'
+package_contains 'test "$(find release -maxdepth 1 -type f | wc -l)" -eq 37'
 contains './scripts/package-release.sh'
 [[ "$(grep -Fc 'version="${GITHUB_REF_NAME#v}"' "$WORKFLOW")" -eq 2 ]] || \
   fail 'CLI and desktop jobs must derive tag versions without the v prefix'
@@ -146,7 +147,7 @@ for value in \
   'https://uploads.github.com/repos/$GITHUB_REPOSITORY' \
   'releases/$release_id/assets?name=$(basename "$asset")' \
   'releases/assets/$asset_id' \
-  "-eq 31" \
+  'cmp expected-assets.txt actual-assets.txt' \
   'SOURCE: release/' \
   'Update latest symlink' \
   '-F draft=false -F make_latest=true'; do
