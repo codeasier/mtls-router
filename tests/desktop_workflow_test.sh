@@ -8,6 +8,7 @@ PACKAGE="$ROOT/desktop/package.json"
 LOCK="$ROOT/desktop/package-lock.json"
 SIDECARS="$ROOT/desktop/scripts/build-sidecars.sh"
 PREPARE="$ROOT/desktop/scripts/prepare-version.sh"
+CREATE_DMG="$ROOT/desktop/scripts/create-macos-dmg.sh"
 CONFIG="$ROOT/desktop/src-tauri/tauri.conf.json"
 HOOKS="$ROOT/desktop/src-tauri/windows/uninstall-hooks.nsh"
 
@@ -279,6 +280,39 @@ ci_frontend_block="$(job_block "$CI" frontend)"
 ci_rust_block="$(job_block "$CI" rust)"
 ci_package_block="$(job_block "$CI" desktop-package)"
 release_desktop_block="$(job_block "$RELEASE" desktop)"
+
+workflow_step() {
+  local workflow=$1
+  local name=$2
+
+  awk -v name="$name" '
+    $0 == "      - name: " name { capture=1; seen=0 }
+    capture && seen && /^      - name:/ { exit }
+    capture { print; seen=1 }
+  ' "$workflow"
+}
+
+[[ -f "$CREATE_DMG" ]] || fail 'controlled macOS DMG helper is missing'
+contains "$CREATE_DMG" 'set -euo pipefail'
+contains "$CREATE_DMG" 'rm -rf "$dmg_dir"'
+contains "$CREATE_DMG" 'mkdir -p "$dmg_dir"'
+contains "$CREATE_DMG" 'CodeasierRouter_${version}.dmg'
+contains "$CREATE_DMG" 'hdiutil create -volname CodeasierRouter -srcfolder "$app" -ov -format UDZO "$dmg"'
+
+unsigned_macos_block="$(workflow_step "$RELEASE" 'Build unsigned macOS package')"
+signed_macos_block="$(workflow_step "$RELEASE" 'Create signed macOS package')"
+for block in "$unsigned_macos_block" "$signed_macos_block"; do
+  [[ "$block" == *'./scripts/create-macos-dmg.sh ${{ matrix.target }} "$VERSION"'* ]] || \
+    fail 'each macOS package path must use the controlled DMG helper'
+done
+[[ "$unsigned_macos_block" == *'npm exec tauri -- build --target ${{ matrix.target }} --bundles app --no-sign --ci'* ]] || \
+  fail 'unsigned macOS packaging must ask Tauri for an app bundle'
+if [[ "$unsigned_macos_block" == *'--bundles dmg'* ]]; then
+  fail 'unsigned macOS packaging must not ask Tauri to create a DMG'
+fi
+if grep -Fq 'hdiutil create' "$RELEASE"; then
+  fail 'release workflow must delegate DMG creation to the controlled helper'
+fi
 
 trigger_block="$(awk '
   /^on:$/ { capture=1 }
