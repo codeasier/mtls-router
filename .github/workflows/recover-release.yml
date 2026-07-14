@@ -1,0 +1,238 @@
+name: Recover Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag to publish without moving it
+        required: true
+        type: string
+      source_run_id:
+        description: Failed tag Release run whose successful artifacts will be reused
+        required: true
+        type: string
+
+concurrency:
+  group: release-publication
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Validate and package existing tag
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      actions: read
+      contents: read
+    runs-on: ubuntu-latest
+    outputs:
+      tag_sha: ${{ steps.validate.outputs.tag_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Validate recovery source
+        id: validate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        run: |
+          set -euo pipefail
+          release_tag="$RELEASE_TAG"
+          source_run_id="$SOURCE_RUN_ID"
+          [[ "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$source_run_id" =~ ^[0-9]+$ ]]
+
+          git fetch --force origin "refs/tags/$release_tag:refs/tags/$release_tag"
+          tag_sha="$(git rev-parse "$release_tag^{commit}")"
+          run="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$source_run_id")"
+          RUN="$run" TAG_SHA="$tag_sha" RELEASE_TAG="$release_tag" python3 - <<'PY'
+          import json
+          import os
+
+          run = json.loads(os.environ["RUN"])
+          tag_sha = os.environ["TAG_SHA"]
+          release_tag = os.environ["RELEASE_TAG"]
+          workflow_id = run["path"]
+          event = run["event"]
+          head_branch = run["head_branch"]
+          head_sha = run["head_sha"]
+          conclusion = run["conclusion"]
+          assert workflow_id == ".github/workflows/release.yml"
+          assert event == "push"
+          assert head_branch == release_tag
+          assert head_sha == tag_sha
+          assert conclusion == "failure"
+          PY
+
+          jobs="$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$source_run_id/jobs?per_page=100" --jq '.jobs[] | [.name,.conclusion] | @tsv')"
+          expected_jobs=(
+            'Build linux/amd64'
+            'Build linux/arm64'
+            'Build darwin/amd64'
+            'Build darwin/arm64'
+            'Build windows/amd64'
+            'Build windows/arm64'
+            'Desktop x86_64-pc-windows-msvc'
+            'Desktop aarch64-pc-windows-msvc'
+            'Desktop x86_64-apple-darwin'
+            'Desktop aarch64-apple-darwin'
+            'Desktop x86_64-unknown-linux-gnu'
+            'Desktop aarch64-unknown-linux-gnu'
+          )
+          test "$(printf '%s\n' "$jobs" | wc -l)" -eq 13
+          for name in "${expected_jobs[@]}"; do
+            test "$(printf '%s\n' "$jobs" | awk -F '\t' -v name="$name" '$1 == name && $2 == "success" { count++ } END { print count+0 }')" -eq 1
+          done
+          test "$(printf '%s\n' "$jobs" | awk -F '\t' '$1 == "Package and publish release" && $2 == "failure" { count++ } END { print count+0 }')" -eq 1
+
+          artifacts="$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$source_run_id/artifacts?per_page=100" --jq '.artifacts[] | [.name,.expired] | @tsv')"
+          expected_artifacts=(
+            mtls-router-cli-linux-amd64
+            mtls-router-cli-linux-arm64
+            mtls-router-cli-darwin-amd64
+            mtls-router-cli-darwin-arm64
+            mtls-router-cli-windows-amd64
+            mtls-router-cli-windows-arm64
+            mtls-router-desktop-windows-amd64
+            mtls-router-desktop-windows-arm64
+            mtls-router-desktop-darwin-amd64
+            mtls-router-desktop-darwin-arm64
+            mtls-router-desktop-linux-amd64
+            mtls-router-desktop-linux-arm64
+          )
+          test "$(printf '%s\n' "$artifacts" | wc -l)" -eq 12
+          for name in "${expected_artifacts[@]}"; do
+            test "$(printf '%s\n' "$artifacts" | awk -F '\t' -v name="$name" '$1 == name && $2 == "false" { count++ } END { print count+0 }')" -eq 1
+          done
+
+          release="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$release_tag" 2>/dev/null || true)"
+          if [[ -n "$release" ]]; then
+            RELEASE="$release" python3 - <<'PY'
+          import json
+          import os
+
+          release = json.loads(os.environ["RELEASE"])
+          assert release["draft"] is True
+          PY
+          fi
+          printf 'tag_sha=%s\n' "$tag_sha" >>"$GITHUB_OUTPUT"
+      - name: Download all binaries from source run
+        uses: actions/download-artifact@v4
+        with:
+          pattern: mtls-router-cli-*
+          path: binaries
+          merge-multiple: true
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ github.token }}
+      - name: Download all desktop packages from source run
+        uses: actions/download-artifact@v4
+        with:
+          pattern: mtls-router-desktop-*
+          path: desktop-packages
+          merge-multiple: true
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ github.token }}
+      - name: Preflight and package
+        env:
+          DOWNLOAD_BASE_URL: https://downloads.codeasier.top/${{ github.event.repository.name }}/${{ inputs.release_tag }}
+          SOURCE_DATE_EPOCH: '0'
+        run: ./scripts/package-release.sh
+      - name: Upload assembled release
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovered-release-${{ inputs.release_tag }}
+          path: release/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish recovered release
+    needs: package
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download assembled release
+        uses: actions/download-artifact@v4
+        with:
+          name: recovered-release-${{ inputs.release_tag }}
+          path: release
+      - name: Revalidate tag and prepare draft Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          EXPECTED_SHA: ${{ needs.package.outputs.tag_sha }}
+        run: |
+          set -euo pipefail
+          tag_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')"
+          test "$tag_sha" = "$EXPECTED_SHA"
+          current_latest="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name' 2>/dev/null || true)"
+          if [[ -n "$current_latest" ]]; then
+            test "$(printf '%s\n%s\n' "$current_latest" "$RELEASE_TAG" | sort -V | tail -n1)" = "$RELEASE_TAG"
+          fi
+          release="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" 2>/dev/null || true)"
+          if [[ -n "$release" ]]; then
+            RELEASE="$release" RELEASE_TAG="$RELEASE_TAG" python3 - <<'PY'
+          import json
+          import os
+
+          release = json.loads(os.environ["RELEASE"])
+          assert release["draft"] is True
+          assert release["tag_name"] == os.environ["RELEASE_TAG"]
+          assert release["prerelease"] is False
+          PY
+          else
+            gh release create "$RELEASE_TAG" --draft --title "$RELEASE_TAG" --target "$EXPECTED_SHA"
+          fi
+          release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" --jq '.id')"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" --jq '.[].id' | while read -r asset_id; do
+            gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
+          done
+          gh release upload "$RELEASE_TAG" release/* --clobber
+          test "$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" --jq '.[].name' | LC_ALL=C sort -u | wc -l)" -eq 31
+      - name: Ensure remote release directory
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ssh.codeasier.top
+          username: codeasier
+          key: ${{ secrets.UPLOAD_SSH_PRIVATE_KEY }}
+          script: |
+            set -euo pipefail
+            mkdir -p "/home/codeasier/downloads/${{ github.event.repository.name }}/${{ inputs.release_tag }}"
+      - name: Mirror staged release
+        uses: easingthemes/ssh-deploy@v5.1.0
+        with:
+          SSH_PRIVATE_KEY: ${{ secrets.UPLOAD_SSH_PRIVATE_KEY }}
+          REMOTE_HOST: ssh.codeasier.top
+          REMOTE_USER: codeasier
+          SOURCE: release/
+          TARGET: /home/codeasier/downloads/${{ github.event.repository.name }}/${{ inputs.release_tag }}/
+          ARGS: -avz --delete
+      - name: Update latest symlink
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ssh.codeasier.top
+          username: codeasier
+          key: ${{ secrets.UPLOAD_SSH_PRIVATE_KEY }}
+          script: |
+            set -euo pipefail
+            repo='${{ github.event.repository.name }}'
+            tag='${{ inputs.release_tag }}'
+            base="/home/codeasier/downloads/$repo"
+            test -d "$base/$tag"
+            ln -sfn "$tag" "$base/latest.tmp"
+            mv -Tf "$base/latest.tmp" "$base/latest"
+      - name: Revalidate tag before publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          EXPECTED_SHA: ${{ needs.package.outputs.tag_sha }}
+        run: test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$EXPECTED_SHA"
+      - name: Publish draft Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit '${{ inputs.release_tag }}' --draft=false --latest
