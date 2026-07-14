@@ -142,8 +142,8 @@ for value in \
   'run-id: ${{ inputs.source_run_id }}' \
   'github-token: ${{ github.token }}' \
   './scripts/package-release.sh' \
-  'gh release create "$RELEASE_TAG" --draft' \
-  'gh release upload "$RELEASE_TAG" release/* --clobber' \
+  'gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"' \
+  'gh release upload "$RELEASE_TAG" release/* --repo "$GITHUB_REPOSITORY"' \
   'releases/assets/$asset_id' \
   "-eq 31" \
   'SOURCE: release/' \

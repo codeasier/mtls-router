@@ -188,13 +188,13 @@ jobs:
           assert release["prerelease"] is False
           PY
           else
-            gh release create "$RELEASE_TAG" --draft --title "$RELEASE_TAG" --target "$EXPECTED_SHA"
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft --title "$RELEASE_TAG" --target "$EXPECTED_SHA"
           fi
           release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" --jq '.id')"
           gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" --jq '.[].id' | while read -r asset_id; do
             gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
           done
-          gh release upload "$RELEASE_TAG" release/* --clobber
+          gh release upload "$RELEASE_TAG" release/* --repo "$GITHUB_REPOSITORY" --clobber
           test "$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" --jq '.[].name' | LC_ALL=C sort -u | wc -l)" -eq 31
       - name: Ensure remote release directory
         uses: appleboy/ssh-action@v1.2.2
@@ -237,4 +237,4 @@ jobs:
       - name: Publish draft Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release edit '${{ inputs.release_tag }}' --draft=false --latest
+        run: gh release edit '${{ inputs.release_tag }}' --repo "$GITHUB_REPOSITORY" --draft=false --latest
