@@ -204,9 +204,9 @@ jobs:
             gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
           done
           for asset in release/*; do
-            gh api --method POST --hostname uploads.github.com \
+            gh api --method POST \
               -H 'Content-Type: application/octet-stream' \
-              "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?name=$(basename "$asset")" \
+              "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$release_id/assets?name=$(basename "$asset")" \
               --input "$asset" >/dev/null
           done
           test "$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" --jq '.[].name' | LC_ALL=C sort -u | wc -l)" -eq 31
