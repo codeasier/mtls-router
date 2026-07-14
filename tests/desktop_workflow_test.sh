@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CI="$ROOT/.github/workflows/ci.yml"
 RELEASE="$ROOT/.github/workflows/release.yml"
+RELEASE_PACKAGE="$ROOT/scripts/package-release.sh"
 PACKAGE="$ROOT/desktop/package.json"
 LOCK="$ROOT/desktop/package-lock.json"
 SIDECARS="$ROOT/desktop/scripts/build-sidecars.sh"
@@ -510,7 +511,8 @@ contains "$RELEASE" 'status="signed and notarized"'
 contains "$RELEASE" 'status="signed"'
 contains "$RELEASE" 'status="unsigned (credentials unavailable)"'
 contains "$RELEASE" 'needs: [build, desktop]'
-contains "$RELEASE" '(cd desktop-packages && sha256sum -c CodeasierRouter-*.sha256)'
+contains "$RELEASE" './scripts/package-release.sh'
+contains "$RELEASE_PACKAGE" '(cd desktop-packages && sha256sum -c CodeasierRouter-*.sha256)'
 
 if grep -Eqi 'dmg.*(uninstall hook|delete hook)|appimage.*(uninstall hook|delete hook)' "$RELEASE" "$CONFIG"; then
   fail 'DMG/AppImage configuration claims an unavailable uninstall hook'

@@ -3,9 +3,12 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKFLOW="$ROOT/.github/workflows/release.yml"
+RECOVERY="$ROOT/.github/workflows/recover-release.yml"
+PACKAGE_SCRIPT="$ROOT/scripts/package-release.sh"
 
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
-contains() { grep -Fq -- "$1" "$WORKFLOW" || fail "workflow missing: $1"; }
+contains() { grep -Fq -- "$1" "$WORKFLOW" || grep -Fq -- "$1" "$PACKAGE_SCRIPT" || fail "release implementation missing: $1"; }
+package_contains() { grep -Fq -- "$1" "$PACKAGE_SCRIPT" || fail "package script missing: $1"; }
 
 [[ "$(grep -c '^  release:$' "$WORKFLOW")" -eq 1 ]] || fail "expected one aggregation/release job"
 [[ "$(grep -c 'softprops/action-gh-release@' "$WORKFLOW")" -eq 1 ]] || fail "release must be published once"
@@ -13,27 +16,28 @@ contains() { grep -Fq -- "$1" "$WORKFLOW" || fail "workflow missing: $1"; }
 contains 'needs: [build, desktop]'
 contains 'actions/download-artifact@v4'
 contains 'merge-multiple: true'
-contains 'LC_ALL=C sha256sum release/mtls-router-*'
-contains 'LC_ALL=C sort -k2 >release/SHA256SUMS'
-contains 'packages/$package.tar.gz'
-contains 'packages/$package.zip'
+package_contains 'LC_ALL=C sha256sum release/mtls-router-*'
+package_contains 'LC_ALL=C sort -k2 >release/SHA256SUMS'
+package_contains 'packages/$package.tar.gz'
+package_contains 'packages/$package.zip'
 contains 'mtls-router-manager-${GOOS}-${GOARCH}${ext}'
 contains './cmd/mtls-router-manager'
-contains '"release/$manager"'
+package_contains '"release/$manager"'
 contains 'test -n "$CLIENT_CERT_PEM" && test -n "$CLIENT_KEY_PEM" && test -n "$UPSTREAM_CA_PEM"'
 contains 'case "${UPSTREAM_URL:-}" in https://*)'
 contains 'files: release/*'
 contains 'SOURCE: release/'
 contains 'TARGET: /home/codeasier/downloads/${{ github.event.repository.name }}/${{ github.ref_name }}/'
 contains 'ARGS: -avz --delete'
-contains "grep -Fxc 'DEFAULT_DOWNLOAD_BASE_URL=\"\"' setup.sh"
+package_contains "grep -Fxc 'DEFAULT_DOWNLOAD_BASE_URL=\"\"' setup.sh"
 contains "grep -Fxc '\$DefaultDownloadBaseUrl = '\\'''\\''' setup.ps1"
 contains "test \"\$(od -An -tx1 -N3 setup.ps1 | tr -d ' \\n')\" = efbbbf"
-contains 'test "$(find release -maxdepth 1 -type f -name '\''mtls-router-*'\'' | wc -l)" -eq 12'
-contains 'test "$(find release -maxdepth 1 -type f | wc -l)" -eq 19'
+package_contains 'test "$(find release -maxdepth 1 -type f -name '\''mtls-router-*'\'' | wc -l)" -eq 12'
+package_contains 'test "$(find release -maxdepth 1 -type f | wc -l)" -eq 19'
 contains 'pattern: mtls-router-cli-*'
-contains 'test "$(find release -maxdepth 1 -type f -name '\''CodeasierRouter-*'\'' | wc -l)" -eq 12'
-contains 'test "$(find release -maxdepth 1 -type f -name '\''signing-status-*'\'' | wc -l)" -eq 6'
+package_contains 'test "$(find release -maxdepth 1 -type f -name '\''CodeasierRouter-*'\'' | wc -l)" -eq 12'
+package_contains 'test "$(find release -maxdepth 1 -type f -name '\''signing-status-*'\'' | wc -l)" -eq 6'
+contains './scripts/package-release.sh'
 [[ "$(grep -Fc 'version="${GITHUB_REF_NAME#v}"' "$WORKFLOW")" -eq 2 ]] || \
   fail 'CLI and desktop jobs must derive tag versions without the v prefix'
 [[ "$(grep -Fc 'version="$DISPATCH_VERSION"' "$WORKFLOW")" -eq 2 ]] || \
@@ -112,5 +116,39 @@ fi
 if awk '/^  build:/{build=1} /^  release:/{build=0} build && /softprops\/action-gh-release|ssh-action|ssh-deploy/' "$WORKFLOW" | grep -q .; then
   fail "matrix build performs publishing"
 fi
+
+[[ -f "$PACKAGE_SCRIPT" ]] || fail 'shared release packaging script is missing'
+grep -Fq '"../../packages/$package.zip"' "$PACKAGE_SCRIPT" || \
+  fail 'Windows archives must resolve to the repository packages directory'
+if grep -Fq '"../../../packages/$package.zip"' "$PACKAGE_SCRIPT"; then
+  fail 'shared release packaging script contains the broken Windows archive path'
+fi
+
+[[ -f "$RECOVERY" ]] || fail 'release recovery workflow is missing'
+for value in \
+  'release_tag:' \
+  'source_run_id:' \
+  'actions: read' \
+  'contents: write' \
+  'group: release-publication' \
+  'persist-credentials: false' \
+  'workflow_id == ".github/workflows/release.yml"' \
+  'event == "push"' \
+  'head_branch == release_tag' \
+  'head_sha == tag_sha' \
+  'conclusion == "failure"' \
+  'assert release["draft"] is True' \
+  'run-id: ${{ inputs.source_run_id }}' \
+  'github-token: ${{ github.token }}' \
+  './scripts/package-release.sh' \
+  'gh release create "$RELEASE_TAG" --draft' \
+  'gh release upload "$RELEASE_TAG" release/* --clobber' \
+  'releases/assets/$asset_id' \
+  "-eq 31" \
+  'SOURCE: release/' \
+  'Update latest symlink' \
+  '--draft=false --latest'; do
+  grep -Fq -- "$value" "$RECOVERY" || fail "recovery workflow missing: $value"
+done
 
 printf 'PASS: release packaging workflow\n'
