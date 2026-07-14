@@ -226,7 +226,9 @@ jobs:
       - name: Build unsigned macOS package
         if: runner.os == 'macOS' && (env.APPLE_CERTIFICATE == '' || env.APPLE_CERTIFICATE_PASSWORD == '')
         working-directory: desktop
-        run: npm exec tauri -- build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --no-sign --ci
+        run: |
+          npm exec tauri -- build --target ${{ matrix.target }} --bundles app --no-sign --ci
+          ./scripts/create-macos-dmg.sh ${{ matrix.target }} "$VERSION"
       - name: Import macOS signing certificate and pre-sign sidecars
         if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != '' && env.APPLE_CERTIFICATE_PASSWORD != ''
         shell: bash
@@ -260,8 +262,7 @@ jobs:
             xcrun notarytool submit "$RUNNER_TEMP/mtls-router-notarization.zip" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
             xcrun stapler staple "$app"
           fi
-          mkdir -p src-tauri/target/${{ matrix.target }}/release/bundle/dmg
-          hdiutil create -volname CodeasierRouter -srcfolder "$app" -ov -format UDZO "src-tauri/target/${{ matrix.target }}/release/bundle/dmg/CodeasierRouter_${VERSION}.dmg"
+          ./scripts/create-macos-dmg.sh ${{ matrix.target }} "$VERSION"
           codesign --force --timestamp --keychain "$APPLE_SIGNING_KEYCHAIN" --sign "$APPLE_SIGNING_IDENTITY" "src-tauri/target/${{ matrix.target }}/release/bundle/dmg/CodeasierRouter_${VERSION}.dmg"
       - name: Inspect package and sidecars
         shell: bash
