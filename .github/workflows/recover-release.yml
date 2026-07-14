@@ -110,8 +110,9 @@ jobs:
             test "$(printf '%s\n' "$artifacts" | awk -F '\t' -v name="$name" '$1 == name && $2 == "false" { count++ } END { print count+0 }')" -eq 1
           done
 
-          release="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$release_tag" 2>/dev/null || true)"
-          if [[ -n "$release" ]]; then
+          release_endpoint="repos/$GITHUB_REPOSITORY/releases/tags/$release_tag"
+          if gh api --silent "$release_endpoint" 2>/dev/null; then
+            release="$(gh api "$release_endpoint")"
             RELEASE="$release" python3 - <<'PY'
           import json
           import os
@@ -174,8 +175,9 @@ jobs:
           if [[ -n "$current_latest" ]]; then
             test "$(printf '%s\n%s\n' "$current_latest" "$RELEASE_TAG" | sort -V | tail -n1)" = "$RELEASE_TAG"
           fi
-          release="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" 2>/dev/null || true)"
-          if [[ -n "$release" ]]; then
+          release_endpoint="repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG"
+          if gh api --silent "$release_endpoint" 2>/dev/null; then
+            release="$(gh api "$release_endpoint")"
             RELEASE="$release" RELEASE_TAG="$RELEASE_TAG" python3 - <<'PY'
           import json
           import os
