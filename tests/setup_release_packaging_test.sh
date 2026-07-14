@@ -138,6 +138,7 @@ for value in \
   'head_sha == tag_sha' \
   'conclusion == "failure"' \
   'assert release["draft"] is True' \
+  'gh api --silent "$release_endpoint"' \
   'run-id: ${{ inputs.source_run_id }}' \
   'github-token: ${{ github.token }}' \
   './scripts/package-release.sh' \
