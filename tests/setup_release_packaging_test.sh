@@ -143,7 +143,7 @@ for value in \
   'github-token: ${{ github.token }}' \
   './scripts/package-release.sh' \
   'gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"' \
-  'hostname uploads.github.com' \
+  'https://uploads.github.com/repos/$GITHUB_REPOSITORY' \
   'releases/$release_id/assets?name=$(basename "$asset")' \
   'releases/assets/$asset_id' \
   "-eq 31" \
@@ -152,5 +152,8 @@ for value in \
   '-F draft=false -F make_latest=true'; do
   grep -Fq -- "$value" "$RECOVERY" || fail "recovery workflow missing: $value"
 done
+if grep -Fq -- '--hostname uploads.github.com' "$RECOVERY"; then
+  fail 'gh api must use the full uploads.github.com URL'
+fi
 
 printf 'PASS: release packaging workflow\n'
