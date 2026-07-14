@@ -110,17 +110,18 @@ jobs:
             test "$(printf '%s\n' "$artifacts" | awk -F '\t' -v name="$name" '$1 == name && $2 == "false" { count++ } END { print count+0 }')" -eq 1
           done
 
-          release_endpoint="repos/$GITHUB_REPOSITORY/releases/tags/$release_tag"
-          if gh api --silent "$release_endpoint" 2>/dev/null; then
-            release="$(gh api "$release_endpoint")"
-            RELEASE="$release" python3 - <<'PY'
+          releases="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --slurp)"
+          RELEASES="$releases" RELEASE_TAG="$release_tag" python3 - <<'PY'
           import json
           import os
 
-          release = json.loads(os.environ["RELEASE"])
-          assert release["draft"] is True
+          pages = json.loads(os.environ["RELEASES"])
+          matches = [release for page in pages for release in page if release["tag_name"] == os.environ["RELEASE_TAG"]]
+          assert len(matches) <= 1
+          if matches:
+              assert matches[0]["draft"] is True
+              assert matches[0]["prerelease"] is False
           PY
-          fi
           printf 'tag_sha=%s\n' "$tag_sha" >>"$GITHUB_OUTPUT"
       - name: Download all binaries from source run
         uses: actions/download-artifact@v4
@@ -175,26 +176,39 @@ jobs:
           if [[ -n "$current_latest" ]]; then
             test "$(printf '%s\n%s\n' "$current_latest" "$RELEASE_TAG" | sort -V | tail -n1)" = "$RELEASE_TAG"
           fi
-          release_endpoint="repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG"
-          if gh api --silent "$release_endpoint" 2>/dev/null; then
-            release="$(gh api "$release_endpoint")"
-            RELEASE="$release" RELEASE_TAG="$RELEASE_TAG" python3 - <<'PY'
+          find_draft_id() {
+            local releases
+            releases="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --slurp)"
+            RELEASES="$releases" RELEASE_TAG="$RELEASE_TAG" EXPECTED_SHA="$EXPECTED_SHA" python3 - <<'PY'
           import json
           import os
 
-          release = json.loads(os.environ["RELEASE"])
-          assert release["draft"] is True
-          assert release["tag_name"] == os.environ["RELEASE_TAG"]
-          assert release["prerelease"] is False
+          pages = json.loads(os.environ["RELEASES"])
+          matches = [release for page in pages for release in page if release["tag_name"] == os.environ["RELEASE_TAG"]]
+          assert len(matches) <= 1
+          if matches:
+              release = matches[0]
+              assert release["draft"] is True
+              assert release["prerelease"] is False
+              assert release["target_commitish"] == os.environ["EXPECTED_SHA"]
+              print(release["id"])
           PY
-          else
+          }
+          release_id="$(find_draft_id)"
+          if [[ -z "$release_id" ]]; then
             gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft --title "$RELEASE_TAG" --target "$EXPECTED_SHA"
+            release_id="$(find_draft_id)"
+            test -n "$release_id"
           fi
-          release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" --jq '.id')"
           gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" --jq '.[].id' | while read -r asset_id; do
             gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
           done
-          gh release upload "$RELEASE_TAG" release/* --repo "$GITHUB_REPOSITORY" --clobber
+          for asset in release/*; do
+            gh api --method POST --hostname uploads.github.com \
+              -H 'Content-Type: application/octet-stream' \
+              "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?name=$(basename "$asset")" \
+              --input "$asset" >/dev/null
+          done
           test "$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" --jq '.[].name' | LC_ALL=C sort -u | wc -l)" -eq 31
       - name: Ensure remote release directory
         uses: appleboy/ssh-action@v1.2.2
@@ -237,4 +251,10 @@ jobs:
       - name: Publish draft Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release edit '${{ inputs.release_tag }}' --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          release_id="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --slurp --jq \
+            '[.[][] | select(.tag_name == env.RELEASE_TAG and .draft == true and .prerelease == false)] | if length == 1 then .[0].id else error("expected exactly one draft Release") end')"
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+            -F draft=false -F make_latest=true >/dev/null
