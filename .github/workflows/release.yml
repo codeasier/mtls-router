@@ -232,6 +232,8 @@ jobs:
         working-directory: desktop
         run: |
           npm exec tauri -- build --target ${{ matrix.target }} --bundles app --no-sign --ci
+          app=src-tauri/target/${{ matrix.target }}/release/bundle/macos/CodeasierRouter.app
+          codesign --force --sign - "$app"
           ./scripts/create-macos-dmg.sh ${{ matrix.target }} "$VERSION"
       - name: Import macOS signing certificate and pre-sign sidecars
         if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != '' && env.APPLE_CERTIFICATE_PASSWORD != ''
@@ -299,11 +301,11 @@ jobs:
           }
           $status="signed"
           Set-Content desktop/release-artifacts/signing-status-${{ matrix.os }}-${{ matrix.arch }}.txt $status
-      - name: Validate and record unsigned macOS status
+      - name: Validate and record fallback macOS status
         if: runner.os == 'macOS' && (env.APPLE_CERTIFICATE == '' || env.APPLE_CERTIFICATE_PASSWORD == '')
         shell: bash
         run: |
-          status="unsigned (credentials unavailable)"
+          status="ad-hoc signed (not trusted by Gatekeeper)"
           printf '%s\n' "$status" >desktop/release-artifacts/signing-status-${{ matrix.os }}-${{ matrix.arch }}.txt
       - name: Validate and record signed macOS status
         if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != '' && env.APPLE_CERTIFICATE_PASSWORD != '' && (env.APPLE_ID == '' || env.APPLE_PASSWORD == '' || env.APPLE_TEAM_ID == '')

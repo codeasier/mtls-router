@@ -75,6 +75,7 @@ case "$os" in
       printf 'DMG Applications symbolic link has an invalid target\n' >&2
       exit 1
     }
+    codesign --verify --deep --strict --verbose=2 "$app"
     packaged_dir="$app/Contents/MacOS"
     packaged_desktop="$packaged_dir/mtls-router-desktop"
     plist_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"

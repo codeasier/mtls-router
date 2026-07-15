@@ -314,6 +314,13 @@ for block in "$unsigned_macos_block" "$signed_macos_block"; do
 done
 [[ "$unsigned_macos_block" == *'npm exec tauri -- build --target ${{ matrix.target }} --bundles app --no-sign --ci'* ]] || \
   fail 'unsigned macOS packaging must ask Tauri for an app bundle'
+[[ "$unsigned_macos_block" == *'codesign --force --sign - "$app"'* ]] || \
+  fail 'fallback macOS packaging must ad-hoc sign the completed app bundle'
+if [[ "$unsigned_macos_block" == *'codesign --force --deep'* ]]; then
+  fail 'fallback macOS bundle signing must not recursively modify hashed sidecars'
+fi
+[[ "$unsigned_macos_block" == *'codesign --force --sign - "$app"'*'./scripts/create-macos-dmg.sh ${{ matrix.target }} "$VERSION"'* ]] || \
+  fail 'fallback macOS app must be signed before DMG creation'
 if [[ "$unsigned_macos_block" == *'--bundles dmg'* ]]; then
   fail 'unsigned macOS packaging must not ask Tauri to create a DMG'
 fi
@@ -511,6 +518,8 @@ fi
 
 contains "$RELEASE" 'Create signed macOS package'
 contains "$RELEASE" 'Build signed Windows package'
+contains "$ROOT/desktop/scripts/verify-package.sh" 'codesign --verify --deep --strict --verbose=2 "$app"'
+contains "$RELEASE" 'status="ad-hoc signed (not trusted by Gatekeeper)"'
 contains "$RELEASE" 'status="unsigned (credentials unavailable)"'
 contains "$RELEASE" 'status="signed (notarization credentials unavailable)"'
 contains "$RELEASE" 'status="signed and notarized"'
