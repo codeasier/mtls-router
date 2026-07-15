@@ -444,6 +444,7 @@ fn apply_presentation_text<R: Runtime>(
     let _ = state.start.set_enabled(value.can_start);
     let _ = state.stop.set_enabled(value.can_stop);
     state.tray.set_tooltip(Some(label))?;
+    #[cfg(not(target_os = "macos"))]
     state.tray.set_icon(Some(tray_icon(value.severity)?))?;
     Ok(())
 }
@@ -591,6 +592,7 @@ impl From<RouterStatus> for RouterSnapshot {
     }
 }
 
+// macOS uses a fixed template image at runtime; tests retain the legacy renderer.
 #[cfg(any(not(target_os = "macos"), test))]
 fn status_icon(severity: Severity) -> Image<'static> {
     const SIZE: usize = 20;
@@ -657,7 +659,7 @@ const MACOS_TRAY_ICON_PNG: &[u8] = include_bytes!("../icons/tray-template-macos@
 
 #[cfg(target_os = "macos")]
 fn tray_icon(_severity: Severity) -> tauri::Result<Image<'static>> {
-    Ok(Image::from_bytes(MACOS_TRAY_ICON_PNG)?.to_owned())
+    Image::from_bytes(MACOS_TRAY_ICON_PNG)
 }
 
 #[cfg(not(target_os = "macos"))]
