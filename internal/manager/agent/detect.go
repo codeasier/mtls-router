@@ -75,31 +75,23 @@ func (d Detector) Detect() ([]State, error) {
 		lookPath = exec.LookPath
 	}
 
-	claudeCommand, claudeDetected := lookup(lookPath, "claude")
-	openCodeCommand, openCodeDetected := lookup(lookPath, "opencode")
-	codexCommand, codexCLI := lookup(lookPath, "codex")
+	claudeCommand, _ := lookup(lookPath, "claude")
+	openCodeCommand, _ := lookup(lookPath, "opencode")
+	codexCommand, _ := lookup(lookPath, "codex")
 
 	claudePaths := ClaudePaths(home, getenv("CLAUDE_CONFIG_DIR"))
 	openCodeOverride := getenv("OPENCODE_CONFIG")
 	openCodePaths := OpenCodePaths(home, openCodeOverride)
-	codexHome := getenv("CODEX_HOME")
-	codexPaths := CodexPaths(home, codexHome)
-	if codexHome == "" {
-		codexHome = filepath.Dir(codexPaths.ConfigPath)
-	}
-	codexDetected := codexCLI || isDirectory(codexHome)
-	if codexDetected && !codexCLI {
-		codexCommand = "<desktop>"
-	}
+	codexPaths := CodexPaths(home, getenv("CODEX_HOME"))
 
-	claude := inspectJSONState(ClaudeCode, "Claude Code", claudeDetected, claudeCommand, claudePaths, FormatJSON, inspectClaude)
+	claude := inspectJSONState(ClaudeCode, "Claude Code", true, claudeCommand, claudePaths, FormatJSON, inspectClaude)
 	openCodeFormat := FormatJSON
 	if filepath.Ext(openCodePaths.ConfigPath) == ".jsonc" {
 		openCodeFormat = FormatJSONC
 	}
-	openCode := inspectJSONState(OpenCode, "opencode", openCodeDetected, openCodeCommand, openCodePaths, openCodeFormat, inspectOpenCode)
+	openCode := inspectJSONState(OpenCode, "opencode", true, openCodeCommand, openCodePaths, openCodeFormat, inspectOpenCode)
 	openCode.pathOverridden = openCodeOverride != ""
-	codex := inspectCodex(codexDetected, codexCommand, codexPaths)
+	codex := inspectCodex(true, codexCommand, codexPaths)
 
 	return []State{claude, openCode, codex}, nil
 }
@@ -282,11 +274,6 @@ func readConfig(path string) ([]byte, error) {
 func isRegularFile(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.Mode().IsRegular()
-}
-
-func isDirectory(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
 }
 
 func pathWritable(path string) bool {

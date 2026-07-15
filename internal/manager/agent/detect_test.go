@@ -65,33 +65,19 @@ func TestDetectReturnsAllAgentsAndRespectsEnvironmentPaths(t *testing.T) {
 	if string(gotJSON) != string(wantJSON) {
 		t.Fatalf("override provenance changed serialized state: got %s want %s", gotJSON, wantJSON)
 	}
-	if states[2].Detected || states[2].Path != filepath.Join(codexHome, "config.toml") {
+	if !states[2].Detected || states[2].Command != "" || states[2].Path != filepath.Join(codexHome, "config.toml") {
 		t.Fatalf("Codex state = %#v", states[2])
 	}
 }
 
-func TestDetectCodexDesktopByHomeDirectory(t *testing.T) {
+func TestDetectTreatsSupportedAgentsAsConfigurableWithoutCLIOrConfig(t *testing.T) {
 	home := t.TempDir()
-	codexHome := filepath.Join(home, "desktop-codex")
-	if err := os.Mkdir(codexHome, 0700); err != nil {
-		t.Fatal(err)
-	}
-	detector := testDetector(home, nil)
-	detector.Getenv = func(key string) string {
-		if key == "CODEX_HOME" {
-			return codexHome
+	states := mustDetect(t, testDetector(home, nil))
+
+	for _, state := range states {
+		if !state.Detected || state.Command != "" || state.Exists || !state.Writable {
+			t.Errorf("unsupported configurable state = %#v", state)
 		}
-		return ""
-	}
-	states, err := detector.Detect()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !states[2].Detected || states[2].Command != "<desktop>" {
-		t.Fatalf("Codex desktop state = %#v", states[2])
-	}
-	if states[2].Path != filepath.Join(codexHome, "config.toml") {
-		t.Fatalf("Codex desktop path = %q", states[2].Path)
 	}
 }
 

@@ -102,11 +102,23 @@ func TestRevisionTokenSurvivesOneRequestManagerProcesses(t *testing.T) {
 }
 
 func TestPreviewMissingInvalidConflictAndAlreadyConfigured(t *testing.T) {
-	t.Run("missing Agent", func(t *testing.T) {
+	t.Run("missing CLIs and configurations are ready to create", func(t *testing.T) {
 		home := t.TempDir()
 		service := newTestService(t, filepath.Join(home, "state"), home, nil, nil)
-		_, err := service.Preview(context.Background(), []Kind{ClaudeCode})
-		assertCode(t, err, CodeAgentNotFound)
+		preview, err := service.Preview(context.Background(), []Kind{ClaudeCode, OpenCode, Codex})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(preview.Agents) != 3 {
+			t.Fatalf("preview Agents = %#v", preview.Agents)
+		}
+		for _, agent := range preview.Agents {
+			for _, file := range agent.Files {
+				if file.Operation != OperationCreate {
+					t.Fatalf("preview file = %#v", file)
+				}
+			}
+		}
 	})
 
 	t.Run("invalid JSON", func(t *testing.T) {
