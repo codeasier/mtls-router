@@ -591,6 +591,7 @@ impl From<RouterStatus> for RouterSnapshot {
     }
 }
 
+#[cfg(any(not(target_os = "macos"), test))]
 fn status_icon(severity: Severity) -> Image<'static> {
     const SIZE: usize = 20;
     let mut rgba = vec![0; SIZE * SIZE * 4];
@@ -599,7 +600,7 @@ fn status_icon(severity: Severity) -> Image<'static> {
         rgba[offset..offset + 4].copy_from_slice(&[0, 0, 0, 255]);
     };
 
-    // Compact CR monogram that remains legible as a macOS template image.
+    // Legacy status-aware CR icon used on non-macOS platforms.
     for y in 3..15 {
         for x in 2..5 {
             pixel(x, y);
