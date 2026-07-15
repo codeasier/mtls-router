@@ -650,6 +650,9 @@ fn status_icon(severity: Severity) -> Image<'static> {
     Image::new_owned(rgba, SIZE as u32, SIZE as u32)
 }
 
+#[cfg(target_os = "macos")]
+const MACOS_TRAY_ICON_PNG: &[u8] = include_bytes!("../icons/tray-template-macos@2x.png");
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -718,6 +721,25 @@ mod tests {
         assert_eq!(icon.rgba()[3], 0);
         let monogram = (8 * 20 + 11) * 4;
         assert_eq!(&icon.rgba()[monogram..monogram + 4], &[0, 0, 0, 255]);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_template_icon_has_retina_dimensions_and_safe_transparent_bounds() {
+        let icon = Image::from_bytes(MACOS_TRAY_ICON_PNG).expect("template PNG must decode");
+        assert_eq!((icon.width(), icon.height()), (40, 40));
+
+        let alphas = icon.rgba().chunks_exact(4).map(|pixel| pixel[3]);
+        assert!(alphas.clone().any(|alpha| alpha == 0));
+        assert!(alphas.clone().any(|alpha| alpha != 0));
+
+        for y in 0..40_usize {
+            for x in 0..40_usize {
+                if x < 2 || x >= 38 || y < 2 || y >= 38 {
+                    assert_eq!(icon.rgba()[(y * 40 + x) * 4 + 3], 0);
+                }
+            }
+        }
     }
 
     #[test]
