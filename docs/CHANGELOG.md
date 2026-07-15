@@ -2,6 +2,21 @@
 
 [中文](zh-CN/CHANGELOG.md)
 
+## v0.1.7 - 2026-07-15
+
+This release supersedes the unpublished `v0.1.6` tag. The `v0.1.6` Release workflow did not publish a GitHub Release because fallback Intel macOS bundle sealing failed; its tag remains unchanged for auditability.
+
+### Fixed
+
+- Fixed fallback macOS packaging by ad-hoc signing the embedded router and manager sidecars before bundling, then signing the generated desktop executable before sealing the application bundle.
+- Kept fallback signing explicit and non-recursive so package verification can continue comparing packaged sidecar hashes with their signed source files.
+
+### Tests
+
+- Expanded release workflow assertions to enforce dependency-ordered fallback macOS signing and continue rejecting recursive bundle signing.
+
+---
+
 ## v0.1.6 - 2026-07-15
 
 This release simplifies the CodeasierRouter desktop interface and hardens fallback macOS application packaging so unsigned builds remain structurally valid before DMG assembly.

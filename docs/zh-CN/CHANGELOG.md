@@ -2,6 +2,21 @@
 
 [English](../CHANGELOG.md)
 
+## v0.1.7 - 2026-07-15
+
+本次发布取代未发布的 `v0.1.6` tag。由于 fallback Intel macOS bundle sealing 失败，`v0.1.6` Release workflow 未创建 GitHub Release；该 tag 保持不变以便审计。
+
+### 修复
+
+- 修复 fallback macOS 打包：在 bundling 前对内嵌 router 和 manager sidecar 执行 ad-hoc 签名，再签名生成的 desktop executable，最后 seal 应用 bundle。
+- fallback 签名保持显式且非递归，使包校验能够继续比较已打包 sidecar 与其已签名源文件的哈希。
+
+### 测试
+
+- 扩展 release workflow 断言，强制 fallback macOS 按依赖顺序签名，并继续拒绝递归 bundle 签名。
+
+---
+
 ## v0.1.6 - 2026-07-15
 
 本次发布简化了 CodeasierRouter 桌面界面，并强化 fallback macOS 应用打包流程，确保未签名构建在组装 DMG 前仍具备有效的 bundle 结构。
