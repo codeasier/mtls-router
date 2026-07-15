@@ -223,11 +223,12 @@ pub fn setup(
         ],
     )?;
 
+    let initial_icon = tray_icon(Severity::Warning)?;
     let tray = TrayIconBuilder::with_id("main")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .tooltip(initial_status)
-        .icon(status_icon(Severity::Warning))
+        .icon(initial_icon)
         .icon_as_template(cfg!(target_os = "macos"))
         .on_menu_event(handle_menu_event)
         .on_tray_icon_event(|tray, event| {
@@ -443,7 +444,7 @@ fn apply_presentation_text<R: Runtime>(
     let _ = state.start.set_enabled(value.can_start);
     let _ = state.stop.set_enabled(value.can_stop);
     state.tray.set_tooltip(Some(label))?;
-    state.tray.set_icon(Some(status_icon(value.severity)))?;
+    state.tray.set_icon(Some(tray_icon(value.severity)?))?;
     Ok(())
 }
 
@@ -653,6 +654,16 @@ fn status_icon(severity: Severity) -> Image<'static> {
 #[cfg(target_os = "macos")]
 const MACOS_TRAY_ICON_PNG: &[u8] = include_bytes!("../icons/tray-template-macos@2x.png");
 
+#[cfg(target_os = "macos")]
+fn tray_icon(_severity: Severity) -> tauri::Result<Image<'static>> {
+    Ok(Image::from_bytes(MACOS_TRAY_ICON_PNG)?.to_owned())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn tray_icon(severity: Severity) -> tauri::Result<Image<'static>> {
+    Ok(status_icon(severity))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -740,6 +751,17 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_template_icon_is_independent_of_severity() {
+        let normal = tray_icon(Severity::Normal).expect("normal icon");
+        let warning = tray_icon(Severity::Warning).expect("warning icon");
+        let error = tray_icon(Severity::Error).expect("error icon");
+
+        assert_eq!(normal.rgba(), warning.rgba());
+        assert_eq!(warning.rgba(), error.rgba());
     }
 
     #[test]
