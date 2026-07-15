@@ -2,6 +2,25 @@
 
 [English](../CHANGELOG.md)
 
+## v0.1.6 - 2026-07-15
+
+本次发布简化了 CodeasierRouter 桌面界面，并强化 fallback macOS 应用打包流程，确保未签名构建在组装 DMG 前仍具备有效的 bundle 结构。
+
+### 变更
+
+- 简化桌面 router 页面、导航、设置入口和状态展示，降低视觉密度并突出主要 router 控制项。
+
+### 修复
+
+- 在创建 DMG 前对 fallback macOS 应用 bundle 执行 ad-hoc 代码签名，确保缺少 release 签名凭据时，修改后的 bundle 仍得到正确 sealing。
+
+### 测试
+
+- 更新桌面 UI 测试，以覆盖精简后的 router 使用体验。
+- 扩展包校验和 release workflow 回归测试，覆盖 fallback macOS bundle sealing。
+
+---
+
 ## v0.1.5 - 2026-07-15
 
 本次发布更新了 CodeasierRouter 桌面界面，并改进 macOS 安装和托盘集成。即使 manager 进程的 PATH 中看不到受支持的 CLI 可执行文件，现在仍可配置 Agent；release 发布流程也新增受控恢复路径和更严格的产物校验。
