@@ -223,11 +223,12 @@ pub fn setup(
         ],
     )?;
 
+    let initial_icon = tray_icon(Severity::Warning)?;
     let tray = TrayIconBuilder::with_id("main")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .tooltip(initial_status)
-        .icon(status_icon(Severity::Warning))
+        .icon(initial_icon)
         .icon_as_template(cfg!(target_os = "macos"))
         .on_menu_event(handle_menu_event)
         .on_tray_icon_event(|tray, event| {
@@ -443,7 +444,8 @@ fn apply_presentation_text<R: Runtime>(
     let _ = state.start.set_enabled(value.can_start);
     let _ = state.stop.set_enabled(value.can_stop);
     state.tray.set_tooltip(Some(label))?;
-    state.tray.set_icon(Some(status_icon(value.severity)))?;
+    #[cfg(not(target_os = "macos"))]
+    state.tray.set_icon(Some(tray_icon(value.severity)?))?;
     Ok(())
 }
 
@@ -590,6 +592,8 @@ impl From<RouterStatus> for RouterSnapshot {
     }
 }
 
+// macOS uses a fixed template image at runtime; tests retain the legacy renderer.
+#[cfg(any(not(target_os = "macos"), test))]
 fn status_icon(severity: Severity) -> Image<'static> {
     const SIZE: usize = 20;
     let mut rgba = vec![0; SIZE * SIZE * 4];
@@ -598,7 +602,7 @@ fn status_icon(severity: Severity) -> Image<'static> {
         rgba[offset..offset + 4].copy_from_slice(&[0, 0, 0, 255]);
     };
 
-    // Compact CR monogram that remains legible as a macOS template image.
+    // Legacy status-aware CR icon used on non-macOS platforms.
     for y in 3..15 {
         for x in 2..5 {
             pixel(x, y);
@@ -648,6 +652,19 @@ fn status_icon(severity: Severity) -> Image<'static> {
         }
     }
     Image::new_owned(rgba, SIZE as u32, SIZE as u32)
+}
+
+#[cfg(target_os = "macos")]
+const MACOS_TRAY_ICON_PNG: &[u8] = include_bytes!("../icons/tray-template-macos@2x.png");
+
+#[cfg(target_os = "macos")]
+fn tray_icon(_severity: Severity) -> tauri::Result<Image<'static>> {
+    Image::from_bytes(MACOS_TRAY_ICON_PNG)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn tray_icon(severity: Severity) -> tauri::Result<Image<'static>> {
+    Ok(status_icon(severity))
 }
 
 #[cfg(test)]
@@ -718,6 +735,36 @@ mod tests {
         assert_eq!(icon.rgba()[3], 0);
         let monogram = (8 * 20 + 11) * 4;
         assert_eq!(&icon.rgba()[monogram..monogram + 4], &[0, 0, 0, 255]);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_template_icon_has_retina_dimensions_and_safe_transparent_bounds() {
+        let icon = Image::from_bytes(MACOS_TRAY_ICON_PNG).expect("template PNG must decode");
+        assert_eq!((icon.width(), icon.height()), (40, 40));
+
+        let alphas = icon.rgba().chunks_exact(4).map(|pixel| pixel[3]);
+        assert!(alphas.clone().any(|alpha| alpha == 0));
+        assert!(alphas.clone().any(|alpha| alpha != 0));
+
+        for y in 0..40_usize {
+            for x in 0..40_usize {
+                if x < 2 || x >= 38 || y < 2 || y >= 38 {
+                    assert_eq!(icon.rgba()[(y * 40 + x) * 4 + 3], 0);
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_template_icon_is_independent_of_severity() {
+        let normal = tray_icon(Severity::Normal).expect("normal icon");
+        let warning = tray_icon(Severity::Warning).expect("warning icon");
+        let error = tray_icon(Severity::Error).expect("error icon");
+
+        assert_eq!(normal.rgba(), warning.rgba());
+        assert_eq!(warning.rgba(), error.rgba());
     }
 
     #[test]
