@@ -11,7 +11,7 @@ The Tauri desktop application is a current-user control panel for the fixed-serv
 Obtain the package for the operating system and CPU architecture from the trusted internal release channel. Do not move, replace, or run a sidecar separately from its desktop package.
 
 - Windows: run the current-user installer matching x86_64 or arm64. Administrator elevation is not required by the application design.
-- macOS: open the DMG matching Intel or Apple Silicon, then copy `mtls-router` to Applications or another user-writable applications directory.
+- macOS: open the DMG matching Intel or Apple Silicon, then drag `CodeasierRouter.app` onto the Applications shortcut.
 - Linux: make the matching x86_64 or arm64 AppImage executable and launch it as the current user.
 
 If the operating system reports that the package is unsigned, unnotarized, damaged, or from an unknown publisher, stop and verify the release status with the distributor. Do not bypass platform security based only on the package filename.

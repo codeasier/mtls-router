@@ -298,7 +298,13 @@ contains "$CREATE_DMG" 'set -euo pipefail'
 contains "$CREATE_DMG" 'rm -rf "$dmg_dir"'
 contains "$CREATE_DMG" 'mkdir -p "$dmg_dir"'
 contains "$CREATE_DMG" 'CodeasierRouter_${version}.dmg'
-contains "$CREATE_DMG" 'hdiutil create -volname CodeasierRouter -srcfolder "$app" -ov -format UDZO "$dmg"'
+contains "$CREATE_DMG" 'staging="$(mktemp -d "${TMPDIR:-/tmp}/mtls-router-dmg.XXXXXX")"'
+contains "$CREATE_DMG" 'trap cleanup EXIT'
+contains "$CREATE_DMG" 'cp -R "$app" "$staging/CodeasierRouter.app"'
+contains "$CREATE_DMG" 'ln -s /Applications "$staging/Applications"'
+contains "$CREATE_DMG" 'hdiutil create -volname CodeasierRouter -srcfolder "$staging" -ov -format UDZO "$dmg"'
+contains "$ROOT/desktop/scripts/verify-package.sh" '[[ -L "$applications_link" ]]'
+contains "$ROOT/desktop/scripts/verify-package.sh" '[[ "$(readlink "$applications_link")" == /Applications ]]'
 
 unsigned_macos_block="$(workflow_step "$RELEASE" 'Build unsigned macOS package')"
 signed_macos_block="$(workflow_step "$RELEASE" 'Create signed macOS package')"

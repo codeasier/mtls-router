@@ -11,7 +11,7 @@ Tauri 桌面应用是固定服务 `mtls-router` 的当前用户控制面板。�
 从可信的内部分发渠道获取与操作系统及 CPU 架构匹配的包。不要把 sidecar 从桌面包中移出、替换或单独运行。
 
 - Windows：运行与 x86_64 或 arm64 匹配的当前用户安装器。应用设计不要求管理员提权。
-- macOS：打开与 Intel 或 Apple Silicon 匹配的 DMG，然后把 `mtls-router` 复制到 Applications 或其他当前用户可写的应用目录。
+- macOS：打开与 Intel 或 Apple Silicon 匹配的 DMG，然后把 `CodeasierRouter.app` 拖到 Applications 快捷方式上。
 - Linux：给与 x86_64 或 arm64 匹配的 AppImage 添加执行权限，再以当前用户启动。
 
 如果操作系统提示包未签名、未 notarize、已损坏或发布者未知，请停止安装并向分发方核实 release 状态。不要只根据包文件名绕过平台安全检查。
