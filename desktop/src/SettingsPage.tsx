@@ -77,6 +77,7 @@ export function SettingsPage({ api }: { api: DesktopApi }) {
   const versionRows = [
     ["A", t("router.desktop"), versions?.desktop],
     ["B", t("router.manager"), versions?.manager],
+    ["C", t("router.router"), versions?.router],
   ];
 
   return (

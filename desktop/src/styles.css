@@ -227,11 +227,19 @@ main {
 }
 
 .topbar {
+  position: sticky;
+  z-index: 10;
+  top: 0;
   display: flex;
   justify-content: space-between;
   align-items: center;
   min-height: 91px;
+  margin-inline: -34px;
+  padding-inline: 34px;
   border-bottom: 1px solid var(--line);
+  background: rgba(247, 242, 234, 0.96);
+  box-shadow: 0 8px 18px rgba(76, 57, 43, 0.05);
+  backdrop-filter: blur(10px);
 }
 
 .topbar p,
@@ -303,13 +311,12 @@ main {
 
 .panel-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 250px;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .primary-panel {
   min-width: 0;
   padding: 26px;
-  border-right: 1px solid var(--line);
 }
 
 .panel-heading {
@@ -447,7 +454,7 @@ main {
 
 .readout-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
   margin: 0;
 }
@@ -627,32 +634,6 @@ main {
   font-size: 11px;
 }
 
-.status-rail {
-  min-width: 0;
-  padding: 26px 20px;
-  background: var(--paper-deep);
-}
-
-.status-rail ol {
-  margin: 22px 0 30px;
-  padding: 0;
-  list-style: none;
-}
-
-.status-rail li {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  min-width: 0;
-  padding: 13px 0;
-  border-bottom: 1px solid var(--line);
-}
-
-.status-rail li > div {
-  min-width: 0;
-}
-
-.status-index,
 .settings-version-list li > span {
   display: grid;
   flex: 0 0 28px;
@@ -666,83 +647,47 @@ main {
   font-weight: 800;
 }
 
-.status-rail strong,
-.status-rail small {
-  display: block;
-}
-
-.status-rail strong {
-  font-size: 12px;
-}
-
-.status-rail small {
-  margin-top: 4px;
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 10px;
-  text-overflow: ellipsis;
-}
-
-.notice {
-  padding: 14px;
-  color: var(--ink);
+.router-next {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: center;
+  margin-top: 26px;
+  padding: 16px 18px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: var(--surface-raised);
+  background: var(--paper-deep);
 }
 
-.notice span {
-  display: inline-block;
-  padding: 4px 7px;
-  color: var(--signal-hover);
-  border-radius: 999px;
-  background: var(--signal-soft);
-  font-size: 9px;
-  font-weight: 850;
+.router-next .overline {
+  margin-bottom: 6px;
 }
 
-.notice p {
-  margin: 11px 0 0;
+.router-next p:last-child {
+  max-width: 640px;
+  margin: 0;
   color: var(--muted);
   font-size: 11px;
-  line-height: 1.65;
+  line-height: 1.6;
 }
 
-.notice button {
-  width: 100%;
+.router-next button {
+  flex: 0 0 auto;
   min-height: 38px;
-  margin-top: 14px;
-  color: #fffaf4;
-  border: 1px solid var(--signal);
+  padding: 0 14px;
+  color: var(--signal-hover);
+  border: 1px solid rgba(220, 91, 47, 0.35);
   border-radius: var(--radius-control);
-  background: var(--signal);
+  background: var(--signal-soft);
   font-size: 11px;
   font-weight: 800;
   cursor: pointer;
 }
 
-.notice button:hover {
-  border-color: var(--signal-hover);
-  background: var(--signal-hover);
-}
-
-.protocol-readout {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  margin: -14px 0 24px;
-  padding: 10px 12px;
-  color: var(--muted);
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  background: rgba(255, 250, 244, 0.65);
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 9px;
-}
-
-.protocol-readout strong {
-  color: var(--ink);
-  overflow-wrap: anywhere;
+.router-next button:hover {
+  color: #fffaf4;
+  border-color: var(--signal);
+  background: var(--signal);
 }
 
 .logs-toolbar {
@@ -1704,6 +1649,11 @@ main {
     padding: 0 18px 22px;
   }
 
+  .topbar {
+    margin-inline: -18px;
+    padding-inline: 18px;
+  }
+
   .panel-grid,
   .settings-grid,
   .agent-card-grid,
@@ -1716,16 +1666,6 @@ main {
     padding: 20px;
     border-right: 0;
     border-bottom: 1px solid var(--line);
-  }
-
-  .status-rail ol {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 12px;
-  }
-
-  .status-rail li {
-    align-items: flex-start;
   }
 
   .logs-toolbar {
@@ -1758,6 +1698,11 @@ main {
     padding: 0 12px 16px;
   }
 
+  .topbar {
+    margin-inline: -12px;
+    padding-inline: 12px;
+  }
+
   .brand-mark {
     flex-basis: 36px;
     height: 36px;
@@ -1787,6 +1732,7 @@ main {
 
   .panel-heading,
   .action-row,
+  .router-next,
   .logs-actions,
   .logs-foot,
   .agents-workbench__header,
@@ -1818,7 +1764,6 @@ main {
   }
 
   .readout-grid,
-  .status-rail ol,
   .preview-files {
     grid-template-columns: 1fr;
   }
