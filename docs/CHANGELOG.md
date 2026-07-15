@@ -2,6 +2,25 @@
 
 [中文](zh-CN/CHANGELOG.md)
 
+## v0.1.6 - 2026-07-15
+
+This release simplifies the CodeasierRouter desktop interface and hardens fallback macOS application packaging so unsigned builds remain structurally valid before DMG assembly.
+
+### Changed
+
+- Simplified the desktop router page, navigation, settings entry, and status presentation to reduce visual density and keep primary router controls prominent.
+
+### Fixed
+
+- Added ad-hoc code signing for fallback macOS application bundles before DMG creation, ensuring modified bundles are sealed even when release signing credentials are unavailable.
+
+### Tests
+
+- Updated desktop UI coverage for the simplified router experience.
+- Expanded package verification and release workflow regression coverage for fallback macOS bundle sealing.
+
+---
+
 ## v0.1.5 - 2026-07-15
 
 This release refreshes the CodeasierRouter desktop interface and improves macOS installation and tray integration. Agent configuration is now available even when supported CLI executables are not visible on the manager process PATH, and release publication gains a controlled recovery path with stricter artifact validation.
