@@ -63,10 +63,10 @@ An unexpected router exit is not restarted in an unlimited loop. If the manager 
 
 Open Logs, preserve the diagnostic summary, then restart the desktop once. Reinstall if the error identifies a sidecar validation problem. Do not start another router on a different port as a workaround.
 
-## Agent not detected or not writable
+## Agent configuration is unavailable or not writable
 
-- Detection supports Claude Code, opencode, and Codex only; the desktop does not install or launch them.
-- Confirm the Agent or its expected home directory exists, then refresh detection.
+- Claude Code, opencode, and Codex are always available as supported configuration targets; the desktop does not install or launch their CLIs.
+- An empty `command` means only that the manager process cannot find the Agent CLI. It does not prevent creating or updating the configuration.
 - Confirm `CLAUDE_CONFIG_DIR`, `OPENCODE_CONFIG`, or `CODEX_HOME` points to the intended current-user location before launching the desktop.
 - Restore current-user write access to the configuration file and its directory. Do not run the desktop as administrator or root to bypass ownership problems.
 
