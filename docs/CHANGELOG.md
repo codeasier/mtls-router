@@ -2,6 +2,34 @@
 
 [中文](zh-CN/CHANGELOG.md)
 
+## v0.1.5 - 2026-07-15
+
+This release refreshes the CodeasierRouter desktop interface and improves macOS installation and tray integration. Agent configuration is now available even when supported CLI executables are not visible on the manager process PATH, and release publication gains a controlled recovery path with stricter artifact validation.
+
+### Added
+
+- Added a controlled release-recovery workflow that reuses validated artifacts from a matching failed tag build without moving or rewriting the release tag.
+- Added a native macOS tray template asset with Retina dimensions and transparent safe bounds.
+
+### Changed
+
+- Reworked the desktop interface with a warm beige and orange visual system across navigation, router controls, Agent configuration, logs, and settings.
+- Made Claude Code, opencode, and Codex configuration targets available independently of CLI discovery while retaining executable paths as optional diagnostics.
+- Extracted deterministic release assembly into a shared packaging script used by normal and recovery publication.
+
+### Fixed
+
+- Added an `Applications` shortcut to macOS DMGs and package checks that reject missing or incorrect shortcuts.
+- Replaced the dense macOS tray monogram with a stable native template icon that follows light and dark menu-bar rendering.
+- Hardened failed-release recovery with draft resumption, explicit repository targeting, the correct GitHub upload endpoint, exact asset-manifest verification, tag-SHA revalidation, and latest-version downgrade protection.
+
+### Tests
+
+- Expanded release workflow and packaging regression coverage for recovery safety, deterministic assembly, and exact artifact manifests.
+- Added Agent detection/configuration tests for missing CLIs and macOS package/tray checks.
+
+---
+
 ## v0.1.4 - 2026-07-13
 
 This release introduces CodeasierRouter, a Tauri 2 desktop control panel and shared management service, while hardening the CLI router's TLS, streaming, background-process, installation, and process-identity behavior. Release tooling now builds and inspects native desktop packages and matched router/manager artifacts across all six supported OS/architecture targets.

@@ -2,6 +2,34 @@
 
 [English](../CHANGELOG.md)
 
+## v0.1.5 - 2026-07-15
+
+本次发布更新了 CodeasierRouter 桌面界面，并改进 macOS 安装和托盘集成。即使 manager 进程的 PATH 中看不到受支持的 CLI 可执行文件，现在仍可配置 Agent；release 发布流程也新增受控恢复路径和更严格的产物校验。
+
+### 新增
+
+- 新增受控 release 恢复 workflow，可复用与失败 tag 构建匹配且已经验证的产物，无需移动或重写 release tag。
+- 新增原生 macOS 托盘 template 资源，具备 Retina 尺寸和透明安全边界。
+
+### 变更
+
+- 重新设计桌面界面，在导航、router 控制、Agent 配置、日志和设置中采用统一的暖米色与橙色视觉体系。
+- Claude Code、opencode 和 Codex 配置目标不再依赖 CLI 检测结果，同时继续将可执行文件路径保留为可选诊断信息。
+- 将确定性的 release 组装逻辑提取到共享打包脚本，供正常发布和恢复发布共同使用。
+
+### 修复
+
+- 为 macOS DMG 添加 `Applications` 快捷方式，并新增包检查以拒绝缺失或指向错误位置的快捷方式。
+- 将密集的 macOS 托盘字母图标替换为稳定的原生 template 图标，使其适配浅色和深色菜单栏渲染。
+- 强化失败 release 的恢复流程，包括恢复 draft、显式指定仓库、使用正确的 GitHub 上传端点、精确校验产物清单、重新验证 tag SHA，以及防止 latest 版本降级。
+
+### 测试
+
+- 扩展 release workflow 和打包回归覆盖，验证恢复安全性、确定性组装和精确产物清单。
+- 新增 CLI 缺失场景下的 Agent 检测/配置测试，以及 macOS 包和托盘检查。
+
+---
+
 ## v0.1.4 - 2026-07-13
 
 本次发布引入 CodeasierRouter，即基于 Tauri 2 的桌面控制面板和共享管理服务，同时强化 CLI router 的 TLS、流式传输、后台进程、安装和进程身份行为。Release tooling 现在会为全部六个受支持的操作系统/架构目标构建并检查原生桌面包及匹配的 router/manager 产物。
