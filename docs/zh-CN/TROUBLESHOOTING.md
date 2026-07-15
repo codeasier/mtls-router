@@ -63,10 +63,10 @@ Router 意外退出后不会进入无限重启循环。manager 退出时，桌�
 
 打开日志、保留诊断摘要，然后只重启一次桌面应用。如果错误指向 sidecar 校验问题，请重新安装。不要通过在其他端口启动另一个 router 来绕过。
 
-## 未检测到 Agent 或不可写
+## Agent 配置不可用或不可写
 
-- 检测只支持 Claude Code、opencode 和 Codex；桌面应用不会安装或启动它们。
-- 确认 Agent 或预期 home 目录存在，然后刷新检测。
+- Claude Code、opencode 和 Codex 始终作为受支持的配置目标可用；桌面应用不会安装或启动它们的 CLI。
+- `command` 为空只表示 manager 进程无法找到 Agent CLI，不会阻止创建或更新配置。
 - 启动桌面应用前，确认 `CLAUDE_CONFIG_DIR`、`OPENCODE_CONFIG` 或 `CODEX_HOME` 指向预期的当前用户位置。
 - 恢复当前用户对配置文件及其目录的写权限。不要以 administrator 或 root 运行桌面应用来绕过所有权问题。
 
