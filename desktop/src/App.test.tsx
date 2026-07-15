@@ -8,6 +8,7 @@ describe("App navigation", () => {
   it("opens the production Router page and navigates from its Agent action", async () => {
     render(<App api={createMockApi()} />);
 
+    expect(screen.getByText("CR")).toBeInTheDocument();
     expect(await screen.findByText("路由未启动")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "前往 Agent 配置" }));
 

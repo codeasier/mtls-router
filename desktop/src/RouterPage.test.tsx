@@ -214,56 +214,6 @@ describe("RouterPage states", () => {
     ).toBeInTheDocument();
   });
 
-  it("refreshes versions when polling observes a different router PID", async () => {
-    let observer: ((snapshot: PollSnapshot) => void) | undefined;
-    const getComponentVersions = vi
-      .fn()
-      .mockResolvedValueOnce({
-        desktop: "desktop-v1",
-        manager: "manager-v1",
-        router: "router-v1",
-        management_protocol: "1",
-      })
-      .mockResolvedValueOnce({
-        desktop: "desktop-v1",
-        manager: "manager-v1",
-        router: "router-v2",
-        management_protocol: "1",
-      });
-    const api = createMockApi({
-      getPollSnapshot: vi.fn().mockResolvedValue({
-        revision: 1,
-        status: { state: "desktop_owned", owner: "desktop", pid: 101 },
-        health: freshHealthy,
-      }),
-      subscribePollSnapshots: vi.fn(async (listener) => {
-        observer = listener;
-        return () => undefined;
-      }),
-      getComponentVersions,
-    });
-    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
-    expect(await screen.findByText("router-v1")).toBeInTheDocument();
-
-    act(() =>
-      observer?.({
-        revision: 2,
-        status: { state: "desktop_owned", owner: "desktop", pid: 101 },
-        health: freshHealthy,
-      }),
-    );
-    act(() =>
-      observer?.({
-        revision: 3,
-        status: { state: "desktop_owned", owner: "desktop", pid: 202 },
-        health: freshHealthy,
-      }),
-    );
-
-    expect(await screen.findByText("router-v2")).toBeInTheDocument();
-    expect(getComponentVersions).toHaveBeenCalledTimes(2);
-  });
-
   it("shows only bounded sanitized unexpected-exit diagnostics", async () => {
     const secret = "sk-routerFailureCanary123456";
     const recentLogs = Array.from(
@@ -316,7 +266,7 @@ describe("RouterPage states", () => {
     },
   );
 
-  it("shows address, owner, and all component versions", async () => {
+  it("shows the local address without owner or component version details", async () => {
     const api = createMockApi({
       getRouterStatus: vi.fn().mockResolvedValue({
         state: "desktop_owned",
@@ -328,56 +278,15 @@ describe("RouterPage states", () => {
     renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
 
     expect(await screen.findByText("127.0.0.1:19999")).toBeInTheDocument();
-    expect(screen.getAllByText("桌面应用")).toHaveLength(2);
-    expect(screen.getByText("desktop-v1")).toBeInTheDocument();
-    expect(screen.getByText("manager-v1")).toBeInTheDocument();
-    expect(screen.getByText("router-v1")).toBeInTheDocument();
-    expect(screen.getByText("1")).toBeInTheDocument();
+    expect(screen.queryByText("所有者")).not.toBeInTheDocument();
+    expect(screen.queryByText("desktop-v1")).not.toBeInTheDocument();
+    expect(screen.queryByText("manager-v1")).not.toBeInTheDocument();
+    expect(screen.queryByText("router-v1")).not.toBeInTheDocument();
+    expect(api.getComponentVersions).not.toHaveBeenCalled();
   });
 });
 
 describe("RouterPage actions", () => {
-  it("refreshes an initially absent router version after manual start", async () => {
-    const getRouterStatus = vi
-      .fn()
-      .mockResolvedValueOnce({ state: "absent" })
-      .mockResolvedValue({
-        state: "desktop_owned",
-        owner: "desktop",
-        pid: 42,
-      });
-    const getComponentVersions = vi
-      .fn()
-      .mockResolvedValueOnce({
-        desktop: "desktop-v1",
-        manager: "manager-v1",
-        router: "",
-        management_protocol: "1",
-      })
-      .mockResolvedValueOnce({
-        desktop: "desktop-v1",
-        manager: "manager-v1",
-        router: "router-started-v2",
-        management_protocol: "1",
-      });
-    const api = createMockApi({
-      getRouterStatus,
-      getComponentVersions,
-      startRouter: vi.fn().mockResolvedValue({
-        state: "desktop_owned",
-        owner: "desktop",
-        pid: 42,
-      }),
-    });
-    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
-    expect(await screen.findByText("未运行")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "启动路由" }));
-
-    expect(await screen.findByText("router-started-v2")).toBeInTheDocument();
-    expect(getComponentVersions).toHaveBeenCalledTimes(2);
-  });
-
   it("starts, refreshes status, and retries health", async () => {
     const getRouterStatus = vi
       .fn()
@@ -417,40 +326,6 @@ describe("RouterPage actions", () => {
       await screen.findByRole("heading", { name: "路由未启动" }),
     ).toBeInTheDocument();
     expect(api.stopRouter).toHaveBeenCalledOnce();
-  });
-
-  it("clears the router version after stop", async () => {
-    const getRouterStatus = vi
-      .fn()
-      .mockResolvedValueOnce({
-        state: "desktop_owned",
-        owner: "desktop",
-        pid: 42,
-      })
-      .mockResolvedValue({ state: "absent" });
-    const getComponentVersions = vi
-      .fn()
-      .mockResolvedValueOnce({
-        desktop: "desktop-v1",
-        manager: "manager-v1",
-        router: "router-running-v1",
-        management_protocol: "1",
-      })
-      .mockResolvedValueOnce({
-        desktop: "desktop-v1",
-        manager: "manager-v1",
-        router: "",
-        management_protocol: "1",
-      });
-    const api = createMockApi({ getRouterStatus, getComponentVersions });
-    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
-    expect(await screen.findByText("router-running-v1")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "停止路由" }));
-
-    expect(await screen.findByText("未运行")).toBeInTheDocument();
-    expect(screen.queryByText("router-running-v1")).not.toBeInTheDocument();
-    expect(getComponentVersions).toHaveBeenCalledTimes(2);
   });
 
   it("allows stop for a desktop-owned degraded router", async () => {

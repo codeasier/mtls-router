@@ -21,18 +21,18 @@ async function openSettings(api = createMockApi()) {
 beforeEach(() => localStorage.clear());
 
 describe("SettingsPage", () => {
-  it("shows autostart, desktop and manager versions, and application locations without sensitive controls", async () => {
+  it("shows all component versions and application locations without sensitive controls", async () => {
     await openSettings();
 
     expect(screen.getByRole("switch", { name: /开机时启动/ })).toBeChecked();
     expect(screen.getByText("desktop-v1")).toBeInTheDocument();
     expect(screen.getByText("manager-v1")).toBeInTheDocument();
-    expect(screen.queryByText("router-v1")).not.toBeInTheDocument();
+    expect(screen.getByText("router-v1")).toBeInTheDocument();
     expect(
       within(screen.getByRole("list", { name: "组件版本" })).getAllByRole(
         "listitem",
       ),
-    ).toHaveLength(2);
+    ).toHaveLength(3);
     expect(screen.getByText("/safe/app-data")).toBeInTheDocument();
     expect(
       screen.getByText("/safe/app-data/mtls-router.log"),

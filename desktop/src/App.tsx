@@ -55,7 +55,7 @@ function AppContent({ api }: { api: DesktopApi }) {
           aria-label={t("app.homeAria")}
         >
           <span className="brand-mark" aria-hidden="true">
-            MR
+            CR
           </span>
           <span>
             <strong>CodeasierRouter</strong>

@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useI18n, type Translator } from "./i18n";
 import type {
-  ComponentVersions,
   DesktopApi,
   PollSnapshot,
   RouterHealth,
@@ -115,14 +114,6 @@ function isAvailable(status: RouterStatus | null): boolean {
   );
 }
 
-function statusIdentity(status: RouterStatus | null): string {
-  return [
-    isAvailable(status) ? "available" : "unavailable",
-    status?.owner ?? "none",
-    status?.pid ?? "none",
-  ].join("|");
-}
-
 function sanitizedFailureDiagnostics(status: RouterStatus | null): {
   lastError: string;
   recentLogs: string[];
@@ -198,14 +189,6 @@ function healthLabel(
   return labels[value];
 }
 
-function ownerLabel(status: RouterStatus | null, t: Translator): string {
-  if (status?.state === "external_compatible" || status?.owner === "cli") {
-    return t("router.owner.external");
-  }
-  if (status?.owner === "desktop") return t("router.owner.desktop");
-  return t("router.owner.none");
-}
-
 function actionErrorKey(
   action: "load" | "start" | "stop" | "health",
 ): RouterMessage {
@@ -249,7 +232,6 @@ export function RouterPage({
   const { t } = useI18n();
   const [status, setStatus] = useState<RouterStatus | null>(null);
   const [health, setHealth] = useState<RouterHealth | null>(null);
-  const [versions, setVersions] = useState<ComponentVersions | null>(null);
   const [operation, setOperation] = useState<Operation>(null);
   const [failed, setFailed] = useState(false);
   const [message, setMessage] = useState<RouterMessage>("");
@@ -259,89 +241,47 @@ export function RouterPage({
   const [reinstallRequired, setReinstallRequired] = useState(false);
   const [healthFailed, setHealthFailed] = useState(false);
   const latestRevision = useRef(-1);
-  const desiredVersionIdentity = useRef<string | null>(null);
-  const loadedVersionIdentity = useRef<string | null>(null);
-  const versionRefresh = useRef<Promise<void> | null>(null);
 
-  const refreshComponentVersions = useCallback(
-    (nextStatus: RouterStatus | null): Promise<void> => {
-      desiredVersionIdentity.current = statusIdentity(nextStatus);
-      if (versionRefresh.current) return versionRefresh.current;
-      if (loadedVersionIdentity.current === desiredVersionIdentity.current) {
-        return Promise.resolve();
+  const applySnapshot = useCallback((snapshot: PollSnapshot) => {
+    if (snapshot.revision <= latestRevision.current) return;
+    latestRevision.current = snapshot.revision;
+    setSnapshotRevision(snapshot.revision);
+    setNow(Date.now());
+    if (snapshot.status) {
+      setStatus(snapshot.status);
+      setFailed(false);
+      if (!snapshot.status_error) {
+        setMessage((current) =>
+          clearRecoveredStatusMessage(current, snapshot.status!),
+        );
       }
-
-      const refresh = async () => {
-        while (
-          desiredVersionIdentity.current !== loadedVersionIdentity.current
-        ) {
-          const identity = desiredVersionIdentity.current;
-          try {
-            const value = await api.getComponentVersions();
-            if (desiredVersionIdentity.current === identity) {
-              setVersions(value);
-            }
-          } catch {
-            // Component versions are informational; retry on the next identity change.
-          }
-          loadedVersionIdentity.current = identity;
-        }
-      };
-      const pending = refresh().finally(() => {
-        if (versionRefresh.current === pending) versionRefresh.current = null;
-      });
-      versionRefresh.current = pending;
-      return pending;
-    },
-    [api],
-  );
-
-  const applySnapshot = useCallback(
-    (snapshot: PollSnapshot) => {
-      if (snapshot.revision <= latestRevision.current) return;
-      latestRevision.current = snapshot.revision;
-      setSnapshotRevision(snapshot.revision);
-      setNow(Date.now());
-      if (snapshot.status) {
-        setStatus(snapshot.status);
-        setFailed(false);
-        if (!snapshot.status_error) {
-          setMessage((current) =>
-            clearRecoveredStatusMessage(current, snapshot.status!),
-          );
-        }
-        void refreshComponentVersions(snapshot.status);
-      } else if (desiredVersionIdentity.current === null) {
-        void refreshComponentVersions(null);
+    }
+    if (snapshot.health) {
+      setHealth(snapshot.health);
+      setHealthFailed(false);
+      if (!snapshot.health_error) {
+        setMessage((current) =>
+          current === "router.error.health" ? "" : current,
+        );
       }
-      if (snapshot.health) {
-        setHealth(snapshot.health);
-        setHealthFailed(false);
-        if (!snapshot.health_error) {
-          setMessage((current) =>
-            current === "router.error.health" ? "" : current,
-          );
-        }
-      }
-      if (snapshot.status && !isAvailable(snapshot.status)) {
-        setHealth(null);
-        setHealthFailed(false);
-      }
-      const statusCode = snapshot.status_error?.code ?? "";
-      if (sidecarError(statusCode)) {
-        setReinstallRequired(true);
-        setMessage("router.error.sidecarReinstall");
-      } else if (statusCode) {
-        setFailed(true);
-        setMessage(actionErrorKey("load"));
-      }
-      if (snapshot.health_error) {
-        setHealthFailed(true);
-        setMessage(actionErrorKey("health"));
-      }
-    },
-    [refreshComponentVersions],
-  );
+    }
+    if (snapshot.status && !isAvailable(snapshot.status)) {
+      setHealth(null);
+      setHealthFailed(false);
+    }
+    const statusCode = snapshot.status_error?.code ?? "";
+    if (sidecarError(statusCode)) {
+      setReinstallRequired(true);
+      setMessage("router.error.sidecarReinstall");
+    } else if (statusCode) {
+      setFailed(true);
+      setMessage(actionErrorKey("load"));
+    }
+    if (snapshot.health_error) {
+      setHealthFailed(true);
+      setMessage(actionErrorKey("health"));
+    }
+  }, []);
 
   useEffect(() => {
     let current = true;
@@ -429,7 +369,6 @@ export function RouterPage({
     try {
       const next = await api.startRouter();
       setStatus(next);
-      await refreshComponentVersions(next);
       await refreshSnapshot();
       setOperation(null);
     } catch (error) {
@@ -462,7 +401,6 @@ export function RouterPage({
       const next = await api.stopRouter();
       setStatus(next);
       setHealth(null);
-      await refreshComponentVersions(next);
       await refreshSnapshot();
       setOperation(null);
     } catch {
@@ -518,10 +456,6 @@ export function RouterPage({
             <dd className={`health-value health-value--${observedHealth}`}>
               {healthLabel(observedHealth, available, t)}
             </dd>
-          </div>
-          <div>
-            <dt>{t("router.owner")}</dt>
-            <dd>{ownerLabel(status, t)}</dd>
           </div>
           <div>
             <dt>{t("router.localAddress")}</dt>
@@ -590,47 +524,17 @@ export function RouterPage({
             {t("router.retryHealth")}
           </button>
         </div>
-      </section>
 
-      <aside className="status-rail" aria-label={t("router.componentsAria")}>
-        <p className="overline">{t("router.componentVersions")}</p>
-        <ol className="version-list">
-          <li>
-            <span className="status-index">A</span>
-            <div>
-              <strong>{t("router.desktop")}</strong>
-              <small>{versions?.desktop ?? t("router.loading")}</small>
-            </div>
-          </li>
-          <li>
-            <span className="status-index">B</span>
-            <div>
-              <strong>{t("router.manager")}</strong>
-              <small>{versions?.manager ?? t("router.loading")}</small>
-            </div>
-          </li>
-          <li>
-            <span className="status-index">C</span>
-            <div>
-              <strong>{t("router.router")}</strong>
-              <small>{versions?.router || t("router.notRunning")}</small>
-            </div>
-          </li>
-        </ol>
-        {versions?.management_protocol && (
-          <div className="protocol-readout">
-            <span>{t("router.protocol")}</span>
-            <strong>{versions.management_protocol}</strong>
+        <div className="router-next">
+          <div>
+            <p className="overline">{t("router.next")}</p>
+            <p>{t("router.agentNotice")}</p>
           </div>
-        )}
-        <div className="notice">
-          <span>{t("router.next")}</span>
-          <p>{t("router.agentNotice")}</p>
           <button type="button" onClick={onNavigateToAgents}>
             {t("router.goToAgents")}
           </button>
         </div>
-      </aside>
+      </section>
     </div>
   );
 }
