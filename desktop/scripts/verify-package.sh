@@ -69,6 +69,12 @@ case "$os" in
     hdiutil attach -readonly -nobrowse -mountpoint "$mounted_dmg" "$package" >/dev/null
     app="$mounted_dmg/CodeasierRouter.app"
     [[ -d "$app" ]] || { printf 'DMG is missing the app bundle\n' >&2; exit 1; }
+    applications_link="$mounted_dmg/Applications"
+    [[ -L "$applications_link" ]] || { printf 'DMG is missing the Applications symbolic link\n' >&2; exit 1; }
+    [[ "$(readlink "$applications_link")" == /Applications ]] || {
+      printf 'DMG Applications symbolic link has an invalid target\n' >&2
+      exit 1
+    }
     packaged_dir="$app/Contents/MacOS"
     packaged_desktop="$packaged_dir/mtls-router-desktop"
     plist_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"
