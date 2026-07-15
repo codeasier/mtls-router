@@ -150,6 +150,15 @@ function identify(bytes) {
   return ["invalid", "unknown"];
 }
 
+function peSubsystem(bytes) {
+  const pe = bytes.readUInt32LE(0x3c);
+  if (bytes.subarray(pe, pe + 4).toString("binary") !== "PE\0\0") return null;
+  const optionalHeader = pe + 24;
+  const magic = bytes.readUInt16LE(optionalHeader);
+  if (magic !== 0x10b && magic !== 0x20b) return null;
+  return bytes.readUInt16LE(optionalHeader + 68);
+}
+
 for (const [name, path] of binaries) {
   const bytes = fs.readFileSync(path);
   const [format, arch] = identify(bytes);
@@ -164,6 +173,9 @@ for (const [name, path] of binaries) {
   }
   if (name === "desktop" && !bytes.includes(Buffer.from(target))) {
     throw new Error("desktop target identity is missing");
+  }
+  if (name === "desktop" && expectedFormat === "pe" && peSubsystem(bytes) !== 2) {
+    throw new Error("desktop PE subsystem is not IMAGE_SUBSYSTEM_WINDOWS_GUI");
   }
 }
 NODE

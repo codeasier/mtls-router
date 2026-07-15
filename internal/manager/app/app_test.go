@@ -54,6 +54,23 @@ type fakeAgent struct {
 	write   func(context.Context, agent.WriteRequest) (agent.WriteResult, error)
 }
 
+func TestDesktopSessionEOFStopsOwnedRouter(t *testing.T) {
+	stops := 0
+	lifecycleManager := &fakeLifecycle{
+		stop: func(context.Context) *lifecycle.Error {
+			stops++
+			return nil
+		},
+	}
+	manager := newWithDependencies(Config{DesktopSession: "desktop-session"}, dependencies{lifecycle: lifecycleManager})
+	if err := manager.Serve(context.Background(), strings.NewReader(""), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if stops != 1 {
+		t.Fatalf("router stops = %d, want 1", stops)
+	}
+}
+
 func (f *fakeAgent) Preview(ctx context.Context, selected []agent.Kind) (agent.Preview, error) {
 	return f.preview(ctx, selected)
 }

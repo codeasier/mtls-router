@@ -2,6 +2,26 @@
 
 package lifecycle
 
-import "os/exec"
+import (
+	"io"
+	"os/exec"
+)
 
-func configureDesktopCommand(*exec.Cmd) {}
+type commandProcess struct {
+	cmd *exec.Cmd
+}
+
+func (p commandProcess) PID() int    { return p.cmd.Process.Pid }
+func (p commandProcess) Wait() error { return p.cmd.Wait() }
+
+func launchForegroundCommand(executable string, args, env []string, output io.Writer) (foregroundProcess, error) {
+	cmd := exec.Command(executable, args...)
+	cmd.Env = env
+	cmd.Stdin = nil
+	cmd.Stdout = output
+	cmd.Stderr = output
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	return commandProcess{cmd: cmd}, nil
+}

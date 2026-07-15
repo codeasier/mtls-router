@@ -65,6 +65,7 @@ contains "$ROOT/desktop/scripts/build-sidecars.sh" 'node -p "require('\''./packa
 contains "$ROOT/desktop/scripts/verify-package.sh" 'node -p "require('\''./package.json'\'').version"'
 contains "$PREPARE" 'const root = process.cwd();'
 contains "$ROOT/desktop/scripts/verify-package.sh" 'expected_protocol="${MANAGEMENT_PROTOCOL_VERSION:-1}"'
+contains "$ROOT/desktop/scripts/verify-package.sh" 'desktop PE subsystem is not IMAGE_SUBSYSTEM_WINDOWS_GUI'
 contains "$ROOT/desktop/src-tauri/build.rs" 'BinaryFormat::Pe'
 contains "$ROOT/desktop/src-tauri/src/sidecar.rs" 'BinaryFormat::Pe'
 if grep -Fq 'BinaryFormat::Coff' "$ROOT/desktop/src-tauri/build.rs" "$ROOT/desktop/src-tauri/src/sidecar.rs"; then
