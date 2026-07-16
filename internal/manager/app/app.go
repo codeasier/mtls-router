@@ -219,6 +219,11 @@ func (a *App) Serve(ctx context.Context, input io.Reader, output io.Writer) erro
 			return nil
 		}
 	}
+	if a.config.DesktopSession != "" {
+		if stopErr := a.deps.lifecycle.Stop(context.Background()); stopErr != nil && stopErr.Code != protocol.CodeRouterNotFound {
+			return errors.New("session-close router cleanup failed")
+		}
+	}
 	return serveErr
 }
 
