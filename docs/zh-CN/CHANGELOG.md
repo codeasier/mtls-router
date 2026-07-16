@@ -2,6 +2,22 @@
 
 [English](../CHANGELOG.md)
 
+## v0.1.8 - 2026-07-16
+
+本次发布改进 Windows 桌面端进程约束，确保 CodeasierRouter 启动的 router 不会在所属桌面会话结束后继续运行，也不会留下可见的控制台窗口。
+
+### 修复
+
+- 将 Windows 桌面端启动的 router 纳入关闭即终止的 Job Object，并在所属 manager 会话结束时停止该 router。
+- 将生产环境 Windows 桌面构建标记为 GUI 应用，使启动 CodeasierRouter 时不再打开控制台窗口。
+
+### 测试
+
+- 新增 Windows 生命周期测试，覆盖挂起状态启动进程、Job Object 配置，以及进程约束关闭时终止 router。
+- 新增 Windows GUI subsystem 的 release 包校验和 manager 会话清理测试。
+
+---
+
 ## v0.1.7 - 2026-07-15
 
 本次发布取代未发布的 `v0.1.6` tag。由于 fallback Intel macOS bundle sealing 失败，`v0.1.6` Release workflow 未创建 GitHub Release；该 tag 保持不变以便审计。

@@ -2,6 +2,22 @@
 
 [中文](zh-CN/CHANGELOG.md)
 
+## v0.1.8 - 2026-07-16
+
+This release improves Windows desktop process containment so routers started by CodeasierRouter do not outlive their owning desktop session or leave visible console windows.
+
+### Fixed
+
+- Contained Windows desktop-started routers in kill-on-close Job Objects and stopped owned routers when their manager session ends.
+- Marked production Windows desktop builds as GUI applications so launching CodeasierRouter no longer opens a console window.
+
+### Tests
+
+- Added Windows lifecycle coverage for suspended process launch, Job Object configuration, and router termination when containment closes.
+- Added release package verification for the Windows GUI subsystem and manager-session cleanup coverage.
+
+---
+
 ## v0.1.7 - 2026-07-15
 
 This release supersedes the unpublished `v0.1.6` tag. The `v0.1.6` Release workflow did not publish a GitHub Release because fallback Intel macOS bundle sealing failed; its tag remains unchanged for auditability.
