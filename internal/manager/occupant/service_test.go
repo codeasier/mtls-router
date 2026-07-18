@@ -206,6 +206,75 @@ func TestServiceNeverSignalsReplacementDuringReleaseWait(t *testing.T) {
 	}
 }
 
+func TestServiceReservesReleaseWindowBeforeSignaling(t *testing.T) {
+	identity := testIdentity()
+	service := New(Config{ListenAddr: identity.ListenAddr, ReleaseTimeout: 2 * time.Second}, Dependencies{
+		Discover: func(ctx context.Context) discovery.Result {
+			deadline, ok := ctx.Deadline()
+			if ok {
+				remaining := time.Until(deadline)
+				if remaining < 900*time.Millisecond || remaining > time.Second {
+					t.Fatalf("pre-signal budget = %s", remaining)
+				}
+			}
+			return discovery.Result{Classification: discovery.UnknownOccupant}
+		},
+		Inspect:     func(context.Context, string) (Identity, error) { return identity, nil },
+		CurrentUser: func() (string, error) { return identity.UserID, nil },
+		Random:      bytes.NewReader(make([]byte, 32)),
+	})
+	inspection, err := service.Inspect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, _ = service.ForceTerminate(ctx, inspection.ConfirmationToken)
+}
+
+func TestServiceRevalidatesProcessWhenReleaseWaitExpires(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		final     process.Status
+		wantError error
+	}{
+		{name: "process exited", final: process.StatusAbsent, wantError: ErrPortReleaseTimeout},
+		{name: "process survived", final: process.StatusGenuine, wantError: ErrTerminationFailed},
+		{name: "identity changed", final: process.StatusStale, wantError: ErrChanged},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			identity := testIdentity()
+			status := process.StatusGenuine
+			validations := 0
+			service := New(Config{ListenAddr: identity.ListenAddr}, Dependencies{
+				Discover: func(context.Context) discovery.Result {
+					return discovery.Result{Classification: discovery.UnknownOccupant}
+				},
+				Inspect:     func(context.Context, string) (Identity, error) { return identity, nil },
+				CurrentUser: func() (string, error) { return identity.UserID, nil },
+				SameProcess: func(left, right process.Identity) (bool, error) { return left == right, nil },
+				Validate: func(process.Identity, string) (process.Status, error) {
+					validations++
+					if validations >= 3 {
+						return test.final, nil
+					}
+					return status, nil
+				},
+				Signal: func(process.Identity, os.Signal) error { return nil },
+				Sleep:  func(context.Context, time.Duration) error { return context.DeadlineExceeded },
+				Random: bytes.NewReader(make([]byte, 32)),
+			})
+			inspection, err := service.Inspect(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := service.ForceTerminate(context.Background(), inspection.ConfirmationToken); !errors.Is(err, test.wantError) {
+				t.Fatalf("error = %v, want %v", err, test.wantError)
+			}
+		})
+	}
+}
+
 type stubConn struct{ net.Conn }
 
 func (stubConn) Close() error { return nil }

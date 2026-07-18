@@ -135,10 +135,12 @@ func (s *Service) ForceTerminate(ctx context.Context, token string) (Result, err
 	if record == nil || token == "" || token != record.value || !s.deps.Now().Before(record.expiresAt) {
 		return Result{}, ErrConfirmationExpired
 	}
-	if err := s.requireUnknown(ctx); err != nil {
+	preSignalCtx, cancel := reserveReleaseWindow(ctx, s.config.ReleaseTimeout)
+	defer cancel()
+	if err := s.requireUnknown(preSignalCtx); err != nil {
 		return Result{}, err
 	}
-	live, err := s.inspectEligible(ctx)
+	live, err := s.inspectEligible(preSignalCtx)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return Result{}, ErrChanged
@@ -187,7 +189,11 @@ func (s *Service) requireUnknown(ctx context.Context) error {
 	if s.deps.Discover == nil {
 		return ErrIdentityUnavailable
 	}
-	if found := s.deps.Discover(ctx); found.Classification != discovery.UnknownOccupant {
+	found := s.deps.Discover(ctx)
+	if ctx.Err() != nil {
+		return ErrIdentityUnavailable
+	}
+	if found.Classification != discovery.UnknownOccupant {
 		if found.Classification == discovery.Absent {
 			return ErrNotFound
 		}
@@ -218,12 +224,25 @@ func (s *Service) waitReleased(parent context.Context, identity Identity) (Resul
 			}
 		}
 		if err := s.deps.Sleep(ctx, s.config.PollInterval); err != nil {
-			if status == process.StatusGenuine {
+			finalStatus, _ := s.deps.Validate(identity.Process, identity.Process.Executable)
+			switch finalStatus {
+			case process.StatusStale:
+				return Result{}, ErrChanged
+			case process.StatusGenuine:
 				return Result{}, ErrTerminationFailed
+			default:
+				return Result{}, ErrPortReleaseTimeout
 			}
-			return Result{}, ErrPortReleaseTimeout
 		}
 	}
+}
+
+func reserveReleaseWindow(parent context.Context, releaseTimeout time.Duration) (context.Context, context.CancelFunc) {
+	deadline, ok := parent.Deadline()
+	if !ok {
+		return context.WithCancel(parent)
+	}
+	return context.WithDeadline(parent, deadline.Add(-releaseTimeout))
 }
 
 func sameIdentity(left, right Identity, sameProcess func(process.Identity, process.Identity) (bool, error)) (bool, error) {

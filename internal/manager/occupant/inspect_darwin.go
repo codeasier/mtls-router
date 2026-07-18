@@ -27,6 +27,11 @@ const (
 	darwinSocketInfoSize  = 792
 )
 
+// The fixed record size and offsets below follow socket_fdinfo, socket_info,
+// tcp_sockinfo, and in_sockinfo in the target macOS SDK's sys/proc_info.h.
+// TestNativeInspectOwnLoopbackListener validates the layout against the running
+// Darwin kernel rather than relying only on synthetic decoder fixtures.
+
 type darwinTCP4Record struct {
 	socketID uint64
 	ip       [4]byte
