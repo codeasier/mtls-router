@@ -23,7 +23,11 @@ if ! command -v pwsh >/dev/null 2>&1; then
   exit 0
 fi
 
-help_out="$(pwsh -NoProfile -File "$SCRIPT" --help 2>&1)"
+pwsh_home="$(mktemp -d)"
+trap 'rm -rf "$pwsh_home"' EXIT
+if ! help_out="$(env -u USERPROFILE HOME="$pwsh_home" pwsh -NoProfile -File "$SCRIPT" --help 2>&1)"; then
+  fail "PowerShell help failed without USERPROFILE: $help_out"
+fi
 [[ "$help_out" == *'router install'* && "$help_out" == *'agent write-config'* ]] || fail "PowerShell help omitted public commands"
 tls_out="$(pwsh -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls; & '$SCRIPT' --help > \$null; [Net.ServicePointManager]::SecurityProtocol.ToString()")"
 [[ "$tls_out" == *Tls* && "$tls_out" == *Tls12* ]] || fail "PowerShell TLS policy was not preserved"
