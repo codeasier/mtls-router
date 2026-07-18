@@ -11,17 +11,19 @@ import (
 type Method string
 
 const (
-	MethodManagerInfo        Method = "manager.info"
-	MethodDiagnosticsCollect Method = "diagnostics.collect"
-	MethodRouterStatus       Method = "router.status"
-	MethodRouterStart        Method = "router.start"
-	MethodRouterStop         Method = "router.stop"
-	MethodRouterHealth       Method = "router.health"
-	MethodRouterVersion      Method = "router.version"
-	MethodRouterLogs         Method = "router.logs"
-	MethodAgentDetect        Method = "agent.detect"
-	MethodAgentPreview       Method = "agent.preview"
-	MethodAgentWrite         Method = "agent.write"
+	MethodManagerInfo                  Method = "manager.info"
+	MethodDiagnosticsCollect           Method = "diagnostics.collect"
+	MethodRouterStatus                 Method = "router.status"
+	MethodRouterStart                  Method = "router.start"
+	MethodRouterStop                   Method = "router.stop"
+	MethodRouterHealth                 Method = "router.health"
+	MethodRouterVersion                Method = "router.version"
+	MethodRouterLogs                   Method = "router.logs"
+	MethodRouterInspectOccupant        Method = "router.inspect_occupant"
+	MethodRouterForceTerminateOccupant Method = "router.force_terminate_occupant"
+	MethodAgentDetect                  Method = "agent.detect"
+	MethodAgentPreview                 Method = "agent.preview"
+	MethodAgentWrite                   Method = "agent.write"
 )
 
 // ErrorCode is stable and intended for branching. Messages are diagnostic
@@ -29,27 +31,35 @@ const (
 type ErrorCode string
 
 const (
-	CodeInvalidRequest       ErrorCode = "INVALID_REQUEST"
-	CodeUnknownMethod        ErrorCode = "UNKNOWN_METHOD"
-	CodeInvalidParams        ErrorCode = "INVALID_PARAMS"
-	CodeSidecarMissing       ErrorCode = "SIDECAR_MISSING"
-	CodeSidecarInvalid       ErrorCode = "SIDECAR_INVALID"
-	CodeRouterNotFound       ErrorCode = "ROUTER_NOT_FOUND"
-	CodeRouterAlreadyRunning ErrorCode = "ROUTER_ALREADY_RUNNING"
-	CodeRouterStartFailed    ErrorCode = "ROUTER_START_FAILED"
-	CodeRouterNotReady       ErrorCode = "ROUTER_NOT_READY"
-	CodeRouterDegraded       ErrorCode = "ROUTER_DEGRADED"
-	CodeRouterNotOwned       ErrorCode = "ROUTER_NOT_OWNED"
-	CodeRouterStateStale     ErrorCode = "ROUTER_STATE_STALE"
-	CodePortOccupied         ErrorCode = "PORT_OCCUPIED"
-	CodeAgentNotFound        ErrorCode = "AGENT_NOT_FOUND"
-	CodeConfigInvalid        ErrorCode = "CONFIG_INVALID"
-	CodeConfigNotWritable    ErrorCode = "CONFIG_NOT_WRITABLE"
-	CodePreviewStale         ErrorCode = "PREVIEW_STALE"
-	CodeBackupFailed         ErrorCode = "BACKUP_FAILED"
-	CodeWriteFailed          ErrorCode = "WRITE_FAILED"
-	CodeRollbackFailed       ErrorCode = "ROLLBACK_FAILED"
-	CodeOperationTimeout     ErrorCode = "OPERATION_TIMEOUT"
+	CodeInvalidRequest              ErrorCode = "INVALID_REQUEST"
+	CodeUnknownMethod               ErrorCode = "UNKNOWN_METHOD"
+	CodeInvalidParams               ErrorCode = "INVALID_PARAMS"
+	CodeSidecarMissing              ErrorCode = "SIDECAR_MISSING"
+	CodeSidecarInvalid              ErrorCode = "SIDECAR_INVALID"
+	CodeRouterNotFound              ErrorCode = "ROUTER_NOT_FOUND"
+	CodeRouterAlreadyRunning        ErrorCode = "ROUTER_ALREADY_RUNNING"
+	CodeRouterStartFailed           ErrorCode = "ROUTER_START_FAILED"
+	CodeRouterNotReady              ErrorCode = "ROUTER_NOT_READY"
+	CodeRouterDegraded              ErrorCode = "ROUTER_DEGRADED"
+	CodeRouterNotOwned              ErrorCode = "ROUTER_NOT_OWNED"
+	CodeRouterStateStale            ErrorCode = "ROUTER_STATE_STALE"
+	CodePortOccupied                ErrorCode = "PORT_OCCUPIED"
+	CodeAgentNotFound               ErrorCode = "AGENT_NOT_FOUND"
+	CodeConfigInvalid               ErrorCode = "CONFIG_INVALID"
+	CodeConfigNotWritable           ErrorCode = "CONFIG_NOT_WRITABLE"
+	CodePreviewStale                ErrorCode = "PREVIEW_STALE"
+	CodeBackupFailed                ErrorCode = "BACKUP_FAILED"
+	CodeWriteFailed                 ErrorCode = "WRITE_FAILED"
+	CodeRollbackFailed              ErrorCode = "ROLLBACK_FAILED"
+	CodeOperationTimeout            ErrorCode = "OPERATION_TIMEOUT"
+	CodeOccupantNotFound            ErrorCode = "OCCUPANT_NOT_FOUND"
+	CodeOccupantNotOwned            ErrorCode = "OCCUPANT_NOT_OWNED"
+	CodeOccupantIdentityUnavailable ErrorCode = "OCCUPANT_IDENTITY_UNAVAILABLE"
+	CodeOccupantChanged             ErrorCode = "OCCUPANT_CHANGED"
+	CodeOccupantProtected           ErrorCode = "OCCUPANT_PROTECTED"
+	CodeOccupantTerminationFailed   ErrorCode = "OCCUPANT_TERMINATION_FAILED"
+	CodePortReleaseTimeout          ErrorCode = "PORT_RELEASE_TIMEOUT"
+	CodeConfirmationExpired         ErrorCode = "CONFIRMATION_EXPIRED"
 )
 
 // Request is one newline-delimited manager request. Params is method-specific.
@@ -76,17 +86,19 @@ type Error struct {
 // Deadlines returns the required internal deadline for every protocol method.
 func Deadlines() map[Method]time.Duration {
 	return map[Method]time.Duration{
-		MethodManagerInfo:        time.Second,
-		MethodDiagnosticsCollect: 5 * time.Second,
-		MethodRouterStatus:       time.Second,
-		MethodRouterStart:        20 * time.Second,
-		MethodRouterStop:         7 * time.Second,
-		MethodRouterHealth:       5 * time.Second,
-		MethodRouterVersion:      time.Second,
-		MethodRouterLogs:         2 * time.Second,
-		MethodAgentDetect:        5 * time.Second,
-		MethodAgentPreview:       5 * time.Second,
-		MethodAgentWrite:         30 * time.Second,
+		MethodManagerInfo:                  time.Second,
+		MethodDiagnosticsCollect:           5 * time.Second,
+		MethodRouterStatus:                 time.Second,
+		MethodRouterStart:                  20 * time.Second,
+		MethodRouterStop:                   7 * time.Second,
+		MethodRouterHealth:                 5 * time.Second,
+		MethodRouterVersion:                time.Second,
+		MethodRouterLogs:                   2 * time.Second,
+		MethodRouterInspectOccupant:        2 * time.Second,
+		MethodRouterForceTerminateOccupant: 3 * time.Second,
+		MethodAgentDetect:                  5 * time.Second,
+		MethodAgentPreview:                 5 * time.Second,
+		MethodAgentWrite:                   30 * time.Second,
 	}
 }
 
@@ -104,6 +116,10 @@ type RouterStartParams struct {
 
 type RouterLogsParams struct {
 	Limit int `json:"limit,omitempty"`
+}
+
+type RouterForceTerminateOccupantParams struct {
+	ConfirmationToken string `json:"confirmation_token"`
 }
 
 type AgentSelection struct {
@@ -151,6 +167,19 @@ type RouterVersionResult struct {
 
 type RouterLogsResult struct {
 	Lines []string `json:"lines"`
+}
+
+type RouterOccupantInspectionResult struct {
+	PID               int       `json:"pid"`
+	ProcessName       string    `json:"process_name"`
+	Executable        string    `json:"executable"`
+	ListenAddr        string    `json:"listen_addr"`
+	ConfirmationToken string    `json:"confirmation_token"`
+	ExpiresAt         time.Time `json:"expires_at"`
+}
+
+type RouterOccupantTerminationResult struct {
+	State string `json:"state"`
 }
 
 type AgentState struct {

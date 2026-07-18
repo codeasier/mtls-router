@@ -84,6 +84,47 @@ func TestSignalNeverTrustsPIDAlone(t *testing.T) {
 	_ = cmd.Wait()
 }
 
+func TestSameIdentityRequiresEveryField(t *testing.T) {
+	identity, err := Inspect(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, changed := range []Identity{
+		{PID: identity.PID + 1, StartedAt: identity.StartedAt, Executable: identity.Executable},
+		{PID: identity.PID, StartedAt: identity.StartedAt + "-changed", Executable: identity.Executable},
+		{PID: identity.PID, StartedAt: identity.StartedAt, Executable: filepath.Join(t.TempDir(), "other")},
+		{},
+	} {
+		same, err := SameIdentity(identity, changed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if same {
+			t.Fatalf("changed identity matched: %+v", changed)
+		}
+	}
+	same, err := SameIdentity(identity, identity)
+	if err != nil || !same {
+		t.Fatalf("same identity = %t, %v", same, err)
+	}
+}
+
+func TestSignalIdentityRefusesChangedIdentity(t *testing.T) {
+	cmd := helperProcess(t)
+	identity, err := Inspect(cmd.Process.Pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := identity
+	changed.Executable = filepath.Join(t.TempDir(), "other")
+	if err := SignalIdentity(changed, os.Kill); !errors.Is(err, ErrIdentityMismatch) {
+		t.Fatalf("changed signal error = %v", err)
+	}
+	if err := processAlive(cmd.Process.Pid); err != nil {
+		t.Fatalf("changed identity was signaled: %v", err)
+	}
+}
+
 func helperProcess(t *testing.T) *exec.Cmd {
 	t.Helper()
 	cmd := exec.Command(os.Args[0], "-test.run=TestProcessHelper", "--", strconv.FormatInt(time.Now().UnixNano(), 10))

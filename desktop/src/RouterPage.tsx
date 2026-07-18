@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useI18n, type Translator } from "./i18n";
 import type {
   DesktopApi,
+  OccupantInspection,
   PollSnapshot,
   RouterHealth,
   RouterStatus,
@@ -16,7 +17,10 @@ type RouterMessage =
   | "router.error.start"
   | "router.error.stop"
   | "router.error.health"
-  | "router.error.sidecarReinstall";
+  | "router.error.sidecarReinstall"
+  | "router.occupant.released";
+type OccupantError =
+  "not-owned" | "unverifiable" | "protected" | "changed" | "temporary";
 export const MAX_FAILURE_LOG_LINES = 20;
 type HealthState = "unknown" | "checking" | "healthy" | "degraded" | "stale";
 type ViewState =
@@ -222,6 +226,31 @@ function sidecarError(code: string): boolean {
   return code === "SIDECAR_MISSING" || code === "SIDECAR_INVALID";
 }
 
+function occupantError(code: string): OccupantError {
+  switch (code) {
+    case "OCCUPANT_NOT_OWNED":
+      return "not-owned";
+    case "OCCUPANT_IDENTITY_UNAVAILABLE":
+      return "unverifiable";
+    case "OCCUPANT_PROTECTED":
+      return "protected";
+    case "OCCUPANT_CHANGED":
+    case "OCCUPANT_NOT_FOUND":
+    case "CONFIRMATION_EXPIRED":
+      return "changed";
+    default:
+      return "temporary";
+  }
+}
+
+const occupantErrorKeys = {
+  "not-owned": "router.occupant.error.not-owned",
+  unverifiable: "router.occupant.error.unverifiable",
+  protected: "router.occupant.error.protected",
+  changed: "router.occupant.error.changed",
+  temporary: "router.occupant.error.temporary",
+} as const;
+
 export function RouterPage({
   api,
   onNavigateToAgents,
@@ -240,7 +269,17 @@ export function RouterPage({
   const [now, setNow] = useState(0);
   const [reinstallRequired, setReinstallRequired] = useState(false);
   const [healthFailed, setHealthFailed] = useState(false);
+  const [occupant, setOccupant] = useState<OccupantInspection | null>(null);
+  const [occupantFailure, setOccupantFailure] = useState<OccupantError | null>(
+    null,
+  );
+  const [inspectingOccupant, setInspectingOccupant] = useState(false);
+  const [occupantDialogOpen, setOccupantDialogOpen] = useState(false);
+  const [terminatingOccupant, setTerminatingOccupant] = useState(false);
   const latestRevision = useRef(-1);
+  const occupantGeneration = useRef(0);
+  const statusState = useRef<RouterStatus | null>(null);
+  const cancelOccupantRef = useRef<HTMLButtonElement>(null);
 
   const applySnapshot = useCallback((snapshot: PollSnapshot) => {
     if (snapshot.revision <= latestRevision.current) return;
@@ -248,6 +287,7 @@ export function RouterPage({
     setSnapshotRevision(snapshot.revision);
     setNow(Date.now());
     if (snapshot.status) {
+      statusState.current = snapshot.status;
       setStatus(snapshot.status);
       setFailed(false);
       if (!snapshot.status_error) {
@@ -282,6 +322,33 @@ export function RouterPage({
       setMessage(actionErrorKey("health"));
     }
   }, []);
+
+  const inspectOccupant = useCallback(async () => {
+    const generation = ++occupantGeneration.current;
+    setInspectingOccupant(true);
+    setOccupant(null);
+    setOccupantFailure(null);
+    try {
+      const inspected = await api.inspectRouterOccupant();
+      if (
+        generation === occupantGeneration.current &&
+        statusState.current?.state === "unknown_occupant"
+      ) {
+        setOccupant(inspected);
+      }
+    } catch (error) {
+      if (
+        generation === occupantGeneration.current &&
+        statusState.current?.state === "unknown_occupant"
+      ) {
+        setOccupantFailure(occupantError(errorCode(error)));
+      }
+    } finally {
+      if (generation === occupantGeneration.current) {
+        setInspectingOccupant(false);
+      }
+    }
+  }, [api]);
 
   useEffect(() => {
     let current = true;
@@ -329,6 +396,33 @@ export function RouterPage({
     const timer = window.setTimeout(() => setNow(Date.now()), remaining);
     return () => window.clearTimeout(timer);
   }, [health, snapshotRevision]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      if (status?.state === "unknown_occupant") {
+        void inspectOccupant();
+        return;
+      }
+      occupantGeneration.current += 1;
+      setOccupant(null);
+      setOccupantFailure(null);
+      setInspectingOccupant(false);
+      setOccupantDialogOpen(false);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [status?.state, inspectOccupant]);
+
+  useEffect(() => {
+    if (!occupantDialogOpen) return;
+    cancelOccupantRef.current?.focus();
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape" && !terminatingOccupant) {
+        setOccupantDialogOpen(false);
+      }
+    }
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [occupantDialogOpen, terminatingOccupant]);
 
   const available = isAvailable(status);
   const observedHealth = checkingHealth
@@ -425,6 +519,33 @@ export function RouterPage({
     }
   }
 
+  async function forceTerminateOccupant() {
+    if (!occupant || terminatingOccupant) return;
+    setTerminatingOccupant(true);
+    setMessage("");
+    try {
+      const next = await api.forceTerminateRouterOccupant(
+        occupant.confirmation_token,
+      );
+      statusState.current = next;
+      setStatus(next);
+      setOccupantDialogOpen(false);
+      setOccupant(null);
+      setHealth(null);
+      await refreshSnapshot();
+      setMessage("router.occupant.released");
+    } catch (error) {
+      const failure = occupantError(errorCode(error));
+      if (failure === "changed") {
+        setOccupantDialogOpen(false);
+        setOccupant(null);
+      }
+      setOccupantFailure(failure);
+    } finally {
+      setTerminatingOccupant(false);
+    }
+  }
+
   return (
     <div className={`panel-grid panel-grid--${copy.tone}`}>
       <section className="primary-panel" aria-labelledby="router-state-heading">
@@ -498,6 +619,56 @@ export function RouterPage({
           </section>
         )}
 
+        {currentState === "occupied" && (
+          <section
+            className="occupant-panel"
+            aria-labelledby="occupant-recovery-heading"
+          >
+            <div>
+              <p className="overline">{t("router.occupant.overline")}</p>
+              <h3 id="occupant-recovery-heading">
+                {t("router.occupant.heading")}
+              </h3>
+            </div>
+            {inspectingOccupant && (
+              <p role="status">{t("router.occupant.inspecting")}</p>
+            )}
+            {occupant && !inspectingOccupant && (
+              <div className="occupant-target">
+                <dl>
+                  <div>
+                    <dt>{t("router.occupant.process")}</dt>
+                    <dd>{occupant.process_name}</dd>
+                  </div>
+                  <div>
+                    <dt>{t("router.occupant.pid")}</dt>
+                    <dd>{occupant.pid}</dd>
+                  </div>
+                </dl>
+                <button
+                  type="button"
+                  className="control-button control-button--danger"
+                  onClick={() => setOccupantDialogOpen(true)}
+                >
+                  {t("router.occupant.forceAction")}
+                </button>
+              </div>
+            )}
+            {occupantFailure && !inspectingOccupant && (
+              <div className="occupant-blocked" role="alert">
+                <p>{t(occupantErrorKeys[occupantFailure])}</p>
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() => void inspectOccupant()}
+                >
+                  {t("router.occupant.retry")}
+                </button>
+              </div>
+            )}
+          </section>
+        )}
+
         <div className="action-row" aria-label={t("router.actionsAria")}>
           <button
             type="button"
@@ -535,6 +706,67 @@ export function RouterPage({
           </button>
         </div>
       </section>
+      {occupantDialogOpen && occupant && (
+        <div
+          className="dialog-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !terminatingOccupant) {
+              setOccupantDialogOpen(false);
+            }
+          }}
+        >
+          <section
+            className="danger-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="occupant-dialog-title"
+            aria-describedby="occupant-dialog-warning"
+          >
+            <p className="overline">{t("router.occupant.dialogOverline")}</p>
+            <h2 id="occupant-dialog-title">
+              {t("router.occupant.dialogTitle")}
+            </h2>
+            <dl className="danger-dialog__details">
+              <div>
+                <dt>{t("router.occupant.process")}</dt>
+                <dd>{occupant.process_name}</dd>
+              </div>
+              <div>
+                <dt>{t("router.occupant.pid")}</dt>
+                <dd>{occupant.pid}</dd>
+              </div>
+              <div className="danger-dialog__path">
+                <dt>{t("router.occupant.executable")}</dt>
+                <dd>{occupant.executable}</dd>
+              </div>
+            </dl>
+            <p id="occupant-dialog-warning" className="danger-dialog__warning">
+              {t("router.occupant.warning")}
+            </p>
+            <div className="danger-dialog__actions">
+              <button
+                ref={cancelOccupantRef}
+                type="button"
+                className="text-button"
+                disabled={terminatingOccupant}
+                onClick={() => setOccupantDialogOpen(false)}
+              >
+                {t("router.occupant.cancel")}
+              </button>
+              <button
+                type="button"
+                className="control-button control-button--danger"
+                disabled={terminatingOccupant}
+                onClick={() => void forceTerminateOccupant()}
+              >
+                {terminatingOccupant
+                  ? t("router.occupant.terminating")
+                  : t("router.occupant.confirm")}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

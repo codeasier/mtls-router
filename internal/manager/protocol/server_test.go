@@ -15,6 +15,7 @@ func TestDeadlinesCoverEveryMethod(t *testing.T) {
 		MethodRouterStatus: time.Second, MethodRouterStart: 20 * time.Second,
 		MethodRouterStop: 7 * time.Second, MethodRouterHealth: 5 * time.Second,
 		MethodRouterVersion: time.Second, MethodRouterLogs: 2 * time.Second,
+		MethodRouterInspectOccupant: 2 * time.Second, MethodRouterForceTerminateOccupant: 3 * time.Second,
 		MethodAgentDetect: 5 * time.Second, MethodAgentPreview: 5 * time.Second,
 		MethodAgentWrite: 30 * time.Second,
 	}

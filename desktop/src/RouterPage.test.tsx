@@ -396,4 +396,193 @@ describe("RouterPage actions", () => {
   });
 });
 
+describe("RouterPage occupant recovery", () => {
+  const inspection = {
+    pid: 4242,
+    process_name: "example-server",
+    executable:
+      "/Users/example/a-very-long-directory-name/another-directory/example-server",
+    listen_addr: "127.0.0.1:19099",
+    confirmation_token: "opaque-confirmation-token",
+    expires_at: "2026-07-18T12:00:30Z",
+  };
+
+  function occupiedApi(overrides = {}) {
+    return createMockApi({
+      getRouterStatus: vi.fn().mockResolvedValue({
+        state: "unknown_occupant",
+        listen_addr: "127.0.0.1:19099",
+      }),
+      inspectRouterOccupant: vi.fn().mockResolvedValue(inspection),
+      ...overrides,
+    });
+  }
+
+  it("inspects on occupied transition, shows a target, and keeps Stop disabled", async () => {
+    const api = occupiedApi();
+    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+
+    expect(await screen.findByText("example-server")).toBeInTheDocument();
+    expect(screen.getByText("4242")).toBeInTheDocument();
+    expect(api.inspectRouterOccupant).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "停止路由" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "强制终止占用进程" }),
+    ).toBeEnabled();
+  });
+
+  it.each([
+    ["OCCUPANT_NOT_OWNED", "该进程不属于当前用户"],
+    ["OCCUPANT_IDENTITY_UNAVAILABLE", "无法完整验证占用进程身份"],
+    ["OCCUPANT_PROTECTED", "该进程受桌面生命周期保护"],
+    ["OCCUPANT_CHANGED", "端口占用进程已变化"],
+    ["MANAGER_FAILED", "暂时无法检查占用进程"],
+  ])("explains blocked inspection %s and allows retry", async (code, copy) => {
+    const inspect = vi
+      .fn()
+      .mockRejectedValueOnce({ code })
+      .mockResolvedValueOnce(inspection);
+    const api = occupiedApi({ inspectRouterOccupant: inspect });
+    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+
+    expect(await screen.findByText(new RegExp(copy))).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "强制终止占用进程" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "重试检查" }));
+    expect(await screen.findByText("example-server")).toBeInTheDocument();
+    expect(inspect).toHaveBeenCalledTimes(2);
+  });
+
+  it("discards an in-flight inspection after status leaves occupied", async () => {
+    let observer: ((snapshot: PollSnapshot) => void) | undefined;
+    let resolveInspection: ((value: typeof inspection) => void) | undefined;
+    const api = createMockApi({
+      getPollSnapshot: vi.fn().mockResolvedValue({
+        revision: 1,
+        status: { state: "unknown_occupant" },
+      }),
+      subscribePollSnapshots: vi.fn(async (listener) => {
+        observer = listener;
+        return () => undefined;
+      }),
+      inspectRouterOccupant: vi.fn(
+        () =>
+          new Promise<typeof inspection>((resolve) => {
+            resolveInspection = resolve;
+          }),
+      ),
+    });
+    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    expect(
+      await screen.findByText("正在安全检查占用进程..."),
+    ).toBeInTheDocument();
+
+    act(() => observer?.({ revision: 2, status: { state: "absent" } }));
+    await act(async () => resolveInspection?.(inspection));
+
+    expect(screen.getByText("路由未启动")).toBeInTheDocument();
+    expect(screen.queryByText("example-server")).not.toBeInTheDocument();
+  });
+
+  it("shows complete confirmation details, focuses Cancel, and cancels without a request", async () => {
+    const api = occupiedApi();
+    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "强制终止占用进程" }),
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "确认强制终止占用进程" });
+    expect(dialog).toHaveTextContent(inspection.process_name);
+    expect(dialog).toHaveTextContent(String(inspection.pid));
+    expect(dialog).toHaveTextContent(inspection.executable);
+    expect(dialog).toHaveTextContent("未保存的数据可能丢失");
+    const cancel = screen.getByRole("button", { name: "取消" });
+    expect(cancel).toHaveFocus();
+    fireEvent.click(cancel);
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(api.forceTerminateRouterOccupant).not.toHaveBeenCalled();
+  });
+
+  it("closes on Escape before submit without a termination request", async () => {
+    const api = occupiedApi();
+    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "强制终止占用进程" }),
+    );
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(api.forceTerminateRouterOccupant).not.toHaveBeenCalled();
+  });
+
+  it("locks duplicate submission and dismissal until termination completes", async () => {
+    let resolveTermination: ((status: RouterStatus) => void) | undefined;
+    const terminate = vi.fn(
+      () =>
+        new Promise<RouterStatus>((resolve) => {
+          resolveTermination = resolve;
+        }),
+    );
+    const api = occupiedApi({ forceTerminateRouterOccupant: terminate });
+    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "强制终止占用进程" }),
+    );
+    const confirm = screen.getByRole("button", { name: "强制终止" });
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.mouseDown(screen.getByRole("dialog").parentElement!);
+
+    expect(terminate).toHaveBeenCalledOnce();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "取消" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "正在终止..." })).toBeDisabled();
+
+    await act(async () => resolveTermination?.({ state: "absent" }));
+  });
+
+  it("releases the port, refreshes, and never starts the router", async () => {
+    const getRouterStatus = vi
+      .fn()
+      .mockResolvedValueOnce({ state: "unknown_occupant" })
+      .mockResolvedValue({ state: "absent" });
+    const api = occupiedApi({ getRouterStatus });
+    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "强制终止占用进程" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "强制终止" }));
+
+    expect(await screen.findByText(/端口已释放/)).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(api.forceTerminateRouterOccupant).toHaveBeenCalledWith(
+      inspection.confirmation_token,
+    );
+    expect(api.startRouter).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "启动路由" })).toBeEnabled();
+  });
+
+  it.each(["OCCUPANT_CHANGED", "CONFIRMATION_EXPIRED"])(
+    "clears stale target after %s and requires reinspection",
+    async (code) => {
+      const api = occupiedApi({
+        forceTerminateRouterOccupant: vi.fn().mockRejectedValue({ code }),
+      });
+      renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+      fireEvent.click(
+        await screen.findByRole("button", { name: "强制终止占用进程" }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "强制终止" }));
+
+      expect(await screen.findByText(/端口占用进程已变化/)).toBeInTheDocument();
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(screen.queryByText("example-server")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "重试检查" })).toBeEnabled();
+    },
+  );
+});
+
 afterEach(() => vi.useRealTimers());

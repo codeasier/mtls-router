@@ -601,6 +601,137 @@ main {
   box-shadow: 0 9px 18px rgba(150, 60, 47, 0.18);
 }
 
+.control-button--danger {
+  color: #fffaf4;
+  border-color: var(--danger);
+  background: var(--danger);
+  box-shadow: 0 8px 18px rgba(150, 60, 47, 0.2);
+}
+
+.control-button--danger:hover:not(:disabled) {
+  border-color: #70291f;
+  background: #70291f;
+}
+
+.occupant-panel {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid rgba(150, 60, 47, 0.32);
+  border-radius: 12px;
+  background: linear-gradient(
+    135deg,
+    var(--danger-soft),
+    var(--surface-raised)
+  );
+}
+
+.occupant-panel h3,
+.danger-dialog h2 {
+  margin: 0;
+}
+
+.occupant-panel > p,
+.occupant-blocked p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.occupant-target,
+.occupant-blocked {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+}
+
+.occupant-target dl {
+  display: flex;
+  gap: 26px;
+  margin: 0;
+}
+
+.occupant-target dt,
+.danger-dialog__details dt {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.occupant-target dd,
+.danger-dialog__details dd {
+  margin: 4px 0 0;
+  font-weight: 750;
+}
+
+.dialog-backdrop {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(38, 29, 23, 0.66);
+}
+
+.danger-dialog {
+  width: min(620px, 100%);
+  max-height: calc(100dvh - 48px);
+  padding: 24px;
+  overflow: auto;
+  border: 2px solid var(--danger);
+  border-radius: 14px;
+  background: var(--surface-raised);
+  box-shadow: 0 22px 60px rgba(38, 29, 23, 0.35);
+}
+
+.danger-dialog__details {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(90px, 0.35fr);
+  gap: 14px;
+  margin: 22px 0;
+}
+
+.danger-dialog__details > div {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--paper-deep);
+}
+
+.danger-dialog__path {
+  grid-column: 1 / -1;
+}
+
+.danger-dialog__path dd {
+  font-family: "SFMono-Regular", Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.danger-dialog__warning {
+  margin: 0;
+  padding: 13px;
+  color: var(--danger);
+  border-left: 3px solid var(--danger);
+  background: var(--danger-soft);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.danger-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 22px;
+}
+
 .text-button {
   color: var(--ink);
   border: 1px solid var(--line-strong);
@@ -1743,6 +1874,36 @@ main {
     display: flex;
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .occupant-target,
+  .occupant-blocked,
+  .danger-dialog__actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .occupant-target dl,
+  .danger-dialog__details {
+    grid-template-columns: 1fr;
+  }
+
+  .occupant-target dl {
+    display: grid;
+    gap: 10px;
+  }
+
+  .danger-dialog__path {
+    grid-column: auto;
+  }
+
+  .dialog-backdrop {
+    padding: 10px;
+  }
+
+  .danger-dialog {
+    max-height: calc(100dvh - 20px);
+    padding: 18px;
   }
 
   .signal {

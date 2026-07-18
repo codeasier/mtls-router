@@ -63,7 +63,7 @@ export const en: Record<TranslationKey, string> = {
   "router.state.occupied.title": "Port is occupied",
   "router.state.occupied.signal": "Port conflict",
   "router.state.occupied.detail":
-    "An unknown process owns the local port. It will not be terminated.",
+    "An unknown process owns the local port. It can be force-terminated only after identity verification and explicit confirmation.",
   "router.state.failed.title": "Router failed to start",
   "router.state.failed.signal": "Action required",
   "router.state.failed.detail":
@@ -105,6 +105,33 @@ export const en: Record<TranslationKey, string> = {
   "router.start": "Start router",
   "router.stop": "Stop router",
   "router.retryHealth": "Retry health check",
+  "router.occupant.overline": "PORT RECOVERY",
+  "router.occupant.heading": "Inspect the port occupant",
+  "router.occupant.inspecting": "Safely inspecting the occupant...",
+  "router.occupant.process": "Process",
+  "router.occupant.pid": "PID",
+  "router.occupant.executable": "Complete executable path",
+  "router.occupant.forceAction": "Force terminate occupant",
+  "router.occupant.retry": "Retry inspection",
+  "router.occupant.error.not-owned":
+    "This process belongs to another user. The app will not request elevation or terminate it.",
+  "router.occupant.error.unverifiable":
+    "The occupant identity cannot be verified completely, so it cannot be terminated safely.",
+  "router.occupant.error.protected":
+    "This process is protected by the desktop lifecycle and cannot be terminated through port recovery.",
+  "router.occupant.error.changed":
+    "The port occupant changed or the confirmation expired. Inspect it again before confirming.",
+  "router.occupant.error.temporary":
+    "The occupant cannot be inspected right now. No termination request was sent.",
+  "router.occupant.dialogOverline": "IRREVERSIBLE ACTION",
+  "router.occupant.dialogTitle": "Confirm force termination",
+  "router.occupant.warning":
+    "Termination is immediate and will not attempt a graceful exit first. Unsaved data in this process may be lost.",
+  "router.occupant.cancel": "Cancel",
+  "router.occupant.confirm": "Force terminate",
+  "router.occupant.terminating": "Terminating...",
+  "router.occupant.released":
+    "The port was released. The router remains stopped until you select Start router.",
   "router.desktop": "Desktop",
   "router.manager": "Manager",
   "router.router": "Router",

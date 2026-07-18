@@ -37,6 +37,8 @@ Go control plane rather than diverging implementations.
 - Manage router lifecycle, status, health, version, and logs safely.
 - Run in the system tray and enable current-user autostart by default.
 - Reuse compatible externally started routers without taking ownership.
+- Provide an explicit, confirmed recovery action for an inspectable current-user
+  process occupying port 19099.
 - Detect, preview, and configure Claude Code, opencode, and Codex.
 - Keep API keys out of desktop persistence, process arguments, environment
   variables, logs, state, protocol responses, and diagnostics.
@@ -53,7 +55,8 @@ Go control plane rather than diverging implementations.
 - Installing or launching Claude Code, opencode, or Codex.
 - Exposing router management endpoints publicly.
 - Automatically choosing a new local port when 19099 is occupied.
-- Killing an unrecognized process that occupies port 19099.
+- Automatically killing an unrecognized process that occupies port 19099, or
+  killing one without current-user ownership and complete identity validation.
 - Automatically restoring or deleting Agent files, backups, logs, or state
   during uninstall.
 - Adding a general-purpose shell, arbitrary file API, or arbitrary process API
@@ -114,6 +117,9 @@ Every manager method MUST have an internal deadline:
 - `diagnostics.collect`, `router.health`, `agent.detect`, and `agent.preview`:
   five seconds.
 - `router.stop`: seven seconds, including the five-second graceful wait.
+- `router.inspect_occupant`: two seconds.
+- `router.force_terminate_occupant`: three seconds, including a two-second
+  post-termination wait.
 - `router.start`: twenty seconds, including startup probe/readiness.
 - `agent.write`: thirty seconds, including rollback.
 
@@ -210,6 +216,8 @@ Required capabilities are:
 - `router.health`
 - `router.version`
 - `router.logs`
+- `router.inspect_occupant`
+- `router.force_terminate_occupant`
 - `agent.detect`
 - `agent.preview`
 - `agent.write`
@@ -351,8 +359,32 @@ Agent guidance, and does not stop it when the desktop quits.
 #### Scenario: unknown occupant
 
 Given an unrecognized service on port 19099, when the desktop starts, then it
-reports a port conflict, does not kill the service, and does not silently
-choose another port.
+reports a port conflict, does not terminate the service automatically, and does
+not silently choose another port.
+
+An unknown occupant MAY be force-terminated only when native inspection proves
+one complete process identity owned by the current manager user. The Router
+page MUST show the process name and PID and require a destructive confirmation
+dialog that also shows the complete executable path and warns that termination
+is immediate and may lose unsaved data. The manager MUST consume a short-lived,
+single-use confirmation token, revalidate the full listener and process
+identity immediately before signaling, and use unconditional process
+termination without first sending a graceful signal.
+
+This exception MUST NOT request elevation or apply to another user's,
+ambiguous, changed, protected, or unverifiable process. It MUST NOT alter the
+regular Stop, Quit, parent-death, external-router, or tray ownership rules. The
+tray MUST NOT expose force termination, and releasing the port MUST NOT start
+the router automatically. If inspection or termination is unavailable, the UI
+MUST retain manual operating-system-tool recovery guidance.
+
+#### Scenario: explicitly confirmed current-user occupant
+
+Given native inspection identifies one complete current-user occupant, when the
+user verifies its process name, PID, and complete executable path, accepts the
+immediate data-loss warning, and explicitly confirms force termination, then
+the manager revalidates and terminates only that unchanged identity, verifies
+port release, and leaves the router stopped.
 
 ### FR-5: Router status and health UI
 
@@ -655,6 +687,14 @@ least:
 - `ROUTER_NOT_OWNED`
 - `ROUTER_STATE_STALE`
 - `PORT_OCCUPIED`
+- `OCCUPANT_NOT_FOUND`
+- `OCCUPANT_NOT_OWNED`
+- `OCCUPANT_IDENTITY_UNAVAILABLE`
+- `OCCUPANT_CHANGED`
+- `OCCUPANT_PROTECTED`
+- `OCCUPANT_TERMINATION_FAILED`
+- `PORT_RELEASE_TIMEOUT`
+- `CONFIRMATION_EXPIRED`
 - `AGENT_NOT_FOUND`
 - `CONFIG_INVALID`
 - `CONFIG_NOT_WRITABLE`

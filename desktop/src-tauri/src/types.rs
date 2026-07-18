@@ -81,6 +81,16 @@ pub struct RouterLogs {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct OccupantInspection {
+    pub pid: u32,
+    pub process_name: String,
+    pub executable: String,
+    pub listen_addr: String,
+    pub confirmation_token: String,
+    pub expires_at: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct Diagnostics {
     pub summary: String,
 }
