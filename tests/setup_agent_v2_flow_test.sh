@@ -38,6 +38,7 @@ args = ["bash", script]
 args += (["agent", mode + "-config"] if command_style == "subcommand" else ["--" + mode + "-config"])
 args += ["--agent=claude,opencode,codex"]
 if config_arg == "config": args += ["--model-config=" + config]
+elif config_arg != "wizard": args += ["--model-config=" + config_arg]
 pid, fd = pty.fork()
 if pid == 0: os.execvp("bash", args)
 out = bytearray(); sent = set(); replies = [("输入隐藏", b"v2-key-canary\n")]
@@ -77,4 +78,5 @@ wizard_out="$(run_pty print success subcommand wizard failure)"; [[ "$wizard_out
 grep -Fq 'render shape_ok' "$tmp/manager.log" && grep -Fq 'write key_ok approvals_ok' "$tmp/manager.log" || fail 'v2 request checks missing'; ! grep -Fq 'v2-key-canary' "$tmp/manager.log" || fail 'fake manager log leaked key'
 [[ "$(grep -c '^method agent.preview$' "$tmp/manager.log")" == 3 && "$(grep -c '^method agent.write$' "$tmp/manager.log")" == 2 ]] || fail 'print/no-state or terminal flow method matrix changed'
 link="$tmp/config-link"; ln -s "$config" "$link"; if "${common[@]}" bash "$package/setup.sh" agent print-config --agent=claude --model-config="$link" </dev/null >/dev/null 2>&1; then fail 'noninteractive/symlink config accepted'; fi
+invalid="$tmp/invalid.json"; printf '[]\n' >"$invalid"; models_before="$(grep -c '^method agent.models$' "$tmp/manager.log")"; if invalid_out="$(run_pty print success subcommand "$invalid" failure)"; then :; fi; [[ "$invalid_out" != *'输入隐藏'* ]] || fail 'invalid model config prompted for key'; [[ "$(grep -c '^method agent.models$' "$tmp/manager.log")" == "$models_before" ]] || fail 'invalid model config reached model discovery'
 printf 'PASS: executable Shell v2 Agent model flow\n'

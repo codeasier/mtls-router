@@ -47,8 +47,9 @@ const (
 // OperationError is safe to return through the management protocol. It never
 // includes configuration contents or an API key.
 type OperationError struct {
-	Code ErrorCode
-	msg  string
+	Code  ErrorCode
+	msg   string
+	cause error
 }
 
 // CatalogBinding verifies a catalog token without reading Agent files.
@@ -131,8 +132,14 @@ func ValidateRefreshedModels(selected []Kind, rawConfig json.RawMessage, refresh
 
 func (e *OperationError) Error() string { return e.msg }
 
+func (e *OperationError) Unwrap() error { return e.cause }
+
 func operationError(code ErrorCode, message string) error {
 	return &OperationError{Code: code, msg: message}
+}
+
+func operationErrorWithCause(code ErrorCode, message string, cause error) error {
+	return &OperationError{Code: code, msg: message, cause: cause}
 }
 
 // CodeOf extracts a stable error code from an Agent operation error.
@@ -452,7 +459,7 @@ func (s *Service) validateV2(selected []Kind, catalogToken string, rawConfig jso
 	}
 	config, err := modelconfig.Decode(rawConfig, claims.Agents, claims.Models)
 	if err != nil {
-		return modelconfig.CatalogClaims{}, nil, nil, operationError(CodeModelConfigInvalid, "canonical model configuration is invalid")
+		return modelconfig.CatalogClaims{}, nil, nil, operationErrorWithCause(CodeModelConfigInvalid, "canonical model configuration is invalid", err)
 	}
 	canonical, err := modelconfig.Canonical(config)
 	if err != nil {

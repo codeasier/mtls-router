@@ -262,6 +262,17 @@ func TestSanitizeTextRedactsURLUserinfoBeforeQueryValues(t *testing.T) {
 	}
 }
 
+func TestMapAgentErrorIncludesSafeValidationDetails(t *testing.T) {
+	err := &modelconfig.ValidationError{Path: "/opencode/models/model-a/options/image_url", Rule: "protected_path"}
+	got := mapAgentError(err)
+	if got.Code != protocol.CodeModelConfigInvalid || got.Details == nil {
+		t.Fatalf("mapped error = %#v", got)
+	}
+	if got.Details.Path != "/opencode/models/model-a/options/image_url" || got.Details.Rule != "protected_path" {
+		t.Fatalf("details = %#v", got.Details)
+	}
+}
+
 func TestHandlersRejectInvalidTypedParameters(t *testing.T) {
 	manager := newWithDependencies(Config{}, dependencies{
 		info:     func() protocol.ManagerInfoResult { return protocol.ManagerInfoResult{} },

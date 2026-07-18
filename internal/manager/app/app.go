@@ -498,16 +498,14 @@ func (a *App) agentWrite(ctx context.Context, params json.RawMessage) (any, *pro
 		request.APIKey = ""
 		return nil, modelContractUnavailable()
 	}
-	writeRequest := agent.WriteRequest{Agents: selected, CatalogToken: request.CatalogToken, ModelConfig: request.ModelConfig, RevisionToken: request.RevisionToken, ApproveManagedOverwrite: *request.ApproveManagedOverwrite, ApproveCodexAuthChange: *request.ApproveCodexAuthChange, APIKey: request.APIKey}
+	writeRequest := agent.WriteRequest{Agents: selected, CatalogToken: request.CatalogToken, ModelConfig: request.ModelConfig, RevisionToken: request.RevisionToken, ApproveManagedOverwrite: *request.ApproveManagedOverwrite, ApproveCodexAuthChange: *request.ApproveCodexAuthChange}
 	validator, ok := a.deps.agent.(agentPreviewValidator)
 	if !ok {
 		request.APIKey = ""
-		writeRequest.APIKey = ""
 		return nil, modelContractUnavailable()
 	}
 	if validateErr := validator.ValidatePreview(ctx, writeRequest); validateErr != nil {
 		request.APIKey = ""
-		writeRequest.APIKey = ""
 		return nil, mapAgentError(validateErr)
 	}
 	binder, ok := a.deps.agent.(agentCatalogBinder)
@@ -534,7 +532,7 @@ func (a *App) agentWrite(ctx context.Context, params json.RawMessage) (any, *pro
 		request.APIKey = ""
 		return nil, mapAgentError(err)
 	}
-	request.APIKey = ""
+	writeRequest.APIKey, request.APIKey = request.APIKey, ""
 	result, writeErr := a.deps.agent.Write(ctx, writeRequest)
 	writeRequest.APIKey = ""
 	if writeErr != nil {
@@ -853,6 +851,10 @@ func mapLifecycleError(err *lifecycle.Error) *protocol.Error {
 
 func mapAgentError(err error) *protocol.Error {
 	code := protocol.ErrorCode(agent.CodeOf(err))
+	var validationErr *modelconfig.ValidationError
+	if code == "" && errors.As(err, &validationErr) {
+		code = protocol.CodeModelConfigInvalid
+	}
 	messages := map[protocol.ErrorCode]string{
 		protocol.CodeInvalidParams:        "invalid Agent parameters",
 		protocol.CodeAgentNotFound:        "selected Agent was not found",
@@ -875,7 +877,11 @@ func mapAgentError(err error) *protocol.Error {
 	if !ok {
 		return &protocol.Error{Code: protocol.CodeWriteFailed, Message: "Agent operation failed"}
 	}
-	return &protocol.Error{Code: code, Message: message}
+	result := &protocol.Error{Code: code, Message: message}
+	if errors.As(err, &validationErr) {
+		result.Details = &protocol.ErrorDetails{Path: validationErr.Path, Rule: validationErr.Rule}
+	}
+	return result
 }
 
 func validateSidecar(path string) *protocol.Error {

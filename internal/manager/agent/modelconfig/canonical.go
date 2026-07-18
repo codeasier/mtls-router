@@ -101,6 +101,8 @@ func appendJCS(out *bytes.Buffer, v any) error {
 		if err != nil {
 			return err
 		}
+		// Stop self-round-tripping custom values from recursing forever; they
+		// are not one of the JSON value types accepted above.
 		if reflect.DeepEqual(decoded, v) {
 			return invalid("", "json_value")
 		}

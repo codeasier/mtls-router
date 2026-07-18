@@ -9,6 +9,8 @@ import (
 	"unicode/utf8"
 )
 
+// Extension keys fail closed on normalized substrings. The deliberate
+// over-match keeps connection and credential-bearing settings manager-owned.
 var protectedFragments = []string{"apikey", "credential", "auth", "token", "secret", "password", "bearer", "header", "url", "endpoint", "provider", "connection", "transport", "proxy", "fetch"}
 
 func parseConfig(o object, selected []Agent, catalog []string) (*Config, error) {
