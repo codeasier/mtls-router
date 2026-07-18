@@ -1,5 +1,13 @@
 # Tauri Desktop Application Tasks
 
+> **Historical Agent-v1 evidence:** `specs/agent-models-config/spec.md` and its
+> dependency tasks supersede task 1.1 method/deadline assertions, task 1.6
+> `configured` semantics, tasks 1.7, 1.8, 1.10, 2.3, 2.4, 3.2 through 3.4, and
+> 4.5 only where they encode static models, key-after-preview, old preview/write
+> shapes, whole Claude `env`, Codex `custom`, or old automation. Existing check
+> marks below record historical v1 work and do not satisfy protocol-v2
+> acceptance. Unrelated task requirements remain in force.
+
 Tasks are ordered by dependency. A task is complete only when its code,
 tests, and required documentation pass the listed verification. Execution
 must not begin until this specification package is approved.

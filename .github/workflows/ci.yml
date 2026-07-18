@@ -174,7 +174,7 @@ jobs:
     env:
       VERSION: 0.1.0
       DEPLOYMENT_ID: dev
-      MANAGEMENT_PROTOCOL_VERSION: '1'
+      MANAGEMENT_PROTOCOL_VERSION: '2'
     strategy:
       fail-fast: false
       matrix:

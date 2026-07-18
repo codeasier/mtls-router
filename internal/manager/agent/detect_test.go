@@ -84,7 +84,7 @@ func TestDetectTreatsSupportedAgentsAsConfigurableWithoutCLIOrConfig(t *testing.
 func TestDetectClaudeConfiguredInvalidAndMissing(t *testing.T) {
 	home := t.TempDir()
 	path := filepath.Join(home, ".claude", "settings.json")
-	writeFile(t, path, `{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:19099","ANTHROPIC_AUTH_TOKEN":"claude-secret-canary"}}`)
+	writeFile(t, path, `{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:19443","ANTHROPIC_AUTH_TOKEN":"claude-secret-canary","ANTHROPIC_MODEL":"dynamic-main","ANTHROPIC_DEFAULT_HAIKU_MODEL":"dynamic-main","ANTHROPIC_DEFAULT_SONNET_MODEL":"dynamic-sonnet","ANTHROPIC_DEFAULT_OPUS_MODEL":"dynamic-main"}}`)
 
 	states := mustDetect(t, testDetector(home, map[string]bool{"claude": true}))
 	if !states[0].Exists || !states[0].Writable || !states[0].Configured || states[0].Invalid {
@@ -125,7 +125,7 @@ func TestDetectOpenCodeJSONCConfiguredAndProviderInvalid(t *testing.T) {
 		t.Fatalf("nonmatching JSONC state = %#v", states[1])
 	}
 
-	writeFile(t, path, `{"provider":{"mtls-router":{"options":{"baseURL":"http://127.0.0.1:19099/v1","apiKey":"open-code-secret-canary"}}}}`)
+	writeFile(t, path, `{"model":"mtls-router/dynamic-main","provider":{"mtls-router":{"npm":"@ai-sdk/openai-compatible","name":"mtls-router","options":{"baseURL":"http://127.0.0.1:19443/v1","apiKey":"open-code-secret-canary"},"models":{"dynamic-main":{"name":"dynamic-main"}}}}}`)
 	states = mustDetect(t, testDetector(home, map[string]bool{"opencode": true}))
 	if !states[1].Configured || states[1].Invalid {
 		t.Fatalf("configured JSONC state = %#v", states[1])
@@ -162,8 +162,24 @@ js_repl = false
 `)
 	writeFile(t, authPath, `{"OPENAI_API_KEY":"codex-secret-canary"}`)
 	states := mustDetect(t, testDetector(home, nil))
-	if !states[2].Detected || !states[2].Configured || states[2].Invalid || !states[2].Writable {
-		t.Fatalf("configured Codex state = %#v", states[2])
+	if !states[2].Detected || states[2].Configured || !states[2].Migratable || states[2].Invalid || !states[2].Writable {
+		t.Fatalf("migratable Codex state = %#v", states[2])
+	}
+
+	writeFile(t, configPath, `model_provider = "mtls-router"
+model = "dynamic-main"
+cli_auth_credentials_store = "file"
+model_reasoning_effort = "medium"
+[model_providers.mtls-router]
+name = "mtls-router"
+wire_api = "responses"
+requires_openai_auth = true
+base_url = "http://127.0.0.1:19443/v1"
+`)
+	writeFile(t, authPath, `{"auth_mode":"apikey","OPENAI_API_KEY":"codex-secret-canary"}`)
+	states = mustDetect(t, testDetector(home, nil))
+	if !states[2].Configured || states[2].Migratable || states[2].Invalid {
+		t.Fatalf("configured Codex v2 state = %#v", states[2])
 	}
 
 	writeFile(t, configPath, "model =\n")

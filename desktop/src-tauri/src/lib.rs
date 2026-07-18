@@ -2,6 +2,7 @@ mod autostart;
 mod commands;
 mod error;
 mod manager;
+mod model_config;
 mod orchestration;
 mod paths;
 mod process_identity;
@@ -141,6 +142,7 @@ pub fn run() {
                 manager: manager.clone(),
                 scheduler: scheduler.clone(),
                 paths,
+                model_flows: Default::default(),
             });
             scheduler.start();
             let app_handle = app.handle().clone();
@@ -176,8 +178,13 @@ pub fn run() {
             commands::diagnostics_collect,
             commands::open_log_location,
             commands::agent_detect,
+            commands::agent_models,
+            commands::agent_render,
             commands::agent_preview,
             commands::agent_write,
+            commands::agent_model_flow_destroy,
+            commands::agent_model_config_import,
+            commands::agent_model_config_export,
             autostart::autostart_get,
             autostart::autostart_set_immediate,
             autostart::prepare_for_uninstall,

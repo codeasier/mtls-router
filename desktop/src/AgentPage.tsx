@@ -1,128 +1,330 @@
-import { useEffect, useState } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ComponentPropsWithoutRef,
+} from "react";
 
-import { useI18n, type Translator } from "./i18n";
+import { useI18n } from "./i18n";
 import {
   sanitizeSensitiveText,
   type AgentDetection,
-  type AgentFilePreview,
+  type AgentFileEffect,
   type AgentId,
+  type AgentModelsResult,
   type AgentPreview,
   type AgentState,
   type AgentWriteResult,
+  type ClaudeRole,
   type DesktopApi,
+  type JsonObject,
+  type ModelConfig,
+  type OpenCodeModelConfig,
 } from "./ipc";
 
-type Stage = "select" | "preview" | "key" | "result";
-
+type Stage =
+  | "select"
+  | "credential"
+  | "discover"
+  | "configure"
+  | "preview"
+  | "write"
+  | "result";
 const agentOrder: AgentId[] = ["claude", "opencode", "codex"];
 const agentNames: Record<AgentId, string> = {
   claude: "Claude Code",
   opencode: "opencode",
   codex: "Codex",
 };
+const roleNames = ["haiku", "sonnet", "opus"] as const;
 
-function operationLabel(
-  operation: AgentFilePreview["operation"],
-  t: Translator,
-) {
-  return t(`agents.operation.${operation}`);
-}
-
-function safe(value: string | undefined): string {
+function safe(value: string | undefined) {
   return sanitizeSensitiveText(value ?? "");
 }
-
-function errorCode(error: unknown): string {
-  if (typeof error === "object" && error !== null && "code" in error) {
-    const code = (error as { code?: unknown }).code;
-    return typeof code === "string" ? code : "";
-  }
-  return "";
+function errorCode(error: unknown) {
+  return typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof (error as { code?: unknown }).code === "string"
+    ? (error as { code: string }).code
+    : "";
+}
+function selectable(agent: AgentState) {
+  return agent.detected && agent.writable && !agent.invalid;
+}
+function initialSelection(detection: AgentDetection) {
+  return detection.agents.filter(selectable).map((agent) => agent.agent);
+}
+function emptyConfig(agents: AgentId[]): ModelConfig {
+  const config: ModelConfig = { version: 1 };
+  if (agents.includes("claude"))
+    config.claude = {
+      primary: { model: "" },
+      haiku: { inherit_primary: true },
+      sonnet: { inherit_primary: true },
+      opus: { inherit_primary: true },
+    };
+  if (agents.includes("opencode"))
+    config.opencode = { default_model: "", models: {} };
+  if (agents.includes("codex")) config.codex = { model: "" };
+  return config;
+}
+function roleModel(role: ClaudeRole) {
+  return "model" in role ? role.model : "";
 }
 
-function detectionLabel(agent: AgentState, t: Translator): string {
-  if (!agent.detected) return t("agents.detection.absent");
-  if (agent.invalid) return t("agents.detection.invalid");
-  if (!agent.writable) return t("agents.detection.readonly");
-  if (agent.configured) return t("agents.detection.configured");
-  return agent.exists
-    ? t("agents.detection.ready")
-    : t("agents.detection.create");
-}
-
-function detectionTone(agent: AgentState): string {
-  if (!agent.detected || !agent.writable) return "idle";
-  if (agent.invalid) return "danger";
-  return agent.configured ? "active" : "ready";
-}
-
-function canSelect(agent: AgentState): boolean {
-  return agent.detected && !agent.invalid && agent.writable;
-}
-
-function initialSelection(detection: AgentDetection): AgentId[] {
-  return detection.agents.filter(canSelect).map((agent) => agent.agent);
-}
-
-function actionMessage(agent: AgentState, t: Translator): string {
-  if (!agent.detected) return t("agents.guidance.absent");
-  if (agent.invalid) {
-    return t("agents.guidance.invalid", {
-      path: safe(agent.path),
-      format: safe(agent.format).toUpperCase(),
-    });
-  }
-  if (!agent.writable) return t("agents.guidance.readonly");
-  return agent.configured
-    ? t("agents.guidance.configured")
-    : t("agents.guidance.ready");
-}
-
-function PreviewFile({ file }: { file: AgentFilePreview }) {
-  const { t } = useI18n();
-  const migration = Boolean(file.source_path && file.source_path !== file.path);
+function AgentSelect({
+  children,
+  ...props
+}: ComponentPropsWithoutRef<"select">) {
   return (
-    <article className="agent-file">
-      <div className="agent-file__head">
-        <span className={`operation operation--${file.operation}`}>
-          {operationLabel(file.operation, t)}
-        </span>
-        <strong>{safe(file.format).toUpperCase()}</strong>
-      </div>
-      <code title={safe(file.path)}>{safe(file.path)}</code>
-      {migration && (
-        <div className="migration-warning" role="note">
-          <strong>{t("agents.migration")}</strong>
-          <span>
-            {t("agents.sourceFile", { path: safe(file.source_path) })}
-          </span>
-          <p>{t("agents.migrationWarning")}</p>
-        </div>
-      )}
-      <div className="operation-list" aria-label={t("agents.fileOperations")}>
-        {file.operations.map((operation) => (
-          <span key={operation}>{operationLabel(operation, t)}</span>
+    <span className="agent-select-control">
+      <select {...props}>{children}</select>
+      <span className="agent-select-control__chevron" aria-hidden="true" />
+    </span>
+  );
+}
+
+function parseExtra(text: string): { value?: JsonObject; error?: string } {
+  if (!text.trim()) return {};
+  try {
+    const value: unknown = JSON.parse(text);
+    if (!value || Array.isArray(value) || typeof value !== "object")
+      return { error: "/: object_required" };
+    const protectedKey =
+      /(credential|apikey|auth|token|secret|password|bearer|header|url|endpoint|provider|transport|proxy|fetch)/i;
+    const visit = (
+      current: unknown,
+      path: string,
+      depth: number,
+    ): string | undefined => {
+      if (depth > 16) return `${path}: max_depth`;
+      if (!current || Array.isArray(current) || typeof current !== "object")
+        return undefined;
+      for (const [key, child] of Object.entries(current)) {
+        if (protectedKey.test(key.replace(/[_.-]/g, "")))
+          return `${path}/${key}: protected_path`;
+        if (child === null) return `${path}/${key}: non_null`;
+        const nested = visit(child, `${path}/${key}`, depth + 1);
+        if (nested) return nested;
+      }
+    };
+    const error = visit(value, "", 0);
+    return error ? { error } : { value: value as JsonObject };
+  } catch {
+    return { error: "/: valid_json" };
+  }
+}
+
+function Catalog({
+  models,
+  search,
+  setSearch,
+  selected,
+  onSelect,
+  multiple = false,
+}: {
+  models: string[];
+  search: string;
+  setSearch: (value: string) => void;
+  selected: string[];
+  onSelect: (model: string) => void;
+  multiple?: boolean;
+}) {
+  const { t } = useI18n();
+  const visible = models.filter((model) =>
+    model.toLocaleLowerCase().includes(search.toLocaleLowerCase()),
+  );
+  return (
+    <div className="model-catalog">
+      <label className="catalog-search">
+        <span>{t("agents.catalogSearch")}</span>
+        <input
+          type="search"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+        />
+      </label>
+      <div
+        className="catalog-list"
+        role={multiple ? "group" : "radiogroup"}
+        aria-label={t("agents.catalogLabel")}
+      >
+        {visible.map((model) => (
+          <label
+            key={model}
+            className={
+              selected.includes(model)
+                ? "catalog-model is-selected"
+                : "catalog-model"
+            }
+          >
+            <input
+              type={multiple ? "checkbox" : "radio"}
+              checked={selected.includes(model)}
+              onChange={() => onSelect(model)}
+            />
+            <code>{safe(model)}</code>
+          </label>
         ))}
+        {!visible.length && <p>{t("agents.catalogEmptySearch")}</p>}
       </div>
-      {file.preserves && file.preserves.length > 0 && (
-        <p className="preserve-copy">
-          {t("agents.preserve", {
-            items: file.preserves.map((item) => safe(item)).join(", "),
-          })}
-        </p>
-      )}
-      {file.contains_api_key && (
-        <p className="sensitive-copy">{t("agents.keyFile")}</p>
-      )}
-      {file.backup.required && (
-        <div className="backup-plan">
-          <span>{t("agents.sensitiveBackup")}</span>
-          <code>{safe(file.backup.pattern)}</code>
-          <p>{t("agents.backupWarning")}</p>
-        </div>
-      )}
-      {file.warning && !migration && (
-        <p className="file-warning">{safe(file.warning)}</p>
+    </div>
+  );
+}
+
+function ExtraEditor({
+  agent,
+  value,
+  onChange,
+}: {
+  agent: AgentId;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const { t } = useI18n();
+  const parsed = parseExtra(value);
+  return (
+    <details className="advanced-editor">
+      <summary>{t("agents.advancedExtra")}</summary>
+      <label>
+        <span>{t("agents.extraJson", { agent: agentNames[agent] })}</span>
+        <textarea
+          aria-invalid={Boolean(parsed.error)}
+          aria-describedby={`${agent}-extra-error`}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          spellCheck={false}
+        />
+      </label>
+      <div className="editor-actions">
+        <button
+          type="button"
+          className="text-button"
+          disabled={!parsed.value}
+          onClick={() => onChange(JSON.stringify(parsed.value, null, 2))}
+        >
+          {t("agents.formatJson")}
+        </button>
+        <small
+          id={`${agent}-extra-error`}
+          role={parsed.error ? "alert" : undefined}
+        >
+          {parsed.error ?? t("agents.extraValid")}
+        </small>
+      </div>
+    </details>
+  );
+}
+
+function OptionalSelect({
+  label,
+  value,
+  values,
+  onChange,
+}: {
+  label: string;
+  value?: string;
+  values: string[];
+  onChange: (value?: string) => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <label className="option-field">
+      <span>{label}</span>
+      <AgentSelect
+        value={value ?? ""}
+        onChange={(event) => onChange(event.target.value || undefined)}
+      >
+        <option value="">{t("agents.unset")}</option>
+        {values.map((item) => (
+          <option key={item} value={item}>
+            {item}
+          </option>
+        ))}
+      </AgentSelect>
+    </label>
+  );
+}
+
+function OptionalNumber({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value?: number;
+  onChange: (value?: number) => void;
+}) {
+  return (
+    <label className="option-field">
+      <span>{label}</span>
+      <input
+        type="number"
+        min="1"
+        max="9007199254740991"
+        value={value ?? ""}
+        onChange={(event) =>
+          onChange(event.target.value ? Number(event.target.value) : undefined)
+        }
+      />
+    </label>
+  );
+}
+
+function ObjectField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value?: JsonObject;
+  onChange: (value?: JsonObject) => void;
+}) {
+  const { t } = useI18n();
+  const [text, setText] = useState(value ? JSON.stringify(value, null, 2) : "");
+  const parsed = parseExtra(text);
+  return (
+    <div className="object-field">
+      <label>
+        <span>{label}</span>
+        <textarea
+          aria-invalid={Boolean(parsed.error)}
+          value={text}
+          placeholder={t("agents.unset")}
+          onChange={(event) => {
+            const next = event.target.value;
+            setText(next);
+            const result = parseExtra(next);
+            if (!next.trim()) onChange(undefined);
+            else if (result.value) onChange(result.value);
+          }}
+          spellCheck={false}
+        />
+      </label>
+      <button
+        type="button"
+        className="text-button"
+        disabled={!parsed.value}
+        onClick={() => setText(JSON.stringify(parsed.value, null, 2))}
+      >
+        {t("agents.formatJson")}
+      </button>
+      <small role={parsed.error ? "alert" : undefined}>
+        {parsed.error ?? t("agents.extraValid")}
+      </small>
+    </div>
+  );
+}
+
+function FileEffect({ effect }: { effect: AgentFileEffect }) {
+  return (
+    <article className="effect-card">
+      <span>{safe(effect.operation).toUpperCase()}</span>
+      <strong>{safe(effect.role)}</strong>
+      <code>{safe(effect.path)}</code>
+      {effect.backup_path && (
+        <code className="backup-path">{safe(effect.backup_path)}</code>
       )}
     </article>
   );
@@ -132,139 +334,255 @@ export function AgentPage({ api }: { api: DesktopApi }) {
   const { t } = useI18n();
   const [detection, setDetection] = useState<AgentDetection | null>(null);
   const [selected, setSelected] = useState<AgentId[]>([]);
+  const [stage, setStage] = useState<Stage>("select");
+  const [key, setKey] = useState("");
+  const [discovery, setDiscovery] = useState<AgentModelsResult | null>(null);
+  const [config, setConfig] = useState<ModelConfig>({ version: 1 });
   const [preview, setPreview] = useState<AgentPreview | null>(null);
   const [result, setResult] = useState<AgentWriteResult | null>(null);
-  const [stage, setStage] = useState<Stage>("select");
-  const [apiKey, setApiKey] = useState("");
+  const [search, setSearch] = useState("");
+  const [extras, setExtras] = useState<Record<AgentId, string>>({
+    claude: "",
+    opencode: "",
+    codex: "",
+  });
+  const [approveDrift, setApproveDrift] = useState(false);
+  const [approveAuth, setApproveAuth] = useState(false);
   const [busy, setBusy] = useState(true);
   const [message, setMessage] = useState("");
+  const flowRef = useRef("");
 
-  function clearKey() {
-    setApiKey("");
+  async function destroyFlow() {
+    const flow = flowRef.current;
+    flowRef.current = "";
+    if (flow) await api.destroyAgentModelFlow(flow).catch(() => undefined);
   }
-
-  async function refreshDetection() {
-    clearKey();
-    setBusy(true);
-    setMessage("");
-    setPreview(null);
-    setResult(null);
-    setStage("select");
-    try {
-      const next = await api.detectAgents();
-      setDetection(next);
-      setSelected(initialSelection(next));
-    } catch {
-      setDetection(null);
-      setSelected([]);
-      setMessage(t("agents.error.detect"));
-    } finally {
-      setBusy(false);
-    }
-  }
-
   useEffect(() => {
-    let current = true;
+    let active = true;
     void api
       .detectAgents()
-      .then((next) => {
-        if (!current) return;
-        setDetection(next);
-        setSelected(initialSelection(next));
+      .then((value) => {
+        if (active) {
+          setDetection(value);
+          setSelected(initialSelection(value));
+        }
       })
-      .catch(() => {
-        if (!current) return;
-        setMessage(t("agents.error.detect"));
-      })
-      .finally(() => {
-        if (current) setBusy(false);
-      });
+      .catch(() => active && setMessage(t("agents.error.detect")))
+      .finally(() => active && setBusy(false));
     return () => {
-      current = false;
+      active = false;
+      const flow = flowRef.current;
+      flowRef.current = "";
+      if (flow) void api.destroyAgentModelFlow(flow);
     };
   }, [api, t]);
 
-  function toggle(agent: AgentId) {
+  function toggleAgent(agent: AgentId) {
     setSelected((current) =>
       current.includes(agent)
         ? current.filter((item) => item !== agent)
-        : agentOrder.filter((item) => [...current, agent].includes(item)),
+        : agentOrder.filter((item) => item === agent || current.includes(item)),
     );
-    setMessage("");
   }
-
-  async function loadPreview(stale = false) {
-    if (selected.length === 0) {
-      setMessage(t("agents.error.selection"));
-      return;
-    }
-    clearKey();
+  async function startOver(target: Stage = "select") {
+    await destroyFlow();
+    setKey("");
+    setDiscovery(null);
+    setPreview(null);
+    setResult(null);
+    setApproveDrift(false);
+    setApproveAuth(false);
+    setMessage("");
+    setStage(target);
+  }
+  async function discover(event: React.FormEvent) {
+    event.preventDefault();
+    if (!key || !selected.length) return;
+    const transient = key;
+    setKey("");
     setBusy(true);
     setMessage("");
+    setStage("discover");
     try {
-      const next = await api.previewAgents(selected);
-      setPreview(next);
-      setResult(null);
-      setStage("preview");
-      if (stale) setMessage(t("agents.previewRefreshed"));
-    } catch (error) {
-      const code = errorCode(error);
-      setMessage(
-        code === "CONFIG_INVALID"
-          ? t("agents.error.invalid")
-          : t("agents.error.preview"),
+      const value = await api.discoverModels(selected, transient);
+      flowRef.current = value.flow_id;
+      setDiscovery(value);
+      const prefill = value.existing.model_config;
+      setConfig(
+        Object.keys(prefill).length
+          ? { version: 1, ...prefill }
+          : emptyConfig(selected),
       );
-      setStage("select");
+      setStage("configure");
+    } catch (error) {
+      setMessage(
+        t(
+          errorCode(error) === "MODEL_AUTH_FAILED"
+            ? "agents.error.auth"
+            : "agents.error.discovery",
+        ),
+      );
+      setStage("credential");
     } finally {
       setBusy(false);
     }
   }
-
-  function cancelToSelection() {
-    clearKey();
-    setPreview(null);
-    setResult(null);
-    setMessage("");
-    setStage("select");
+  function configError(): string {
+    if (!discovery) return "/: catalog_required";
+    if (config.claude && !config.claude.primary.model)
+      return "/claude/primary/model: required";
+    if (
+      config.opencode &&
+      (!Object.keys(config.opencode.models).length ||
+        !config.opencode.default_model)
+    )
+      return "/opencode/default_model: required";
+    if (config.codex && !config.codex.model) return "/codex/model: required";
+    for (const agent of selected) {
+      const parsed = parseExtra(extras[agent]);
+      if (parsed.error) return `/${agent}/extra${parsed.error}`;
+    }
+    return "";
   }
-
-  function cancelKeyEntry() {
-    clearKey();
-    setMessage("");
-    setStage("preview");
+  function finalConfig(): ModelConfig {
+    const value = structuredClone(config);
+    for (const agent of selected) {
+      const parsed = parseExtra(extras[agent]).value;
+      if (!parsed || !Object.keys(parsed).length) continue;
+      if (agent === "claude" && value.claude)
+        value.claude.extra = Object.fromEntries(
+          Object.entries(parsed).map(([key, child]) => [key, String(child)]),
+        );
+      if (agent === "codex" && value.codex)
+        value.codex.extra = parsed as NonNullable<typeof value.codex.extra>;
+    }
+    return value;
   }
-
-  async function write() {
-    if (!preview || apiKey.length === 0) return;
-    const transientKey = apiKey;
-    clearKey();
+  async function loadPreview() {
+    if (!discovery) return;
+    const invalid = configError();
+    if (invalid) {
+      setMessage(invalid);
+      return;
+    }
     setBusy(true);
     setMessage("");
     try {
-      const next = await api.writeAgents(
+      const value = await api.previewAgents(
         selected,
-        preview.revision_token,
-        transientKey,
+        discovery.flow_id,
+        discovery.catalog_token,
+        finalConfig(),
       );
-      setResult(next);
+      setPreview(value);
+      setConfig(value.model_config);
+      setStage("preview");
+    } catch (error) {
+      const code = errorCode(error);
+      if (code === "MODEL_CATALOG_STALE") {
+        await startOver("credential");
+        setMessage(t("agents.error.catalogStale"));
+      } else
+        setMessage(
+          t("agents.error.config", {
+            detail: safe(
+              (error as { details?: { path?: string; rule?: string } })?.details
+                ?.path,
+            ),
+          }),
+        );
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function write() {
+    if (!discovery || !preview) return;
+    setBusy(true);
+    setStage("write");
+    setMessage("");
+    try {
+      const value = await api.writeAgents(
+        selected,
+        discovery.flow_id,
+        discovery.catalog_token,
+        config,
+        preview.revision_token,
+        approveDrift,
+        approveAuth,
+      );
+      flowRef.current = "";
+      setResult(value);
       setStage("result");
     } catch (error) {
-      if (errorCode(error) === "PREVIEW_STALE") {
-        await loadPreview(true);
+      const code = errorCode(error);
+      if (code === "PREVIEW_STALE") {
+        setStage("configure");
+        setMessage(t("agents.previewRefreshed"));
+      } else if (
+        code === "MODEL_NOT_AVAILABLE" ||
+        code === "MODEL_CATALOG_STALE"
+      ) {
+        await startOver("credential");
+        setMessage(t("agents.error.catalogStale"));
       } else {
+        await destroyFlow();
+        setStage("credential");
         setMessage(t("agents.error.write"));
-        setStage("preview");
       }
     } finally {
       setBusy(false);
     }
   }
+  async function importConfig(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || !discovery) return;
+    if (
+      file.size > 2 * 1024 * 1024 ||
+      !file.name.toLowerCase().endsWith(".json")
+    ) {
+      setMessage(t("agents.error.import"));
+      return;
+    }
+    try {
+      setConfig(
+        await api.importAgentModelConfig(
+          await file.text(),
+          selected,
+          discovery.flow_id,
+        ),
+      );
+      setExtras({ claude: "", opencode: "", codex: "" });
+      setMessage(t("agents.imported"));
+    } catch {
+      setMessage(t("agents.error.import"));
+    }
+  }
+  async function exportConfig() {
+    if (!discovery || configError()) return;
+    try {
+      const content = await api.exportAgentModelConfig(
+        finalConfig(),
+        selected,
+        discovery.flow_id,
+      );
+      const url = URL.createObjectURL(
+        new Blob([content], { type: "application/json" }),
+      );
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "mtls-router-model-config.json";
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setMessage(t("agents.error.export"));
+    }
+  }
 
-  const detectionByAgent = new Map(
+  const byAgent = new Map(
     detection?.agents.map((agent) => [agent.agent, agent]) ?? [],
   );
-  const stageLabel = t(`agents.stage.${stage}`);
-
+  const invalid = configError();
   return (
     <section className="agents-workbench" aria-labelledby="agents-heading">
       <header className="agents-workbench__header">
@@ -274,123 +592,65 @@ export function AgentPage({ api }: { api: DesktopApi }) {
         </div>
         <div
           className="stage-meter"
-          aria-label={t("agents.currentStage", { stage: stageLabel })}
+          aria-label={t("agents.currentStage", {
+            stage: t(`agents.stage.${stage}`),
+          })}
         >
-          {(["select", "preview", "key", "result"] as Stage[]).map(
-            (item, index) => (
-              <span key={item} className={item === stage ? "is-current" : ""}>
-                {String(index + 1).padStart(2, "0")}
-              </span>
-            ),
-          )}
+          {(
+            [
+              "select",
+              "credential",
+              "discover",
+              "configure",
+              "preview",
+              "write",
+              "result",
+            ] as Stage[]
+          ).map((item, index) => (
+            <span key={item} className={item === stage ? "is-current" : ""}>
+              {String(index + 1).padStart(2, "0")}
+            </span>
+          ))}
         </div>
       </header>
-
       {message && (
         <p className="agent-alert" role="alert">
           {message}
         </p>
       )}
-
       {stage === "select" && (
         <>
           <div className="agent-toolbar">
             <p>{t("agents.selectionNote")}</p>
-            <button
-              type="button"
-              className="text-button"
-              onClick={() => void refreshDetection()}
-              disabled={busy}
-            >
-              {busy ? t("agents.detecting") : t("agents.refresh")}
-            </button>
           </div>
-          <div className="agent-card-grid" aria-busy={busy}>
-            {agentOrder.map((id, index) => {
-              const agent = detectionByAgent.get(id);
-              if (!agent) {
-                return (
-                  <article className="agent-card agent-card--loading" key={id}>
-                    <span>{String(index + 1).padStart(2, "0")}</span>
-                    <h3>{agentNames[id]}</h3>
-                    <p>{busy ? t("agents.loading") : t("agents.noResult")}</p>
-                  </article>
-                );
-              }
-              const selectable = canSelect(agent);
-              const checked = selected.includes(id);
+          <div className="agent-card-grid">
+            {agentOrder.map((id) => {
+              const agent = byAgent.get(id);
               return (
                 <article
-                  className={`agent-card agent-card--${detectionTone(agent)}${checked ? " is-selected" : ""}`}
+                  className={`agent-card${selected.includes(id) ? " is-selected" : ""}`}
                   key={id}
                 >
-                  <div className="agent-card__topline">
-                    <span>{String(index + 1).padStart(2, "0")}</span>
-                    <span className="agent-state">
-                      {detectionLabel(agent, t)}
-                    </span>
-                  </div>
-                  <h3>{safe(agent.name) || agentNames[id]}</h3>
-                  <dl>
-                    <div className="agent-card__path">
-                      <dt>{t("agents.mainConfig")}</dt>
-                      <dd title={safe(agent.path)}>
-                        {safe(agent.path) || t("agents.notLocated")}
-                      </dd>
-                    </div>
-                    {agent.auth_path && (
-                      <div className="agent-card__path">
-                        <dt>{t("agents.authFile")}</dt>
-                        <dd title={safe(agent.auth_path)}>
-                          {safe(agent.auth_path)}
-                        </dd>
-                      </div>
-                    )}
-                    <div>
-                      <dt>{t("agents.format")}</dt>
-                      <dd>
-                        {safe(agent.format).toUpperCase() ||
-                          t("agents.notApplicable")}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>{t("agents.file")}</dt>
-                      <dd>
-                        {agent.exists
-                          ? t("agents.exists")
-                          : t("agents.pendingCreate")}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>{t("agents.permission")}</dt>
-                      <dd>
-                        {agent.writable
-                          ? t("agents.writable")
-                          : t("agents.detection.readonly")}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>{t("agents.routerConfig")}</dt>
-                      <dd>
-                        {agent.configured
-                          ? t("agents.detection.configured")
-                          : t("agents.notConfigured")}
-                      </dd>
-                    </div>
-                  </dl>
-                  <p className="agent-card__guidance">
-                    {actionMessage(agent, t)}
+                  <h3>{agentNames[id]}</h3>
+                  <p
+                    className="agent-card__config-path"
+                    title={agent ? safe(agent.path) : undefined}
+                  >
+                    {agent ? safe(agent.path) : t("agents.noResult")}
                   </p>
+                  <span className="agent-state">
+                    {agent?.configured
+                      ? t("agents.detection.configured")
+                      : t("agents.detection.ready")}
+                  </span>
                   <label className="agent-select">
                     <input
                       type="checkbox"
-                      checked={checked}
-                      disabled={!selectable}
-                      onChange={() => toggle(id)}
+                      checked={selected.includes(id)}
+                      disabled={!agent || !selectable(agent)}
+                      onChange={() => toggleAgent(id)}
                     />
-                    <span>
-                      {checked ? t("agents.selected") : t("agents.select")}
-                    </span>
+                    <span>{t("agents.select")}</span>
                   </label>
                 </article>
               );
@@ -399,185 +659,711 @@ export function AgentPage({ api }: { api: DesktopApi }) {
           <div className="agent-footer-action">
             <span>{t("agents.selectedCount", { count: selected.length })}</span>
             <button
-              type="button"
               className="control-button"
-              disabled={busy || selected.length === 0}
-              onClick={() => void loadPreview()}
+              disabled={!selected.length}
+              onClick={() => setStage("credential")}
             >
-              {t("agents.generatePreview")}
+              {t("agents.continue")}
             </button>
           </div>
         </>
       )}
-
-      {(stage === "preview" || stage === "key") && preview && (
+      {stage === "credential" && (
+        <form className="credential-stage" onSubmit={discover}>
+          <p className="overline">{t("agents.stage.credential")}</p>
+          <h3>{t("agents.credentialHeading")}</h3>
+          <p>{t("agents.credentialNote")}</p>
+          <label className="key-field">
+            <span>{t("agents.apiKey")}</span>
+            <input
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              value={key}
+              onChange={(event) => setKey(event.target.value)}
+            />
+          </label>
+          <div className="action-row">
+            <button className="control-button" disabled={!key || busy}>
+              {t("agents.discover")}
+            </button>
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => void startOver()}
+            >
+              {t("agents.cancelDetection")}
+            </button>
+          </div>
+        </form>
+      )}
+      {(stage === "discover" || stage === "write") && (
+        <div className="processing-stage" role="status">
+          <span className="instrument__dial">
+            {stage === "discover" ? "GET" : "TX"}
+          </span>
+          <h3>
+            {t(
+              stage === "discover" ? "agents.discovering" : "agents.executing",
+            )}
+          </h3>
+        </div>
+      )}
+      {stage === "configure" && discovery && (
+        <div className="config-workbench">
+          <aside className="catalog-rail">
+            <p className="overline">{t("agents.commonCatalog")}</p>
+            <strong>
+              {t("agents.modelCount", { count: discovery.models.length })}
+            </strong>
+            <Catalog
+              models={discovery.models}
+              search={search}
+              setSearch={setSearch}
+              selected={[]}
+              onSelect={() => undefined}
+            />
+          </aside>
+          <div className="config-panels">
+            {discovery.existing.drifted_agents.length > 0 && (
+              <p className="drift-note" role="note">
+                {t("agents.existingDrift", {
+                  agents: discovery.existing.drifted_agents.join(", "),
+                })}
+              </p>
+            )}
+            {Object.entries(discovery.existing.unavailable_models).map(
+              ([agent, models]) =>
+                models?.length ? (
+                  <p className="drift-note" role="note" key={agent}>
+                    {t("agents.unavailableModels", {
+                      agent,
+                      models: models.join(", "),
+                    })}
+                  </p>
+                ) : null,
+            )}
+            {selected.includes("claude") && config.claude && (
+              <section className="model-agent-panel">
+                <h3>Claude Code</h3>
+                <label className="option-field">
+                  <span>{t("agents.primaryModel")}</span>
+                  <AgentSelect
+                    value={config.claude.primary.model}
+                    onChange={(event) =>
+                      setConfig({
+                        ...config,
+                        claude: {
+                          ...config.claude!,
+                          primary: { model: event.target.value },
+                        },
+                      })
+                    }
+                  >
+                    <option value="">{t("agents.chooseModel")}</option>
+                    {discovery.models.map((model) => (
+                      <option key={model}>{model}</option>
+                    ))}
+                  </AgentSelect>
+                </label>
+                {roleNames.map((role) => (
+                  <div className="role-row" key={role}>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={"inherit_primary" in config.claude![role]}
+                        onChange={(event) =>
+                          setConfig({
+                            ...config,
+                            claude: {
+                              ...config.claude!,
+                              [role]: event.target.checked
+                                ? { inherit_primary: true }
+                                : { model: "" },
+                            },
+                          })
+                        }
+                      />
+                      {t("agents.inheritPrimary", { role })}
+                    </label>
+                    {!("inherit_primary" in config.claude![role]) && (
+                      <AgentSelect
+                        aria-label={`${role} model`}
+                        value={roleModel(config.claude![role])}
+                        onChange={(event) =>
+                          setConfig({
+                            ...config,
+                            claude: {
+                              ...config.claude!,
+                              [role]: { model: event.target.value },
+                            },
+                          })
+                        }
+                      >
+                        <option value="">{t("agents.chooseModel")}</option>
+                        {discovery.models.map((model) => (
+                          <option key={model}>{model}</option>
+                        ))}
+                      </AgentSelect>
+                    )}
+                  </div>
+                ))}
+                <ExtraEditor
+                  agent="claude"
+                  value={extras.claude}
+                  onChange={(value) => setExtras({ ...extras, claude: value })}
+                />
+              </section>
+            )}
+            {selected.includes("opencode") && config.opencode && (
+              <section className="model-agent-panel">
+                <h3>opencode</h3>
+                <div
+                  className="catalog-list"
+                  role="group"
+                  aria-label={t("agents.opencodeModels")}
+                >
+                  {discovery.models
+                    .filter((model) =>
+                      model
+                        .toLocaleLowerCase()
+                        .includes(search.toLocaleLowerCase()),
+                    )
+                    .map((model) => (
+                      <label
+                        key={model}
+                        className={
+                          config.opencode!.models[model]
+                            ? "catalog-model is-selected"
+                            : "catalog-model"
+                        }
+                      >
+                        <input
+                          type="checkbox"
+                          checked={Boolean(config.opencode!.models[model])}
+                          onChange={() => {
+                            const models = { ...config.opencode!.models };
+                            if (models[model]) delete models[model];
+                            else models[model] = {};
+                            const default_model = models[
+                              config.opencode!.default_model
+                            ]
+                              ? config.opencode!.default_model
+                              : "";
+                            setConfig({
+                              ...config,
+                              opencode: { models, default_model },
+                            });
+                          }}
+                        />
+                        <code>{safe(model)}</code>
+                      </label>
+                    ))}
+                </div>
+                <label className="option-field">
+                  <span>{t("agents.defaultModel")}</span>
+                  <AgentSelect
+                    value={config.opencode.default_model}
+                    onChange={(event) =>
+                      setConfig({
+                        ...config,
+                        opencode: {
+                          ...config.opencode!,
+                          default_model: event.target.value,
+                        },
+                      })
+                    }
+                  >
+                    <option value="">{t("agents.chooseModel")}</option>
+                    {Object.keys(config.opencode.models).map((model) => (
+                      <option key={model}>{model}</option>
+                    ))}
+                  </AgentSelect>
+                </label>
+                {Object.entries(config.opencode.models).map(
+                  ([model, settings]) => (
+                    <OpenCodeSettings
+                      key={model}
+                      model={model}
+                      settings={settings}
+                      update={(next) =>
+                        setConfig({
+                          ...config,
+                          opencode: {
+                            ...config.opencode!,
+                            models: {
+                              ...config.opencode!.models,
+                              [model]: next,
+                            },
+                          },
+                        })
+                      }
+                    />
+                  ),
+                )}
+                <ExtraEditor
+                  agent="opencode"
+                  value={extras.opencode}
+                  onChange={(value) =>
+                    setExtras({ ...extras, opencode: value })
+                  }
+                />
+              </section>
+            )}
+            {selected.includes("codex") && config.codex && (
+              <section className="model-agent-panel">
+                <h3>Codex</h3>
+                <label className="option-field">
+                  <span>{t("agents.activeModel")}</span>
+                  <AgentSelect
+                    value={config.codex.model}
+                    onChange={(event) =>
+                      setConfig({
+                        ...config,
+                        codex: { ...config.codex!, model: event.target.value },
+                      })
+                    }
+                  >
+                    <option value="">{t("agents.chooseModel")}</option>
+                    {discovery.models.map((model) => (
+                      <option key={model}>{model}</option>
+                    ))}
+                  </AgentSelect>
+                </label>
+                <div className="typed-grid">
+                  <OptionalSelect
+                    label={t("agents.reasoningEffort")}
+                    value={config.codex.reasoning_effort}
+                    values={[
+                      "none",
+                      "minimal",
+                      "low",
+                      "medium",
+                      "high",
+                      "xhigh",
+                      "max",
+                      "ultra",
+                    ]}
+                    onChange={(value) =>
+                      setConfig({
+                        ...config,
+                        codex: { ...config.codex!, reasoning_effort: value },
+                      })
+                    }
+                  />
+                  <OptionalSelect
+                    label={t("agents.reasoningSummary")}
+                    value={config.codex.reasoning_summary}
+                    values={["auto", "concise", "detailed", "none"]}
+                    onChange={(value) =>
+                      setConfig({
+                        ...config,
+                        codex: {
+                          ...config.codex!,
+                          reasoning_summary: value as
+                            | "auto"
+                            | "concise"
+                            | "detailed"
+                            | "none"
+                            | undefined,
+                        },
+                      })
+                    }
+                  />
+                  <OptionalSelect
+                    label={t("agents.verbosity")}
+                    value={config.codex.verbosity}
+                    values={["low", "medium", "high"]}
+                    onChange={(value) =>
+                      setConfig({
+                        ...config,
+                        codex: {
+                          ...config.codex!,
+                          verbosity: value as
+                            "low" | "medium" | "high" | undefined,
+                        },
+                      })
+                    }
+                  />
+                  <OptionalNumber
+                    label={t("agents.contextWindow")}
+                    value={config.codex.context_window}
+                    onChange={(value) =>
+                      setConfig({
+                        ...config,
+                        codex: { ...config.codex!, context_window: value },
+                      })
+                    }
+                  />
+                  <OptionalNumber
+                    label={t("agents.compactLimit")}
+                    value={config.codex.auto_compact_token_limit}
+                    onChange={(value) =>
+                      setConfig({
+                        ...config,
+                        codex: {
+                          ...config.codex!,
+                          auto_compact_token_limit: value,
+                        },
+                      })
+                    }
+                  />
+                  <OptionalSelect
+                    label={t("agents.compactScope")}
+                    value={
+                      config.codex.extra?.model_auto_compact_token_limit_scope
+                    }
+                    values={["total", "body_after_prefix"]}
+                    onChange={(value) =>
+                      setConfig({
+                        ...config,
+                        codex: {
+                          ...config.codex!,
+                          extra: value
+                            ? {
+                                model_auto_compact_token_limit_scope: value as
+                                  "total" | "body_after_prefix",
+                              }
+                            : undefined,
+                        },
+                      })
+                    }
+                  />
+                </div>
+                <ExtraEditor
+                  agent="codex"
+                  value={extras.codex}
+                  onChange={(value) => setExtras({ ...extras, codex: value })}
+                />
+              </section>
+            )}
+            <div className="config-actions">
+              <label className="text-button file-button">
+                {t("agents.importConfig")}
+                <input
+                  type="file"
+                  accept="application/json,.json"
+                  onChange={(event) => void importConfig(event)}
+                />
+              </label>
+              <button
+                className="text-button"
+                disabled={Boolean(invalid)}
+                onClick={() => void exportConfig()}
+              >
+                {t("agents.exportConfig")}
+              </button>
+              <button
+                className="control-button"
+                disabled={Boolean(invalid) || busy}
+                onClick={() => void loadPreview()}
+              >
+                {t("agents.generatePreview")}
+              </button>
+              <button className="text-button" onClick={() => void startOver()}>
+                {t("agents.cancelDetection")}
+              </button>
+            </div>
+            {invalid && (
+              <p className="validation-path" role="alert">
+                {invalid}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+      {stage === "preview" && preview && (
         <div className="preview-layout">
           <div className="preview-main">
-            {preview.agents.map((agent) => (
-              <section className="preview-agent" key={agent.agent}>
-                <div className="preview-agent__heading">
-                  <span>{safe(agent.agent).toUpperCase()}</span>
-                  <h3>{safe(agent.name)}</h3>
-                  <small>
-                    {t("agents.fileCount", { count: agent.files.length })}
-                  </small>
-                </div>
-                <div className="preview-files">
-                  {agent.files.map((file) => (
-                    <PreviewFile
-                      key={`${agent.agent}-${file.path}`}
-                      file={file}
-                    />
-                  ))}
-                </div>
-              </section>
-            ))}
+            <section className="preview-agent">
+              <div className="preview-agent__heading">
+                <h3>{t("agents.fragments")}</h3>
+              </div>
+              {preview.fragments.map((fragment) => (
+                <article
+                  className="fragment-card"
+                  key={`${fragment.agent}-${fragment.role}`}
+                >
+                  <strong>
+                    {agentNames[fragment.agent]} / {safe(fragment.role)}
+                  </strong>
+                  <code>{safe(fragment.path)}</code>
+                  <pre>{safe(fragment.content)}</pre>
+                </article>
+              ))}
+            </section>
+            <section className="preview-agent">
+              <div className="preview-agent__heading">
+                <h3>{t("agents.effects")}</h3>
+              </div>
+              <div className="preview-files">
+                {preview.files.map((effect) => (
+                  <FileEffect
+                    key={`${effect.path}-${effect.role}`}
+                    effect={effect}
+                  />
+                ))}
+                {preview.state_change && (
+                  <FileEffect effect={preview.state_change} />
+                )}
+              </div>
+            </section>
           </div>
           <aside className="approval-rail">
             <p className="overline">{t("agents.approvalBoundary")}</p>
-            <h3>
-              {stage === "preview"
-                ? t("agents.reviewScope")
-                : t("agents.oneTimeCredential")}
-            </h3>
-            {stage === "preview" ? (
-              <>
-                <p>{t("agents.reviewNote")}</p>
-                {preview.warnings && preview.warnings.length > 0 && (
-                  <div className="preview-warnings" role="note">
-                    {preview.warnings.map((warning) => (
-                      <p key={warning}>{safe(warning)}</p>
-                    ))}
-                  </div>
-                )}
-                <div className="risk-box">
-                  <strong>{t("agents.reviewSensitiveBackup")}</strong>
-                  <p>{t("agents.reviewBackup")}</p>
-                </div>
-                <button
-                  type="button"
-                  className="control-button"
-                  onClick={() => {
-                    clearKey();
-                    setMessage("");
-                    setStage("key");
-                  }}
-                >
-                  {t("agents.approve")}
-                </button>
-                <button
-                  type="button"
-                  className="text-button"
-                  onClick={cancelToSelection}
-                >
-                  {t("agents.cancelDetection")}
-                </button>
-              </>
-            ) : (
-              <form
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void write();
-                }}
+            <h3>{t("agents.reviewScope")}</h3>
+            {preview.managed_collisions.map((collision) => (
+              <p
+                className="collision"
+                key={`${collision.agent}-${collision.path}`}
               >
-                <p>{t("agents.keyNote")}</p>
-                <label className="key-field">
-                  <span>{t("agents.apiKey")}</span>
-                  <input
-                    type="password"
-                    name="agent-api-key"
-                    autoComplete="off"
-                    spellCheck={false}
-                    value={apiKey}
-                    disabled={busy}
-                    onChange={(event) => setApiKey(event.target.value)}
-                  />
-                </label>
-                <button
-                  type="submit"
-                  className="control-button"
-                  disabled={busy || apiKey.length === 0}
-                >
-                  {busy ? t("agents.executing") : t("agents.write")}
-                </button>
-                <button
-                  type="button"
-                  className="text-button"
-                  disabled={busy}
-                  onClick={cancelKeyEntry}
-                >
-                  {t("agents.cancelKey")}
-                </button>
-              </form>
+                {safe(collision.agent)} <code>{safe(collision.path)}</code>{" "}
+                {safe(collision.action)}
+              </p>
+            ))}
+            {preview.managed_config_drift && (
+              <label className="approval-check">
+                <input
+                  type="checkbox"
+                  checked={approveDrift}
+                  onChange={(event) => setApproveDrift(event.target.checked)}
+                />
+                {t("agents.approveDrift")}
+              </label>
             )}
+            {preview.requires_codex_auth_approval && (
+              <label className="approval-check">
+                <input
+                  type="checkbox"
+                  checked={approveAuth}
+                  onChange={(event) => setApproveAuth(event.target.checked)}
+                />
+                {t("agents.approveCodexAuth")}
+              </label>
+            )}
+            <button
+              className="control-button"
+              disabled={
+                (preview.managed_config_drift && !approveDrift) ||
+                (preview.requires_codex_auth_approval && !approveAuth)
+              }
+              onClick={() => void write()}
+            >
+              {t("agents.write")}
+            </button>
+            <button
+              className="text-button"
+              onClick={() => setStage("configure")}
+            >
+              {t("agents.backToConfigure")}
+            </button>
+            <button className="text-button" onClick={() => void startOver()}>
+              {t("agents.cancelDetection")}
+            </button>
           </aside>
         </div>
       )}
-
       {stage === "result" && result && (
         <div className="agent-results">
           <div className="result-banner">
             <span>{t("agents.transactionComplete")}</span>
             <h3>{t("agents.resultHeading")}</h3>
-            <p>{t("agents.resultNote")}</p>
           </div>
           <div className="result-grid">
             {result.agents.map((agent) => (
               <article key={agent.agent}>
                 <div className="result-card__heading">
-                  <h4>{agentNames[agent.agent] ?? safe(agent.agent)}</h4>
+                  <h4>{agentNames[agent.agent]}</h4>
                   <span className={agent.success ? "result-ok" : "result-fail"}>
                     {agent.success ? t("agents.success") : t("agents.failure")}
                   </span>
                 </div>
-                {agent.rolled_back && (
-                  <p className="rollback-note">{t("agents.rolledBack")}</p>
-                )}
-                {agent.error_code && (
-                  <p>
-                    {t("agents.errorCode", { code: safe(agent.error_code) })}
-                  </p>
-                )}
-                <dl>
-                  <dt>{t("agents.changed")}</dt>
-                  <dd>
-                    {(agent.changed ?? []).length > 0
-                      ? agent.changed?.map((path) => (
-                          <code key={path}>{safe(path)}</code>
-                        ))
-                      : t("agents.none")}
-                  </dd>
-                  <dt>{t("agents.sensitiveBackup")}</dt>
-                  <dd>
-                    {(agent.backups ?? []).length > 0
-                      ? agent.backups?.map((path) => (
-                          <code key={path}>{safe(path)}</code>
-                        ))
-                      : t("agents.none")}
-                  </dd>
-                  {(agent.rollback_backups ?? []).length > 0 && (
-                    <>
-                      <dt>{t("agents.rollbackBackup")}</dt>
-                      <dd>
-                        {agent.rollback_backups?.map((path) => (
-                          <code key={path}>{safe(path)}</code>
-                        ))}
-                      </dd>
-                    </>
-                  )}
-                </dl>
+                {agent.changed?.map((path) => (
+                  <code key={path}>{safe(path)}</code>
+                ))}
+                {agent.backups?.map((path) => (
+                  <code key={path}>{safe(path)}</code>
+                ))}
               </article>
             ))}
           </div>
-          <button
-            type="button"
-            className="control-button"
-            onClick={() => void refreshDetection()}
-          >
+          <button className="control-button" onClick={() => void startOver()}>
             {t("agents.finish")}
           </button>
         </div>
       )}
     </section>
+  );
+}
+
+function OpenCodeSettings({
+  model,
+  settings,
+  update,
+}: {
+  model: string;
+  settings: OpenCodeModelConfig;
+  update: (value: OpenCodeModelConfig) => void;
+}) {
+  const { t } = useI18n();
+  const flags = [
+    "reasoning",
+    "attachment",
+    "tool_call",
+    "temperature",
+  ] as const;
+  const modalities = ["text", "audio", "image", "video", "pdf"] as const;
+  function toggleModality(
+    kind: "input" | "output",
+    modality: (typeof modalities)[number],
+  ) {
+    const current = settings.modalities?.[kind] ?? [];
+    const next = current.includes(modality)
+      ? current.filter((item) => item !== modality)
+      : [...current, modality];
+    const other =
+      settings.modalities?.[kind === "input" ? "output" : "input"] ?? [];
+    update({
+      ...settings,
+      modalities:
+        next.length || other.length
+          ? { ...settings.modalities, [kind]: next.length ? next : undefined }
+          : undefined,
+    });
+  }
+  return (
+    <details className="model-settings">
+      <summary>{safe(model)}</summary>
+      <label className="option-field">
+        <span>{t("agents.displayName")}</span>
+        <input
+          value={settings.name ?? ""}
+          placeholder={t("agents.unset")}
+          onChange={(event) =>
+            update({ ...settings, name: event.target.value || undefined })
+          }
+        />
+      </label>
+      <div className="omission-grid">
+        {flags.map((flag) => (
+          <label key={flag}>
+            <AgentSelect
+              aria-label={`${model} ${flag}`}
+              value={settings[flag] === undefined ? "" : String(settings[flag])}
+              onChange={(event) =>
+                update({
+                  ...settings,
+                  [flag]:
+                    event.target.value === ""
+                      ? undefined
+                      : event.target.value === "true",
+                })
+              }
+            >
+              <option value="">{t("agents.unset")}</option>
+              <option value="true">true</option>
+              <option value="false">false</option>
+            </AgentSelect>
+            <span>{flag}</span>
+          </label>
+        ))}
+      </div>
+      <div className="typed-grid">
+        <label className="option-field">
+          <span>{t("agents.contextLimit")}</span>
+          <input
+            type="number"
+            min="1"
+            value={settings.limit?.context ?? ""}
+            onChange={(event) => {
+              const context = Number(event.target.value);
+              update({
+                ...settings,
+                limit: context
+                  ? {
+                      context,
+                      output: settings.limit?.output || 1,
+                      input: settings.limit?.input,
+                    }
+                  : undefined,
+              });
+            }}
+          />
+        </label>
+        <label className="option-field">
+          <span>{t("agents.outputLimit")}</span>
+          <input
+            type="number"
+            min="1"
+            value={settings.limit?.output ?? ""}
+            onChange={(event) => {
+              const output = Number(event.target.value);
+              update({
+                ...settings,
+                limit: output
+                  ? {
+                      context: settings.limit?.context || output,
+                      output,
+                      input: settings.limit?.input,
+                    }
+                  : undefined,
+              });
+            }}
+          />
+        </label>
+      </div>
+      <div className="modality-grid">
+        {(["input", "output"] as const).map((kind) => (
+          <fieldset key={kind}>
+            <legend>{t(`agents.modalities.${kind}`)}</legend>
+            {modalities.map((modality) => (
+              <label key={modality}>
+                <input
+                  type="checkbox"
+                  checked={
+                    settings.modalities?.[kind]?.includes(modality) ?? false
+                  }
+                  onChange={() => toggleModality(kind, modality)}
+                />
+                {modality}
+              </label>
+            ))}
+          </fieldset>
+        ))}
+      </div>
+      <OptionalSelect
+        label={t("agents.interleaved")}
+        value={
+          settings.interleaved === true ? "true" : settings.interleaved?.field
+        }
+        values={["true", "reasoning", "reasoning_content", "reasoning_details"]}
+        onChange={(value) =>
+          update({
+            ...settings,
+            interleaved:
+              value === "true"
+                ? true
+                : value
+                  ? {
+                      field: value as
+                        "reasoning" | "reasoning_content" | "reasoning_details",
+                    }
+                  : undefined,
+          })
+        }
+      />
+      <div className="typed-grid">
+        <ObjectField
+          label={t("agents.optionsJson")}
+          value={settings.options}
+          onChange={(value) => update({ ...settings, options: value })}
+        />
+        <ObjectField
+          label={t("agents.modelExtraJson")}
+          value={settings.extra}
+          onChange={(value) => update({ ...settings, extra: value })}
+        />
+      </div>
+    </details>
   );
 }

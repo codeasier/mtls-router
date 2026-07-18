@@ -16,7 +16,8 @@ func TestDeadlinesCoverEveryMethod(t *testing.T) {
 		MethodRouterStop: 7 * time.Second, MethodRouterHealth: 5 * time.Second,
 		MethodRouterVersion: time.Second, MethodRouterLogs: 2 * time.Second,
 		MethodRouterInspectOccupant: 2 * time.Second, MethodRouterForceTerminateOccupant: 3 * time.Second,
-		MethodAgentDetect: 5 * time.Second, MethodAgentPreview: 5 * time.Second,
+		MethodAgentDetect: 5 * time.Second, MethodAgentModels: 30 * time.Second,
+		MethodAgentRender: 5 * time.Second, MethodAgentPreview: 5 * time.Second,
 		MethodAgentWrite: 30 * time.Second,
 	}
 	got := Deadlines()
@@ -27,6 +28,106 @@ func TestDeadlinesCoverEveryMethod(t *testing.T) {
 		if got[method] != duration {
 			t.Errorf("deadline for %q = %s, want %s", method, got[method], duration)
 		}
+	}
+}
+
+func TestErrorDetailsAreBoundedAndValidationOnly(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  *Error
+		want bool
+	}{
+		{name: "valid", err: &Error{Code: CodeModelConfigInvalid, Message: "invalid model config", Details: &ErrorDetails{Path: "/opencode/models/model-a", Rule: "protected_path"}}, want: true},
+		{name: "non-validation", err: &Error{Code: CodeModelDiscoveryFailed, Message: "failed", Details: &ErrorDetails{Path: "/x", Rule: "invalid_value"}}},
+		{name: "unbounded path", err: &Error{Code: CodeInvalidParams, Message: "invalid", Details: &ErrorDetails{Path: "/" + strings.Repeat("x", 1024), Rule: "invalid_value"}}},
+		{name: "unstable rule", err: &Error{Code: CodeInvalidParams, Message: "invalid", Details: &ErrorDetails{Path: "/x", Rule: "contains secret"}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := errorResponse(nil, test.err)
+			if (response.Error.Details != nil) != test.want {
+				t.Fatalf("details = %#v, want present=%t", response.Error.Details, test.want)
+			}
+		})
+	}
+}
+
+func TestV2AgentParamsRejectUnknownFields(t *testing.T) {
+	for name, target := range map[string]any{
+		"models": &AgentModelsParams{}, "render": &AgentConfigParams{}, "write": &AgentWriteParams{},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := DecodeParams(json.RawMessage(`{"agents":["claude"],"unknown":true}`), target); err == nil || err.Code != CodeInvalidParams {
+				t.Fatalf("error = %#v", err)
+			}
+		})
+	}
+}
+
+func TestV2AgentParamsRejectMixedShapes(t *testing.T) {
+	tests := []struct {
+		name   string
+		raw    string
+		target any
+	}{
+		{name: "mixed preview", raw: `{"agents":["claude"],"catalog_token":"catalog","model_config":{"version":1},"api_key":"v1-key"}`, target: &AgentConfigParams{}},
+		{name: "mixed write", raw: `{"agents":["claude"],"catalog_token":"catalog","model_config":{"version":1},"revision_token":"revision","approve_managed_overwrite":false,"approve_codex_auth_change":false,"api_key":"key","config":{"claude":{}}}`, target: &AgentWriteParams{}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := DecodeParams(json.RawMessage(test.raw), test.target); err == nil || err.Code != CodeInvalidParams {
+				t.Fatalf("error = %#v", err)
+			}
+		})
+	}
+}
+
+func TestProtocolResultJSONExactShapes(t *testing.T) {
+	tests := []struct {
+		name  string
+		value any
+		keys  []string
+	}{
+		{name: "models", value: AgentModelsResult{}, keys: []string{"api_base_url", "catalog_token", "existing", "models", "router_base_url"}},
+		{name: "models existing", value: AgentModelsExisting{}, keys: []string{"drifted_agents", "model_config", "unavailable_models"}},
+		{name: "render", value: AgentRenderResult{}, keys: []string{"fragments", "model_config"}},
+		{name: "preview", value: AgentPreviewResult{}, keys: []string{"drifted_agents", "files", "fragments", "managed_collisions", "managed_config_drift", "model_config", "requires_codex_auth_approval", "revision_token"}},
+		{name: "write", value: AgentWriteResult{}, keys: []string{"agents", "transaction_id"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			encoded, err := json.Marshal(test.value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var object map[string]json.RawMessage
+			if err := json.Unmarshal(encoded, &object); err != nil {
+				t.Fatal(err)
+			}
+			if len(object) != len(test.keys) {
+				t.Fatalf("shape = %s, want keys %v", encoded, test.keys)
+			}
+			for _, key := range test.keys {
+				if _, ok := object[key]; !ok {
+					t.Fatalf("shape = %s, missing %q", encoded, key)
+				}
+			}
+		})
+	}
+}
+
+func TestServeRejectsRequestOverFourMiBWithProtocolResponse(t *testing.T) {
+	server := NewServer(nil)
+	input := strings.NewReader(strings.Repeat("x", maxRequestSize+1) + "\n")
+	var output bytes.Buffer
+	if err := server.Serve(context.Background(), input, &output); err != nil {
+		t.Fatal(err)
+	}
+	var response Response
+	if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &response); err != nil {
+		t.Fatalf("response is not protocol JSON: %q: %v", output.String(), err)
+	}
+	if response.ID != nil || response.Error == nil || response.Error.Code != CodeInvalidRequest {
+		t.Fatalf("response = %#v", response)
 	}
 }
 

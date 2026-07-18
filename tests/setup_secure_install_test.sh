@@ -33,7 +33,7 @@ IFS= read -r request
 id="\$(printf '%s' "\$request" | jq -r '.id // empty')"
 method="\$(printf '%s' "\$request" | jq -r '.method // empty')"
 if [[ "\$method" == manager.info ]]; then
-  jq -cn --arg id "\$id" '{id:\$id,result:{version:"$generation",commit:"test",build_date:"test",target:"test/test",deployment_id:"test-deployment",management_protocol_version:"1"}}'
+  jq -cn --arg id "\$id" '{id:\$id,result:{version:"$generation",commit:"test",build_date:"test",target:"test/test",deployment_id:"test-deployment",management_protocol_version:"2"}}'
 else
   jq -cn --arg id "\$id" '{id:\$id,result:{}}'
 fi
@@ -72,9 +72,21 @@ run_install "$package" "$install" "$home" >/dev/null
 receipt="$home/state/install-receipt.json"
 jq -e --arg router "$install/mtls-router" --arg manager "$install/mtls-router-manager" '
   .schema_version == 1 and .deployment_id == "test-deployment" and
-  .management_protocol_version == "1" and .router.path == $router and
+  .management_protocol_version == "2" and .router.path == $router and
   .manager.path == $manager and .router.version == "v2" and .manager.version == "v2"' "$receipt" >/dev/null || fail "receipt metadata is incomplete"
 [[ "$(file_mode "$receipt")" == 600 ]] || fail "receipt is not mode 0600"
+
+# Agent/router manager resolution rejects a mixed-version receipt before it
+# executes the installed pair.
+cp "$receipt" "$tmp/receipt-v2.json"
+jq '.management_protocol_version = "1"' "$receipt" >"$tmp/receipt-v1.json"
+mv "$tmp/receipt-v1.json" "$receipt"
+cp "$ROOT/setup.sh" "$tmp/setup-clean.sh"
+if MTLS_ROUTER_INSTALL_DIR="$install" MTLS_ROUTER_STATE_DIR="$home/state" HOME="$home" \
+  bash "$tmp/setup-clean.sh" router status >/dev/null 2>&1; then
+  fail "protocol v1 receipt was accepted"
+fi
+mv "$tmp/receipt-v2.json" "$receipt"
 
 for missing in "$router_asset" "$manager_asset" SHA256SUMS; do
   rm -rf "$package"

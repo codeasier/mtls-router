@@ -72,7 +72,7 @@ fn main() {
     );
     println!(
         "cargo:rustc-env=MTLS_MANAGEMENT_PROTOCOL_VERSION={}",
-        env::var("MANAGEMENT_PROTOCOL_VERSION").unwrap_or_else(|_| "1".into())
+        env::var("MANAGEMENT_PROTOCOL_VERSION").unwrap_or_else(|_| "2".into())
     );
 
     tauri_build::build()

@@ -33,22 +33,48 @@ export function createMockApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
       desktop: "desktop-v1",
       manager: "manager-v1",
       router: "router-v1",
-      management_protocol: "1",
+      management_protocol: "2",
     }),
     getRouterLogs: vi.fn().mockResolvedValue({ lines: [] }),
     collectDiagnostics: vi.fn().mockResolvedValue({ summary: "safe summary" }),
     openLogLocation: vi.fn().mockResolvedValue(undefined),
     detectAgents: vi.fn().mockResolvedValue({ agents: [] }),
+    discoverModels: vi.fn().mockResolvedValue({
+      flow_id: "flow",
+      models: ["model-a"],
+      catalog_token: "catalog",
+      router_base_url: "http://127.0.0.1:19099",
+      api_base_url: "http://127.0.0.1:19099/v1",
+      existing: {
+        model_config: {},
+        unavailable_models: {},
+        drifted_agents: [],
+      },
+    }),
+    renderAgentConfig: vi
+      .fn()
+      .mockResolvedValue({ model_config: { version: 1 }, fragments: [] }),
     previewAgents: vi.fn().mockResolvedValue({
       revision_token: "revision",
-      agents: [],
+      model_config: { version: 1 },
+      fragments: [],
+      files: [],
+      managed_config_drift: false,
+      drifted_agents: [],
+      managed_collisions: [],
+      requires_codex_auth_approval: false,
     }),
     writeAgents: vi.fn().mockResolvedValue({
       transaction_id: "transaction",
       agents: [],
-      sensitive_files: false,
-      warning: "",
     }),
+    destroyAgentModelFlow: vi.fn().mockResolvedValue(undefined),
+    importAgentModelConfig: vi
+      .fn()
+      .mockImplementation(async (content: string) => JSON.parse(content)),
+    exportAgentModelConfig: vi
+      .fn()
+      .mockImplementation(async (config) => JSON.stringify(config, null, 2)),
     getAutostart: vi.fn().mockResolvedValue(true),
     setAutostart: vi
       .fn()

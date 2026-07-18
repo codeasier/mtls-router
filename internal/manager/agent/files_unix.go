@@ -33,3 +33,11 @@ func applyPrivateMode(path string, source os.FileMode) error {
 func applyTargetPermissions(path, _ string, mode os.FileMode) error {
 	return os.Chmod(path, mode.Perm())
 }
+
+func privatePermissionsOK(_ string, directory bool, mode os.FileMode) bool {
+	want := os.FileMode(0o600)
+	if directory {
+		want = 0o700
+	}
+	return mode.Perm() == want
+}

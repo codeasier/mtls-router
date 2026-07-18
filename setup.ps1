@@ -4,8 +4,9 @@
 
 $Repo = 'codeasier/mtls-router'
 $ScriptDir = $PSScriptRoot
-$InstallDir = if ($env:MTLS_ROUTER_INSTALL_DIR) { $env:MTLS_ROUTER_INSTALL_DIR } else { Join-Path $env:USERPROFILE '.local\bin' }
-$StateDir = if ($env:MTLS_ROUTER_STATE_DIR) { $env:MTLS_ROUTER_STATE_DIR } else { Join-Path $env:USERPROFILE '.mtls-router' }
+$UserHome = if ($env:USERPROFILE) { $env:USERPROFILE } elseif ($HOME) { $HOME } else { throw '无法确定用户主目录。' }
+$InstallDir = if ($env:MTLS_ROUTER_INSTALL_DIR) { $env:MTLS_ROUTER_INSTALL_DIR } else { Join-Path $UserHome '.local\bin' }
+$StateDir = if ($env:MTLS_ROUTER_STATE_DIR) { $env:MTLS_ROUTER_STATE_DIR } else { Join-Path $UserHome '.mtls-router' }
 $DefaultDownloadBaseUrl = ''
 $DownloadBaseUrl = if ($env:MTLS_ROUTER_DOWNLOAD_URL) { $env:MTLS_ROUTER_DOWNLOAD_URL } else { $DefaultDownloadBaseUrl }
 $DownloadUser = $env:MTLS_ROUTER_DOWNLOAD_USER
@@ -17,6 +18,10 @@ $ReceiptPath = Join-Path $StateDir 'install-receipt.json'
 $PendingPath = Join-Path $StateDir 'install-pending.json'
 $BackupDir = Join-Path $StateDir 'install-previous'
 $RouterBaseUrl = 'http://127.0.0.1:19099'
+$ManagementProtocolVersion = '2'
+$MaxModelConfigSize = 2 * 1024 * 1024
+$script:TransientApiKey = ''
+$script:TransientRequest = ''
 
 function Write-Info($Message) { Write-Host $Message -ForegroundColor Cyan }
 function Write-Success($Message) { Write-Host $Message -ForegroundColor Green }
@@ -96,7 +101,7 @@ function Test-Receipt {
     if (-not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf)) { return $false }
     try { $receipt = Get-Content -LiteralPath $ReceiptPath -Raw | ConvertFrom-Json } catch { return $false }
     if ($receipt.schema_version -ne 1 -or $receipt.router.path -cne $RouterPath -or $receipt.manager.path -cne $ManagerPath) { return $false }
-    if (-not $receipt.deployment_id -or -not $receipt.management_protocol_version) { return $false }
+    if (-not $receipt.deployment_id -or [string]$receipt.management_protocol_version -cne $ManagementProtocolVersion) { return $false }
     return (Test-Hash $RouterPath $receipt.router.sha256) -and (Test-Hash $ManagerPath $receipt.manager.sha256)
 }
 
@@ -169,7 +174,7 @@ function Install-Pair($SourceRouter, $SourceManager) {
     $routerHash = Get-Hash $SourceRouter
     $managerHash = Get-Hash $SourceManager
     $info = Invoke-ManagerAt $SourceManager $SourceRouter '{"id":"setup-info","method":"manager.info","params":{}}'
-    if (-not $info.result.version -or -not $info.result.deployment_id -or -not $info.result.management_protocol_version) { Write-Fail 'manager 元数据响应无效。' }
+    if (-not $info.result.version -or -not $info.result.deployment_id -or [string]$info.result.management_protocol_version -cne $ManagementProtocolVersion) { Write-Fail 'manager 元数据响应无效。' }
     $routerVersion = Get-BinaryVersion $SourceRouter
     if ($routerVersion -cne [string]$info.result.version) { Write-Fail 'router 与 manager 版本不匹配，拒绝安装。' }
     New-Item -ItemType Directory -Force -Path $InstallDir, $StateDir | Out-Null
@@ -300,6 +305,27 @@ function Invoke-Manager($Request) {
     return Invoke-ManagerAt $pair.Manager $pair.Router $Request
 }
 
+function Invoke-ManagerSecret($Request) {
+    $pair = Resolve-ManagerPair
+    $responses = @('{"id":"setup-secret-info","method":"manager.info","params":{}}' | & $pair.Manager serve --router-sidecar $pair.Router)
+    if ($LASTEXITCODE -ne 0 -or $responses.Count -ne 1) { Write-Fail 'manager 返回了无效的握手响应。' }
+    try { $info = $responses[0] | ConvertFrom-Json } catch { Write-Fail 'manager 返回了无效 JSON。' }
+    $assets = Get-PlatformAssets
+    $expectedTarget = 'windows/' + $(if ($assets.Manager -match '-arm64\.exe$') { 'arm64' } else { 'amd64' })
+    if ($info.id -cne 'setup-secret-info' -or $info.error -or -not $info.result.deployment_id -or [string]$info.result.target -cne $expectedTarget -or [string]$info.result.management_protocol_version -cne $ManagementProtocolVersion) {
+        Write-Fail 'manager protocol v2 握手失败；未接受含密钥请求。'
+    }
+    if ($pair.Manager -ceq $ManagerPath) {
+        $receipt = Get-Content -LiteralPath $ReceiptPath -Raw | ConvertFrom-Json
+        if ([string]$info.result.deployment_id -cne [string]$receipt.deployment_id) { Write-Fail 'manager deployment 握手与安装 receipt 不匹配；未接受含密钥请求。' }
+    }
+    $responses = @($Request | & $pair.Manager serve --router-sidecar $pair.Router)
+    if ($LASTEXITCODE -ne 0 -or $responses.Count -ne 1) { Write-Fail 'manager 返回了无效的响应。' }
+    try { $operation = $responses[0] | ConvertFrom-Json } catch { Write-Fail 'manager 返回了无效 JSON。' }
+    if ($operation.error) { Write-Fail "manager $($operation.error.code): $($operation.error.message)" }
+    return $operation
+}
+
 function Start-MtlsRouter {
     if ($env:MTLS_ROUTER_SKIP_START -eq '1') { Write-Info '[启动] 跳过（MTLS_ROUTER_SKIP_START=1）'; return }
     $result = Invoke-Manager '{"id":"setup","method":"router.start","params":{"owner":"cli"}}'
@@ -353,91 +379,52 @@ function Get-AgentTargets($Filter, $Detect) {
     return $targets
 }
 
-function Show-AgentPreview($Filter) {
-    $detect = Invoke-Manager '{"id":"detect","method":"agent.detect","params":{}}'
-    $targets = @(Get-AgentTargets $Filter $detect)
-    if (-not $targets.Count) { Write-Warn '  未检测到 Claude Code、opencode 或 Codex。'; return }
-    $request = [ordered]@{ id = 'preview'; method = 'agent.preview'; params = @{ agents = $targets } } | ConvertTo-Json -Compress -Depth 10
-    $preview = Invoke-Manager $request
-    foreach ($key in $targets) {
-        $state = $detect.result.agents | Where-Object agent -eq $key | Select-Object -First 1
-        Write-Host "### $($state.name) -> $($state.path)"
-        switch ($key) {
+function Read-OptionalString($Label) { $v = Read-Host "$Label [留空表示未设置]"; if ($v) { return $v }; return $null }
+function Read-OptionalBoolean($Label) { while ($true) { $v = Read-Host "$Label [true/false/留空]"; if (-not $v) { return $null }; if ($v -ceq 'true') { return $true }; if ($v -ceq 'false') { return $false } } }
+function Read-OptionalInteger($Label) { $v = Read-Host "$Label [正整数/留空]"; if (-not $v) { return $null }; $n = 0L; if (-not [Int64]::TryParse($v, [ref]$n) -or $n -le 0) { Write-Fail "$Label 必须是正整数。" }; return $n }
+function Read-OptionalObject($Label) { $v = Read-Host "$Label [JSON object/留空]"; if (-not $v) { return $null }; try { $o = $v | ConvertFrom-Json } catch { Write-Fail "$Label 必须是 JSON object。" }; if ($o -isnot [pscustomobject]) { Write-Fail "$Label 必须是 JSON object。" }; return $o }
+function Add-Optional($Object, $Name, $Value) { if ($null -ne $Value) { $Object[$Name] = $Value } }
+
+function New-AgentModelConfig($Targets) {
+    $config = [ordered]@{ version = 1 }
+    foreach ($agent in $Targets) {
+        switch ($agent) {
             'claude' {
-@'
-{
-  "env": {
-    "ANTHROPIC_BASE_URL": "http://127.0.0.1:19099",
-    "ANTHROPIC_AUTH_TOKEN": "{UserApiKey}",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "gpt-5.5",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "gpt-5.5",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "gpt-5.4[1M]",
-    "ANTHROPIC_MODEL": "gpt-5.5",
-    "ENABLE_TOOL_SEARCH": "true",
-    "DISABLE_AUTOUPDATER": "1"
-  }
-}
-'@
+                $model = Read-Host 'Claude primary model ID（不会自动选择）'; if (-not $model) { Write-Fail 'model ID 不能为空。' }
+                $primary = [ordered]@{ model = $model }; Add-Optional $primary 'name' (Read-OptionalString 'Claude primary name')
+                $section = [ordered]@{ primary = $primary }
+                foreach ($role in @('haiku','sonnet','opus')) { $choice = Read-Host "Claude ${role}：输入 inherit 或 model ID"; if (-not $choice) { Write-Fail "$role 不能为空。" }; if ($choice -ceq 'inherit') { $section[$role] = [ordered]@{ inherit_primary = $true } } else { $entry = [ordered]@{ model = $choice }; Add-Optional $entry 'name' (Read-OptionalString "Claude $role name"); $section[$role] = $entry } }
+                $extra = [ordered]@{}; foreach ($field in @('ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION','ANTHROPIC_DEFAULT_HAIKU_MODEL_DESCRIPTION','ANTHROPIC_DEFAULT_SONNET_MODEL_DESCRIPTION','ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION')) { Add-Optional $extra $field (Read-OptionalString "Claude $field") }; if ($extra.Count) { $section.extra = $extra }; $config.claude = $section
             }
             'opencode' {
-@'
-{
-  "provider": {
-    "mtls-router": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "mtls-router",
-      "options": {"baseURL": "http://127.0.0.1:19099/v1", "apiKey": "{UserApiKey}"},
-      "models": {"gpt-5.5": {"name": "GPT-5.5"}, "gpt-5.4": {"name": "GPT-5.4"}}
-    }
-  }
-}
-'@
+                $ids = @((Read-Host 'opencode model IDs（逗号分隔，不会自动选择）').Split(',') | ForEach-Object Trim | Where-Object { $_ }); if (-not $ids.Count) { Write-Fail '至少需要一个 model。' }; $default = Read-Host 'opencode default model ID'; $models = [ordered]@{}
+                foreach ($model in $ids) { $entry = [ordered]@{}; Add-Optional $entry 'name' (Read-OptionalString "opencode $model name"); foreach ($field in @('reasoning','attachment','tool_call','temperature')) { Add-Optional $entry $field (Read-OptionalBoolean "opencode $model $field") }; $context = Read-OptionalInteger "opencode $model limit.context"; $input = Read-OptionalInteger "opencode $model limit.input"; $output = Read-OptionalInteger "opencode $model limit.output"; if ($null -ne $context -or $null -ne $input -or $null -ne $output) { if ($null -eq $context -or $null -eq $output) { Write-Fail 'limit 需要 context 和 output。' }; $limit = [ordered]@{ context = $context; output = $output }; Add-Optional $limit 'input' $input; $entry.limit = $limit }; Add-Optional $entry 'modalities' (Read-OptionalObject "opencode $model modalities（input/output arrays）"); $interleaved = Read-OptionalString "opencode $model interleaved: true/reasoning/reasoning_content/reasoning_details"; if ($interleaved -ceq 'true') { $entry.interleaved = $true } elseif ($interleaved) { $entry.interleaved = [ordered]@{ field = $interleaved } }; Add-Optional $entry 'options' (Read-OptionalObject "opencode $model options"); Add-Optional $entry 'extra' (Read-OptionalObject "opencode $model extra"); $models[$model] = $entry }
+                $config.opencode = [ordered]@{ default_model = $default; models = $models }
             }
             'codex' {
-@'
-model_provider = "custom"
-model = "gpt-5.5"
-disable_response_storage = true
-
-[model_providers.custom]
-name = "9router"
-wire_api = "responses"
-requires_openai_auth = true
-base_url = "http://127.0.0.1:19099/v1"
-'@
-                Write-Host "### Codex -> $($state.auth_path)"
-                Write-Host "{`n  `"OPENAI_API_KEY`": `"{UserApiKey}`"`n}"
+                $model = Read-Host 'Codex model ID（不会自动选择）'; if (-not $model) { Write-Fail 'model ID 不能为空。' }; $section = [ordered]@{ model = $model }; foreach ($field in @('reasoning_effort','reasoning_summary','verbosity')) { Add-Optional $section $field (Read-OptionalString "Codex $field") }; foreach ($field in @('context_window','auto_compact_token_limit')) { Add-Optional $section $field (Read-OptionalInteger "Codex $field") }; $scope = Read-OptionalString 'Codex model_auto_compact_token_limit_scope: total/body_after_prefix'; if ($scope) { $section.extra = [ordered]@{ model_auto_compact_token_limit_scope = $scope } }; $config.codex = $section
             }
         }
-        Write-Host ''
     }
-    if (-not $preview.result.revision_token) { Write-Fail 'manager preview 缺少 revision token。' }
-    Write-Info '以上内容由 manager 预览验证；未修改文件。'
+    return $config
 }
 
-function Write-AgentConfig($Filter) {
-    if (-not $Filter) { Write-Fail '--write-config 需要 --agent=claude,opencode,codex 显式指定要操作的 agent。' }
-    $detect = Invoke-Manager '{"id":"detect","method":"agent.detect","params":{}}'
-    $targets = @(Get-AgentTargets $Filter $detect)
-    $previewRequest = [ordered]@{ id = 'preview'; method = 'agent.preview'; params = @{ agents = $targets } } | ConvertTo-Json -Compress -Depth 10
-    $preview = Invoke-Manager $previewRequest
-    $apiKey = ''
-    try {
-        if (-not [Console]::IsInputRedirected) {
-            $secure = Read-Host '请输入 mtls-router OPENAI_API_KEY（输入隐藏）' -AsSecureString
-            $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
-            try { $apiKey = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }
-        }
-    } catch {}
-    if (-not $apiKey) { Write-Fail '写入 Agent 配置需要隐藏交互输入。非交互自动化请向 mtls-router-manager serve 的 agent.write JSON stdin 请求提供 api_key；MTLS_ROUTER_OPENAI_API_KEY 已移除。' }
-    $request = [ordered]@{ id = 'write'; method = 'agent.write'; params = @{ agents = $targets; revision_token = $preview.result.revision_token; api_key = $apiKey } } | ConvertTo-Json -Compress -Depth 10
-    $response = Invoke-Manager $request
-    $apiKey = ''; $request = ''
-    foreach ($agent in $response.result.agents) {
-        $name = switch ($agent.agent) { 'claude' {'Claude Code'} 'codex' {'Codex'} default {$agent.agent} }
-        foreach ($path in $agent.changed) { Write-Success "  已写入 $name 配置: $path" }
-        foreach ($backup in $agent.backups) { Write-Info "  已备份: $backup" }
-    }
+function Read-ModelConfigFile($Path) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { Write-Fail '--model-config 必须是普通文件。' }; $item = Get-Item -LiteralPath $Path -Force; if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { Write-Fail '--model-config 不接受链接或 reparse point。' }; if ($item.Length -le 0 -or $item.Length -gt $MaxModelConfigSize) { Write-Fail '--model-config 必须大于 0 且不超过 2 MiB。' }; try { $config = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json } catch { Write-Fail '--model-config 必须是有效 JSON object。' }; if ($config -isnot [pscustomobject]) { Write-Fail '--model-config 根必须是 JSON object。' }; return $config
+}
+function Show-Fragments($Result) { foreach ($f in $Result.fragments) { Write-Host "### $($f.agent) [$($f.role)] -> $($f.path) ($($f.format))"; Write-Host $f.content; Write-Host '' } }
+function Show-ExactPreview($Result) { Show-Fragments $Result; foreach ($f in $Result.files) { Write-Host "FILE $($f.operation): $($f.path)"; if ($f.backup_path) { Write-Host "  BACKUP: $($f.backup_path)" } }; foreach ($c in $Result.managed_collisions) { Write-Host "COLLISION $($c.agent) $($c.path): $($c.type) -> $($c.action)" }; if ($Result.state_change) { Write-Host "STATE $($Result.state_change.operation): $($Result.state_change.path)" }; if ($Result.state_backup) { Write-Host "STATE BACKUP: $($Result.state_backup.path)" } }
+
+function Invoke-AgentFlow($Mode, $Filter, $ModelConfigPath) {
+    if ($Mode -ceq 'write' -and -not $Filter) { Write-Fail '--write-config 需要 --agent=claude,opencode,codex 显式指定要操作的 agent。' }; $detect = Invoke-Manager '{"id":"detect","method":"agent.detect","params":{}}'; if (-not $Filter) { if ([Console]::IsInputRedirected) { Write-Fail 'Agent 配置需要交互选择。非交互自动化请使用 manager protocol v2 stdin。' }; foreach ($state in @($detect.result.agents | Where-Object detected)) { Write-Host "DETECTED $($state.agent): $($state.path)" }; $Filter = Read-Host '选择 Agent（逗号分隔 claude,opencode,codex）'; if (-not $Filter) { Write-Fail '必须显式选择至少一个 Agent。' } }; $targets = @(Get-AgentTargets $Filter $detect); if (-not $targets.Count) { Write-Warn '未检测到 Agent。'; return }
+    if ([Console]::IsInputRedirected) { Write-Fail 'Agent 配置需要隐藏交互输入。非交互自动化请使用 manager protocol v2 stdin：manager.info 握手后调用 agent.models、agent.render/agent.preview、agent.write；key 不得进入参数、环境或文件。MTLS_ROUTER_OPENAI_API_KEY 已移除。' }
+    try { $secure = Read-Host '请输入 mtls-router OPENAI_API_KEY（输入隐藏）' -AsSecureString; $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure); try { $script:TransientApiKey = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }; if (-not $script:TransientApiKey) { Write-Fail 'API key 不能为空。' }
+        $script:TransientRequest = [ordered]@{ id='models'; method='agent.models'; params=[ordered]@{ owner='cli'; agents=$targets; api_key=$script:TransientApiKey } } | ConvertTo-Json -Compress -Depth 30; $models = Invoke-ManagerSecret $script:TransientRequest; $script:TransientRequest = ''; foreach ($id in $models.result.models) { Write-Host "MODEL $id" }
+        $modelConfig = if ($ModelConfigPath) { Read-ModelConfigFile $ModelConfigPath } else { New-AgentModelConfig $targets }; $params = [ordered]@{ agents=$targets; catalog_token=$models.result.catalog_token; model_config=$modelConfig }
+        if ($Mode -ceq 'print') { $render = Invoke-Manager ([ordered]@{ id='render'; method='agent.render'; params=$params } | ConvertTo-Json -Compress -Depth 30); Show-Fragments $render.result; Write-Info 'manager 动态渲染完成；未修改 Agent、事务或 sidecar 文件。发现模型可能启动 router 生命周期状态。'; return }
+        $preview = Invoke-Manager ([ordered]@{ id='preview'; method='agent.preview'; params=$params } | ConvertTo-Json -Compress -Depth 30); Show-ExactPreview $preview.result; $approveDrift = $false; $approveCodex = $false; if ($preview.result.managed_config_drift) { if ((Read-Host 'managed drift：输入 OVERWRITE 批准') -cne 'OVERWRITE') { Write-Fail '已取消。' }; $approveDrift = $true }; if ($preview.result.requires_codex_auth_approval) { if ((Read-Host 'Codex auth 将变更并清理冲突认证；输入 CODEX-AUTH 批准') -cne 'CODEX-AUTH') { Write-Fail '已取消。' }; $approveCodex = $true }; if ((Read-Host '输入 WRITE 确认写入') -cne 'WRITE') { Write-Fail '已取消。' }
+        $writeParams = [ordered]@{ agents=$targets; catalog_token=$models.result.catalog_token; model_config=$modelConfig; revision_token=$preview.result.revision_token; approve_managed_overwrite=$approveDrift; approve_codex_auth_change=$approveCodex; api_key=$script:TransientApiKey }; $script:TransientRequest = [ordered]@{ id='write'; method='agent.write'; params=$writeParams } | ConvertTo-Json -Compress -Depth 30; $response = Invoke-ManagerSecret $script:TransientRequest; foreach ($agent in $response.result.agents) { foreach ($path in $agent.changed) { Write-Success "WROTE $($agent.agent): $path" }; foreach ($backup in $agent.backups) { Write-Info "BACKUP: $backup" } }
+    } finally { $script:TransientApiKey = ''; $script:TransientRequest = ''; $writeParams = $null; $secure = $null; $modelConfig = $null }
 }
 
 function Print-NextSteps {
@@ -455,20 +442,22 @@ function Show-Usage {
 默认行为等价于 router setup，不修改 Agent 配置。
 
   router install|start|setup|status|log [--tail=N]|stop
-  agent print-config [--agent=claude,opencode,codex]
-  agent write-config --agent=claude,opencode,codex
+  agent print-config [--agent=claude,opencode,codex] [--model-config=PATH]
+  agent write-config --agent=claude,opencode,codex [--model-config=PATH]
   --print-config / --write-config   兼容旧别名
 
 安装选项: --download --download-url=URL --download-user=USER
           --download-password=PASSWORD --version=VERSION
 
-Agent 写入仅接受隐藏交互输入。自动化请直接向 mtls-router-manager serve
-发送 agent.preview 后再发送含 api_key 的 agent.write 单行 JSON stdin 请求。
+Agent 命令先隐藏读取 key，再发现模型；不会自动选择模型。向导覆盖 Agent-native
+typed fields，或读取不超过 2 MiB 的普通 JSON --model-config 文件。
+非交互自动化请使用 manager protocol v2 stdin：manager.info 握手后依次调用
+agent.models、agent.render/agent.preview、agent.write；key 不得进入参数、环境或文件。
 '@
 }
 
 function Main {
-    $action = 'setup'; $agentFilter = ''; $lines = 200
+    $action = 'setup'; $agentFilter = ''; $modelConfigPath = ''; $lines = 200
     if ($args.Count) {
         switch ($args[0]) {
             'router' { if ($args.Count -lt 2) { Write-Fail 'router 需要子命令' }; $action = "router-$($args[1])"; $args = @($args | Select-Object -Skip 2) }
@@ -486,6 +475,8 @@ function Main {
         switch -Regex ($a) {
             '^--agent=(.+)$' { $agentFilter = $Matches[1]; $i++; continue }
             '^--agent$' { if (++$i -ge $args.Count) { Write-Fail '--agent 需要参数' }; $agentFilter = $args[$i]; $i++; continue }
+            '^--model-config=(.+)$' { $modelConfigPath = $Matches[1]; $i++; continue }
+            '^--model-config$' { if (++$i -ge $args.Count) { Write-Fail '--model-config 需要路径' }; $modelConfigPath = $args[$i]; $i++; continue }
             '^--tail=(.+)$' { $lines = $Matches[1]; $i++; continue }
             '^--tail$' { if (++$i -ge $args.Count) { Write-Fail '--tail 需要行数' }; $lines = $args[$i]; $i++; continue }
             '^--download$' { if ($action -notin @('setup','router-install','router-setup')) { Write-Fail '--download 仅适用于 router install/setup' }; $script:AllowDownload = $true; $i++; continue }
@@ -509,8 +500,8 @@ function Main {
         'router-status' { Show-RouterStatus }
         'router-log' { Show-RouterLog $lines }
         'router-stop' { Stop-Router }
-        'print' { Show-AgentPreview $agentFilter }
-        'write' { Write-AgentConfig $agentFilter; Print-NextSteps }
+        'print' { Invoke-AgentFlow 'print' $agentFilter $modelConfigPath }
+        'write' { Invoke-AgentFlow 'write' $agentFilter $modelConfigPath; Print-NextSteps }
     }
 }
 

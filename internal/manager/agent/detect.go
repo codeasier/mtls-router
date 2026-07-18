@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -10,7 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"unicode/utf8"
+
+	"github.com/codeasier/mtls-router/internal/manager/agent/modelconfig"
 )
 
 const maxConfigSize = 16 << 20
@@ -38,6 +38,7 @@ type State struct {
 	Writable   bool   `json:"writable"`
 	Configured bool   `json:"configured"`
 	Invalid    bool   `json:"invalid"`
+	Migratable bool   `json:"migratable,omitempty"`
 
 	pathOverridden bool
 }
@@ -153,8 +154,16 @@ func inspectClaude(root map[string]json.RawMessage) (bool, bool) {
 	if !valid {
 		return false, false
 	}
-	return jsonStringEquals(env["ANTHROPIC_BASE_URL"], "http://127.0.0.1:19099") &&
-		hasNonemptyJSONString(env["ANTHROPIC_AUTH_TOKEN"]), false
+	base, ok := rawString(env["ANTHROPIC_BASE_URL"])
+	if !ok || !validRouterBaseURL(base) || !hasNonemptyJSONString(env["ANTHROPIC_AUTH_TOKEN"]) {
+		return false, false
+	}
+	for _, key := range []string{"ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL"} {
+		if !hasNonemptyJSONString(env[key]) {
+			return false, false
+		}
+	}
+	return true, false
 }
 
 func inspectOpenCode(root map[string]json.RawMessage) (bool, bool) {
@@ -178,8 +187,23 @@ func inspectOpenCode(root map[string]json.RawMessage) (bool, bool) {
 	if !valid {
 		return false, false
 	}
-	return jsonStringEquals(options["baseURL"], "http://127.0.0.1:19099/v1") &&
-		hasNonemptyJSONString(options["apiKey"]), false
+	base, ok := rawString(options["baseURL"])
+	if !ok || !validAPIBaseURL(base) || !hasNonemptyJSONString(options["apiKey"]) {
+		return false, false
+	}
+	if !jsonStringEquals(router["npm"], "@ai-sdk/openai-compatible") || !jsonStringEquals(router["name"], "mtls-router") {
+		return false, false
+	}
+	models, valid := decodeObject(router["models"])
+	if !valid || len(models) == 0 {
+		return false, false
+	}
+	rootModel, ok := rawString(root["model"])
+	if !ok || !strings.HasPrefix(rootModel, "mtls-router/") {
+		return false, false
+	}
+	_, exists := models[strings.TrimPrefix(rootModel, "mtls-router/")]
+	return exists, false
 }
 
 func inspectCodex(detected bool, command string, paths Paths) State {
@@ -204,7 +228,7 @@ func inspectCodex(detected bool, command string, paths Paths) State {
 			state.Invalid = true
 			return state
 		}
-		authConfigured = hasNonemptyJSONString(auth["OPENAI_API_KEY"])
+		authConfigured = jsonStringEquals(auth["auth_mode"], "apikey") && hasNonemptyJSONString(auth["OPENAI_API_KEY"])
 	}
 	if !state.Exists {
 		return state
@@ -215,21 +239,54 @@ func inspectCodex(detected bool, command string, paths Paths) State {
 		state.Invalid = true
 		return state
 	}
-	values, valid := parseTOML(content)
+	values, valid := decodeTOML(content)
 	if !valid {
 		state.Invalid = true
 		return state
 	}
 
-	state.Configured = values["model_provider"] == `"custom"` &&
-		values["model"] == `"gpt-5.5"` &&
-		values["disable_response_storage"] == "true" &&
-		values["model_providers.custom.name"] == `"9router"` &&
-		values["model_providers.custom.wire_api"] == `"responses"` &&
-		values["model_providers.custom.requires_openai_auth"] == "true" &&
-		values["model_providers.custom.base_url"] == `"http://127.0.0.1:19099/v1"` &&
-		authConfigured
+	authRoot := map[string]json.RawMessage{}
+	if authContent, err := readConfig(paths.AuthPath); err == nil {
+		authRoot, _ = decodeObject(authContent)
+	}
+	state.Migratable = exactHistoricalCodex(values, authRoot)
+	provider, providerOK := tomlTable(values, "model_providers", "mtls-router")
+	model, modelOK := tomlString(values["model"])
+	store, storeOK := tomlString(values["cli_auth_credentials_store"])
+	state.Configured = values["model_provider"] == "mtls-router" && modelOK && model != "" && storeOK && store == "file" &&
+		providerOK && provider["name"] == "mtls-router" && provider["wire_api"] == "responses" && provider["requires_openai_auth"] == true &&
+		validAPIValue(provider["base_url"]) && authConfigured && validCodexModelSettings(values)
 	return state
+}
+
+func validRouterBaseURL(value string) bool { _, err := apiURL(value); return err == nil }
+func validAPIBaseURL(value string) bool    { return validAPIValue(value) }
+func validAPIValue(value any) bool {
+	text, ok := value.(string)
+	if !ok || !strings.HasSuffix(text, "/v1") {
+		return false
+	}
+	api, err := apiURL(strings.TrimSuffix(text, "/v1"))
+	return err == nil && api == strings.TrimSuffix(text, "/")
+}
+
+func validCodexModelSettings(values map[string]any) bool {
+	section := map[string]any{"model": values["model"]}
+	for key, canonical := range map[string]string{"model_reasoning_effort": "reasoning_effort", "model_reasoning_summary": "reasoning_summary", "model_verbosity": "verbosity", "model_context_window": "context_window", "model_auto_compact_token_limit": "auto_compact_token_limit"} {
+		if value, ok := values[key]; ok {
+			section[canonical] = value
+		}
+	}
+	if value, ok := values["model_auto_compact_token_limit_scope"]; ok {
+		section["extra"] = map[string]any{"model_auto_compact_token_limit_scope": value}
+	}
+	doc, err := json.Marshal(map[string]any{"version": modelconfig.Version, "codex": section})
+	if err != nil {
+		return false
+	}
+	model, _ := values["model"].(string)
+	_, err = modelconfig.Decode(doc, []modelconfig.Agent{modelconfig.Codex}, []string{model})
+	return err == nil
 }
 
 func decodeObject(content []byte) (map[string]json.RawMessage, bool) {
@@ -374,197 +431,4 @@ func stripJSONC(src []byte) ([]byte, error) {
 		return nil, errors.New("unterminated JSONC token")
 	}
 	return out.Bytes(), nil
-}
-
-// parseTOML validates the TOML forms emitted and preserved by the setup
-// scripts and returns only non-sensitive scalar values needed for detection.
-func parseTOML(content []byte) (map[string]string, bool) {
-	if len(content) > maxConfigSize || !utf8.Valid(content) {
-		return nil, false
-	}
-	values := make(map[string]string)
-	section := ""
-	scanner := bufio.NewScanner(bytes.NewReader(content))
-	scanner.Buffer(make([]byte, 4096), maxConfigSize)
-	for scanner.Scan() {
-		line, valid := stripTOMLComment(strings.TrimSpace(scanner.Text()))
-		if !valid {
-			return nil, false
-		}
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if strings.HasPrefix(line, "[") {
-			name, ok := parseTOMLHeader(line)
-			if !ok {
-				return nil, false
-			}
-			section = name
-			continue
-		}
-		key, value, ok := splitTOMLAssignment(line)
-		if !ok || !validTOMLKey(key) {
-			return nil, false
-		}
-		if strings.HasPrefix(strings.TrimSpace(value), "[") {
-			for !balancedTOMLArray(value) {
-				if !scanner.Scan() {
-					return nil, false
-				}
-				next, valid := stripTOMLComment(strings.TrimSpace(scanner.Text()))
-				if !valid {
-					return nil, false
-				}
-				value += "\n" + strings.TrimSpace(next)
-			}
-		}
-		if !validTOMLValue(value) {
-			return nil, false
-		}
-		fullKey := key
-		if section != "" {
-			fullKey = section + "." + key
-		}
-		if _, duplicate := values[fullKey]; duplicate {
-			return nil, false
-		}
-		values[fullKey] = strings.TrimSpace(value)
-	}
-	return values, scanner.Err() == nil
-}
-
-func stripTOMLComment(line string) (string, bool) {
-	quote := byte(0)
-	escape := false
-	for i := 0; i < len(line); i++ {
-		ch := line[i]
-		if quote != 0 {
-			if quote == '"' && escape {
-				escape = false
-			} else if quote == '"' && ch == '\\' {
-				escape = true
-			} else if ch == quote {
-				quote = 0
-			}
-			continue
-		}
-		if ch == '"' || ch == '\'' {
-			quote = ch
-		} else if ch == '#' {
-			return line[:i], true
-		}
-	}
-	return line, quote == 0
-}
-
-func parseTOMLHeader(line string) (string, bool) {
-	array := strings.HasPrefix(line, "[[")
-	start, end := 1, "]"
-	if array {
-		start, end = 2, "]]"
-	}
-	if !strings.HasSuffix(line, end) {
-		return "", false
-	}
-	name := strings.TrimSpace(line[start : len(line)-len(end)])
-	return name, name != "" && validTOMLKey(name)
-}
-
-func splitTOMLAssignment(line string) (string, string, bool) {
-	quote := byte(0)
-	escape := false
-	for i := 0; i < len(line); i++ {
-		ch := line[i]
-		if quote != 0 {
-			if quote == '"' && escape {
-				escape = false
-			} else if quote == '"' && ch == '\\' {
-				escape = true
-			} else if ch == quote {
-				quote = 0
-			}
-			continue
-		}
-		if ch == '"' || ch == '\'' {
-			quote = ch
-		} else if ch == '=' {
-			key, value := strings.TrimSpace(line[:i]), strings.TrimSpace(line[i+1:])
-			return key, value, key != "" && value != ""
-		}
-	}
-	return "", "", false
-}
-
-func validTOMLKey(key string) bool {
-	for _, part := range strings.Split(key, ".") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			return false
-		}
-		if (part[0] == '"' && part[len(part)-1] == '"') || (part[0] == '\'' && part[len(part)-1] == '\'') {
-			continue
-		}
-		for _, ch := range part {
-			if (ch < 'a' || ch > 'z') && (ch < 'A' || ch > 'Z') && (ch < '0' || ch > '9') && ch != '_' && ch != '-' {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-func validTOMLValue(value string) bool {
-	value = strings.TrimSpace(value)
-	if value == "true" || value == "false" || value == "inf" || value == "+inf" || value == "-inf" || value == "nan" || value == "+nan" || value == "-nan" {
-		return true
-	}
-	if len(value) >= 2 && ((value[0] == '"' && value[len(value)-1] == '"') || (value[0] == '\'' && value[len(value)-1] == '\'')) {
-		return true
-	}
-	if len(value) >= 2 && value[0] == '[' && value[len(value)-1] == ']' {
-		return balancedTOMLArray(value)
-	}
-	if len(value) >= 2 && value[0] == '{' && value[len(value)-1] == '}' {
-		return true
-	}
-	if value == "" {
-		return false
-	}
-	first := value[0]
-	if (first >= '0' && first <= '9') || first == '+' || first == '-' {
-		return !strings.ContainsAny(value, "\t\r\n")
-	}
-	return false
-}
-
-func balancedTOMLArray(value string) bool {
-	depth := 0
-	quote := byte(0)
-	escape := false
-	for i := 0; i < len(value); i++ {
-		ch := value[i]
-		if quote != 0 {
-			if quote == '"' && escape {
-				escape = false
-			} else if quote == '"' && ch == '\\' {
-				escape = true
-			} else if ch == quote {
-				quote = 0
-			}
-			continue
-		}
-		switch ch {
-		case '"', '\'':
-			quote = ch
-		case '[':
-			depth++
-		case ']':
-			depth--
-			if depth < 0 {
-				return false
-			}
-		}
-	}
-	return depth == 0 && quote == 0
 }

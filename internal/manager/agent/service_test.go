@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/codeasier/mtls-router/internal/manager/agent/modelconfig"
 )
 
 const testAPIKey = "sk-agent-write-key-canary-7f2d"
@@ -30,9 +32,7 @@ func TestPreviewIsStructuredKeyFreeAndDoesNotWrite(t *testing.T) {
 	writeFile(t, codexAuth, `{"OPENAI_API_KEY":"stored-codex-canary","extra":"drop"}`)
 
 	service := newTestService(t, stateDir, home, map[string]bool{"claude": true, "opencode": true, "codex": true}, nil)
-	if _, err := os.Stat(stateDir); !os.IsNotExist(err) {
-		t.Fatalf("service construction wrote preview state: %v", err)
-	}
+	assertOnlyLockState(t, stateDir)
 	preview, err := service.Preview(context.Background(), []Kind{Codex, ClaudeCode, OpenCode})
 	if err != nil {
 		t.Fatal(err)
@@ -67,8 +67,8 @@ func TestPreviewIsStructuredKeyFreeAndDoesNotWrite(t *testing.T) {
 		}
 	}
 	assertNoBackupFiles(t, home)
-	if _, err := os.Stat(stateDir); !os.IsNotExist(err) {
-		t.Fatalf("preview created transaction state: %v", err)
+	if _, err := os.Stat(filepath.Join(stateDir, journalFileName)); !os.IsNotExist(err) {
+		t.Fatalf("preview created transaction journal: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(filepath.Dir(openCodeJSONC), "opencode.json")); !os.IsNotExist(err) {
 		t.Fatalf("preview created migration target: %v", err)
@@ -80,7 +80,7 @@ func TestRevisionTokenSurvivesOneRequestManagerProcesses(t *testing.T) {
 	stateDir := filepath.Join(home, "manager-state")
 	detector := testServiceDetector(home, map[string]bool{"claude": true}, nil)
 
-	previewService, err := NewService(Options{StateDir: stateDir, Detector: detector})
+	previewService, err := NewService(Options{StateDir: stateDir, Detector: detector, LegacyRenderInput: legacyTestRenderInput()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestRevisionTokenSurvivesOneRequestManagerProcesses(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	writeService, err := NewService(Options{StateDir: stateDir, Detector: detector})
+	writeService, err := NewService(Options{StateDir: stateDir, Detector: detector, LegacyRenderInput: legacyTestRenderInput()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +278,7 @@ js_repl = false
 	if jsonString(t, claude["SENTINEL"]) != "keep" || jsonString(t, env["ANTHROPIC_AUTH_TOKEN"]) != testAPIKey {
 		t.Fatalf("Claude config = %s", readString(t, claudePath))
 	}
-	if _, exists := env["OTHER"]; exists || jsonString(t, env["ANTHROPIC_DEFAULT_SONNET_MODEL"]) != "gpt-5.4[1M]" {
+	if jsonString(t, env["OTHER"]) != "drop" || jsonString(t, env["ANTHROPIC_DEFAULT_SONNET_MODEL"]) != "model-sonnet" {
 		t.Fatalf("Claude managed env = %s", readString(t, claudePath))
 	}
 
@@ -290,24 +290,24 @@ js_repl = false
 	if jsonString(t, openCode["model"]) != "anthropic/keep" || jsonString(t, options["apiKey"]) != testAPIKey {
 		t.Fatalf("opencode config = %s", readString(t, openCodePath))
 	}
-	if _, ok := providers["anthropic"]; !ok || len(models) != 2 || models["gpt-5.5"] == nil || models["gpt-5.4"] == nil {
+	if _, ok := providers["anthropic"]; !ok || len(models) != 2 || models["model-primary"] == nil || models["model-sonnet"] == nil {
 		t.Fatalf("opencode providers/models = %s", readString(t, openCodePath))
 	}
 
 	codex := readString(t, codexConfig)
 	for _, expected := range []string{
-		`model_provider = "custom"`, `model = "gpt-5.5"`, `disable_response_storage = true`,
-		`[model_providers.custom]`, `name = "9router"`, `approval_policy = "on-request"`, `[features]`, `js_repl = false`,
+		`model_provider = "mtls-router"`, `model = "model-primary"`, `cli_auth_credentials_store = "file"`,
+		`[model_providers.mtls-router]`, `name = "mtls-router"`, `approval_policy = "on-request"`, `[features]`, `js_repl = false`,
 	} {
 		if !strings.Contains(codex, expected) {
 			t.Fatalf("Codex config missing %q: %s", expected, codex)
 		}
 	}
-	if strings.Contains(codex, `name = "old"`) || strings.Count(codex, "[model_providers.custom]") != 1 {
-		t.Fatalf("Codex managed section not replaced: %s", codex)
+	if !strings.Contains(codex, `name = "old"`) || !strings.Contains(codex, "disable_response_storage = false") {
+		t.Fatalf("Codex user custom provider or obsolete setting handling failed: %s", codex)
 	}
 	auth := readJSONObject(t, codexAuth)
-	if len(auth) != 1 || jsonString(t, auth["OPENAI_API_KEY"]) != testAPIKey {
+	if jsonString(t, auth["auth_mode"]) != "apikey" || jsonString(t, auth["OPENAI_API_KEY"]) != testAPIKey {
 		t.Fatalf("Codex auth = %s", readString(t, codexAuth))
 	}
 	if _, err := os.Stat(service.journalPath()); !os.IsNotExist(err) {
@@ -514,6 +514,38 @@ func TestWriteFailureRollsBackAllAgentsAndRetainsBackups(t *testing.T) {
 	assertResultKeyFree(t, result)
 }
 
+func TestCodexAuthFailureRollsBackConfigAndAuthWithoutTouchingKeyring(t *testing.T) {
+	home := t.TempDir()
+	configPath := filepath.Join(home, ".codex", "config.toml")
+	authPath := filepath.Join(home, ".codex", "auth.json")
+	configOriginal := "cli_auth_credentials_store = \"keyring\"\napproval_policy = \"on-request\"\n"
+	authOriginal := `{"auth_mode":"chatgpt","tokens":{"access_token":"old"},"metadata":{"keyring_id":"untouched"}}`
+	writeFile(t, configPath, configOriginal)
+	writeFile(t, authPath, authOriginal)
+	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"codex": true}, nil)
+	preview, err := service.Preview(context.Background(), []Kind{Codex})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.hooks.beforeReplace = func(path string) error {
+		if path == authPath {
+			return errors.New("injected auth replacement failure")
+		}
+		return nil
+	}
+	result, err := service.Write(context.Background(), WriteRequest{Agents: []Kind{Codex}, RevisionToken: preview.RevisionToken, APIKey: testAPIKey})
+	assertCode(t, err, CodeWriteFailed)
+	if got := readString(t, configPath); got != configOriginal {
+		t.Fatalf("keyring config not restored: %q", got)
+	}
+	if got := readString(t, authPath); got != authOriginal {
+		t.Fatalf("auth file not restored: %q", got)
+	}
+	if len(result.Agents) != 1 || !result.Agents[0].RolledBack {
+		t.Fatalf("rollback result = %#v", result)
+	}
+}
+
 func TestRollbackFailureDisablesWrites(t *testing.T) {
 	home := t.TempDir()
 	claudePath := filepath.Join(home, ".claude", "settings.json")
@@ -655,7 +687,7 @@ func TestStartupRecoversManagerCrashAfterReplacement(t *testing.T) {
 	}
 	backupPath := journal.Entries[0].BackupPath
 
-	recovered, err := NewService(Options{StateDir: stateDir, Detector: testServiceDetector(home, map[string]bool{"claude": true}, nil)})
+	recovered, err := NewService(Options{StateDir: stateDir, Detector: testServiceDetector(home, map[string]bool{"claude": true}, nil), LegacyRenderInput: legacyTestRenderInput()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -913,11 +945,26 @@ func writeOneClaude(t *testing.T, service *Service) string {
 
 func newTestService(t *testing.T, stateDir, home string, commands map[string]bool, env map[string]string) *Service {
 	t.Helper()
-	service, err := NewService(Options{StateDir: stateDir, Detector: testServiceDetector(home, commands, env)})
+	service, err := NewService(Options{StateDir: stateDir, Detector: testServiceDetector(home, commands, env), LegacyRenderInput: legacyTestRenderInput()})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return service
+}
+
+func legacyTestRenderInput() *LegacyRenderInput {
+	name := "Primary"
+	return &LegacyRenderInput{
+		RouterBaseURL: "http://127.0.0.1:19099", APIBaseURL: "http://127.0.0.1:19099/v1",
+		Config: &modelconfig.Config{Version: 1,
+			Claude: &modelconfig.ClaudeConfig{
+				Primary: modelconfig.Model{Model: "model-primary", Name: &name},
+				Haiku:   modelconfig.ClaudeRole{InheritPrimary: true}, Sonnet: modelconfig.ClaudeRole{Selection: &modelconfig.Model{Model: "model-sonnet"}}, Opus: modelconfig.ClaudeRole{InheritPrimary: true},
+			},
+			OpenCode: &modelconfig.OpenCodeConfig{DefaultModel: "model-primary", Models: map[string]modelconfig.OpenCodeModelConfig{"model-primary": {}, "model-sonnet": {}}},
+			Codex:    &modelconfig.CodexConfig{Model: "model-primary"},
+		},
+	}
 }
 
 func testServiceDetector(home string, commands map[string]bool, env map[string]string) Detector {
@@ -953,6 +1000,17 @@ func assertNoBackupFiles(t *testing.T, root string) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func assertOnlyLockState(t *testing.T, stateDir string) {
+	t.Helper()
+	entries, err := os.ReadDir(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != lockFileName {
+		t.Fatalf("unexpected startup state: %#v", entries)
 	}
 }
 

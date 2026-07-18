@@ -16,8 +16,13 @@ export const COMMANDS = {
   diagnosticsCollect: "diagnostics_collect",
   openLogLocation: "open_log_location",
   agentDetect: "agent_detect",
+  agentModels: "agent_models",
+  agentRender: "agent_render",
   agentPreview: "agent_preview",
   agentWrite: "agent_write",
+  agentFlowDestroy: "agent_model_flow_destroy",
+  agentModelConfigImport: "agent_model_config_import",
+  agentModelConfigExport: "agent_model_config_export",
   autostartGet: "autostart_get",
   autostartSet: "autostart_set",
   nativeLanguageSet: "set_native_language",
@@ -98,6 +103,63 @@ export interface DesktopPaths {
 
 export type AgentId = "claude" | "opencode" | "codex";
 export type NativeLanguage = "zh-CN" | "en";
+export type JsonObject = Record<string, unknown>;
+
+export interface ModelSelection {
+  model: string;
+  name?: string;
+}
+export type ClaudeRole = { inherit_primary: true } | ModelSelection;
+export interface ClaudeModelConfig {
+  primary: ModelSelection;
+  haiku: ClaudeRole;
+  sonnet: ClaudeRole;
+  opus: ClaudeRole;
+  extra?: Record<string, string>;
+}
+export interface ModelLimit {
+  context: number;
+  input?: number;
+  output: number;
+}
+export interface Modalities {
+  input?: Array<"text" | "audio" | "image" | "video" | "pdf">;
+  output?: Array<"text" | "audio" | "image" | "video" | "pdf">;
+}
+export interface OpenCodeModelConfig {
+  name?: string;
+  reasoning?: boolean;
+  attachment?: boolean;
+  tool_call?: boolean;
+  temperature?: boolean;
+  limit?: ModelLimit;
+  modalities?: Modalities;
+  interleaved?:
+    true | { field: "reasoning" | "reasoning_content" | "reasoning_details" };
+  options?: JsonObject;
+  extra?: JsonObject;
+}
+export interface OpenCodeConfig {
+  default_model: string;
+  models: Record<string, OpenCodeModelConfig>;
+}
+export interface CodexConfig {
+  model: string;
+  reasoning_effort?: string;
+  reasoning_summary?: "auto" | "concise" | "detailed" | "none";
+  verbosity?: "low" | "medium" | "high";
+  context_window?: number;
+  auto_compact_token_limit?: number;
+  extra?: {
+    model_auto_compact_token_limit_scope?: "total" | "body_after_prefix";
+  };
+}
+export interface ModelConfig {
+  version: 1;
+  claude?: ClaudeModelConfig;
+  opencode?: OpenCodeConfig;
+  codex?: CodexConfig;
+}
 
 export interface AgentState {
   agent: AgentId;
@@ -116,37 +178,48 @@ export interface AgentState {
 export interface AgentDetection {
   agents: AgentState[];
 }
-
-export interface BackupPlan {
-  required: boolean;
-  pattern?: string;
-  sensitive: boolean;
-  warning?: string;
+export interface AgentModelsResult {
+  flow_id: string;
+  models: string[];
+  catalog_token: string;
+  router_base_url: string;
+  api_base_url: string;
+  existing: {
+    model_config: Partial<ModelConfig>;
+    unavailable_models: Partial<Record<AgentId, string[]>>;
+    drifted_agents: AgentId[];
+  };
 }
-
-export interface AgentFilePreview {
-  path: string;
-  source_path?: string;
-  format: string;
-  operation: "create" | "replace" | "preserve";
-  operations: Array<"create" | "replace" | "preserve">;
-  contains_api_key: boolean;
-  preserves?: string[];
-  backup: BackupPlan;
-  warning?: string;
-}
-
-export interface AgentPreviewItem {
+export interface AgentFragment {
   agent: AgentId;
-  name: string;
-  files: AgentFilePreview[];
-  warnings?: string[];
+  role: string;
+  path: string;
+  format: string;
+  content: string;
 }
-
+export interface AgentFileEffect {
+  path: string;
+  role: string;
+  format: string;
+  operation: string;
+  backup_path?: string;
+}
 export interface AgentPreview {
   revision_token: string;
-  agents: AgentPreviewItem[];
-  warnings?: string[];
+  model_config: ModelConfig;
+  fragments: AgentFragment[];
+  files: AgentFileEffect[];
+  managed_config_drift: boolean;
+  drifted_agents: AgentId[];
+  managed_collisions: Array<{
+    agent: AgentId;
+    path: string;
+    type: string;
+    action: string;
+  }>;
+  requires_codex_auth_approval: boolean;
+  state_change?: AgentFileEffect;
+  state_backup?: AgentFileEffect;
 }
 
 export interface FileWriteStatus {
@@ -160,19 +233,16 @@ export interface FileWriteStatus {
 export interface AgentWriteStatus {
   agent: AgentId;
   success: boolean;
-  files: FileWriteStatus[];
   changed?: string[];
   backups?: string[];
-  rollback_backups?: string[];
-  rolled_back?: boolean;
   error_code?: string;
 }
 
 export interface AgentWriteResult {
   transaction_id: string;
   agents: AgentWriteStatus[];
-  sensitive_files: boolean;
-  warning: string;
+  state_change?: AgentFileEffect;
+  state_backup?: AgentFileEffect;
 }
 
 export interface DesktopApi {
@@ -194,12 +264,39 @@ export interface DesktopApi {
   collectDiagnostics(): Promise<Diagnostics>;
   openLogLocation(): Promise<void>;
   detectAgents(): Promise<AgentDetection>;
-  previewAgents(agents: AgentId[]): Promise<AgentPreview>;
+  discoverModels(agents: AgentId[], apiKey: string): Promise<AgentModelsResult>;
+  renderAgentConfig(
+    agents: AgentId[],
+    flowId: string,
+    catalogToken: string,
+    modelConfig: ModelConfig,
+  ): Promise<{ model_config: ModelConfig; fragments: AgentFragment[] }>;
+  previewAgents(
+    agents: AgentId[],
+    flowId: string,
+    catalogToken: string,
+    modelConfig: ModelConfig,
+  ): Promise<AgentPreview>;
   writeAgents(
     agents: AgentId[],
+    flowId: string,
+    catalogToken: string,
+    modelConfig: ModelConfig,
     revisionToken: string,
-    apiKey: string,
+    approveManagedOverwrite: boolean,
+    approveCodexAuthChange: boolean,
   ): Promise<AgentWriteResult>;
+  destroyAgentModelFlow(flowId: string): Promise<void>;
+  importAgentModelConfig(
+    content: string,
+    agents: AgentId[],
+    flowId: string,
+  ): Promise<ModelConfig>;
+  exportAgentModelConfig(
+    modelConfig: ModelConfig,
+    agents: AgentId[],
+    flowId: string,
+  ): Promise<string>;
   getAutostart(): Promise<boolean>;
   setAutostart(enabled: boolean): Promise<boolean>;
   setNativeLanguage(language: NativeLanguage): Promise<void>;
@@ -272,16 +369,52 @@ export function createDesktopApi(
     },
     openLogLocation: () => invoke(COMMANDS.openLogLocation),
     detectAgents: () => invoke(COMMANDS.agentDetect),
-    previewAgents: (agents) =>
-      invoke(COMMANDS.agentPreview, { request: { agents } }),
-    writeAgents: (agents, revisionToken, apiKey) =>
+    discoverModels: (agents, apiKey) =>
+      invoke(COMMANDS.agentModels, { request: { agents, api_key: apiKey } }),
+    renderAgentConfig: (agents, flowId, catalogToken, modelConfig) =>
+      invoke(COMMANDS.agentRender, {
+        request: {
+          agents,
+          flow_id: flowId,
+          catalog_token: catalogToken,
+          model_config: modelConfig,
+        },
+      }),
+    previewAgents: (agents, flowId, catalogToken, modelConfig) =>
+      invoke(COMMANDS.agentPreview, {
+        request: {
+          agents,
+          flow_id: flowId,
+          catalog_token: catalogToken,
+          model_config: modelConfig,
+        },
+      }),
+    writeAgents: (
+      agents,
+      flowId,
+      catalogToken,
+      modelConfig,
+      revisionToken,
+      approveManagedOverwrite,
+      approveCodexAuthChange,
+    ) =>
       invoke(COMMANDS.agentWrite, {
         request: {
           agents,
+          flow_id: flowId,
+          catalog_token: catalogToken,
+          model_config: modelConfig,
           revision_token: revisionToken,
-          api_key: apiKey,
+          approve_managed_overwrite: approveManagedOverwrite,
+          approve_codex_auth_change: approveCodexAuthChange,
         },
       }),
+    destroyAgentModelFlow: (flowId) =>
+      invoke(COMMANDS.agentFlowDestroy, { flowId }),
+    importAgentModelConfig: (content, agents, flowId) =>
+      invoke(COMMANDS.agentModelConfigImport, { content, agents, flowId }),
+    exportAgentModelConfig: (modelConfig, agents, flowId) =>
+      invoke(COMMANDS.agentModelConfigExport, { modelConfig, agents, flowId }),
     getAutostart: () => invoke(COMMANDS.autostartGet),
     setAutostart: (enabled) => invoke(COMMANDS.autostartSet, { enabled }),
     setNativeLanguage: (language) =>

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct PollError {
@@ -128,6 +129,8 @@ pub struct AgentState {
     pub writable: bool,
     pub configured: bool,
     pub invalid: bool,
+    #[serde(default)]
+    pub migratable: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -136,83 +139,68 @@ pub struct AgentDetect {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
-pub struct BackupPlan {
-    pub required: bool,
-    #[serde(default)]
-    pub pattern: String,
-    pub sensitive: bool,
-    #[serde(default)]
-    pub warning: String,
+pub struct AgentFragment {
+    pub agent: String,
+    pub role: String,
+    pub path: String,
+    pub format: String,
+    pub content: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
-pub struct AgentFilePreview {
+pub struct AgentFileEffect {
     pub path: String,
-    #[serde(default)]
-    pub source_path: String,
+    pub role: String,
     pub format: String,
     pub operation: String,
-    pub operations: Vec<String>,
-    pub contains_api_key: bool,
     #[serde(default)]
-    pub preserves: Vec<String>,
-    pub backup: BackupPlan,
-    #[serde(default)]
-    pub warning: String,
+    pub backup_path: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
-pub struct AgentPreviewItem {
+pub struct ManagedCollision {
     pub agent: String,
-    pub name: String,
-    pub files: Vec<AgentFilePreview>,
-    #[serde(default)]
-    pub warnings: Vec<String>,
+    pub path: String,
+    #[serde(rename = "type")]
+    pub collision_type: String,
+    pub action: String,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct AgentPreview {
     pub revision_token: String,
-    pub agents: Vec<AgentPreviewItem>,
+    pub model_config: Value,
+    pub fragments: Vec<AgentFragment>,
     #[serde(default)]
-    pub warnings: Vec<String>,
+    pub files: Vec<AgentFileEffect>,
+    pub managed_config_drift: bool,
+    #[serde(default)]
+    pub drifted_agents: Vec<String>,
+    #[serde(default)]
+    pub managed_collisions: Vec<ManagedCollision>,
+    pub requires_codex_auth_approval: bool,
+    pub state_change: Option<AgentFileEffect>,
+    pub state_backup: Option<AgentFileEffect>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct AgentWriteResult {
     pub transaction_id: String,
     pub agents: Vec<AgentWriteStatus>,
-    pub sensitive_files: bool,
-    pub warning: String,
+    pub state_change: Option<AgentFileEffect>,
+    pub state_backup: Option<AgentFileEffect>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct AgentWriteStatus {
     pub agent: String,
     pub success: bool,
-    pub files: Vec<FileWriteStatus>,
     #[serde(default)]
     pub changed: Vec<String>,
     #[serde(default)]
     pub backups: Vec<String>,
     #[serde(default)]
-    pub rollback_backups: Vec<String>,
-    #[serde(default)]
-    pub rolled_back: bool,
-    #[serde(default)]
     pub error_code: String,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
-pub struct FileWriteStatus {
-    pub path: String,
-    #[serde(default)]
-    pub backup_path: String,
-    #[serde(default)]
-    pub rollback_backup_path: String,
-    pub replaced: bool,
-    #[serde(default)]
-    pub restored: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]

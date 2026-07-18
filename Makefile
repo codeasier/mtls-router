@@ -7,7 +7,7 @@ test-shell:
 	set -- ./tests/setup_*_test.sh; \
 	for t in "$${@}"; do \
 		[ -f "$${t}" ] || continue; \
-		CODEX_HOME="$${hostile_codex}" bash "$${t}"; \
+		CODEX_HOME="$${hostile_codex}" bash "$${t}" || exit $$?; \
 	done
 
 test-workflows:

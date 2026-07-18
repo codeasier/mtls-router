@@ -15,7 +15,7 @@ describe("App navigation", () => {
     expect(
       screen.getByRole("heading", { name: "Agent 配置" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("配置工作台")).toBeInTheDocument();
+    expect(screen.getByText("模型配置工作台")).toBeInTheDocument();
     expect(await screen.findAllByText("未返回检测结果")).toHaveLength(3);
   });
 

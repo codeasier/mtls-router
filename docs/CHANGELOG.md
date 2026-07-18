@@ -2,6 +2,26 @@
 
 [中文](zh-CN/CHANGELOG.md)
 
+## Unreleased
+
+### Added
+
+- Added authenticated `GET /v1/models` discovery and one common all-endpoint-compatible catalog for Claude Code, opencode, and Codex.
+- Added protocol-v2 `agent.models`/`agent.render`, canonical key-free model config, Agent-native options, redacted render/preview, write-time catalog refresh, managed ownership state, and drift/Codex-auth approvals.
+
+### Changed
+
+- Moved Shell, PowerShell, and desktop configuration to key-before-discovery with explicit model selection, omission of unset optional fields, and no static/cached model fallback.
+- Migrated Claude to managed `env` merge, opencode to the exact selected provider catalog, and Codex from the historical `custom` provider to dedicated `mtls-router` plus separately approved file-backed API-key auth.
+- Detection now describes local structural completeness only; current authorization is established only by discovery and write-time refresh.
+
+### Security and release
+
+- Added private signed catalog/revision state, shared operation locking, transactional sidecar/backups, compatibility revision pins, and release preflight rejection for mixed protocol generations.
+- Documented that Agent and approved backup files may contain keys while model config, tokens, sidecar, logs, diagnostics, and protocol results do not.
+
+---
+
 ## v0.1.8 - 2026-07-16
 
 This release improves Windows desktop process containment so routers started by CodeasierRouter do not outlive their owning desktop session or leave visible console windows.

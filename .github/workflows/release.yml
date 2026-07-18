@@ -78,7 +78,8 @@ jobs:
              -o "dist/mtls-router-${GOOS}-${GOARCH}${ext}" .
           go build -trimpath \
             -ldflags "-s -w -X 'github.com/codeasier/mtls-router/internal/version.Version=${RELEASE_VERSION}' -X 'github.com/codeasier/mtls-router/internal/version.Commit=${GITHUB_SHA::12}' -X 'github.com/codeasier/mtls-router/internal/version.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)' -X 'github.com/codeasier/mtls-router/internal/version.DeploymentID=${DEPLOYMENT_ID}'" \
-            -o "dist/mtls-router-manager-${GOOS}-${GOARCH}${ext}" ./cmd/mtls-router-manager
+             -o "dist/mtls-router-manager-${GOOS}-${GOARCH}${ext}" ./cmd/mtls-router-manager
+          printf '{"schema_version":1,"producer":"cli-%s-%s","management_protocol_version":"2"}\n' "$GOOS" "$GOARCH" >"dist/release-metadata-cli-${GOOS}-${GOARCH}.json"
       - uses: actions/upload-artifact@v4
         with:
           name: mtls-router-cli-${{ matrix.goos }}-${{ matrix.goarch }}
@@ -128,7 +129,7 @@ jobs:
       UPSTREAM_CA_PEM: ${{ secrets.UPSTREAM_CA_PEM }}
       UPSTREAM_URL: ${{ vars.UPSTREAM_URL }}
       DEPLOYMENT_ID: ${{ vars.DEPLOYMENT_ID }}
-      MANAGEMENT_PROTOCOL_VERSION: '1'
+      MANAGEMENT_PROTOCOL_VERSION: '2'
       APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
       APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
       APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -278,6 +279,9 @@ jobs:
         env:
           PACKAGE_OUTPUT_DIR: ${{ github.workspace }}/desktop/release-artifacts
         run: ./desktop/scripts/verify-package.sh ${{ matrix.target }}
+      - name: Record release protocol metadata
+        shell: bash
+        run: printf '{"schema_version":1,"producer":"desktop-%s-%s","management_protocol_version":"%s"}\n' '${{ matrix.os }}' '${{ matrix.arch }}' "$MANAGEMENT_PROTOCOL_VERSION" >desktop/release-artifacts/release-metadata-desktop-${{ matrix.os }}-${{ matrix.arch }}.json
       - name: Record Linux signing status
         if: runner.os == 'Linux'
         shell: bash
@@ -354,6 +358,10 @@ jobs:
           pattern: mtls-router-desktop-*
           path: desktop-packages
           merge-multiple: true
+      - name: Collect protocol metadata
+        run: |
+          mkdir protocol-metadata
+          mv binaries/release-metadata-*.json desktop-packages/release-metadata-*.json protocol-metadata/
       - name: Preflight and package
         env:
           DOWNLOAD_BASE_URL: https://downloads.codeasier.top/${{ github.event.repository.name }}/${{ github.ref_name }}

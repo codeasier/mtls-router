@@ -1,0 +1,546 @@
+use crate::error::{CommandError, Result};
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
+use std::collections::{HashMap, HashSet};
+
+const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+const MAX_CONFIG_SIZE: usize = 2 * 1024 * 1024;
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelConfig {
+    pub version: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claude: Option<ClaudeConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub opencode: Option<OpenCodeConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub codex: Option<CodexConfig>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelSelection {
+    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum ClaudeRole {
+    Inherit(InheritPrimary),
+    Selection(ModelSelection),
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct InheritPrimary {
+    pub inherit_primary: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClaudeConfig {
+    pub primary: ModelSelection,
+    pub haiku: ClaudeRole,
+    pub sonnet: ClaudeRole,
+    pub opus: ClaudeRole,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra: Option<HashMap<String, String>>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpenCodeConfig {
+    pub default_model: String,
+    pub models: HashMap<String, OpenCodeModel>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpenCodeModel {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attachment: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<ModelLimit>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modalities: Option<Modalities>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interleaved: Option<Interleaved>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub options: Option<Map<String, Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra: Option<Map<String, Value>>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelLimit {
+    pub context: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input: Option<u64>,
+    pub output: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Modalities {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub input: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub output: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum Interleaved {
+    Enabled(bool),
+    Field(InterleavedField),
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct InterleavedField {
+    pub field: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CodexConfig {
+    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_summary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verbosity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_compact_token_limit: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extra: Option<Map<String, Value>>,
+}
+
+fn invalid(path: &str, rule: &str) -> CommandError {
+    CommandError::invalid_params(format!("model config {rule} at {path}"))
+}
+
+fn valid_text(value: &str, max: usize) -> bool {
+    !value.is_empty() && value.len() <= max && !value.chars().any(char::is_control)
+}
+
+fn selected_model(value: &ModelSelection, catalog: &HashSet<&str>, path: &str) -> Result<()> {
+    if !valid_text(&value.model, 256) || !catalog.contains(value.model.as_str()) {
+        return Err(invalid(path, "catalog_model"));
+    }
+    if value
+        .name
+        .as_ref()
+        .is_some_and(|name| !valid_text(name, 16 * 1024))
+    {
+        return Err(invalid(path, "non_empty_name"));
+    }
+    Ok(())
+}
+
+pub fn validate(config: &ModelConfig, agents: &[String], catalog: &[String]) -> Result<()> {
+    if config.version != 1 {
+        return Err(invalid("/version", "const"));
+    }
+    let selected: HashSet<&str> = agents.iter().map(String::as_str).collect();
+    if selected.contains("claude") != config.claude.is_some()
+        || selected.contains("opencode") != config.opencode.is_some()
+        || selected.contains("codex") != config.codex.is_some()
+    {
+        return Err(invalid("/", "agent_scope"));
+    }
+    let catalog: HashSet<&str> = catalog.iter().map(String::as_str).collect();
+    if let Some(claude) = &config.claude {
+        selected_model(&claude.primary, &catalog, "/claude/primary/model")?;
+        for (name, role) in [
+            ("haiku", &claude.haiku),
+            ("sonnet", &claude.sonnet),
+            ("opus", &claude.opus),
+        ] {
+            match role {
+                ClaudeRole::Inherit(value) if value.inherit_primary => {}
+                ClaudeRole::Selection(value) => {
+                    selected_model(value, &catalog, &format!("/claude/{name}/model"))?
+                }
+                _ => return Err(invalid(&format!("/claude/{name}"), "one_of")),
+            }
+        }
+        if let Some(extra) = &claude.extra {
+            let allowed = [
+                "ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL_DESCRIPTION",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL_DESCRIPTION",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION",
+            ];
+            if extra
+                .iter()
+                .any(|(key, value)| !allowed.contains(&key.as_str()) || value.len() > 16 * 1024)
+            {
+                return Err(invalid("/claude/extra", "allowlist"));
+            }
+        }
+    }
+    if let Some(opencode) = &config.opencode {
+        if opencode.models.is_empty() || !opencode.models.contains_key(&opencode.default_model) {
+            return Err(invalid("/opencode/default_model", "selected_default"));
+        }
+        for (id, model) in &opencode.models {
+            if !catalog.contains(id.as_str()) {
+                return Err(invalid("/opencode/models", "catalog_model"));
+            }
+            if model
+                .name
+                .as_ref()
+                .is_some_and(|name| !valid_text(name, 16 * 1024))
+            {
+                return Err(invalid("/opencode/models/name", "non_empty_name"));
+            }
+            if let Some(limit) = &model.limit {
+                if limit.context == 0
+                    || limit.output == 0
+                    || limit.context > MAX_SAFE_INTEGER
+                    || limit.output > MAX_SAFE_INTEGER
+                    || limit
+                        .input
+                        .is_some_and(|input| input == 0 || input > limit.context)
+                {
+                    return Err(invalid("/opencode/models/limit", "integer_relationship"));
+                }
+            }
+            if let Some(modalities) = &model.modalities {
+                for values in [&modalities.input, &modalities.output] {
+                    let mut seen = HashSet::new();
+                    if values.iter().any(|value| {
+                        !matches!(value.as_str(), "text" | "audio" | "image" | "video" | "pdf")
+                            || !seen.insert(value)
+                    }) {
+                        return Err(invalid("/opencode/models/modalities", "unique_enum"));
+                    }
+                }
+            }
+            if let Some(interleaved) = &model.interleaved {
+                match interleaved {
+                    Interleaved::Enabled(true) => {}
+                    Interleaved::Field(field)
+                        if matches!(
+                            field.field.as_str(),
+                            "reasoning" | "reasoning_content" | "reasoning_details"
+                        ) => {}
+                    _ => return Err(invalid("/opencode/models/interleaved", "enum")),
+                }
+            }
+            if let Some(value) = &model.options {
+                validate_extension(value, 0, "/opencode/models/options")?;
+            }
+            if let Some(value) = &model.extra {
+                validate_extension(value, 0, "/opencode/models/extra")?;
+            }
+        }
+    }
+    if let Some(codex) = &config.codex {
+        if !catalog.contains(codex.model.as_str()) {
+            return Err(invalid("/codex/model", "catalog_model"));
+        }
+        if codex.reasoning_effort.as_ref().is_some_and(|value| {
+            value.is_empty()
+                || value.len() > 64
+                || !value.bytes().all(|byte| {
+                    byte.is_ascii_lowercase()
+                        || byte.is_ascii_digit()
+                        || byte == b'_'
+                        || byte == b'-'
+                })
+        }) {
+            return Err(invalid("/codex/reasoning_effort", "token"));
+        }
+        if codex.reasoning_summary.as_ref().is_some_and(|value| {
+            !matches!(value.as_str(), "auto" | "concise" | "detailed" | "none")
+        }) {
+            return Err(invalid("/codex/reasoning_summary", "enum"));
+        }
+        if codex
+            .verbosity
+            .as_ref()
+            .is_some_and(|value| !matches!(value.as_str(), "low" | "medium" | "high"))
+        {
+            return Err(invalid("/codex/verbosity", "enum"));
+        }
+        if codex
+            .context_window
+            .is_some_and(|value| value == 0 || value > MAX_SAFE_INTEGER)
+            || codex.auto_compact_token_limit.is_some_and(|value| {
+                value == 0
+                    || value > MAX_SAFE_INTEGER
+                    || codex.context_window.is_some_and(|context| value > context)
+            })
+        {
+            return Err(invalid("/codex/context_window", "integer_relationship"));
+        }
+        if let Some(extra) = &codex.extra {
+            if extra.len() > 1
+                || extra.iter().any(|(key, value)| {
+                    key != "model_auto_compact_token_limit_scope"
+                        || !matches!(value.as_str(), Some("total" | "body_after_prefix"))
+                })
+            {
+                return Err(invalid("/codex/extra", "allowlist"));
+            }
+        }
+    }
+    if serde_json::to_vec(config)
+        .map_err(|_| invalid("/", "encoding"))?
+        .len()
+        > MAX_CONFIG_SIZE
+    {
+        return Err(invalid("/", "max_size"));
+    }
+    Ok(())
+}
+
+fn validate_extension(value: &Map<String, Value>, depth: usize, path: &str) -> Result<()> {
+    if depth > 16 {
+        return Err(invalid(path, "max_depth"));
+    }
+    for (key, value) in value {
+        if key.is_empty() || key.len() > 128 || key.chars().any(char::is_control) {
+            return Err(invalid(path, "key"));
+        }
+        let normalized: String = key
+            .chars()
+            .filter(|c| !matches!(c, '_' | '-' | '.'))
+            .flat_map(char::to_lowercase)
+            .collect();
+        if [
+            "credential",
+            "apikey",
+            "auth",
+            "token",
+            "secret",
+            "password",
+            "bearer",
+            "header",
+            "url",
+            "endpoint",
+            "provider",
+            "transport",
+            "proxy",
+            "fetch",
+        ]
+        .iter()
+        .any(|word| normalized.contains(word))
+        {
+            return Err(invalid(path, "protected_path"));
+        }
+        match value {
+            Value::Null => return Err(invalid(path, "non_null")),
+            Value::String(value) if value.len() > 16 * 1024 => {
+                return Err(invalid(path, "max_length"))
+            }
+            Value::Array(value) if value.len() > 1024 => return Err(invalid(path, "max_items")),
+            Value::Object(value) => validate_extension(value, depth + 1, path)?,
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+pub fn import_json(content: &str, agents: &[String], catalog: &[String]) -> Result<ModelConfig> {
+    if content.is_empty() || content.len() > MAX_CONFIG_SIZE {
+        return Err(invalid("/", "max_size"));
+    }
+    let config: ModelConfig = serde_json::from_str(content).map_err(|_| invalid("/", "json"))?;
+    validate(&config, agents, catalog)?;
+    Ok(config)
+}
+
+pub fn export_json(config: &ModelConfig, agents: &[String], catalog: &[String]) -> Result<String> {
+    validate(config, agents, catalog)?;
+    let value = serde_json::to_value(config).map_err(|_| invalid("/", "encoding"))?;
+    canonical_json(&value)
+}
+
+fn canonical_json(value: &Value) -> Result<String> {
+    match value {
+        Value::Null | Value::Bool(_) | Value::String(_) => {
+            serde_json::to_string(value).map_err(|_| invalid("/", "encoding"))
+        }
+        Value::Number(value) => canonical_number(value),
+        Value::Array(values) => {
+            let items = values
+                .iter()
+                .map(canonical_json)
+                .collect::<Result<Vec<_>>>()?;
+            Ok(format!("[{}]", items.join(",")))
+        }
+        Value::Object(values) => {
+            let mut entries: Vec<_> = values.iter().collect();
+            entries.sort_by(|(left, _), (right, _)| left.encode_utf16().cmp(right.encode_utf16()));
+            let entries = entries
+                .into_iter()
+                .map(|(key, value)| {
+                    Ok(format!(
+                        "{}:{}",
+                        serde_json::to_string(key).map_err(|_| invalid("/", "encoding"))?,
+                        canonical_json(value)?
+                    ))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            Ok(format!("{{{}}}", entries.join(",")))
+        }
+    }
+}
+
+fn canonical_number(value: &serde_json::Number) -> Result<String> {
+    if value.is_i64() || value.is_u64() {
+        return Ok(value.to_string());
+    }
+    let number = value.as_f64().ok_or_else(|| invalid("/", "encoding"))?;
+    if !number.is_finite() {
+        return Err(invalid("/", "encoding"));
+    }
+    if number == 0.0 {
+        return Ok("0".into());
+    }
+    let absolute = number.abs();
+    if (1e-6..1e21).contains(&absolute) {
+        return Ok(number.to_string());
+    }
+    let scientific = format!("{number:e}");
+    let (mantissa, exponent) = scientific
+        .split_once('e')
+        .ok_or_else(|| invalid("/", "encoding"))?;
+    let exponent: i32 = exponent.parse().map_err(|_| invalid("/", "encoding"))?;
+    Ok(format!(
+        "{mantissa}e{}{exponent}",
+        if exponent >= 0 { "+" } else { "" }
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn minimal() -> ModelConfig {
+        ModelConfig {
+            version: 1,
+            claude: Some(ClaudeConfig {
+                primary: ModelSelection {
+                    model: "m1".into(),
+                    name: None,
+                },
+                haiku: ClaudeRole::Inherit(InheritPrimary {
+                    inherit_primary: true,
+                }),
+                sonnet: ClaudeRole::Inherit(InheritPrimary {
+                    inherit_primary: true,
+                }),
+                opus: ClaudeRole::Inherit(InheritPrimary {
+                    inherit_primary: true,
+                }),
+                extra: None,
+            }),
+            opencode: None,
+            codex: None,
+        }
+    }
+
+    #[test]
+    fn validates_scope_catalog_and_protected_extensions() {
+        assert!(validate(&minimal(), &["claude".into()], &["m1".into()]).is_ok());
+        assert!(validate(&minimal(), &["codex".into()], &["m1".into()]).is_err());
+        let mut config = minimal();
+        config.claude.as_mut().unwrap().primary.model = "missing".into();
+        assert!(validate(&config, &["claude".into()], &["m1".into()]).is_err());
+        let mut extra = Map::new();
+        extra.insert("api-key".into(), Value::String("value".into()));
+        assert!(validate_extension(&extra, 0, "/extra").is_err());
+    }
+
+    #[test]
+    fn focused_import_export_reject_credentials_and_unknown_fields() {
+        let agents = vec!["claude".into()];
+        let catalog = vec!["m1".into()];
+        let exported = export_json(&minimal(), &agents, &catalog).unwrap();
+        assert!(!exported.contains("api_key"));
+        assert!(import_json(&exported, &agents, &catalog).is_ok());
+        assert!(import_json(r#"{"version":1,"api_key":"secret"}"#, &agents, &catalog).is_err());
+    }
+
+    #[test]
+    fn export_matches_shared_jcs_vectors() {
+        let vectors: Value = serde_json::from_str(include_str!(
+            "../../../internal/manager/agent/modelconfig/testdata/jcs-vectors.json"
+        ))
+        .unwrap();
+        for vector in vectors.as_array().unwrap() {
+            let agents: Vec<String> = serde_json::from_value(vector["agents"].clone()).unwrap();
+            let catalog: Vec<String> = serde_json::from_value(vector["catalog"].clone()).unwrap();
+            let config = import_json(vector["input"].as_str().unwrap(), &agents, &catalog).unwrap();
+            assert_eq!(
+                export_json(&config, &agents, &catalog).unwrap(),
+                vector["canonical"].as_str().unwrap(),
+                "{}",
+                vector["name"].as_str().unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn generated_schema_matches_rust_interchange_fields() {
+        let schema: Value = serde_json::from_str(include_str!(
+            "../../../internal/manager/agent/modelconfig/schema/model-config-v1.schema.json"
+        ))
+        .unwrap();
+        let sorted_keys = |value: &Value| {
+            let mut keys: Vec<_> = value.as_object().unwrap().keys().cloned().collect();
+            keys.sort();
+            keys
+        };
+        assert_eq!(
+            sorted_keys(&schema["properties"]),
+            ["claude", "codex", "opencode", "version"]
+        );
+        assert_eq!(
+            sorted_keys(&schema["$defs"]["openCodeModel"]["properties"]),
+            [
+                "attachment",
+                "extra",
+                "interleaved",
+                "limit",
+                "modalities",
+                "name",
+                "options",
+                "reasoning",
+                "temperature",
+                "tool_call",
+            ]
+        );
+        assert_eq!(
+            sorted_keys(&schema["properties"]["codex"]["properties"]),
+            [
+                "auto_compact_token_limit",
+                "context_window",
+                "extra",
+                "model",
+                "reasoning_effort",
+                "reasoning_summary",
+                "verbosity",
+            ]
+        );
+    }
+}

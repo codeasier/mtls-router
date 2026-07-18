@@ -52,19 +52,19 @@ contains "$CI" 'sudo apt-get install -y libappindicator3-dev librsvg2-dev libweb
 contains "$RELEASE" 'sudo apt-get install -y libappindicator3-dev librsvg2-dev libwebkit2gtk-4.1-dev xdg-utils'
 contains "$CI" 'npm exec tauri -- build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --no-sign --ci'
 contains "$CI" './desktop/scripts/verify-package.sh ${{ matrix.target }}'
-for metadata in 'VERSION: 0.1.0' 'DEPLOYMENT_ID: dev' "MANAGEMENT_PROTOCOL_VERSION: '1'"; do
+for metadata in 'VERSION: 0.1.0' 'DEPLOYMENT_ID: dev' "MANAGEMENT_PROTOCOL_VERSION: '2'"; do
   contains "$CI" "$metadata"
 done
-contains "$RELEASE" "MANAGEMENT_PROTOCOL_VERSION: '1'"
+contains "$RELEASE" "MANAGEMENT_PROTOCOL_VERSION: '2'"
 contains "$RELEASE" "printf 'VERSION=%s\\n' \"\$version\" >>\"\$GITHUB_ENV\""
 contains "$ROOT/desktop/scripts/verify-package.sh" '"$packaged_desktop" --verify-manager-handshake'
 contains "$ROOT/desktop/src-tauri/src/main.rs" '"--verify-manager-handshake"'
 contains "$ROOT/desktop/src-tauri/src/main.rs" 'verify_manager_handshake()'
-contains "$ROOT/desktop/scripts/build-sidecars.sh" 'management_protocol_version="${MANAGEMENT_PROTOCOL_VERSION:-1}"'
+contains "$ROOT/desktop/scripts/build-sidecars.sh" 'management_protocol_version="${MANAGEMENT_PROTOCOL_VERSION:-2}"'
 contains "$ROOT/desktop/scripts/build-sidecars.sh" 'node -p "require('\''./package.json'\'').version"'
 contains "$ROOT/desktop/scripts/verify-package.sh" 'node -p "require('\''./package.json'\'').version"'
 contains "$PREPARE" 'const root = process.cwd();'
-contains "$ROOT/desktop/scripts/verify-package.sh" 'expected_protocol="${MANAGEMENT_PROTOCOL_VERSION:-1}"'
+contains "$ROOT/desktop/scripts/verify-package.sh" 'expected_protocol="${MANAGEMENT_PROTOCOL_VERSION:-2}"'
 contains "$ROOT/desktop/scripts/verify-package.sh" 'desktop PE subsystem is not IMAGE_SUBSYSTEM_WINDOWS_GUI'
 contains "$ROOT/desktop/src-tauri/build.rs" 'BinaryFormat::Pe'
 contains "$ROOT/desktop/src-tauri/src/sidecar.rs" 'BinaryFormat::Pe'
@@ -493,14 +493,14 @@ assert_npm_job frontend "$ci_frontend_block"
 assert_npm_job desktop-package "$ci_package_block"
 assert_npm_job release-desktop "$release_desktop_block"
 
-for metadata in 'VERSION: 0.1.0' 'DEPLOYMENT_ID: dev' "MANAGEMENT_PROTOCOL_VERSION: '1'"; do
+for metadata in 'VERSION: 0.1.0' 'DEPLOYMENT_ID: dev' "MANAGEMENT_PROTOCOL_VERSION: '2'"; do
   [[ "$ci_package_block" == *"$metadata"* ]] || fail "desktop-package job missing inherited $metadata"
 done
 if [[ "$(printf '%s' "$ci_package_block" | grep -Fc 'VERSION: 0.1.0')" -ne 1 ]]; then
   fail 'CI desktop VERSION must be defined once at package job scope'
 fi
 
-for metadata in 'DEPLOYMENT_ID: ${{ vars.DEPLOYMENT_ID }}' "MANAGEMENT_PROTOCOL_VERSION: '1'"; do
+for metadata in 'DEPLOYMENT_ID: ${{ vars.DEPLOYMENT_ID }}' "MANAGEMENT_PROTOCOL_VERSION: '2'"; do
   [[ "$release_desktop_block" == *"$metadata"* ]] || fail "release desktop job missing inherited $metadata"
 done
 [[ "$release_desktop_block" == *"printf 'VERSION=%s\\n' \"\$version\" >>\"\$GITHUB_ENV\""* ]] || \

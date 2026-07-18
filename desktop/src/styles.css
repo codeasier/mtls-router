@@ -53,7 +53,8 @@ body {
 button,
 a,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -72,7 +73,9 @@ select {
 button:focus-visible,
 a:focus-visible,
 input:focus-visible,
-select:focus-visible {
+select:focus-visible,
+textarea:focus-visible,
+summary:focus-visible {
   outline: 2px solid var(--signal);
   outline-offset: 2px;
   box-shadow: var(--focus-ring);
@@ -1313,6 +1316,18 @@ main {
   font-size: clamp(21px, 3vw, 28px);
 }
 
+.agent-card__config-path {
+  min-width: 0;
+  max-width: 100%;
+  margin: 0 0 14px;
+  overflow: hidden;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .agent-card dl {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1738,6 +1753,397 @@ main {
   font-size: 10px;
 }
 
+.credential-stage,
+.processing-stage {
+  max-width: 620px;
+  margin: 48px auto;
+  padding: 30px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-lifted);
+}
+
+.credential-stage h3,
+.processing-stage h3 {
+  margin: 0 0 12px;
+  font-size: 25px;
+}
+
+.credential-stage > p:not(.overline) {
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.processing-stage {
+  display: grid;
+  justify-items: center;
+  gap: 18px;
+  text-align: center;
+}
+
+.config-workbench {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.28fr) minmax(0, 1fr);
+  min-height: 540px;
+  background: var(--paper-deep);
+}
+
+.catalog-rail {
+  min-width: 0;
+  padding: 20px;
+  border-right: 1px solid var(--line);
+  background: #342f2a;
+  color: #f7f2ea;
+}
+
+.catalog-rail .overline,
+.catalog-rail .catalog-search span {
+  color: #bfb2a6;
+}
+
+.catalog-rail > strong {
+  display: block;
+  margin-bottom: 18px;
+}
+
+.model-catalog,
+.catalog-search {
+  display: grid;
+  gap: 9px;
+}
+
+.catalog-search span,
+.option-field > span,
+.advanced-editor label > span {
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.catalog-search input,
+.option-field input,
+.agent-select-control select {
+  width: 100%;
+  min-height: 38px;
+  padding: 7px 9px;
+  color: var(--ink);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface-raised);
+}
+
+.agent-select-control {
+  position: relative;
+  display: block;
+  min-width: 0;
+  width: 100%;
+}
+
+.agent-select-control select {
+  min-width: 0;
+  padding-right: 36px;
+  appearance: none;
+  cursor: pointer;
+}
+
+.agent-select-control__chevron {
+  position: absolute;
+  top: 50%;
+  right: 15px;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--signal);
+  border-bottom: 1.5px solid var(--signal);
+  pointer-events: none;
+  transform: translateY(-65%) rotate(45deg);
+}
+
+.agent-select-control select:hover:not(:disabled) {
+  border-color: rgba(220, 91, 47, 0.45);
+  background: var(--signal-soft);
+}
+
+.agent-select-control select:disabled {
+  color: var(--muted);
+  background: var(--paper-deep);
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.agent-select-control:has(select:disabled) .agent-select-control__chevron {
+  border-color: var(--muted);
+}
+
+.catalog-list {
+  display: grid;
+  gap: 5px;
+  max-height: 420px;
+  overflow: auto;
+}
+
+.catalog-model {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.model-agent-panel .catalog-model {
+  border-color: var(--line);
+}
+
+.catalog-model.is-selected {
+  color: var(--signal-hover);
+  border-color: var(--signal);
+  background: var(--signal-soft);
+}
+
+.catalog-model code {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 10px;
+  text-overflow: ellipsis;
+}
+
+.config-panels {
+  min-width: 0;
+  padding: 16px;
+}
+
+.model-agent-panel {
+  margin-bottom: 14px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--signal);
+  border-radius: 12px;
+  background: var(--surface-raised);
+}
+
+.model-agent-panel h3 {
+  margin: 0 0 18px;
+  font-size: 21px;
+}
+
+.option-field,
+.advanced-editor label {
+  display: grid;
+  gap: 7px;
+}
+
+.role-row,
+.approval-check {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.role-row > label {
+  flex: 0 0 180px;
+  font-size: 11px;
+}
+
+.role-row .agent-select-control {
+  flex: 1;
+}
+
+.typed-grid,
+.omission-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+  margin-top: 12px;
+}
+
+.omission-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.omission-grid label {
+  display: grid;
+  gap: 5px;
+  font-size: 9px;
+}
+
+.model-settings,
+.advanced-editor {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--paper);
+}
+
+.model-settings summary,
+.advanced-editor summary {
+  cursor: pointer;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.advanced-editor label {
+  margin-top: 12px;
+}
+
+.advanced-editor textarea {
+  min-height: 120px;
+  padding: 10px;
+  resize: vertical;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+}
+
+.object-field {
+  display: grid;
+  gap: 6px;
+}
+
+.object-field > label {
+  display: grid;
+  gap: 6px;
+}
+
+.object-field .text-button {
+  justify-self: start;
+}
+
+.object-field textarea {
+  min-height: 92px;
+  padding: 8px;
+  resize: vertical;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 9px;
+}
+
+.object-field small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.modality-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+  margin: 12px 0;
+}
+
+.modality-grid fieldset {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.modality-grid legend,
+.modality-grid label {
+  font-size: 9px;
+}
+
+.editor-actions,
+.config-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.editor-actions small {
+  color: var(--muted);
+}
+
+.file-button {
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.file-button input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+
+.validation-path,
+.drift-note {
+  padding: 10px;
+  border-radius: 8px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+}
+
+.validation-path {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.drift-note {
+  color: var(--warning);
+  background: var(--warning-soft);
+}
+
+.fragment-card {
+  padding: 15px;
+  border-bottom: 1px solid var(--line);
+}
+
+.fragment-card > code,
+.effect-card code {
+  display: block;
+  margin: 7px 0;
+  font-size: 9px;
+  overflow-wrap: anywhere;
+}
+
+.fragment-card pre {
+  max-height: 300px;
+  margin: 10px 0 0;
+  padding: 12px;
+  overflow: auto;
+  color: #eee6dc;
+  background: var(--log);
+  font-size: 10px;
+  white-space: pre-wrap;
+}
+
+.effect-card {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface-raised);
+}
+
+.effect-card > span {
+  color: var(--signal-hover);
+  font-size: 8px;
+  font-weight: 850;
+}
+
+.backup-path {
+  color: var(--warning);
+}
+
+.collision {
+  padding: 9px;
+  background: var(--warning-soft);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 800px) {
   .app-frame {
     grid-template-columns: 82px minmax(0, 1fr);
@@ -1788,9 +2194,19 @@ main {
   .panel-grid,
   .settings-grid,
   .agent-card-grid,
+  .config-workbench,
   .preview-layout,
   .result-grid {
     grid-template-columns: 1fr;
+  }
+
+  .catalog-rail {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .catalog-list {
+    max-height: 220px;
   }
 
   .primary-panel {
@@ -1925,7 +2341,9 @@ main {
   }
 
   .readout-grid,
-  .preview-files {
+  .preview-files,
+  .typed-grid,
+  .omission-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1967,6 +2385,8 @@ main {
 
   .stage-meter {
     align-self: flex-start;
+    max-width: 100%;
+    overflow-x: auto;
   }
 
   .agent-card {

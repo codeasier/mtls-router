@@ -16,11 +16,17 @@ RECEIPT_PATH="$STATE_DIR/install-receipt.json"
 PENDING_PATH="$STATE_DIR/install-pending.json"
 BACKUP_DIR="$STATE_DIR/install-previous"
 ROUTER_BASE_URL="http://127.0.0.1:19099"
+MANAGEMENT_PROTOCOL_VERSION="2"
+MAX_MODEL_CONFIG_SIZE=$((2 * 1024 * 1024))
+TRANSIENT_API_KEY=""
+TRANSIENT_REQUEST=""
 
 info() { printf '\033[36m%s\033[0m\n' "$1"; }
 success() { printf '\033[32m%s\033[0m\n' "$1"; }
 warn() { printf '\033[33m%s\033[0m\n' "$1"; }
 fail() { printf '\033[31m%s\033[0m\n' "$1" >&2; exit 1; }
+cleanup_agent_secrets() { TRANSIENT_API_KEY=""; TRANSIENT_REQUEST=""; }
+trap cleanup_agent_secrets EXIT
 
 print_banner() {
   info "============================================================"
@@ -95,9 +101,9 @@ hash_matches() {
 
 receipt_is_valid() {
   [[ -f "$RECEIPT_PATH" ]] || return 1
-  jq -e --arg router "$ROUTER_PATH" --arg manager "$MANAGER_PATH" '
+  jq -e --arg router "$ROUTER_PATH" --arg manager "$MANAGER_PATH" --arg protocol "$MANAGEMENT_PROTOCOL_VERSION" '
     .schema_version == 1 and .deployment_id != "" and
-    .management_protocol_version != "" and
+    .management_protocol_version == $protocol and
     .router.path == $router and .manager.path == $manager and
     (.router.sha256 | test("^[0-9a-f]{64}$")) and
     (.manager.sha256 | test("^[0-9a-f]{64}$"))' "$RECEIPT_PATH" >/dev/null 2>&1 || return 1
@@ -166,7 +172,7 @@ manager_info_from() {
   request='{"id":"setup-info","method":"manager.info","params":{}}'
   response="$(printf '%s\n' "$request" | "$1" serve --router-sidecar "$2")" || fail "无法读取 manager 元数据。"
   [[ "$(printf '%s\n' "$response" | wc -l | tr -d ' ')" == 1 ]] || fail "manager 返回了无效的多行响应。"
-  printf '%s\n' "$response" | jq -e '.id == "setup-info" and .result.version != "" and .result.deployment_id != "" and .result.management_protocol_version != ""' >/dev/null ||
+  printf '%s\n' "$response" | jq -e --arg protocol "$MANAGEMENT_PROTOCOL_VERSION" '.id == "setup-info" and .result.version != "" and .result.deployment_id != "" and .result.management_protocol_version == $protocol' >/dev/null ||
     fail "manager 元数据响应无效。"
   printf '%s\n' "$response"
 }
@@ -338,6 +344,25 @@ manager_call() {
   printf '%s\n' "$response"
 }
 
+manager_secret_call() {
+  local request="$1" info_response operation_response expected_target
+  resolve_manager
+  info_response="$(printf '%s\n' '{"id":"setup-secret-info","method":"manager.info","params":{}}' | "$RESOLVED_MANAGER" serve --router-sidecar "$RESOLVED_ROUTER")" || fail "无法读取 manager 元数据。"
+  [[ "$(printf '%s\n' "$info_response" | wc -l | tr -d ' ')" == 1 ]] || fail "manager 返回了无效的握手响应。"
+  expected_target="${ROUTER_ASSET#mtls-router-}"; expected_target="${expected_target/-//}"
+  printf '%s' "$info_response" | jq -e --arg protocol "$MANAGEMENT_PROTOCOL_VERSION" --arg target "$expected_target" '.id == "setup-secret-info" and .error == null and .result.deployment_id != "" and .result.target == $target and .result.management_protocol_version == $protocol' >/dev/null ||
+    fail "manager protocol v2 握手失败；未接受含密钥请求。"
+  if [[ "$RESOLVED_MANAGER" == "$MANAGER_PATH" ]]; then
+    [[ "$(printf '%s' "$info_response" | jq -r .result.deployment_id)" == "$(jq -r .deployment_id "$RECEIPT_PATH")" ]] || fail "manager deployment 握手与安装 receipt 不匹配；未接受含密钥请求。"
+  fi
+  operation_response="$(printf '%s\n' "$request" | "$RESOLVED_MANAGER" serve --router-sidecar "$RESOLVED_ROUTER")" || fail "mtls-router-manager 执行失败。"
+  [[ "$(printf '%s\n' "$operation_response" | wc -l | tr -d ' ')" == 1 ]] || fail "manager 返回了无效的响应。"
+  if [[ "$(printf '%s' "$operation_response" | jq -r '.error.code // empty')" != "" ]]; then
+    fail "manager $(printf '%s' "$operation_response" | jq -r '.error.code'): $(printf '%s' "$operation_response" | jq -r '.error.message')"
+  fi
+  printf '%s\n' "$operation_response"
+}
+
 router_start() {
   [[ "${MTLS_ROUTER_SKIP_START:-}" != 1 ]] || { info "[启动] 跳过（MTLS_ROUTER_SKIP_START=1）"; return; }
   local response
@@ -402,89 +427,50 @@ parse_targets() {
   done
 }
 
-agent_print() {
-  local filter="$1" detect preview agents_json key path auth_path
-  detect="$(manager_call '{"id":"detect","method":"agent.detect","params":{}}')"
-  parse_targets "$filter" "$detect"
-  ((${#TARGETS[@]})) || { warn "  未检测到 Claude Code、opencode 或 Codex。"; return; }
-  agents_json="$(printf '%s\n' "${TARGETS[@]}" | jq -R . | jq -s .)"
-  preview="$(manager_call "$(jq -cn --argjson agents "$agents_json" '{id:"preview",method:"agent.preview",params:{agents:$agents}}')")"
-  for key in "${TARGETS[@]}"; do
-    path="$(printf '%s' "$detect" | jq -r --arg key "$key" '.result.agents[] | select(.agent==$key) | .path')"
-    printf '### %s -> %s\n' "$(case "$key" in claude) printf 'Claude Code';; opencode) printf opencode;; codex) printf Codex;; esac)" "$path"
-    case "$key" in
-      claude)
-        cat <<'JSON'
-{
-  "env": {
-    "ANTHROPIC_BASE_URL": "http://127.0.0.1:19099",
-    "ANTHROPIC_AUTH_TOKEN": "{UserApiKey}",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "gpt-5.5",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "gpt-5.5",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "gpt-5.4[1M]",
-    "ANTHROPIC_MODEL": "gpt-5.5",
-    "ENABLE_TOOL_SEARCH": "true",
-    "DISABLE_AUTOUPDATER": "1"
-  }
+prompt_value() { printf '%s' "$1" >&2; IFS= read -r PROMPT_VALUE || fail "输入已结束。"; }
+optional_string() { [[ -z "$1" ]] && printf null || jq -Rn --arg v "$1" '$v'; }
+prompt_json_object() {
+  prompt_value "$1 [JSON object，留空表示未设置]: "; [[ -z "$PROMPT_VALUE" ]] && { PROMPT_JSON=null; return; }
+  PROMPT_JSON="$(printf '%s' "$PROMPT_VALUE" | jq -ce 'if type=="object" then . else error("object") end')" || fail "$1 必须是 JSON object。"
 }
-JSON
-        ;;
-      opencode)
-        cat <<'JSON'
-{
-  "provider": {
-    "mtls-router": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "mtls-router",
-      "options": {"baseURL": "http://127.0.0.1:19099/v1", "apiKey": "{UserApiKey}"},
-      "models": {"gpt-5.5": {"name": "GPT-5.5"}, "gpt-5.4": {"name": "GPT-5.4"}}
-    }
-  }
-}
-JSON
-        ;;
-      codex)
-        cat <<'TOML'
-model_provider = "custom"
-model = "gpt-5.5"
-disable_response_storage = true
+prompt_bool() { while true; do prompt_value "$1 [true/false/留空]: "; case "$PROMPT_VALUE" in "") PROMPT_JSON=null; return;; true|false) PROMPT_JSON="$PROMPT_VALUE"; return;; esac; done; }
+prompt_int() { prompt_value "$1 [正整数/留空]: "; [[ -z "$PROMPT_VALUE" || "$PROMPT_VALUE" =~ ^[1-9][0-9]*$ ]] || fail "$1 必须是正整数。"; PROMPT_JSON="${PROMPT_VALUE:-null}"; }
 
-[model_providers.custom]
-name = "9router"
-wire_api = "responses"
-requires_openai_auth = true
-base_url = "http://127.0.0.1:19099/v1"
-TOML
-        auth_path="$(printf '%s' "$detect" | jq -r '.result.agents[] | select(.agent=="codex") | .auth_path')"
-        printf '### Codex -> %s\n{\n  "OPENAI_API_KEY": "{UserApiKey}"\n}\n' "$auth_path"
-        ;;
-    esac
-    printf '\n'
-  done
-  [[ -n "$(printf '%s' "$preview" | jq -r .result.revision_token)" ]] || fail "manager preview 缺少 revision token。"
-  info "以上内容由 manager 预览验证；未修改文件。"
+build_model_config() {
+  local config='{"version":1}' agent model name role answer entry section ids default field context input output value extra='{}'
+  for agent in "${TARGETS[@]}"; do case "$agent" in
+    claude)
+      prompt_value "Claude primary model ID（不会自动选择）: "; model="$PROMPT_VALUE"; [[ -n "$model" ]] || fail "model ID 不能为空。"; prompt_value "Claude primary name [留空]: "; name="$PROMPT_VALUE"
+      section="$(jq -cn --arg m "$model" --argjson n "$(optional_string "$name")" '{primary:({model:$m}+if $n==null then {} else {name:$n} end)}')"
+      for role in haiku sonnet opus; do prompt_value "Claude $role：输入 inherit 或 model ID: "; answer="$PROMPT_VALUE"; [[ -n "$answer" ]] || fail "$role 不能为空。"; if [[ "$answer" == inherit ]]; then entry='{"inherit_primary":true}'; else prompt_value "Claude $role name [留空]: "; entry="$(jq -cn --arg m "$answer" --argjson n "$(optional_string "$PROMPT_VALUE")" '{model:$m}+if $n==null then {} else {name:$n} end')"; fi; section="$(jq -cn --argjson s "$section" --arg r "$role" --argjson e "$entry" '$s+{($r):$e}')"; done
+      extra='{}'; for field in ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION ANTHROPIC_DEFAULT_HAIKU_MODEL_DESCRIPTION ANTHROPIC_DEFAULT_SONNET_MODEL_DESCRIPTION ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION; do prompt_value "Claude $field [留空]: "; [[ -z "$PROMPT_VALUE" ]] || extra="$(jq -cn --argjson e "$extra" --arg f "$field" --arg v "$PROMPT_VALUE" '$e+{($f):$v}')"; done; [[ "$extra" == '{}' ]] || section="$(jq -cn --argjson s "$section" --argjson e "$extra" '$s+{extra:$e}')"; config="$(jq -cn --argjson c "$config" --argjson s "$section" '$c+{claude:$s}')" ;;
+    opencode)
+      prompt_value "opencode model IDs（逗号分隔，不会自动选择）: "; ids="$PROMPT_VALUE"; [[ -n "$ids" ]] || fail "至少需要一个 model。"; prompt_value "opencode default model ID: "; default="$PROMPT_VALUE"; local models='{}'; IFS=',' read -ra values <<<"$ids"
+      for model in "${values[@]}"; do model="${model// /}"; [[ -n "$model" ]] || fail "model ID 不能为空。"; entry='{}'; prompt_value "opencode $model name [留空]: "; [[ -z "$PROMPT_VALUE" ]] || entry="$(jq -cn --argjson e "$entry" --arg v "$PROMPT_VALUE" '$e+{name:$v}')"; for field in reasoning attachment tool_call temperature; do prompt_bool "opencode $model $field"; [[ "$PROMPT_JSON" == null ]] || entry="$(jq -cn --argjson e "$entry" --arg f "$field" --argjson v "$PROMPT_JSON" '$e+{($f):$v}')"; done; prompt_int "opencode $model limit.context"; context="$PROMPT_JSON"; prompt_int "opencode $model limit.input"; input="$PROMPT_JSON"; prompt_int "opencode $model limit.output"; output="$PROMPT_JSON"; if [[ "$context$input$output" != nullnullnull ]]; then [[ "$context" != null && "$output" != null ]] || fail "limit 需要 context 和 output。"; entry="$(jq -cn --argjson e "$entry" --argjson c "$context" --argjson i "$input" --argjson o "$output" '$e+{limit:({context:$c,output:$o}+if $i==null then {} else {input:$i} end)}')"; fi; prompt_json_object "opencode $model modalities（input/output arrays）"; [[ "$PROMPT_JSON" == null ]] || entry="$(jq -cn --argjson e "$entry" --argjson v "$PROMPT_JSON" '$e+{modalities:$v}')"; prompt_value "opencode $model interleaved [true/reasoning/reasoning_content/reasoning_details/留空]: "; value="$PROMPT_VALUE"; [[ -z "$value" ]] || { [[ "$value" == true ]] && PROMPT_JSON=true || PROMPT_JSON="$(jq -cn --arg f "$value" '{field:$f}')"; entry="$(jq -cn --argjson e "$entry" --argjson v "$PROMPT_JSON" '$e+{interleaved:$v}')"; }; prompt_json_object "opencode $model options"; [[ "$PROMPT_JSON" == null ]] || entry="$(jq -cn --argjson e "$entry" --argjson v "$PROMPT_JSON" '$e+{options:$v}')"; prompt_json_object "opencode $model extra"; [[ "$PROMPT_JSON" == null ]] || entry="$(jq -cn --argjson e "$entry" --argjson v "$PROMPT_JSON" '$e+{extra:$v}')"; models="$(jq -cn --argjson m "$models" --arg id "$model" --argjson e "$entry" '$m+{($id):$e}')"; done; config="$(jq -cn --argjson c "$config" --arg d "$default" --argjson m "$models" '$c+{opencode:{default_model:$d,models:$m}}')" ;;
+    codex)
+      prompt_value "Codex model ID（不会自动选择）: "; model="$PROMPT_VALUE"; [[ -n "$model" ]] || fail "model ID 不能为空。"; section="$(jq -cn --arg m "$model" '{model:$m}')"; for field in reasoning_effort reasoning_summary verbosity; do prompt_value "Codex $field [留空]: "; [[ -z "$PROMPT_VALUE" ]] || section="$(jq -cn --argjson s "$section" --arg f "$field" --arg v "$PROMPT_VALUE" '$s+{($f):$v}')"; done; for field in context_window auto_compact_token_limit; do prompt_int "Codex $field"; [[ "$PROMPT_JSON" == null ]] || section="$(jq -cn --argjson s "$section" --arg f "$field" --argjson v "$PROMPT_JSON" '$s+{($f):$v}')"; done; prompt_value "Codex model_auto_compact_token_limit_scope [total/body_after_prefix/留空]: "; [[ -z "$PROMPT_VALUE" ]] || section="$(jq -cn --argjson s "$section" --arg v "$PROMPT_VALUE" '$s+{extra:{model_auto_compact_token_limit_scope:$v}}')"; config="$(jq -cn --argjson c "$config" --argjson s "$section" '$c+{codex:$s}')" ;;
+  esac; done; MODEL_CONFIG="$config"
 }
 
-agent_write() {
-  local filter="$1" detect agents_json preview token api_key="" request response
-  [[ -n "$filter" ]] || fail "--write-config 需要 --agent=claude,opencode,codex 显式指定要操作的 agent。"
-  detect="$(manager_call '{"id":"detect","method":"agent.detect","params":{}}')"
-  parse_targets "$filter" "$detect"
-  agents_json="$(printf '%s\n' "${TARGETS[@]}" | jq -R . | jq -s .)"
-  preview="$(manager_call "$(jq -cn --argjson agents "$agents_json" '{id:"preview",method:"agent.preview",params:{agents:$agents}}')")"
-  token="$(printf '%s' "$preview" | jq -r .result.revision_token)"
-  if [[ -t 0 ]]; then
-    printf '请输入 mtls-router OPENAI_API_KEY（输入隐藏）：' >&2
-    IFS= read -rs api_key || true
-    printf '\n' >&2
-  fi
-  [[ -n "$api_key" ]] || fail "写入 Agent 配置需要隐藏交互输入。非交互自动化请向 mtls-router-manager serve 的 agent.write JSON stdin 请求提供 api_key；MTLS_ROUTER_OPENAI_API_KEY 已移除。"
-  request="$(jq -cn --argjson agents "$agents_json" --arg token "$token" --arg api_key "$api_key" '{id:"write",method:"agent.write",params:{agents:$agents,revision_token:$token,api_key:$api_key}}')"
-  response="$(manager_call "$request")"
-  api_key=""; request=""
-  while IFS=$'\t' read -r name path; do success "  已写入 $name 配置: $path"; done < <(
-    printf '%s' "$response" | jq -r '.result.agents[] | (if .agent=="claude" then "Claude Code" elif .agent=="codex" then "Codex" else .agent end) as $a | .changed[]? | [$a,.] | @tsv')
-  while IFS= read -r backup; do [[ -z "$backup" ]] || info "  已备份: $backup"; done < <(printf '%s' "$response" | jq -r '.result.agents[].backups[]?')
+load_model_config() { local path="$1" size; [[ -f "$path" && ! -L "$path" ]] || fail "--model-config 必须是普通文件且不能是符号链接。"; size="$(wc -c <"$path" | tr -d ' ')"; (( size > 0 && size <= MAX_MODEL_CONFIG_SIZE )) || fail "--model-config 必须大于 0 且不超过 2 MiB。"; MODEL_CONFIG="$(jq -ce 'if type=="object" then . else error("object") end' "$path")" || fail "--model-config 必须是有效 JSON object。"; }
+show_fragments() { printf '%s' "$1" | jq -r '.result.fragments[] | "### \(.agent) [\(.role)] -> \(.path) (\(.format))\n\(.content)\n"'; }
+show_preview() { show_fragments "$1"; printf '%s' "$1" | jq -r '(.result.files[] | "FILE \(.operation): \(.path)"+(if .backup_path then "\n  BACKUP: \(.backup_path)" else "" end)), (.result.managed_collisions[] | "COLLISION \(.agent) \(.path): \(.type) -> \(.action)"), (if .result.state_change then "STATE \(.result.state_change.operation): \(.result.state_change.path)" else empty end), (if .result.state_backup then "STATE BACKUP: \(.result.state_backup.path)" else empty end)'; }
+
+agent_flow() {
+  local mode="$1" filter="$2" config_path="$3" detect agents_json models catalog response preview approve_drift=false approve_codex=false
+  [[ "$mode" != write || -n "$filter" ]] || fail "--write-config 需要 --agent=claude,opencode,codex 显式指定要操作的 agent。"; detect="$(manager_call '{"id":"detect","method":"agent.detect","params":{}}')"
+  if [[ -z "$filter" ]]; then [[ -t 0 ]] || fail "Agent 配置需要交互选择。非交互自动化请使用 manager protocol v2 stdin。"; printf '%s' "$detect" | jq -r '.result.agents[] | select(.detected) | "DETECTED \(.agent): \(.path)"'; prompt_value "选择 Agent（逗号分隔 claude,opencode,codex）: "; filter="$PROMPT_VALUE"; [[ -n "$filter" ]] || fail "必须显式选择至少一个 Agent。"; fi
+  parse_targets "$filter" "$detect"; ((${#TARGETS[@]})) || { warn "  未检测到 Agent。"; return; }; agents_json="$(printf '%s\n' "${TARGETS[@]}" | jq -R . | jq -s .)"
+  [[ -z "$config_path" ]] || load_model_config "$config_path"
+  [[ -t 0 ]] || fail "Agent 配置需要隐藏交互输入。非交互自动化请使用 manager protocol v2 stdin：manager.info 握手后调用 agent.models、agent.render/agent.preview、agent.write；key 不得进入参数、环境或文件。MTLS_ROUTER_OPENAI_API_KEY 已移除。"
+  printf '请输入 mtls-router OPENAI_API_KEY（输入隐藏）：' >&2; IFS= read -rs TRANSIENT_API_KEY || true; printf '\n' >&2; [[ -n "$TRANSIENT_API_KEY" ]] || fail "API key 不能为空。"
+  TRANSIENT_REQUEST="$(jq -cn --argjson a "$agents_json" --arg k "$TRANSIENT_API_KEY" '{id:"models",method:"agent.models",params:{owner:"cli",agents:$a,api_key:$k}}')"; models="$(manager_secret_call "$TRANSIENT_REQUEST")"; TRANSIENT_REQUEST=""; printf '%s' "$models" | jq -r '.result.models[] | "MODEL \(.)"'; catalog="$(printf '%s' "$models" | jq -r .result.catalog_token)"
+  if [[ -z "$config_path" ]]; then build_model_config; fi
+  if [[ "$mode" == print ]]; then response="$(manager_call "$(jq -cn --argjson a "$agents_json" --arg t "$catalog" --argjson c "$MODEL_CONFIG" '{id:"render",method:"agent.render",params:{agents:$a,catalog_token:$t,model_config:$c}}')")"; show_fragments "$response"; cleanup_agent_secrets; info "manager 动态渲染完成；未修改 Agent、事务或 sidecar 文件。发现模型可能启动 router 生命周期状态。"; return; fi
+  preview="$(manager_call "$(jq -cn --argjson a "$agents_json" --arg t "$catalog" --argjson c "$MODEL_CONFIG" '{id:"preview",method:"agent.preview",params:{agents:$a,catalog_token:$t,model_config:$c}}')")"; show_preview "$preview"
+  if [[ "$(printf '%s' "$preview" | jq -r .result.managed_config_drift)" == true ]]; then prompt_value "managed drift：输入 OVERWRITE 批准: "; [[ "$PROMPT_VALUE" == OVERWRITE ]] || fail "已取消。"; approve_drift=true; fi; if [[ "$(printf '%s' "$preview" | jq -r .result.requires_codex_auth_approval)" == true ]]; then prompt_value "Codex auth 将变更并清理冲突认证；输入 CODEX-AUTH 批准: "; [[ "$PROMPT_VALUE" == CODEX-AUTH ]] || fail "已取消。"; approve_codex=true; fi; prompt_value "输入 WRITE 确认写入: "; [[ "$PROMPT_VALUE" == WRITE ]] || fail "已取消。"
+  TRANSIENT_REQUEST="$(jq -cn --argjson a "$agents_json" --arg t "$catalog" --argjson c "$MODEL_CONFIG" --arg r "$(printf '%s' "$preview" | jq -r .result.revision_token)" --argjson d "$approve_drift" --argjson x "$approve_codex" --arg k "$TRANSIENT_API_KEY" '{id:"write",method:"agent.write",params:{agents:$a,catalog_token:$t,model_config:$c,revision_token:$r,approve_managed_overwrite:$d,approve_codex_auth_change:$x,api_key:$k}}')"; response="$(manager_secret_call "$TRANSIENT_REQUEST")"; cleanup_agent_secrets
+  printf '%s' "$response" | jq -r '(.result.agents[] | .agent as $a | .changed[]? | "WROTE \($a): \(.)"), (.result.agents[].backups[]? | "BACKUP: \(.)")'
 }
 
 print_next_steps() {
@@ -502,20 +488,22 @@ print_usage() {
 默认行为等价于 router setup，不修改 Agent 配置。
 
   router install|start|setup|status|log [--tail=N]|stop
-  agent print-config [--agent=claude,opencode,codex]
-  agent write-config --agent=claude,opencode,codex
+  agent print-config [--agent=claude,opencode,codex] [--model-config=PATH]
+  agent write-config --agent=claude,opencode,codex [--model-config=PATH]
   --print-config / --write-config   兼容旧别名
 
 安装选项: --download --download-url=URL --download-user=USER
           --download-password=PASSWORD --version=VERSION
 
-Agent 写入仅接受隐藏交互输入。自动化请直接向 mtls-router-manager serve
-发送 agent.preview 后再发送含 api_key 的 agent.write 单行 JSON stdin 请求。
+Agent 命令先隐藏读取 key，再发现模型；不会自动选择模型。向导覆盖 Agent-native
+typed fields，或读取不超过 2 MiB 的普通 JSON --model-config 文件。
+非交互自动化请使用 manager protocol v2 stdin：manager.info 握手后依次调用
+agent.models、agent.render/agent.preview、agent.write；key 不得进入参数、环境或文件。
 USAGE
 }
 
 main() {
-  local action=setup agent_filter="" lines=200
+  local action=setup agent_filter="" model_config_path="" lines=200
   if (($#)); then
     case "$1" in
       router) (($# >= 2)) || fail "router 需要子命令：install / start / setup / status / log / stop"; action="router-$2"; shift 2 ;;
@@ -532,6 +520,8 @@ main() {
     case "$1" in
       --agent=*) agent_filter="${1#*=}"; shift ;;
       --agent) (($# > 1)) || fail "--agent 需要参数"; agent_filter="$2"; shift 2 ;;
+      --model-config=*) model_config_path="${1#*=}"; [[ -n "$model_config_path" ]] || fail "--model-config 需要路径"; shift ;;
+      --model-config) (($# > 1)) || fail "--model-config 需要路径"; model_config_path="$2"; shift 2 ;;
       --tail=*) lines="${1#*=}"; shift ;;
       --tail) (($# > 1)) || fail "--tail 需要行数"; lines="$2"; shift 2 ;;
       --download) [[ "$action" == setup || "$action" == router-install || "$action" == router-setup ]] || fail "--download 仅适用于 router install/setup"; ALLOW_DOWNLOAD=1; shift ;;
@@ -555,8 +545,8 @@ main() {
     router-status) router_status ;;
     router-log) router_log "$lines" ;;
     router-stop) router_stop ;;
-    print) agent_print "$agent_filter" ;;
-    write) agent_write "$agent_filter"; print_next_steps ;;
+    print) agent_flow print "$agent_filter" "$model_config_path" ;;
+    write) agent_flow write "$agent_filter" "$model_config_path"; print_next_steps ;;
   esac
 }
 

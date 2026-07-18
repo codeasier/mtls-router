@@ -22,6 +22,8 @@ const (
 	MethodRouterInspectOccupant        Method = "router.inspect_occupant"
 	MethodRouterForceTerminateOccupant Method = "router.force_terminate_occupant"
 	MethodAgentDetect                  Method = "agent.detect"
+	MethodAgentModels                  Method = "agent.models"
+	MethodAgentRender                  Method = "agent.render"
 	MethodAgentPreview                 Method = "agent.preview"
 	MethodAgentWrite                   Method = "agent.write"
 )
@@ -60,6 +62,17 @@ const (
 	CodeOccupantTerminationFailed   ErrorCode = "OCCUPANT_TERMINATION_FAILED"
 	CodePortReleaseTimeout          ErrorCode = "PORT_RELEASE_TIMEOUT"
 	CodeConfirmationExpired         ErrorCode = "CONFIRMATION_EXPIRED"
+	CodeModelAuthFailed             ErrorCode = "MODEL_AUTH_FAILED"
+	CodeModelDiscoveryFailed        ErrorCode = "MODEL_DISCOVERY_FAILED"
+	CodeModelResponseInvalid        ErrorCode = "MODEL_RESPONSE_INVALID"
+	CodeModelCatalogEmpty           ErrorCode = "MODEL_CATALOG_EMPTY"
+	CodeModelCatalogStale           ErrorCode = "MODEL_CATALOG_STALE"
+	CodeModelConfigInvalid          ErrorCode = "MODEL_CONFIG_INVALID"
+	CodeModelNotAvailable           ErrorCode = "MODEL_NOT_AVAILABLE"
+	CodeManagedConfigDrift          ErrorCode = "MANAGED_CONFIG_DRIFT"
+	CodeModelStateInvalid           ErrorCode = "MODEL_STATE_INVALID"
+	CodeAgentOperationBusy          ErrorCode = "AGENT_OPERATION_BUSY"
+	CodeCodexAuthUnsupported        ErrorCode = "CODEX_AUTH_UNSUPPORTED"
 )
 
 // Request is one newline-delimited manager request. Params is method-specific.
@@ -79,8 +92,16 @@ type Response struct {
 
 // Error is a sanitized protocol error.
 type Error struct {
-	Code    ErrorCode `json:"code"`
-	Message string    `json:"message"`
+	Code    ErrorCode     `json:"code"`
+	Message string        `json:"message"`
+	Details *ErrorDetails `json:"details,omitempty"`
+}
+
+// ErrorDetails identifies one validation failure without echoing the rejected
+// value. It is omitted for non-validation errors.
+type ErrorDetails struct {
+	Path string `json:"path"`
+	Rule string `json:"rule"`
 }
 
 // Deadlines returns the required internal deadline for every protocol method.
@@ -97,6 +118,8 @@ func Deadlines() map[Method]time.Duration {
 		MethodRouterInspectOccupant:        2 * time.Second,
 		MethodRouterForceTerminateOccupant: 3 * time.Second,
 		MethodAgentDetect:                  5 * time.Second,
+		MethodAgentModels:                  30 * time.Second,
+		MethodAgentRender:                  5 * time.Second,
 		MethodAgentPreview:                 5 * time.Second,
 		MethodAgentWrite:                   30 * time.Second,
 	}
@@ -122,14 +145,26 @@ type RouterForceTerminateOccupantParams struct {
 	ConfirmationToken string `json:"confirmation_token"`
 }
 
-type AgentSelection struct {
-	Agents []string `json:"agents"`
+type AgentModelsParams struct {
+	Owner  RouterOwner `json:"owner"`
+	Agents []string    `json:"agents"`
+	APIKey string      `json:"api_key"`
+}
+
+type AgentConfigParams struct {
+	Agents       []string        `json:"agents"`
+	CatalogToken string          `json:"catalog_token"`
+	ModelConfig  json.RawMessage `json:"model_config"`
 }
 
 type AgentWriteParams struct {
-	Agents        []string `json:"agents"`
-	RevisionToken string   `json:"revision_token"`
-	APIKey        string   `json:"api_key"`
+	Agents                  []string        `json:"agents"`
+	CatalogToken            string          `json:"catalog_token"`
+	ModelConfig             json.RawMessage `json:"model_config"`
+	RevisionToken           string          `json:"revision_token"`
+	ApproveManagedOverwrite *bool           `json:"approve_managed_overwrite"`
+	ApproveCodexAuthChange  *bool           `json:"approve_codex_auth_change"`
+	APIKey                  string          `json:"api_key"`
 }
 
 type ManagerInfoResult struct {
@@ -194,27 +229,66 @@ type AgentState struct {
 	Writable   bool   `json:"writable"`
 	Configured bool   `json:"configured"`
 	Invalid    bool   `json:"invalid"`
+	Migratable bool   `json:"migratable,omitempty"`
 }
 
 type AgentDetectResult struct {
 	Agents []AgentState `json:"agents"`
 }
 
-type AgentChange struct {
-	Agent      string `json:"agent"`
+type AgentModelsExisting struct {
+	ModelConfig       json.RawMessage     `json:"model_config"`
+	UnavailableModels map[string][]string `json:"unavailable_models"`
+	DriftedAgents     []string            `json:"drifted_agents"`
+}
+
+type AgentModelsResult struct {
+	Models        []string            `json:"models"`
+	CatalogToken  string              `json:"catalog_token"`
+	RouterBaseURL string              `json:"router_base_url"`
+	APIBaseURL    string              `json:"api_base_url"`
+	Existing      AgentModelsExisting `json:"existing"`
+}
+
+type AgentFragment struct {
+	Agent   string `json:"agent"`
+	Role    string `json:"role"`
+	Path    string `json:"path"`
+	Format  string `json:"format"`
+	Content string `json:"content"`
+}
+
+type AgentRenderResult struct {
+	ModelConfig json.RawMessage `json:"model_config"`
+	Fragments   []AgentFragment `json:"fragments"`
+}
+
+type AgentFileEffect struct {
 	Path       string `json:"path"`
+	Role       string `json:"role"`
+	Format     string `json:"format"`
 	Operation  string `json:"operation"`
 	BackupPath string `json:"backup_path,omitempty"`
-	Warning    string `json:"warning,omitempty"`
+}
+
+type ManagedCollision struct {
+	Agent  string `json:"agent"`
+	Path   string `json:"path"`
+	Type   string `json:"type"`
+	Action string `json:"action"`
 }
 
 type AgentPreviewResult struct {
-	RevisionToken string        `json:"revision_token"`
-	Changes       []AgentChange `json:"changes"`
-}
-
-type AgentWriteResult struct {
-	Agents []AgentWriteStatus `json:"agents"`
+	RevisionToken             string             `json:"revision_token"`
+	ModelConfig               json.RawMessage    `json:"model_config"`
+	Fragments                 []AgentFragment    `json:"fragments"`
+	Files                     []AgentFileEffect  `json:"files"`
+	ManagedConfigDrift        bool               `json:"managed_config_drift"`
+	DriftedAgents             []string           `json:"drifted_agents"`
+	ManagedCollisions         []ManagedCollision `json:"managed_collisions"`
+	RequiresCodexAuthApproval bool               `json:"requires_codex_auth_approval"`
+	StateChange               *AgentFileEffect   `json:"state_change,omitempty"`
+	StateBackup               *AgentFileEffect   `json:"state_backup,omitempty"`
 }
 
 type AgentWriteStatus struct {
@@ -223,4 +297,11 @@ type AgentWriteStatus struct {
 	Changed   []string  `json:"changed,omitempty"`
 	Backups   []string  `json:"backups,omitempty"`
 	ErrorCode ErrorCode `json:"error_code,omitempty"`
+}
+
+type AgentWriteResult struct {
+	TransactionID string             `json:"transaction_id"`
+	Agents        []AgentWriteStatus `json:"agents"`
+	StateChange   *AgentFileEffect   `json:"state_change,omitempty"`
+	StateBackup   *AgentFileEffect   `json:"state_backup,omitempty"`
 }

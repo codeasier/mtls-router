@@ -75,3 +75,12 @@ func applyTargetPermissions(path, target string, mode os.FileMode) error {
 		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
 		nil, nil, dacl, nil)
 }
+
+func privatePermissionsOK(path string, _ bool, _ os.FileMode) bool {
+	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		return false
+	}
+	dacl, _, err := descriptor.DACL()
+	return err == nil && dacl != nil
+}
