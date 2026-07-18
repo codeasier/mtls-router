@@ -196,20 +196,18 @@ func makeCatalog(count int) string {
 }
 
 func TestFetchTimeoutsDuringHeadersAndBody(t *testing.T) {
-	if testing.Short() {
-		t.Skip("exercises the fixed five-second HTTP deadline")
-	}
+	const timeout = 100 * time.Millisecond
 	tests := []struct {
 		name    string
 		handler http.HandlerFunc
 	}{
-		{name: "headers", handler: func(http.ResponseWriter, *http.Request) { time.Sleep(requestTimeout + 250*time.Millisecond) }},
+		{name: "headers", handler: func(http.ResponseWriter, *http.Request) { time.Sleep(timeout + 50*time.Millisecond) }},
 		{name: "body", handler: func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = io.WriteString(w, `{"data":[`)
 			if flusher, ok := w.(http.Flusher); ok {
 				flusher.Flush()
 			}
-			time.Sleep(requestTimeout + 250*time.Millisecond)
+			time.Sleep(timeout + 50*time.Millisecond)
 		}},
 	}
 	for _, test := range tests {
@@ -217,12 +215,37 @@ func TestFetchTimeoutsDuringHeadersAndBody(t *testing.T) {
 			server := httptest.NewServer(test.handler)
 			defer server.Close()
 			started := time.Now()
-			_, err := New(nil).Fetch(context.Background(), Request{URL: server.URL + "/v1/models", APIKey: "timeout-key"})
+			client := New(nil)
+			client.timeout = timeout
+			client.httpClient.Timeout = timeout
+			_, err := client.Fetch(context.Background(), Request{URL: server.URL + "/v1/models", APIKey: "timeout-key"})
 			assertCode(t, err, protocol.CodeModelDiscoveryFailed)
-			if elapsed := time.Since(started); elapsed < 4*time.Second || elapsed > 6*time.Second {
+			if elapsed := time.Since(started); elapsed < timeout/2 || elapsed > time.Second {
 				t.Fatalf("deadline elapsed = %v", elapsed)
 			}
 		})
+	}
+}
+
+func TestFetchAllowsCatalogResponseBeyondFiveSeconds(t *testing.T) {
+	transport := roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		select {
+		case <-time.After(5100 * time.Millisecond):
+		case <-request.Context().Done():
+			return nil, request.Context().Err()
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"data":[{"id":"slow-model"}]}`)),
+			Request:    request,
+		}, nil
+	})
+	models, err := New(transport).Fetch(context.Background(), Request{
+		URL: "http://127.0.0.1:19099/v1/models", APIKey: "slow-key",
+	})
+	if err != nil || len(models) != 1 || models[0] != "slow-model" {
+		t.Fatalf("Fetch() = %q, %v", models, err)
 	}
 }
 

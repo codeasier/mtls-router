@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	requestTimeout = 5 * time.Second
+	requestTimeout = 15 * time.Second
 	maxBodyBytes   = 1 << 20
 )
 
@@ -31,6 +31,7 @@ type Request struct {
 // remain enforced by Client.
 type Client struct {
 	httpClient *http.Client
+	timeout    time.Duration
 }
 
 // New returns a client using transport. A nil transport uses a direct transport
@@ -48,7 +49,7 @@ func New(transport http.RoundTripper) *Client {
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
-	}}
+	}, timeout: requestTimeout}
 }
 
 // Fetch requests and normalizes the complete model catalog.
@@ -60,7 +61,7 @@ func (c *Client) Fetch(ctx context.Context, request Request) ([]string, error) {
 		return nil, discoveryFailed()
 	}
 
-	requestCtx, cancel := context.WithTimeout(ctx, requestTimeout)
+	requestCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, endpoint.String(), nil)
 	if err != nil {

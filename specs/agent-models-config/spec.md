@@ -403,7 +403,9 @@ The manager issues a direct local `GET /v1/models` with:
 - No body or query string.
 - No environment-configured proxy.
 - Redirect following disabled.
-- A five-second HTTP deadline within the method deadline.
+- A fifteen-second HTTP deadline within the thirty-second method deadline. The
+  router retains its shorter upstream timeout, so discovery receives the
+  router's bounded success or failure instead of cancelling first.
 - A 1 MiB response-body limit.
 
 Validation and key transmission must be channel-bound. The manager opens one

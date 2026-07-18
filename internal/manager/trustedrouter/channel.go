@@ -61,7 +61,7 @@ func (c Channel) Fetch(ctx context.Context, listener Listener, trusted discovery
 	defer transport.CloseIdleConnections()
 	httpClient := &http.Client{
 		Transport: transport,
-		Timeout:   5 * time.Second,
+		Timeout:   15 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
