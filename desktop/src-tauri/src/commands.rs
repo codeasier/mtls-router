@@ -1,38 +1,118 @@
 use crate::{
     error::{CommandError, Result},
     manager::ManagerClient,
+    model_config::{self, ModelConfig},
     scheduler::PollScheduler,
     types::{
-        AgentDetect, AgentPreview, AgentWriteResult, ComponentVersions, DesktopPaths, Diagnostics,
-        ManagerInfo, NativeLanguage, PollSnapshot, RouterHealth, RouterLogs, RouterStatus,
-        RouterVersion,
+        AgentDetect, AgentFragment, AgentPreview, AgentWriteResult, ComponentVersions,
+        DesktopPaths, Diagnostics, ManagerInfo, NativeLanguage, PollSnapshot, RouterHealth,
+        RouterLogs, RouterStatus, RouterVersion,
     },
 };
-use serde::Deserialize;
-use serde_json::json;
-use std::{env, path::PathBuf};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::{collections::HashMap, env, path::PathBuf, sync::Arc};
 use tauri::AppHandle;
 use tauri_plugin_opener::OpenerExt;
-use zeroize::Zeroize;
+use tokio::sync::Mutex;
+use uuid::Uuid;
+use zeroize::{Zeroize, Zeroizing};
 
 pub struct AppState {
     pub manager: ManagerClient,
     pub scheduler: PollScheduler,
     pub paths: DesktopPaths,
+    pub model_flows: Arc<Mutex<HashMap<String, ModelFlow>>>,
+}
+
+pub(crate) struct ModelFlow {
+    api_key: Zeroizing<String>,
+    agents: Vec<String>,
+    models: Vec<String>,
+    catalog_token: String,
+}
+
+struct PendingFlow {
+    flows: Arc<Mutex<HashMap<String, ModelFlow>>>,
+    id: String,
+    keep: bool,
+}
+
+impl Drop for PendingFlow {
+    fn drop(&mut self) {
+        if self.keep {
+            return;
+        }
+        if let Ok(mut flows) = self.flows.try_lock() {
+            flows.remove(&self.id);
+            return;
+        }
+        let flows = self.flows.clone();
+        let id = self.id.clone();
+        tauri::async_runtime::spawn(async move {
+            flows.lock().await.remove(&id);
+        });
+    }
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct AgentSelection {
+pub struct AgentModelsRequest {
     pub agents: Vec<String>,
+    pub api_key: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentConfigRequest {
+    pub agents: Vec<String>,
+    pub flow_id: String,
+    pub catalog_token: String,
+    pub model_config: ModelConfig,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentWriteRequest {
     pub agents: Vec<String>,
+    pub flow_id: String,
+    pub catalog_token: String,
+    pub model_config: ModelConfig,
     pub revision_token: String,
-    pub api_key: String,
+    pub approve_managed_overwrite: bool,
+    pub approve_codex_auth_change: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct AgentModelsExisting {
+    pub model_config: Value,
+    pub unavailable_models: HashMap<String, Vec<String>>,
+    pub drifted_agents: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct ManagerModelsResult {
+    models: Vec<String>,
+    catalog_token: String,
+    router_base_url: String,
+    api_base_url: String,
+    existing: AgentModelsExisting,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct AgentModelsResult {
+    pub flow_id: String,
+    pub models: Vec<String>,
+    pub catalog_token: String,
+    pub router_base_url: String,
+    pub api_base_url: String,
+    pub existing: AgentModelsExisting,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct AgentRenderResult {
+    pub model_config: Value,
+    pub fragments: Vec<AgentFragment>,
 }
 
 #[tauri::command]
@@ -120,25 +200,81 @@ pub async fn agent_detect(state: tauri::State<'_, AppState>) -> Result<AgentDete
 }
 
 #[tauri::command]
+pub async fn agent_models(
+    request: AgentModelsRequest,
+    state: tauri::State<'_, AppState>,
+) -> Result<AgentModelsResult> {
+    agent_models_command(request, &state.manager, state.model_flows.clone()).await
+}
+
+async fn agent_models_command(
+    mut request: AgentModelsRequest,
+    manager: &ManagerClient,
+    model_flows: Arc<Mutex<HashMap<String, ModelFlow>>>,
+) -> Result<AgentModelsResult> {
+    validate_agents(&request.agents)?;
+    validate_api_key(&request.api_key)?;
+    let flow_id = Uuid::new_v4().to_string();
+    let key = std::mem::take(&mut request.api_key);
+    request.api_key.zeroize();
+    model_flows.lock().await.insert(
+        flow_id.clone(),
+        ModelFlow {
+            api_key: Zeroizing::new(key),
+            agents: request.agents.clone(),
+            models: Vec::new(),
+            catalog_token: String::new(),
+        },
+    );
+    let mut pending = PendingFlow {
+        flows: model_flows.clone(),
+        id: flow_id.clone(),
+        keep: false,
+    };
+    let params = {
+        let flows = model_flows.lock().await;
+        let flow = flows.get(&flow_id).ok_or_else(flow_expired)?;
+        json!({ "owner": "desktop", "agents": request.agents, "api_key": flow.api_key.as_str() })
+    };
+    let result: ManagerModelsResult = manager.call("agent.models", params).await?;
+    validate_models_result(&result)?;
+    {
+        let mut flows = model_flows.lock().await;
+        let flow = flows.get_mut(&flow_id).ok_or_else(flow_expired)?;
+        flow.models = result.models.clone();
+        flow.catalog_token = result.catalog_token.clone();
+    }
+    pending.keep = true;
+    Ok(AgentModelsResult {
+        flow_id,
+        models: result.models,
+        catalog_token: result.catalog_token,
+        router_base_url: result.router_base_url,
+        api_base_url: result.api_base_url,
+        existing: result.existing,
+    })
+}
+
+#[tauri::command]
+pub async fn agent_render(
+    request: AgentConfigRequest,
+    state: tauri::State<'_, AppState>,
+) -> Result<AgentRenderResult> {
+    validate_config_request(&request, &state).await?;
+    state.manager.call("agent.render", json!({ "agents": request.agents, "catalog_token": request.catalog_token, "model_config": request.model_config })).await
+}
+
+#[tauri::command]
 pub async fn agent_preview(
-    request: AgentSelection,
+    request: AgentConfigRequest,
     state: tauri::State<'_, AppState>,
 ) -> Result<AgentPreview> {
-    agent_preview_command(request, &state.manager).await
+    validate_config_request(&request, &state).await?;
+    state.manager.call("agent.preview", json!({ "agents": request.agents, "catalog_token": request.catalog_token, "model_config": request.model_config })).await
 }
 
 async fn agent_detect_command(manager: &ManagerClient) -> Result<AgentDetect> {
     manager.call("agent.detect", json!({})).await
-}
-
-async fn agent_preview_command(
-    request: AgentSelection,
-    manager: &ManagerClient,
-) -> Result<AgentPreview> {
-    validate_agents(&request.agents)?;
-    manager
-        .call("agent.preview", json!({ "agents": request.agents }))
-        .await
 }
 
 #[tauri::command]
@@ -146,30 +282,94 @@ pub async fn agent_write(
     request: AgentWriteRequest,
     state: tauri::State<'_, AppState>,
 ) -> Result<AgentWriteResult> {
-    agent_write_command(request, &state.manager).await
+    agent_write_command(request, &state.manager, &state.model_flows).await
 }
 
 async fn agent_write_command(
-    mut request: AgentWriteRequest,
+    request: AgentWriteRequest,
     manager: &ManagerClient,
+    model_flows: &Arc<Mutex<HashMap<String, ModelFlow>>>,
 ) -> Result<AgentWriteResult> {
     validate_agents(&request.agents)?;
-    if request.revision_token.trim().is_empty() || request.revision_token.len() > 1024 {
-        request.api_key.zeroize();
+    if request.revision_token.trim().is_empty() || request.revision_token.len() > 512 * 1024 {
         return Err(CommandError::invalid_params("revision token is invalid"));
     }
-    if request.api_key.is_empty() || request.api_key.len() > 16 * 1024 {
-        request.api_key.zeroize();
-        return Err(CommandError::invalid_params("API key is invalid"));
-    }
+    let flow = {
+        let mut flows = model_flows.lock().await;
+        let flow = flows.get(&request.flow_id).ok_or_else(flow_expired)?;
+        if flow.agents != request.agents || flow.catalog_token != request.catalog_token {
+            return Err(flow_expired());
+        }
+        model_config::validate(&request.model_config, &request.agents, &flow.models)?;
+        if contains_exact_string(
+            &serde_json::to_value(&request.model_config)
+                .map_err(|_| CommandError::invalid_params("model config is invalid"))?,
+            flow.api_key.as_str(),
+        ) {
+            return Err(CommandError::invalid_params(
+                "model config contains a credential value",
+            ));
+        }
+        flows.remove(&request.flow_id).ok_or_else(flow_expired)?
+    };
     let params = json!({
         "agents": request.agents,
+        "catalog_token": request.catalog_token,
+        "model_config": request.model_config,
         "revision_token": request.revision_token,
-        "api_key": request.api_key,
+        "approve_managed_overwrite": request.approve_managed_overwrite,
+        "approve_codex_auth_change": request.approve_codex_auth_change,
+        "api_key": flow.api_key.as_str(),
     });
-    request.api_key.zeroize();
-    let result = manager.call("agent.write", params).await;
-    result
+    match manager.call("agent.write", params).await {
+        Err(error) if error.code == "PREVIEW_STALE" => {
+            model_flows.lock().await.insert(request.flow_id, flow);
+            Err(error)
+        }
+        result => result,
+    }
+}
+
+#[tauri::command]
+pub async fn agent_model_flow_destroy(
+    flow_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<()> {
+    validate_flow_id(&flow_id)?;
+    state.model_flows.lock().await.remove(&flow_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn agent_model_config_import(
+    content: String,
+    agents: Vec<String>,
+    flow_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<ModelConfig> {
+    validate_agents(&agents)?;
+    let flows = state.model_flows.lock().await;
+    let flow = flows.get(&flow_id).ok_or_else(flow_expired)?;
+    if flow.agents != agents {
+        return Err(flow_expired());
+    }
+    model_config::import_json(&content, &agents, &flow.models)
+}
+
+#[tauri::command]
+pub async fn agent_model_config_export(
+    model_config: ModelConfig,
+    agents: Vec<String>,
+    flow_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<String> {
+    validate_agents(&agents)?;
+    let flows = state.model_flows.lock().await;
+    let flow = flows.get(&flow_id).ok_or_else(flow_expired)?;
+    if flow.agents != agents {
+        return Err(flow_expired());
+    }
+    model_config::export_json(&model_config, &agents, &flow.models)
 }
 
 #[tauri::command]
@@ -178,8 +378,12 @@ pub fn desktop_paths(state: tauri::State<'_, AppState>) -> DesktopPaths {
 }
 
 #[tauri::command]
-pub fn window_visibility(visible: bool, state: tauri::State<'_, AppState>) {
+pub async fn window_visibility(visible: bool, state: tauri::State<'_, AppState>) -> Result<()> {
     state.scheduler.set_visible(visible);
+    if !visible {
+        state.model_flows.lock().await.clear();
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -218,135 +422,157 @@ pub fn validate_agents(agents: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn validate_api_key(api_key: &str) -> Result<()> {
+    if api_key.is_empty() || api_key.len() > 16 * 1024 {
+        return Err(CommandError::invalid_params("API key is invalid"));
+    }
+    Ok(())
+}
+
+fn validate_flow_id(flow_id: &str) -> Result<()> {
+    match Uuid::parse_str(flow_id) {
+        Ok(id) if id.get_version_num() == 4 => Ok(()),
+        _ => Err(CommandError::invalid_params("model flow is invalid")),
+    }
+}
+
+fn flow_expired() -> CommandError {
+    CommandError::new(
+        "MODEL_FLOW_EXPIRED",
+        "enter the API key and discover models again",
+    )
+}
+
+fn validate_models_result(result: &ManagerModelsResult) -> Result<()> {
+    let mut seen = std::collections::HashSet::new();
+    if result.models.is_empty()
+        || result.models.len() > 1000
+        || result.catalog_token.is_empty()
+        || result.catalog_token.len() > 512 * 1024
+        || result.models.iter().any(|model| {
+            model.is_empty()
+                || model.len() > 256
+                || model.chars().any(char::is_control)
+                || !seen.insert(model)
+        })
+    {
+        return Err(CommandError::new(
+            "INVALID_RESPONSE",
+            "manager returned an invalid model catalog",
+        ));
+    }
+    Ok(())
+}
+
+async fn validate_config_request(request: &AgentConfigRequest, state: &AppState) -> Result<()> {
+    validate_agents(&request.agents)?;
+    validate_flow_id(&request.flow_id)?;
+    if request.catalog_token.is_empty() || request.catalog_token.len() > 512 * 1024 {
+        return Err(CommandError::invalid_params("catalog token is invalid"));
+    }
+    let flows = state.model_flows.lock().await;
+    let flow = flows.get(&request.flow_id).ok_or_else(flow_expired)?;
+    if flow.agents != request.agents || flow.catalog_token != request.catalog_token {
+        return Err(flow_expired());
+    }
+    model_config::validate(&request.model_config, &request.agents, &flow.models)
+}
+
+fn contains_exact_string(value: &Value, secret: &str) -> bool {
+    match value {
+        Value::String(value) => value == secret,
+        Value::Array(values) => values
+            .iter()
+            .any(|value| contains_exact_string(value, secret)),
+        Value::Object(values) => values
+            .values()
+            .any(|value| contains_exact_string(value, secret)),
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::manager::{TransportChild, TransportEvent, TransportFactory, TransportSession};
     use serde_json::Value;
-    use std::{
-        collections::VecDeque,
-        sync::{Arc, Mutex, OnceLock},
-    };
+    use std::{collections::VecDeque, sync::Mutex as StdMutex, time::Duration};
     use tokio::sync::mpsc;
 
-    struct FixtureChild {
-        writes: Arc<Mutex<Vec<Value>>>,
-        responder: mpsc::Sender<TransportEvent>,
-        stale_write: bool,
+    struct FakeChild {
+        events: mpsc::Sender<TransportEvent>,
+        requests: Arc<StdMutex<Vec<Value>>>,
+        responses: Arc<StdMutex<VecDeque<Vec<u8>>>>,
     }
 
-    impl TransportChild for FixtureChild {
+    impl TransportChild for FakeChild {
         fn write(&mut self, bytes: &[u8]) -> Result<()> {
-            let request: Value = serde_json::from_slice(bytes).expect("valid manager request");
-            self.writes.lock().unwrap().push(request.clone());
-            let response = fixture_response(&request, self.stale_write);
-            self.responder
-                .try_send(TransportEvent::Stdout(
-                    serde_json::to_vec(&response).unwrap(),
-                ))
-                .unwrap();
+            let request: Value = serde_json::from_slice(bytes).unwrap();
+            self.requests.lock().unwrap().push(request.clone());
+            let id = request["id"].clone();
+            let method = request["method"].as_str().unwrap();
+            let response = if method == "manager.info" {
+                serde_json::to_vec(&json!({
+                    "id": id,
+                    "result": {
+                        "version": env!("MTLS_MANAGER_VERSION"),
+                        "commit": "test",
+                        "build_date": "test",
+                        "target": env!("MTLS_MANAGER_TARGET"),
+                        "deployment_id": env!("MTLS_DEPLOYMENT_ID"),
+                        "management_protocol_version": env!("MTLS_MANAGEMENT_PROTOCOL_VERSION")
+                    }
+                }))
+                .unwrap()
+            } else {
+                self.responses
+                    .lock()
+                    .unwrap()
+                    .pop_front()
+                    .unwrap_or_else(|| b"not-json".to_vec())
+            };
+            let events = self.events.clone();
+            tauri::async_runtime::spawn(async move {
+                let response = if response == b"delay" {
+                    tokio::time::sleep(Duration::from_secs(60)).await;
+                    b"not-json".to_vec()
+                } else {
+                    response
+                };
+                let _ = events.send(TransportEvent::Stdout(response)).await;
+            });
             Ok(())
         }
 
         fn kill(self: Box<Self>) {}
     }
 
-    struct FixtureFactory {
-        writes: Arc<Mutex<Vec<Value>>>,
-        stale_writes: Mutex<VecDeque<bool>>,
+    struct FakeFactory {
+        requests: Arc<StdMutex<Vec<Value>>>,
+        responses: Arc<StdMutex<VecDeque<Vec<u8>>>>,
     }
 
-    impl TransportFactory for FixtureFactory {
+    impl TransportFactory for FakeFactory {
         fn spawn(&self) -> Result<TransportSession> {
-            let (responder, events) = mpsc::channel(16);
+            let (events, receiver) = mpsc::channel(8);
             Ok(TransportSession {
-                child: Box::new(FixtureChild {
-                    writes: self.writes.clone(),
-                    responder,
-                    stale_write: self
-                        .stale_writes
-                        .lock()
-                        .unwrap()
-                        .pop_front()
-                        .unwrap_or(false),
+                child: Box::new(FakeChild {
+                    events,
+                    requests: self.requests.clone(),
+                    responses: self.responses.clone(),
                 }),
-                events,
+                events: receiver,
             })
         }
     }
 
-    fn fixture_response(request: &Value, stale_write: bool) -> Value {
-        let id = request["id"].clone();
-        let result = match request["method"].as_str().unwrap() {
-            "manager.info" => json!({
-                "version": env!("MTLS_MANAGER_VERSION"),
-                "commit": "fixture",
-                "build_date": "fixture",
-                "target": env!("MTLS_MANAGER_TARGET"),
-                "deployment_id": env!("MTLS_DEPLOYMENT_ID"),
-                "management_protocol_version": env!("MTLS_MANAGEMENT_PROTOCOL_VERSION")
-            }),
-            "agent.detect" => json!({ "agents": [{
-                "agent": "opencode", "name": "opencode", "detected": true,
-                "path": "/fixture/opencode.jsonc", "format": "jsonc",
-                "exists": true, "writable": true, "configured": false, "invalid": false
-            }] }),
-            "agent.preview" => json!({
-                "revision_token": "fixture-revision",
-                "agents": [{
-                    "agent": "codex", "name": "Codex", "files": [
-                        {
-                            "path": "/fixture/config.toml", "format": "toml",
-                            "operation": "replace", "operations": ["replace", "preserve"],
-                            "contains_api_key": false,
-                            "backup": { "required": true, "sensitive": true }
-                        },
-                        {
-                            "path": "/fixture/auth.json", "format": "json",
-                            "operation": "create", "operations": ["create"],
-                            "contains_api_key": true,
-                            "backup": { "required": false, "sensitive": false }
-                        }
-                    ]
-                }]
-            }),
-            "agent.write" if stale_write => {
-                return json!({
-                    "id": id,
-                    "error": { "code": "PREVIEW_STALE", "message": "preview is stale" }
-                });
-            }
-            "agent.write" => json!({
-                "transaction_id": "fixture-transaction",
-                "agents": [{
-                    "agent": "codex", "success": true,
-                    "files": [{
-                        "path": "/fixture/auth.json", "replaced": true,
-                        "backup_path": "/fixture/auth.json.bak-safe"
-                    }],
-                    "changed": ["/fixture/auth.json"],
-                    "backups": ["/fixture/auth.json.bak-safe"]
-                }],
-                "sensitive_files": true,
-                "warning": "backups are sensitive"
-            }),
-            method => panic!("unexpected fixture method {method}"),
+    fn fake_client(responses: Vec<Vec<u8>>) -> (ManagerClient, Arc<StdMutex<Vec<Value>>>) {
+        let requests = Arc::new(StdMutex::new(Vec::new()));
+        let factory = FakeFactory {
+            requests: requests.clone(),
+            responses: Arc::new(StdMutex::new(responses.into())),
         };
-        json!({ "id": id, "result": result })
-    }
-
-    fn runtime() -> &'static tokio::runtime::Runtime {
-        static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
-        RUNTIME.get_or_init(|| tokio::runtime::Runtime::new().unwrap())
-    }
-
-    fn fixture_client(stale_write: bool) -> (ManagerClient, Arc<Mutex<Vec<Value>>>) {
-        let writes = Arc::new(Mutex::new(Vec::new()));
-        let factory = Arc::new(FixtureFactory {
-            writes: writes.clone(),
-            stale_writes: Mutex::new([stale_write].into()),
-        });
-        (ManagerClient::new(factory), writes)
+        (ManagerClient::new(Arc::new(factory)), requests)
     }
 
     #[test]
@@ -360,65 +586,138 @@ mod tests {
     }
 
     #[test]
-    fn agent_commands_preserve_structured_boundary_results() {
-        runtime().block_on(async {
-            let (manager, writes) = fixture_client(false);
-            let detected = agent_detect_command(&manager).await.unwrap();
-            assert_eq!(detected.agents[0].format, "jsonc");
+    fn flow_ids_keys_and_catalog_results_are_strictly_bounded() {
+        assert!(validate_api_key("").is_err());
+        assert!(validate_api_key("fixture-key").is_ok());
+        assert!(validate_flow_id(&Uuid::new_v4().to_string()).is_ok());
+        assert!(validate_flow_id("guessable").is_err());
+        let result = ManagerModelsResult {
+            models: vec!["model-a".into()],
+            catalog_token: "token".into(),
+            router_base_url: "http://127.0.0.1:19099".into(),
+            api_base_url: "http://127.0.0.1:19099/v1".into(),
+            existing: AgentModelsExisting {
+                model_config: json!({}),
+                unavailable_models: HashMap::new(),
+                drifted_agents: vec![],
+            },
+        };
+        assert!(validate_models_result(&result).is_ok());
+    }
 
-            let preview = agent_preview_command(
-                AgentSelection {
-                    agents: vec!["codex".to_owned()],
-                },
-                &manager,
-            )
-            .await
-            .unwrap();
-            assert_eq!(preview.agents[0].files.len(), 2);
-            assert!(preview.agents[0].files[1].contains_api_key);
+    #[test]
+    fn defense_in_depth_detects_exact_secret_in_model_config() {
+        let key = "command-boundary-secret-fixture";
+        assert!(contains_exact_string(&json!({"nested": [key]}), key));
+        assert!(!contains_exact_string(&json!({"nested": ["display"]}), key));
+    }
 
-            let key = "command-boundary-secret-fixture";
-            let result = agent_write_command(
-                AgentWriteRequest {
-                    agents: vec!["codex".to_owned()],
-                    revision_token: preview.revision_token,
-                    api_key: key.to_owned(),
-                },
-                &manager,
-            )
-            .await
-            .unwrap();
-            assert!(result.agents[0].success);
-            assert_eq!(result.agents[0].changed, ["/fixture/auth.json"]);
-            assert!(!serde_json::to_string(&result).unwrap().contains(key));
-
-            let writes = writes.lock().unwrap();
-            let agent_writes: Vec<_> = writes
-                .iter()
-                .filter(|request| request["method"] == "agent.write")
-                .collect();
-            assert_eq!(agent_writes.len(), 1);
-            assert_eq!(agent_writes[0]["params"]["api_key"], key);
+    #[test]
+    fn discovery_destroys_secret_flow_on_malformed_and_schema_invalid_responses() {
+        tauri::async_runtime::block_on(async {
+            for response in [
+                b"not-json".to_vec(),
+                serde_json::to_vec(&json!({"id":"desktop-1","result":{"lines":[]}})).unwrap(),
+            ] {
+                let recovery_status =
+                    serde_json::to_vec(&json!({"id":"desktop-2","result":{"state":"absent"}}))
+                        .unwrap();
+                let (manager, _) = fake_client(vec![response, recovery_status]);
+                let flows = Arc::new(Mutex::new(HashMap::new()));
+                let error = agent_models_command(
+                    AgentModelsRequest {
+                        agents: vec!["claude".into()],
+                        api_key: "terminal-path-secret".into(),
+                    },
+                    &manager,
+                    flows.clone(),
+                )
+                .await
+                .unwrap_err();
+                assert_eq!(error.code, "INVALID_RESPONSE");
+                tokio::task::yield_now().await;
+                assert!(flows.lock().await.is_empty());
+            }
         });
     }
 
     #[test]
-    fn stale_preview_code_crosses_the_command_boundary_without_sensitive_data() {
-        runtime().block_on(async {
-            let (manager, _) = fixture_client(true);
-            let key = "stale-command-secret-fixture";
+    fn cancelled_discovery_destroys_secret_flow() {
+        tauri::async_runtime::block_on(async {
+            let (manager, requests) = fake_client(vec![b"delay".to_vec()]);
+            let flows = Arc::new(Mutex::new(HashMap::new()));
+            let task_flows = flows.clone();
+            let task = tauri::async_runtime::spawn(async move {
+                agent_models_command(
+                    AgentModelsRequest {
+                        agents: vec!["claude".into()],
+                        api_key: "cancelled-secret".into(),
+                    },
+                    &manager,
+                    task_flows,
+                )
+                .await
+            });
+            for _ in 0..100 {
+                if requests
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|request| request["method"] == "agent.models")
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            task.abort();
+            let _ = task.await;
+            for _ in 0..100 {
+                if flows.lock().await.is_empty() {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            panic!("cancelled discovery retained flow state");
+        });
+    }
+
+    #[test]
+    fn malformed_write_is_terminal_and_destroys_secret_flow() {
+        tauri::async_runtime::block_on(async {
+            let recovery_status =
+                serde_json::to_vec(&json!({"id":"desktop-2","result":{"state":"absent"}})).unwrap();
+            let (manager, _) = fake_client(vec![b"not-json".to_vec(), recovery_status]);
+            let flow_id = Uuid::new_v4().to_string();
+            let flows = Arc::new(Mutex::new(HashMap::from([(
+                flow_id.clone(),
+                ModelFlow {
+                    api_key: Zeroizing::new("write-secret".into()),
+                    agents: vec!["claude".into()],
+                    models: vec!["m1".into()],
+                    catalog_token: "catalog".into(),
+                },
+            )])));
             let error = agent_write_command(
                 AgentWriteRequest {
-                    agents: vec!["claude".to_owned()],
-                    revision_token: "stale-revision".to_owned(),
-                    api_key: key.to_owned(),
+                    agents: vec!["claude".into()],
+                    flow_id,
+                    catalog_token: "catalog".into(),
+                    model_config: minimal_model_config(),
+                    revision_token: "revision".into(),
+                    approve_managed_overwrite: false,
+                    approve_codex_auth_change: false,
                 },
                 &manager,
+                &flows,
             )
             .await
             .unwrap_err();
-            assert_eq!(error.code, "PREVIEW_STALE");
-            assert!(!error.message.contains(key));
+            assert_eq!(error.code, "INVALID_RESPONSE");
+            assert!(flows.lock().await.is_empty());
         });
+    }
+
+    fn minimal_model_config() -> ModelConfig {
+        serde_json::from_value(json!({"version":1,"claude":{"primary":{"model":"m1"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true}}})).unwrap()
     }
 }

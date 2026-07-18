@@ -86,7 +86,27 @@ manager 会保留受支持的无关设置，但不会猜测如何修复无效语
 
 `PREVIEW_STALE` 表示所选目标在预览后发生变化。写入会在修改前被拒绝。
 
-请返回检测、生成新预览、重新审查所有路径和警告，然后再次输入 key。对于显式 `OPENCODE_CONFIG`，确认精确覆盖路径在预览后没有发生变化。不要用旧 revision token 重试。处理陈旧预览时，桌面应用会清除临时 key 输入。
+客户端允许时，请返回配置，使用保留的无 key 目录/config 生成新预览。如果 catalog token 同样 stale，则重新输入 key 并发现模型。对于显式 `OPENCODE_CONFIG`，确认精确覆盖路径在预览后没有发生变化。不要用旧 revision token 重试。
+
+## 模型配置错误
+
+所有模型错误都会安全失败：不会修改 Agent 或 last-applied sidecar 文件，也不会使用静态模型、缓存目录、现有模型或替代模型 fallback。
+
+| Code | 处理方式 |
+|---|---|
+| `MODEL_AUTH_FAILED` | 重新输入 API key；目录 endpoint 返回了 401 或 403。 |
+| `MODEL_DISCOVERY_FAILED` | 检查可信本地 router、网络和上游服务后重试。Redirect 和非认证 HTTP 失败使用此 code。 |
+| `MODEL_RESPONSE_INVALID` | 报告上游服务契约失败；成功响应 malformed、超限，或不是标准 `data[].id` JSON。 |
+| `MODEL_CATALOG_EMPTY` | 确认账户/key 能看到模型，然后重新发现。 |
+| `MODEL_CATALOG_STALE` | 重新发现模型。Router 地址、deployment、protocol、owner 或 token trust state 已变化。 |
+| `MODEL_CONFIG_INVALID` | 按报告的 JSON Pointer 修正规范 model config。不要在 `extra`/`options` 中放入凭据、URL、provider/header 字段或任意 Agent 配置。 |
+| `MODEL_NOT_AVAILABLE` | 写入时刷新发现所选模型已消失。重新发现并明确选择；manager 不会自动替代。 |
+| `MANAGED_CONFIG_DRIFT` | 生成新预览，只检查列出的托管 namespace，然后明确批准覆盖或取消。 |
+| `MODEL_STATE_INVALID` | 保留 Agent 备份，并先解决 transaction journal。仅在审查后整体移走无效 `agent-transactions` 目录；不要只替换 signing key 或 sidecar。 |
+| `AGENT_OPERATION_BUSY` | 等待另一个桌面/CLI Agent 操作结束后重试。不要删除 lock 或 transaction state。 |
+| `CODEX_AUTH_UNSUPPORTED` | 重试前解决 forced ChatGPT login、managed policy 或不兼容 credential-store policy。Manager 不会降低 policy，也不会删除 OS keyring 凭据。 |
+
+检测中的 `configured=true` 不是授权结果，只表示本地托管结构完整。使用模型发现检查当前 key visibility。目录只能手工刷新：重新进入 Agent 配置并提供 key。详见 [Agent 模型配置](AGENT_MODELS.md)。
 
 ## 写入或回滚失败
 

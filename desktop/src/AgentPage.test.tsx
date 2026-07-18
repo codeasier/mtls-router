@@ -2,432 +2,366 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { AgentPage } from "./AgentPage";
-import type { AgentDetection, AgentPreview, AgentWriteResult } from "./ipc";
+import type {
+  AgentDetection,
+  AgentModelsResult,
+  AgentPreview,
+  ModelConfig,
+} from "./ipc";
 import { createMockApi } from "./test/api";
 
 const detection: AgentDetection = {
-  agents: [
+  agents: ["claude", "opencode", "codex"].map((agent) => ({
+    agent: agent as "claude" | "opencode" | "codex",
+    name: agent,
+    detected: true,
+    path: `/safe/${agent}`,
+    format: agent === "codex" ? "toml" : "json",
+    exists: true,
+    writable: true,
+    configured: false,
+    invalid: false,
+  })),
+};
+const discovery: AgentModelsResult = {
+  flow_id: "6e9cee5f-3e9d-42d9-a88e-9e0677edb806",
+  models: ["model-a", "model-b"],
+  catalog_token: "catalog-token",
+  router_base_url: "http://127.0.0.1:19099",
+  api_base_url: "http://127.0.0.1:19099/v1",
+  existing: {
+    model_config: {},
+    unavailable_models: { claude: ["gone-model"] },
+    drifted_agents: [],
+  },
+};
+const configured: ModelConfig = {
+  version: 1,
+  claude: {
+    primary: { model: "model-a" },
+    haiku: { inherit_primary: true },
+    sonnet: { inherit_primary: true },
+    opus: { inherit_primary: true },
+  },
+  opencode: { default_model: "model-a", models: { "model-a": {} } },
+  codex: { model: "model-b" },
+};
+const preview: AgentPreview = {
+  revision_token: "revision",
+  model_config: configured,
+  fragments: [
     {
       agent: "claude",
-      name: "Claude Code",
-      detected: true,
-      path: "/home/operator/.claude/settings.json",
+      role: "config",
+      path: "/safe/settings.json",
       format: "json",
-      exists: true,
-      writable: true,
-      configured: true,
-      invalid: false,
-    },
-    {
-      agent: "opencode",
-      name: "opencode",
-      detected: false,
-      path: "/home/operator/.config/opencode/opencode.jsonc",
-      format: "jsonc",
-      exists: false,
-      writable: true,
-      configured: false,
-      invalid: false,
-    },
-    {
-      agent: "codex",
-      name: "Codex",
-      detected: true,
-      path: "/home/operator/.codex/config.toml",
-      auth_path: "/home/operator/.codex/auth.json",
-      format: "toml",
-      exists: true,
-      writable: true,
-      configured: false,
-      invalid: true,
+      content: '{"token":"<redacted-api-key>"}',
     },
   ],
-};
-
-const apiKeyLabel = /API (?:key|密钥)/;
-
-const structuredPreview: AgentPreview = {
-  revision_token: "revision-structured",
-  agents: [
+  files: [
     {
-      agent: "opencode",
-      name: "opencode",
-      files: [
-        {
-          path: "/home/operator/.config/opencode/opencode.json",
-          source_path: "/home/operator/.config/opencode/opencode.jsonc",
-          format: "json",
-          operation: "replace",
-          operations: ["replace", "preserve"],
-          contains_api_key: false,
-          preserves: ["其他 providers", "根级设置"],
-          backup: {
-            required: true,
-            pattern:
-              "/home/operator/.config/opencode/opencode.jsonc.bak-<timestamp>-<random>",
-            sensitive: true,
-            warning: "backup may contain a previous key",
-          },
-          warning: "comments and formatting are not preserved",
-        },
-      ],
-    },
-    {
-      agent: "codex",
-      name: "Codex",
-      files: [
-        {
-          path: "/home/operator/.codex/config.toml",
-          format: "toml",
-          operation: "replace",
-          operations: ["replace", "preserve"],
-          contains_api_key: false,
-          preserves: ["unrelated root keys", "unmanaged sections"],
-          backup: {
-            required: true,
-            pattern:
-              "/home/operator/.codex/config.toml.bak-<timestamp>-<random>",
-            sensitive: true,
-          },
-        },
-        {
-          path: "/home/operator/.codex/auth.json",
-          format: "json",
-          operation: "create",
-          operations: ["create"],
-          contains_api_key: true,
-          backup: { required: false, sensitive: false },
-        },
-      ],
+      path: "/safe/settings.json",
+      role: "config",
+      format: "json",
+      operation: "replace",
+      backup_path: "/safe/settings.json.bak-safe",
     },
   ],
-};
-
-const writeResult: AgentWriteResult = {
-  transaction_id: "transaction-1",
-  sensitive_files: true,
-  warning: "backups are sensitive",
-  agents: [
+  managed_config_drift: true,
+  drifted_agents: ["claude"],
+  managed_collisions: [
     {
-      agent: "opencode",
-      success: true,
-      files: [],
-      changed: ["/home/operator/.config/opencode/opencode.json"],
-      backups: [
-        "/home/operator/.config/opencode/opencode.jsonc.bak-20260712-safe",
-      ],
-    },
-    {
-      agent: "codex",
-      success: true,
-      files: [],
-      changed: [
-        "/home/operator/.codex/config.toml",
-        "/home/operator/.codex/auth.json",
-      ],
-      backups: ["/home/operator/.codex/config.toml.bak-20260712-safe"],
+      agent: "claude",
+      path: "/env/ANTHROPIC_MODEL",
+      type: "fixed_managed_path",
+      action: "replace",
     },
   ],
+  requires_codex_auth_approval: true,
 };
 
-function selectableDetection(): AgentDetection {
-  return {
-    agents: detection.agents.map((agent) => ({
-      ...agent,
-      detected: true,
-      writable: true,
-      invalid: false,
-    })),
-  };
-}
-
-async function reachKeyInput(
-  preview = structuredPreview,
-  selectedDetection = selectableDetection(),
+async function reachCredential(
+  api = createMockApi({ detectAgents: vi.fn().mockResolvedValue(detection) }),
 ) {
-  const api = createMockApi({
-    detectAgents: vi.fn().mockResolvedValue(selectedDetection),
-    previewAgents: vi.fn().mockResolvedValue(preview),
-    writeAgents: vi.fn().mockResolvedValue(writeResult),
-  });
-  const view = render(<AgentPage api={api} />);
-  await screen.findByRole("button", { name: "生成写入预览" });
-  fireEvent.click(screen.getByRole("button", { name: "生成写入预览" }));
-  await screen.findByText("确认变更范围");
-  fireEvent.click(screen.getByRole("button", { name: "我已审阅并批准" }));
-  return { api, unmount: view.unmount };
+  render(<AgentPage api={api} />);
+  await screen.findByText("/safe/claude");
+  fireEvent.click(
+    screen.getByRole("button", { name: /继续输入凭据|Continue to credential/ }),
+  );
+  return api;
 }
 
-describe("Agent detection", () => {
-  it("shows paths, formats, writability and state without selecting absent or invalid Agents", async () => {
-    const api = createMockApi({
-      detectAgents: vi.fn().mockResolvedValue(detection),
-    });
-    render(<AgentPage api={api} />);
-
-    expect(
-      await screen.findByText("/home/operator/.claude/settings.json"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("/home/operator/.codex/auth.json"),
-    ).toBeInTheDocument();
-    expect(screen.getAllByText("JSON").length).toBeGreaterThan(0);
-    expect(screen.getByText("JSONC")).toBeInTheDocument();
-    expect(screen.getByText("TOML")).toBeInTheDocument();
-    expect(screen.getByText("未检测到")).toBeInTheDocument();
-    expect(screen.getByText("配置无效")).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        (text) => text.includes("config.toml") && text.includes("TOML 语法"),
-      ),
-    ).toBeInTheDocument();
-
-    const selectors = screen.getAllByRole("checkbox");
-    expect(selectors[0]).toBeChecked();
-    expect(selectors[1]).not.toBeChecked();
-    expect(selectors[1]).toBeDisabled();
-    expect(selectors[2]).not.toBeChecked();
-    expect(selectors[2]).toBeDisabled();
+async function reachConfigure() {
+  const api = createMockApi({
+    detectAgents: vi.fn().mockResolvedValue(detection),
+    discoverModels: vi.fn().mockResolvedValue(discovery),
   });
-
-  it("refreshes detection and recomputes safe default selection", async () => {
-    const detectAgents = vi
-      .fn()
-      .mockResolvedValueOnce(detection)
-      .mockResolvedValueOnce(selectableDetection());
-    render(<AgentPage api={createMockApi({ detectAgents })} />);
-    await screen.findByText("未检测到");
-
-    fireEvent.click(screen.getByRole("button", { name: "刷新检测" }));
-
-    await waitFor(() => expect(detectAgents).toHaveBeenCalledTimes(2));
-    await waitFor(() =>
-      expect(
-        screen
-          .getAllByRole("checkbox")
-          .every((item) => item.matches(":checked")),
-      ).toBe(true),
-    );
+  await reachCredential(api);
+  const secret = "fixture-secret-never-in-dom-after-submit";
+  fireEvent.change(screen.getByLabelText(/API (?:key|密钥)/), {
+    target: { value: secret },
   });
-});
+  fireEvent.click(
+    screen.getByRole("button", { name: /发现模型|Discover models/ }),
+  );
+  await screen.findByText(/共同模型目录|Common model catalog/);
+  return { api, secret };
+}
 
-describe("Agent preview and approval", () => {
-  it("renders operations, sensitive backups, JSONC migration, and Codex's two files", async () => {
-    const previewAgents = vi.fn().mockResolvedValue(structuredPreview);
-    render(
-      <AgentPage
-        api={createMockApi({
-          detectAgents: vi.fn().mockResolvedValue(selectableDetection()),
-          previewAgents,
-        })}
-      />,
-    );
-    await screen.findByRole("button", { name: "生成写入预览" });
-    fireEvent.click(screen.getByRole("button", { name: "生成写入预览" }));
-
-    expect(
-      await screen.findByText(/JSONC\s*(?:→|->)\s*JSON 迁移/),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/注释与原格式不会保留/)).toBeInTheDocument();
-    expect(
-      screen.getByText("/home/operator/.codex/config.toml"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("/home/operator/.codex/auth.json"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/此文件会保存本次提供的 API key/),
-    ).toBeInTheDocument();
-    expect(document.querySelectorAll(".backup-plan")).toHaveLength(2);
-    expect(
-      screen.queryByRole("textbox", { name: apiKeyLabel }),
-    ).not.toBeInTheDocument();
-    expect(previewAgents).toHaveBeenCalledWith(["claude", "opencode", "codex"]);
+function completeRequiredConfig() {
+  fireEvent.change(screen.getByLabelText(/^主模型$|^Primary model$/), {
+    target: { value: "model-a" },
   });
-
-  it("sanitizes manager-derived strings before rendering them", async () => {
-    const secret = "sk-previewBoundaryCanary123456";
-    const preview: AgentPreview = {
-      ...structuredPreview,
-      agents: [
-        {
-          ...structuredPreview.agents[0],
-          files: [
-            {
-              ...structuredPreview.agents[0].files[0],
-              warning: `api_key=${secret}`,
-              path: `/tmp/${secret}.json`,
-            },
-          ],
-        },
-      ],
-    };
-    await reachKeyInput(preview);
-
-    expect(document.body.textContent).not.toContain(secret);
-    expect(document.body.textContent).toContain("[REDACTED");
+  fireEvent.click(screen.getByRole("checkbox", { name: "model-a" }));
+  fireEvent.change(screen.getByLabelText(/默认模型|Default model/), {
+    target: { value: "model-a" },
   });
-
-  it("returns invalid previews to detection without exposing backend details", async () => {
-    const previewAgents = vi.fn().mockRejectedValue({
-      code: "CONFIG_INVALID",
-      message: "invalid config includes a sensitive backend value",
-    });
-    render(
-      <AgentPage
-        api={createMockApi({
-          detectAgents: vi.fn().mockResolvedValue(selectableDetection()),
-          previewAgents,
-        })}
-      />,
-    );
-    fireEvent.click(
-      await screen.findByRole("button", { name: "生成写入预览" }),
-    );
-
-    expect(
-      await screen.findByText(/目标配置无效，未修改任何文件/),
-    ).toBeInTheDocument();
-    expect(document.body.textContent).not.toContain("sensitive backend value");
-    expect(
-      screen.getByRole("button", { name: "刷新检测" }),
-    ).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText(/活动模型|Active model/), {
+    target: { value: "model-b" },
   });
-});
+}
 
-describe("transient Agent write", () => {
-  it("requires approval, sends the key once, clears it, and renders per-Agent paths", async () => {
-    const { api } = await reachKeyInput();
-    const secret = "fixture-write-secret-value";
-    const field = screen.getByLabelText(apiKeyLabel);
-    expect(field).toHaveAttribute("type", "password");
-    fireEvent.change(field, { target: { value: secret } });
-    expect(field).toHaveValue(secret);
-
-    fireEvent.click(screen.getByRole("button", { name: "写入所选 Agent" }));
-
-    expect(await screen.findByText("Agent 配置结果")).toBeInTheDocument();
-    expect(api.writeAgents).toHaveBeenCalledTimes(1);
-    expect(api.writeAgents).toHaveBeenCalledWith(
+describe("Agent model workbench", () => {
+  it("does not auto-select models and clears the credential immediately on discovery submit", async () => {
+    const { api, secret } = await reachConfigure();
+    expect(api.discoverModels).toHaveBeenCalledWith(
       ["claude", "opencode", "codex"],
-      "revision-structured",
       secret,
     );
-    expect(screen.queryByDisplayValue(secret)).not.toBeInTheDocument();
     expect(document.body.textContent).not.toContain(secret);
+    expect(screen.getByLabelText(/^主模型$|^Primary model$/)).toHaveValue("");
+    expect(screen.getByLabelText(/活动模型|Active model/)).toHaveValue("");
     expect(
-      screen.getByText("/home/operator/.codex/auth.json"),
-    ).toBeInTheDocument();
-    expect(screen.getAllByText(/\.bak-20260712-safe/)).toHaveLength(2);
+      screen
+        .getAllByRole("checkbox")
+        .filter(
+          (item) => item.closest(".catalog-model") && item.matches(":checked"),
+        ),
+    ).toHaveLength(0);
+    expect(document.body.textContent).toContain("gone-model");
   });
 
-  it("clears the password on cancellation and starts with an empty field after reapproval", async () => {
-    await reachKeyInput();
-    fireEvent.change(screen.getByLabelText(apiKeyLabel), {
-      target: { value: "cancelled-secret-value" },
+  it("supports searchable catalog, Claude inheritance, opencode multi/default, Codex typed omission, and constrained extra", async () => {
+    await reachConfigure();
+    const searches = screen.getAllByRole("searchbox");
+    expect(searches).toHaveLength(1);
+    fireEvent.change(searches[0], { target: { value: "model-b" } });
+    expect(screen.getAllByText("model-b").length).toBeGreaterThan(0);
+    expect(
+      screen.getByLabelText(/haiku 继承主模型|haiku inherits primary/),
+    ).toBeChecked();
+    fireEvent.change(searches[0], { target: { value: "model-a" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: "model-a" }));
+    fireEvent.change(screen.getByLabelText(/默认模型|Default model/), {
+      target: { value: "model-a" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "取消并清除密钥" }));
-    fireEvent.click(screen.getByRole("button", { name: "我已审阅并批准" }));
-
-    expect(screen.getByLabelText(apiKeyLabel)).toHaveValue("");
-    expect(document.body.textContent).not.toContain("cancelled-secret-value");
+    expect(screen.getByLabelText(/推理强度|Reasoning effort/)).toHaveValue("");
+    fireEvent.click(
+      screen.getAllByText(/高级受限 extra|Advanced constrained extra/)[1],
+    );
+    const editor = screen.getByLabelText(/opencode extra JSON/);
+    fireEvent.change(editor, { target: { value: '{"api-key":"forbidden"}' } });
+    expect(await screen.findByText(/protected_path/)).toBeInTheDocument();
+    expect(editor).toHaveAttribute("aria-invalid", "true");
+    fireEvent.change(editor, { target: { value: '{"status":"active"}' } });
+    fireEvent.click(
+      editor.closest("details")!.querySelector<HTMLButtonElement>("button")!,
+    );
+    expect(editor).toHaveValue('{\n  "status": "active"\n}');
   });
 
-  it("does not retain the password after navigation unmounts and remounts the page", async () => {
-    const { api, unmount } = await reachKeyInput();
-    fireEvent.change(screen.getByLabelText(apiKeyLabel), {
-      target: { value: "navigation-secret-value" },
+  it("keeps labels, stage status, alerts, and controls accessible at a narrow viewport", async () => {
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 360,
     });
-    // App navigation unmounts AgentPage; a new visit always starts from detection.
-    unmount();
-    render(<AgentPage api={api} />);
-
+    await reachConfigure();
     expect(
-      await screen.findByRole("button", { name: "生成写入预览" }),
-    ).toBeInTheDocument();
+      screen.getByRole("searchbox", { name: /搜索模型|Search models/ }),
+    ).toBeVisible();
+    expect(screen.getByLabelText(/当前步骤|Current stage/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/^主模型$|^Primary model$/)).toBeVisible();
     expect(
-      screen.queryByDisplayValue("navigation-secret-value"),
-    ).not.toBeInTheDocument();
-    expect(document.body.textContent).not.toContain("navigation-secret-value");
+      screen.getByRole("button", {
+        name: /生成写入预览|Generate write preview/,
+      }),
+    ).toBeVisible();
+    expect(document.documentElement.outerHTML).not.toContain(
+      "fixture-secret-never-in-dom-after-submit",
+    );
   });
 
-  it("clears the password after an ordinary write error", async () => {
-    const { api } = await reachKeyInput();
-    vi.mocked(api.writeAgents).mockRejectedValueOnce({ code: "WRITE_FAILED" });
-    fireEvent.change(screen.getByLabelText(apiKeyLabel), {
-      target: { value: "error-secret-value" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "写入所选 Agent" }));
-
-    expect(
-      await screen.findByText(/写入失败，密钥输入已清除/),
-    ).toBeInTheDocument();
-    expect(screen.queryByLabelText(apiKeyLabel)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "我已审阅并批准" }));
-    expect(screen.getByLabelText(apiKeyLabel)).toHaveValue("");
-    expect(document.body.textContent).not.toContain("error-secret-value");
-  });
-
-  it("refreshes a stale preview and requires approval and key entry again", async () => {
-    const refreshed = {
-      ...structuredPreview,
-      revision_token: "revision-refreshed",
-    };
-    const { api } = await reachKeyInput();
-    vi.mocked(api.writeAgents).mockRejectedValueOnce({ code: "PREVIEW_STALE" });
-    vi.mocked(api.previewAgents).mockResolvedValueOnce(refreshed);
-    fireEvent.change(screen.getByLabelText(apiKeyLabel), {
-      target: { value: "stale-secret-value" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "写入所选 Agent" }));
-
-    expect(
-      await screen.findByText(/文件已变化，预览已刷新/),
-    ).toBeInTheDocument();
-    expect(api.previewAgents).toHaveBeenCalledTimes(2);
-    expect(screen.queryByLabelText(apiKeyLabel)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "我已审阅并批准" }));
-    expect(screen.getByLabelText(apiKeyLabel)).toHaveValue("");
-    expect(document.body.textContent).not.toContain("stale-secret-value");
-  });
-
-  it("reports rollback and diagnostic backup paths per Agent", async () => {
-    const rollbackResult: AgentWriteResult = {
-      transaction_id: "transaction-rollback",
-      sensitive_files: true,
-      warning: "backups are sensitive",
-      agents: [
-        {
-          agent: "claude",
-          success: false,
-          files: [],
-          changed: ["/home/operator/.claude/settings.json"],
-          backups: ["/home/operator/.claude/settings.json.bak-original"],
-          rollback_backups: [
-            "/home/operator/.claude/settings.json.rollback-failed-write",
-          ],
-          rolled_back: true,
-          error_code: "WRITE_FAILED",
+  it("prefills complete available canonical config and renders drift/auth approvals and redacted fragments", async () => {
+    const api = createMockApi({
+      detectAgents: vi.fn().mockResolvedValue(detection),
+      discoverModels: vi.fn().mockResolvedValue({
+        ...discovery,
+        existing: {
+          model_config: configured,
+          unavailable_models: {},
+          drifted_agents: ["claude"],
         },
-      ],
-    };
-    const { api } = await reachKeyInput();
-    vi.mocked(api.writeAgents).mockResolvedValueOnce(rollbackResult);
-    fireEvent.change(screen.getByLabelText(apiKeyLabel), {
-      target: { value: "rollback-secret-value" },
+      }),
+      previewAgents: vi.fn().mockResolvedValue(preview),
+      writeAgents: vi.fn().mockResolvedValue({
+        transaction_id: "tx",
+        agents: [
+          {
+            agent: "claude",
+            success: true,
+            changed: ["/safe/settings.json"],
+          },
+        ],
+      }),
     });
-    fireEvent.click(screen.getByRole("button", { name: "写入所选 Agent" }));
-
-    expect(await screen.findByText("已回滚本次变更")).toBeInTheDocument();
-    expect(screen.getByText("错误代码：WRITE_FAILED")).toBeInTheDocument();
+    await reachCredential(api);
+    fireEvent.change(screen.getByLabelText(/API (?:key|密钥)/), {
+      target: { value: "prefill-secret" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: /发现模型|Discover models/ }),
+    );
     expect(
-      screen.getByText("/home/operator/.claude/settings.json.bak-original"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "/home/operator/.claude/settings.json.rollback-failed-write",
-      ),
-    ).toBeInTheDocument();
-    expect(document.body.textContent).not.toContain("rollback-secret-value");
+      (await screen.findAllByDisplayValue("model-a")).length,
+    ).toBeGreaterThan(0);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /生成写入预览|Generate write preview/,
+      }),
+    );
+    expect(await screen.findByText(/<redacted-api-key>/)).toBeInTheDocument();
+    const write = screen.getByRole("button", {
+      name: /写入所选 Agent|Write selected Agents/,
+    });
+    expect(write).toBeDisabled();
+    fireEvent.click(screen.getByLabelText(/漂移|drifted/));
+    fireEvent.click(screen.getByLabelText(/Codex/));
+    fireEvent.click(write);
+    await screen.findByText(/Agent 配置结果|Agent configuration result/);
+    expect(api.writeAgents).toHaveBeenCalledTimes(1);
+    expect(document.body.textContent).not.toContain("prefill-secret");
   });
+
+  it("destroys Rust flow state on cancel and navigation unmount", async () => {
+    const { api } = await reachConfigure();
+    fireEvent.click(
+      screen.getByRole("button", { name: /取消并返回检测|Cancel and return/ }),
+    );
+    await waitFor(() =>
+      expect(api.destroyAgentModelFlow).toHaveBeenCalledWith(discovery.flow_id),
+    );
+    const view = render(<AgentPage api={api} />);
+    view.unmount();
+  });
+
+  it("returns stale catalog failures to credential entry without exposing secrets", async () => {
+    const { api } = await reachConfigure();
+    vi.mocked(api.previewAgents).mockRejectedValueOnce({
+      code: "MODEL_CATALOG_STALE",
+    });
+    const selects = screen.getAllByRole("combobox");
+    fireEvent.change(selects[0], { target: { value: "model-a" } });
+    fireEvent.change(screen.getByLabelText(/活动模型|Active model/), {
+      target: { value: "model-b" },
+    });
+    const opencodeModel = screen
+      .getAllByText("model-a")
+      .find((node) =>
+        node.closest("label")?.querySelector('input[type="checkbox"]'),
+      );
+    if (opencodeModel) fireEvent.click(opencodeModel.closest("label")!);
+    fireEvent.change(screen.getByLabelText(/默认模型|Default model/), {
+      target: { value: "model-a" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /生成写入预览|Generate write preview/,
+      }),
+    );
+    expect(await screen.findByLabelText(/API (?:key|密钥)/)).toHaveValue("");
+  });
+
+  it.each([
+    "MODEL_AUTH_FAILED",
+    "MODEL_DISCOVERY_FAILED",
+    "MODEL_CATALOG_EMPTY",
+  ])(
+    "returns %s discovery failure to an empty credential stage",
+    async (code) => {
+      const secret = `transition-secret-${code}`;
+      const api = createMockApi({
+        detectAgents: vi.fn().mockResolvedValue(detection),
+        discoverModels: vi.fn().mockRejectedValue({ code, message: secret }),
+      });
+      await reachCredential(api);
+      fireEvent.change(screen.getByLabelText(/API (?:key|密钥)/), {
+        target: { value: secret },
+      });
+      fireEvent.click(
+        screen.getByRole("button", { name: /发现模型|Discover models/ }),
+      );
+      expect(await screen.findByLabelText(/API (?:key|密钥)/)).toHaveValue("");
+      expect(document.body.textContent).not.toContain(secret);
+      expect(localStorage.length).toBe(0);
+    },
+  );
+
+  it.each([
+    ["PREVIEW_STALE", "configure"],
+    ["MODEL_NOT_AVAILABLE", "credential"],
+    ["MODEL_CATALOG_STALE", "credential"],
+    ["MODEL_AUTH_FAILED", "credential"],
+  ] as const)(
+    "handles %s write failure at the recoverable %s stage",
+    async (code, target) => {
+      const api = createMockApi({
+        detectAgents: vi.fn().mockResolvedValue(detection),
+        discoverModels: vi.fn().mockResolvedValue(discovery),
+        previewAgents: vi.fn().mockResolvedValue({
+          ...preview,
+          managed_config_drift: false,
+          requires_codex_auth_approval: false,
+        }),
+        writeAgents: vi
+          .fn()
+          .mockRejectedValue({ code, message: `write-secret-${code}` }),
+      });
+      await reachCredential(api);
+      fireEvent.change(screen.getByLabelText(/API (?:key|密钥)/), {
+        target: { value: "terminal-write-secret" },
+      });
+      fireEvent.click(
+        screen.getByRole("button", { name: /发现模型|Discover models/ }),
+      );
+      await screen.findByText(/共同模型目录|Common model catalog/);
+      completeRequiredConfig();
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: /生成写入预览|Generate write preview/,
+        }),
+      );
+      await screen.findByText(/<redacted-api-key>/);
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: /写入所选 Agent|Write selected Agents/,
+        }),
+      );
+      if (target === "credential") {
+        expect(await screen.findByLabelText(/API (?:key|密钥)/)).toHaveValue(
+          "",
+        );
+        expect(api.destroyAgentModelFlow).toHaveBeenCalledWith(
+          discovery.flow_id,
+        );
+      } else {
+        expect(
+          await screen.findByText(/共同模型目录|Common model catalog/),
+        ).toBeInTheDocument();
+      }
+      expect(document.documentElement.outerHTML).not.toContain(
+        `write-secret-${code}`,
+      );
+      expect(localStorage.length).toBe(0);
+    },
+  );
 });

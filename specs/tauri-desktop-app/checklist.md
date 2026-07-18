@@ -1,5 +1,16 @@
 # Tauri Desktop Application Acceptance Checklist
 
+> **Supersession notice:** checked Agent assertions on lines/sections covering
+> the v1 method/deadline contract, `configured` meaning, key-after-preview,
+> static/key-free preview, old write request, whole Claude `env`, static
+> opencode models, Codex `custom` provider/auth, and old stdin automation are
+> historical evidence only. `specs/agent-models-config/checklist.md` is the v2
+> acceptance authority for those behaviors. This notice applies specifically
+> to the old Agent assertions in Shared Manager, Setup CLI Compatibility, Agent
+> Detection and Preview, Agent Write and Rollback, Agent Configuration
+> Semantics, and related documentation checks; unrelated desktop checks remain
+> current.
+
 This checklist defines observable release acceptance. Check an item only after
 the behavior has been demonstrated by an automated test or recorded manual
 verification on the stated platform.

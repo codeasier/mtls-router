@@ -43,76 +43,14 @@ MTLS_ROUTER_SKIP_START=1 "${common[@]}" bash "$package/setup.sh" >/dev/null
 [[ ! -e "$home/claude/settings.json" && ! -e "$home/opencode.json" && ! -e "$home/codex/config.toml" ]] || fail "no-arg setup changed Agent files"
 [[ "$(file_mode "$package/$router_asset")" == 555 && "$(file_mode "$package/$manager_asset")" == 555 ]] || fail "package payloads are not mode 0555 after install"
 
-sibling_preview="$("${common[@]}" bash "$package/setup.sh" agent print-config --agent=claude,opencode,codex 2>&1)"
-[[ "$sibling_preview" == *"Claude Code"* && "$sibling_preview" == *"opencode"* && "$sibling_preview" == *"Codex"* ]] || fail "sibling preview omitted selected Agent"
-[[ "$(file_mode "$package/$router_asset")" == 555 && "$(file_mode "$package/$manager_asset")" == 555 ]] || fail "sibling preview changed package payload modes"
-
 cp "$ROOT/setup.sh" "$clean/setup.sh"
 
-preview="$("${common[@]}" bash "$clean/setup.sh" agent print-config --agent=claude,opencode,codex 2>&1)"
-[[ "$preview" == *"Claude Code"* && "$preview" == *"opencode"* && "$preview" == *"Codex"* ]] || fail "wrapper preview omitted selected Agent"
-[[ "$preview" == *"未修改文件"* ]] || fail "wrapper preview did not preserve human output"
-
-# The removed environment variable must not supply a secret or reach a file.
-if MTLS_ROUTER_OPENAI_API_KEY=environment-canary "${common[@]}" bash "$clean/setup.sh" agent write-config --agent=claude >/dev/null 2>"$tmp/env-error"; then
-  fail "removed MTLS_ROUTER_OPENAI_API_KEY unexpectedly supplied a key"
-fi
-grep -Fq 'MTLS_ROUTER_OPENAI_API_KEY 已移除' "$tmp/env-error" || fail "removed key migration guidance missing"
-[[ ! -e "$home/claude/settings.json" ]] || fail "removed environment key changed Agent config"
-
-# The public write command keeps hidden interactive input and sends it through manager stdin.
-"${common[@]}" python3 - "$clean/setup.sh" <<'PY'
-import os
-import pty
-import select
-import sys
-
-script = sys.argv[1]
-secret = b"interactive-wrapper-key"
-pid, fd = pty.fork()
-if pid == 0:
-    os.execvp("bash", ["bash", script, "agent", "write-config", "--agent=claude"])
-output = bytearray()
-sent = False
-while True:
-    ready, _, _ = select.select([fd], [], [], 10)
-    if not ready:
-        raise SystemExit("interactive wrapper timed out")
-    try:
-        chunk = os.read(fd, 4096)
-    except OSError:
-        break
-    if not chunk:
-        break
-    output.extend(chunk)
-    if not sent and "输入隐藏".encode() in output:
-        os.write(fd, secret + b"\n")
-        sent = True
-_, status = os.waitpid(pid, 0)
-if not sent or os.waitstatus_to_exitcode(status) != 0:
-    raise SystemExit("interactive wrapper failed")
-if secret in output:
-    raise SystemExit("interactive key was echoed")
-PY
-jq -e '.env.ANTHROPIC_AUTH_TOKEN == "interactive-wrapper-key"' "$home/claude/settings.json" >/dev/null || fail "hidden interactive key was not written"
-
-# Noninteractive automation talks directly to manager stdin: preview then write.
-manager="$install/mtls-router-manager"; router="$install/mtls-router"
-preview_json="$(printf '%s\n' '{"id":"p","method":"agent.preview","params":{"agents":["claude","opencode","codex"]}}' | "${common[@]}" "$manager" serve --router-sidecar "$router")"
-token="$(printf '%s' "$preview_json" | jq -r .result.revision_token)"
-request="$(jq -cn --arg token "$token" --arg key 'stdin-automation-key' '{id:"w",method:"agent.write",params:{agents:["claude","opencode","codex"],revision_token:$token,api_key:$key}}')"
-response="$(printf '%s\n' "$request" | "${common[@]}" "$manager" serve --router-sidecar "$router")"
-printf '%s' "$response" | jq -e '.result.agents | length == 3 and all(.success)' >/dev/null || fail "manager stdin automation failed"
-[[ "$response" != *'stdin-automation-key'* ]] || fail "manager response leaked stdin key"
-jq -e '.env.ANTHROPIC_AUTH_TOKEN == "stdin-automation-key"' "$home/claude/settings.json" >/dev/null || fail "Claude write missing stdin key"
-jq -e '.provider."mtls-router".options.apiKey == "stdin-automation-key"' "$home/opencode.json" >/dev/null || fail "opencode write missing stdin key"
-jq -e '.OPENAI_API_KEY == "stdin-automation-key" and (keys | length) == 1' "$home/codex/auth.json" >/dev/null || fail "Codex auth write is not minimal"
-grep -Fq '[model_providers.custom]' "$home/codex/config.toml" || fail "Codex config missing provider"
-
-# Compatibility aliases continue to execute manager previews and never download.
-alias_out="$("${common[@]}" bash "$clean/setup.sh" --print-config --agent=claude 2>&1)"
-[[ "$alias_out" == *"Claude Code"* ]] || fail "legacy print alias failed"
-if "${common[@]}" bash "$clean/setup.sh" --write-config --agent=claude </dev/null >/dev/null 2>&1; then fail "legacy write alias accepted noninteractive keyless use"; fi
+# Agent commands are interactive only and compatibility aliases use the same v2 guidance.
+for command in 'agent print-config --agent=claude' 'agent write-config --agent=claude' '--print-config --agent=claude' '--write-config --agent=claude'; do
+  if MTLS_ROUTER_OPENAI_API_KEY=environment-canary "${common[@]}" bash "$clean/setup.sh" $command </dev/null >/dev/null 2>"$tmp/noninteractive-error"; then fail "$command accepted noninteractive key input"; fi
+  grep -Fq 'protocol v2' "$tmp/noninteractive-error" || fail "$command omitted v2 automation guidance"
+done
+[[ ! -e "$home/claude/settings.json" ]] || fail "noninteractive command changed Agent config"
 
 # Agent commands with no sibling or verified receipt fail without touching a downloader.
 mkdir -p "$tmp/uninstalled-home"
@@ -126,4 +64,4 @@ grep -Fq '不会隐式下载' "$tmp/uninstalled-error" || fail "Agent missing-ma
 # A hostile inherited CODEX_HOME is not touched when the test fixes its isolated value.
 [[ ! -e "$CODEX_HOME" ]] || fail "hostile outer CODEX_HOME was touched"
 
-printf 'PASS: setup manager wrapper and stdin Agent automation\n'
+printf 'PASS: setup manager wrapper and v2 noninteractive guidance\n'

@@ -153,7 +153,7 @@ Windows PowerShell：
   "commit": "abc1234",
   "build_date": "2026-06-21T09:23:24Z",
   "deployment_id": "production-service",
-  "management_protocol_version": "1",
+  "management_protocol_version": "2",
   "pid": 12345,
   "started_at": "2026-06-21T09:23:24Z"
 }
@@ -197,15 +197,17 @@ Windows PowerShell：
 
 `router install` 只下载并安装二进制。`router start` 只启动已安装的二进制；如果不存在，会明确提示先执行 `router install` 或 `router setup`。`router setup` 会安装并启动 router，等价于无参数默认行为。
 
-`agent print-config` 会在 manager 验证无密钥变更预览后，继续打印原有的 key-placeholder 配置片段。`agent write-config --agent=...` 只写入 agent 配置，并要求显式提供 `--agent=` 和隐藏交互输入的 key。旧的顶层 `--print-config` 和 `--write-config --agent=...` 仍作为兼容别名保留。Agent 命令只会执行经 checksum 验证的同目录 manager，或经安装 receipt 验证的 manager；绝不会隐式下载 manager。
+`agent print-config` 和 `agent write-config --agent=...` 都会先隐藏读取 key，再发现经过认证的完整 `GET /v1/models` 目录。它们要求明确选择各 Agent 的原生模型，绝不会自动选择或推断模型。Print 返回 manager 动态渲染且 API-key 脱敏的托管片段；write 显示精确预览，并在一次事务写入前立即重新验证目录。可添加 `--model-config=<path>`，使用无 key 的规范 JSON 选择替代模型问答。旧的顶层 `--print-config` 和 `--write-config --agent=...` 仍作为同一 v2 流程的兼容别名。Agent 命令只会执行经 checksum 验证的同目录 manager，或经安装 receipt 验证的 manager；绝不会隐式下载 manager。
 
-由于环境变量不是安全的 secret 传输方式，`MTLS_ROUTER_OPENAI_API_KEY` 已移除，不再提供 key。非交互自动化必须调用已验证并安装的 `mtls-router-manager serve`，先取得 `agent.preview` revision token，再只通过后续单行 `agent.write` stdin 请求发送 `api_key`。manager 只向 stdout 写协议响应，并串行处理请求直到 stdin EOF。不要把 key 放入命令行参数、环境变量、日志、shell history 或临时请求文件。精确的隐藏输入跨平台示例见 [stdin manager 自动化](DESKTOP.md#stdin-manager-自动化)。
+由于环境变量不是安全的 secret 传输方式，`MTLS_ROUTER_OPENAI_API_KEY` 已移除，不再提供 key。非交互自动化必须验证 `manager.info` protocol `2`，调用 `agent.models`，构造规范 model config，再调用 `agent.render` 或 `agent.preview` 与 `agent.write`。Key 只出现在 `agent.models` 和 `agent.write` stdin 请求体中。不要把 key 放入命令行参数、环境变量、model config、日志、shell history 或临时请求文件。完整契约见 [Agent 模型配置](AGENT_MODELS.md#protocol-v2-自动化)。
 
 `mtls-router` 二进制本身只管理 router，不提供 `print-config` 这类 agent 配置命令。
 
-- Claude Code 会把 `env` block 写入 `~/.claude/settings.json`，或 `$CLAUDE_CONFIG_DIR/settings.json`。
-- opencode 会把 `mtls-router` provider 写入选中的配置路径。不设置显式 `OPENCODE_CONFIG` 时，已有的标准 `~/.config/opencode/opencode.jsonc` 会迁移到同目录的 `opencode.json`；显式指定 `.jsonc` 覆盖路径时，则会在该精确路径原地规范化。两种操作都会丢失注释和格式。
-- Codex CLI 会把 `[model_providers.custom]` block（带 `model_provider = "custom"` 和 `name = "9router"`）写入 `~/.codex/config.toml`，遵循 `CODEX_HOME`。
+- Claude Code 只把受管理的 `env` key 合并到 `~/.claude/settings.json` 或 `$CLAUDE_CONFIG_DIR/settings.json`，并支持主模型及可继承的 Haiku、Sonnet、Opus 选择。
+- opencode 会把精确选择的目录子集写入 `provider.mtls-router`，并写入由 manager 拥有的根默认模型。不设置显式 `OPENCODE_CONFIG` 时，已有的标准 `~/.config/opencode/opencode.jsonc` 会迁移到同目录的 `opencode.json`；显式指定 `.jsonc` 覆盖路径时，则会在该精确路径原地规范化。两种操作都会丢失注释和格式。
+- Codex 会把专用 `[model_providers.mtls-router]` Responses provider 和选中的 typed model setting 写入 `~/.codex/config.toml`，遵循 `CODEX_HOME`。把 CLI/IDE 共享认证切换为官方 file-backed API-key 模式需要单独预览批准。
+
+服务返回的每个模型都支持 Claude Messages 与 token counting、opencode Chat Completions、兼容 Completions 和 Codex Responses，包括流式响应。`configured` 检测只表示本地托管结构完整；当前授权由模型发现和写入时刷新证明。未设置的可选模型字段保持省略。发现失败、目录 stale、模型消失、漂移或所有权状态无效都会安全失败，不使用静态/cache fallback，也不产生部分变更。无关设置会保留；托管漂移需要批准，备份可能含 key，必须妥善保护。规范 schema、选项、刷新、失败、迁移、所有权和备份契约见 [Agent 模型配置](AGENT_MODELS.md)。
 
 安装脚本不会安装任何 agent，也不会启动任何 agent。
 

@@ -57,26 +57,68 @@ describe("typed desktop API", () => {
     expect(unlisten).toHaveBeenCalledOnce();
   });
 
-  it("uses only named Agent commands and nests transient write parameters", async () => {
+  it("uses focused v2 Agent commands and never sends a key at write", async () => {
     const invoke = vi.fn().mockResolvedValue({ agents: [] });
     const api = createDesktopApi(invoke as InvokeFn);
     const transientKey = "fixture-sensitive-value";
 
     await api.detectAgents();
-    await api.previewAgents(["claude", "codex"]);
-    await api.writeAgents(["claude"], "revision-1", transientKey);
+    await api.discoverModels(["claude"], transientKey);
+    const modelConfig = {
+      version: 1 as const,
+      claude: {
+        primary: { model: "m" },
+        haiku: { inherit_primary: true as const },
+        sonnet: { inherit_primary: true as const },
+        opus: { inherit_primary: true as const },
+      },
+    };
+    await api.previewAgents(["claude"], "flow", "catalog", modelConfig);
+    await api.renderAgentConfig(["claude"], "flow", "catalog", modelConfig);
+    await api.writeAgents(
+      ["claude"],
+      "flow",
+      "catalog",
+      modelConfig,
+      "revision-1",
+      false,
+      false,
+    );
 
     expect(invoke).toHaveBeenNthCalledWith(1, COMMANDS.agentDetect);
-    expect(invoke).toHaveBeenNthCalledWith(2, COMMANDS.agentPreview, {
-      request: { agents: ["claude", "codex"] },
+    expect(invoke).toHaveBeenNthCalledWith(2, COMMANDS.agentModels, {
+      request: { agents: ["claude"], api_key: transientKey },
     });
-    expect(invoke).toHaveBeenNthCalledWith(3, COMMANDS.agentWrite, {
+    expect(invoke).toHaveBeenNthCalledWith(3, COMMANDS.agentPreview, {
       request: {
         agents: ["claude"],
-        revision_token: "revision-1",
-        api_key: transientKey,
+        flow_id: "flow",
+        catalog_token: "catalog",
+        model_config: modelConfig,
       },
     });
+    expect(invoke).toHaveBeenNthCalledWith(4, COMMANDS.agentRender, {
+      request: {
+        agents: ["claude"],
+        flow_id: "flow",
+        catalog_token: "catalog",
+        model_config: modelConfig,
+      },
+    });
+    expect(invoke).toHaveBeenNthCalledWith(5, COMMANDS.agentWrite, {
+      request: {
+        agents: ["claude"],
+        flow_id: "flow",
+        catalog_token: "catalog",
+        model_config: modelConfig,
+        revision_token: "revision-1",
+        approve_managed_overwrite: false,
+        approve_codex_auth_change: false,
+      },
+    });
+    expect(JSON.stringify(invoke.mock.calls.slice(2))).not.toContain(
+      transientKey,
+    );
   });
 
   it("uses only narrow settings and uninstall commands", async () => {

@@ -2,6 +2,26 @@
 
 [English](../CHANGELOG.md)
 
+## 未发布
+
+### 新增
+
+- 新增经过认证的 `GET /v1/models` 发现，以及 Claude Code、opencode 和 Codex 共用且兼容全部 endpoint 的模型目录。
+- 新增 protocol-v2 `agent.models`/`agent.render`、无 key 规范 model config、Agent 原生选项、脱敏 render/preview、写入时目录刷新、托管所有权状态，以及漂移/Codex-auth 批准。
+
+### 变更
+
+- Shell、PowerShell 和桌面端改为 key-before-discovery，要求明确选择模型，省略未设置可选字段，并取消静态/cache 模型 fallback。
+- Claude 改为 managed `env` merge；opencode 改为精确选择的 provider 目录；Codex 从历史 `custom` provider 迁移到专用 `mtls-router`，并单独批准 file-backed API-key auth。
+- 检测现在只描述本地结构完整性；当前授权只能由模型发现和写入时刷新证明。
+
+### 安全与发布
+
+- 新增私有签名 catalog/revision state、共享操作 lock、事务 sidecar/备份、兼容性 revision pin，以及拒绝混合 protocol generation 的 release preflight。
+- 明确 Agent 文件与批准的备份可能含 key，而 model config、token、sidecar、日志、诊断和 protocol result 不含 key。
+
+---
+
 ## v0.1.8 - 2026-07-16
 
 本次发布改进 Windows 桌面端进程约束，确保 CodeasierRouter 启动的 router 不会在所属桌面会话结束后继续运行，也不会留下可见的控制台窗口。

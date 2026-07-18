@@ -54,21 +54,24 @@ Quit is different from closing the window. Quit stops a verified desktop-owned r
 
 The Agents page supports Claude Code, opencode, and Codex. Detection is metadata-only: it reports path, format, existence, writability, and configured or invalid state without returning stored API-key values. It respects `CLAUDE_CONFIG_DIR`, `OPENCODE_CONFIG`, and `CODEX_HOME`; an existing Codex home directory also identifies a Codex desktop installation.
 
-Agent configuration is an explicit sequence:
+Agent configuration is an explicit key-before-discovery sequence:
 
 1. Refresh detection and select only valid, writable Agents.
-2. Generate a structured preview. Preview reads files but writes nothing.
-3. Review every create, replace, preserve, migration, and backup operation. With no explicit `OPENCODE_CONFIG`, the canonical `~/.config/opencode/opencode.jsonc` is migrated to sibling `opencode.json`; an existing sibling is a migration collision. When `OPENCODE_CONFIG` explicitly names a `.jsonc` file, the exact path is replaced in place as strict JSON, backed up when it exists, and isolated from any sibling `opencode.json`. Both JSONC operations lose comments and formatting. Codex may change both `config.toml` and `auth.json`.
-4. Approve the preview and enter the API key in the password field.
-5. Write the selected Agents and review changed and backup paths.
+2. Enter the API key. React clears the field immediately; Rust retains it only in one transient, non-replayable flow.
+3. Discover the complete authenticated model catalog through the trusted local router. The same catalog is offered to every selected Agent, with no automatic selection.
+4. Configure Agent-native choices: Claude primary/role inheritance, an opencode model subset/default/options, and one Codex model/options. Unset optional fields remain omitted. A key-free canonical model config can be imported or exported.
+5. Generate a structured preview and review redacted fragments plus every create, replace, preserve, migration, drift approval, state, and backup operation. With no explicit `OPENCODE_CONFIG`, the canonical `~/.config/opencode/opencode.jsonc` is migrated to sibling `opencode.json`; an existing sibling is a migration collision. When `OPENCODE_CONFIG` explicitly names a `.jsonc` file, the exact path is replaced in place as strict JSON, backed up when it exists, and isolated from any sibling `opencode.json`. Both JSONC operations lose comments and formatting. Codex may change both `config.toml` and `auth.json` and requires separate approval for file-backed API-key authentication.
+6. Approve and write. The manager consumes the in-memory key to refresh the catalog before creating any write artifact, then review changed and backup paths.
 
 Immediately before writing, the manager verifies that files still match the approved revision. `PREVIEW_STALE` means a target changed; no write begins and a fresh preview is required. Existing files are backed up before replacement. A multi-Agent write is one transaction: failure causes already changed files to be rolled back, while diagnostic backups are retained. If rollback cannot be proven, further Agent writes fail closed.
 
 Backups remain beside the original configuration and may contain an old API key. They are sensitive recovery artifacts: protect, retain, or remove them with the same care as the original Agent file. Preview and result screens identify backup paths but never display backup contents.
 
+Detection's `configured` state means only that local managed fields are structurally complete and internally consistent. It does not prove the selected models are currently authorized. Re-enter configuration and supply a key for a manual refresh; there is no background catalog synchronization or Agent-file rewrite. Catalog/auth/validation failures, a disappeared model, drift without approval, or invalid ownership state fail closed with no static/cached fallback or partial write. See [Agent Model Configuration](AGENT_MODELS.md) for the service contract, canonical schema, omission, migration, and ownership rules.
+
 ## API-key boundary and limitations
 
-The desktop keeps the entered key only for the confirmed write request. It clears application-held values after success, cancellation, navigation, or error and passes the key to `mtls-router-manager serve` only inside the `agent.write` JSON line on manager stdin. The key is not intentionally placed in desktop or manager state, process arguments, environment variables, logs, diagnostics, preview responses, or write responses.
+The desktop submits the entered key for `agent.models`, clears the password field immediately, and keeps the key only in zeroizing Rust transient flow state until one `agent.write`. Secret-bearing calls are never automatically replayed after timeout, malformed response, manager restart, or uncertain delivery. The key is not intentionally placed in desktop or manager persistent state, process arguments, environment variables, logs, diagnostics, model config, catalog/revision tokens, preview responses, or write responses.
 
 The selected Agent configuration must persist the key where that Agent requires it. User-approved recovery backups may also persist an older key. Clearing JavaScript and Rust application references is best effort and is not a guarantee of forensic erasure from process or operating-system memory.
 
@@ -76,59 +79,7 @@ The selected Agent configuration must persist the key where that Agent requires 
 
 ## Stdin manager automation
 
-Automation must invoke the receipt-verified installed `mtls-router-manager serve`, preview first, and send the returned revision token and key in a subsequent line-delimited `agent.write` request. The key must not be an argument, exported environment variable, log value, or temporary request file.
-
-This cross-platform Python example prompts without echo and supplies each JSON request directly on manager stdin. Adjust `agents` as needed; valid IDs are `claude`, `opencode`, and `codex`.
-
-```python
-import getpass
-import json
-import os
-from pathlib import Path
-import subprocess
-
-manager = Path.home() / ".local" / "bin" / (
-    "mtls-router-manager.exe" if os.name == "nt" else "mtls-router-manager"
-)
-agents = ["claude"]
-
-
-def call(request):
-    completed = subprocess.run(
-        [str(manager), "serve"],
-        input=json.dumps(request, separators=(",", ":")) + "\n",
-        text=True,
-        capture_output=True,
-        check=True,
-    )
-    response = json.loads(completed.stdout)
-    if response.get("error"):
-        raise RuntimeError(response["error"]["code"])
-    return response["result"]
-
-
-preview = call(
-    {"id": "preview", "method": "agent.preview", "params": {"agents": agents}}
-)
-api_key = getpass.getpass("API key: ")
-try:
-    result = call(
-        {
-            "id": "write",
-            "method": "agent.write",
-            "params": {
-                "agents": agents,
-                "revision_token": preview["revision_token"],
-                "api_key": api_key,
-            },
-        }
-    )
-    print(json.dumps(result, indent=2))
-finally:
-    api_key = ""
-```
-
-Each manager process handles requests sequentially and exits cleanly on stdin EOF. The desktop keeps one manager alive for its session; one-shot automation such as the example may use one process per request.
+Automation must invoke the receipt-verified installed `mtls-router-manager serve`, require `manager.info` protocol `2`, call `agent.models` with the transient key, construct canonical model config, call key-free `agent.render` or `agent.preview`, and finally call `agent.write` with the revision token, explicit approvals, and transient key. The key must not be an argument, exported environment variable, model-config value, log value, or temporary request file. Catalog tokens are intentionally verifiable across one-shot manager processes. See the exact [protocol v2 automation contract](AGENT_MODELS.md#protocol-v2-automation).
 
 ## Credential model
 

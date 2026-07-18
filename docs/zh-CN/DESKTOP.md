@@ -54,21 +54,24 @@ Router 页面会区分本地进程和上游健康。运行中的进程可能处�
 
 Agent 页面支持 Claude Code、opencode 和 Codex。检测只返回元数据：路径、格式、是否存在、可写性以及已配置或无效状态，不返回已存储的 API key 值。检测遵循 `CLAUDE_CONFIG_DIR`、`OPENCODE_CONFIG` 和 `CODEX_HOME`；Codex home 目录存在时也可识别 Codex 桌面安装。
 
-Agent 配置必须显式执行以下步骤：
+Agent 配置必须显式执行 key-before-discovery 流程：
 
 1. 刷新检测，只选择有效且可写的 Agent。
-2. 生成结构化预览。预览只读文件，不执行写入。
-3. 审查每个创建、替换、保留、迁移和备份操作。不设置显式 `OPENCODE_CONFIG` 时，标准 `~/.config/opencode/opencode.jsonc` 会迁移到同目录的 `opencode.json`；已有同名 sibling 会构成迁移冲突。显式 `OPENCODE_CONFIG` 指定 `.jsonc` 文件时，只会在该精确路径原地替换为 strict JSON；已有文件会备份，并且不会触碰 sibling `opencode.json`。两种 JSONC 操作都会丢失注释和格式。Codex 可能同时修改 `config.toml` 和 `auth.json`。
-4. 批准预览，然后在密码输入框中输入 API key。
-5. 写入所选 Agent，并检查修改和备份路径。
+2. 输入 API key。React 会立即清空输入框；Rust 只在一次性且不可 replay 的临时流程中保留它。
+3. 通过可信本地 router 发现完整的认证模型目录。所有已选 Agent 使用同一个目录，绝不自动选择模型。
+4. 配置各 Agent 原生选择：Claude 主模型/角色继承、opencode 模型子集/默认/选项，以及一个 Codex 模型/选项。未设置的可选字段保持省略。可以导入或导出无 key 的规范 model config。
+5. 生成结构化预览，审查脱敏片段以及每个创建、替换、保留、迁移、漂移批准、状态和备份操作。不设置显式 `OPENCODE_CONFIG` 时，标准 `~/.config/opencode/opencode.jsonc` 会迁移到同目录的 `opencode.json`；已有同名 sibling 会构成迁移冲突。显式 `OPENCODE_CONFIG` 指定 `.jsonc` 文件时，只会在该精确路径原地替换为 strict JSON；已有文件会备份，并且不会触碰 sibling `opencode.json`。两种 JSONC 操作都会丢失注释和格式。Codex 可能同时修改 `config.toml` 和 `auth.json`，切换 file-backed API-key auth 需要单独批准。
+6. 批准并写入。Manager 会消耗内存中的 key，在创建任何写入产物前刷新目录，随后检查修改和备份路径。
 
 写入前，manager 会再次确认文件仍与已批准的 revision 一致。`PREVIEW_STALE` 表示目标已变化；此时不会开始写入，必须重新预览。替换现有文件前会创建备份。一次多 Agent 写入是一个事务：失败时会回滚本事务已经修改的文件，但保留诊断备份。如果无法证明回滚成功，后续 Agent 写入会安全失败。
 
 备份保留在原配置旁边，可能包含旧 API key。它们属于敏感恢复产物，应当像原 Agent 文件一样保护、保留或删除。预览和结果页面会标明备份路径，但绝不会显示备份内容。
 
+检测中的 `configured` 仅表示本地托管字段结构完整且内部一致，不证明所选模型当前已获授权。需要手工刷新时重新进入配置并提供 key；系统不会后台同步目录或重写 Agent 文件。目录/认证/校验失败、模型消失、未批准漂移或所有权状态无效都会安全失败，不使用静态/cache fallback，也不会部分写入。服务契约、规范 schema、省略、迁移与所有权规则见 [Agent 模型配置](AGENT_MODELS.md)。
+
 ## API key 边界和限制
 
-桌面应用只在已确认的写入请求期间保留输入的 key。成功、取消、离开页面或出错后会清除应用持有的值，并且只在 manager stdin 上的 `agent.write` JSON 行中把 key 传给 `mtls-router-manager serve`。应用不会有意把 key 放入桌面或 manager 状态、进程参数、环境变量、日志、诊断、预览响应或写入响应。
+桌面应用会把输入 key 提交给 `agent.models`，立即清空密码输入框，并只在 zeroizing Rust 临时流程状态中保留到一次 `agent.write`。Timeout、malformed response、manager restart 或 uncertain delivery 后，secret-bearing 调用绝不会自动 replay。应用不会有意把 key 放入桌面或 manager 持久状态、进程参数、环境变量、日志、诊断、model config、catalog/revision token、预览响应或写入响应。
 
 所选 Agent 的配置文件仍需按该 Agent 的要求持久化 key。用户批准的恢复备份也可能持久化旧 key。清除 JavaScript 和 Rust 中的应用引用只是 best effort，不保证能从进程或操作系统内存中进行取证级擦除。
 
@@ -76,59 +79,7 @@ Agent 配置必须显式执行以下步骤：
 
 ## stdin manager 自动化
 
-自动化必须调用经安装 receipt 验证的 `mtls-router-manager serve`，先预览，再通过后续单行 `agent.write` 请求发送返回的 revision token 和 key。key 不得出现在参数、导出的环境变量、日志或临时请求文件中。
-
-以下跨平台 Python 示例会隐藏提示输入，并把每个 JSON 请求直接写入 manager stdin。可按需调整 `agents`；有效 ID 为 `claude`、`opencode` 和 `codex`。
-
-```python
-import getpass
-import json
-import os
-from pathlib import Path
-import subprocess
-
-manager = Path.home() / ".local" / "bin" / (
-    "mtls-router-manager.exe" if os.name == "nt" else "mtls-router-manager"
-)
-agents = ["claude"]
-
-
-def call(request):
-    completed = subprocess.run(
-        [str(manager), "serve"],
-        input=json.dumps(request, separators=(",", ":")) + "\n",
-        text=True,
-        capture_output=True,
-        check=True,
-    )
-    response = json.loads(completed.stdout)
-    if response.get("error"):
-        raise RuntimeError(response["error"]["code"])
-    return response["result"]
-
-
-preview = call(
-    {"id": "preview", "method": "agent.preview", "params": {"agents": agents}}
-)
-api_key = getpass.getpass("API key: ")
-try:
-    result = call(
-        {
-            "id": "write",
-            "method": "agent.write",
-            "params": {
-                "agents": agents,
-                "revision_token": preview["revision_token"],
-                "api_key": api_key,
-            },
-        }
-    )
-    print(json.dumps(result, indent=2))
-finally:
-    api_key = ""
-```
-
-每个 manager 进程会串行处理请求，并在 stdin EOF 时正常退出。桌面应用会在会话期间保持一个 manager；上述 one-shot 自动化可以每个请求使用一个进程。
+自动化必须调用经安装 receipt 验证的 `mtls-router-manager serve`，要求 `manager.info` protocol `2`，使用临时 key 调用 `agent.models`，构造规范 model config，调用无 key 的 `agent.render` 或 `agent.preview`，最后使用 revision token、显式 approval 和临时 key 调用 `agent.write`。Key 不得出现在参数、导出的环境变量、model-config value、日志或临时请求文件中。Catalog token 可以有意跨 one-shot manager 进程验证。精确流程见 [protocol v2 自动化契约](AGENT_MODELS.md#protocol-v2-自动化)。
 
 ## 凭据模型
 

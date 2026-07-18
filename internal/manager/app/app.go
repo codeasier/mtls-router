@@ -2,12 +2,13 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/codeasier/mtls-router/internal/manager/agent"
+	"github.com/codeasier/mtls-router/internal/manager/agent/modelconfig"
 	"github.com/codeasier/mtls-router/internal/manager/discovery"
 	"github.com/codeasier/mtls-router/internal/manager/lifecycle"
 	"github.com/codeasier/mtls-router/internal/manager/metadata"
@@ -24,6 +26,8 @@ import (
 	"github.com/codeasier/mtls-router/internal/manager/process"
 	"github.com/codeasier/mtls-router/internal/manager/protocol"
 	"github.com/codeasier/mtls-router/internal/manager/state"
+	"github.com/codeasier/mtls-router/internal/manager/trustedrouter"
+	"github.com/codeasier/mtls-router/internal/version"
 )
 
 const (
@@ -33,6 +37,8 @@ const (
 	maxLogReadBytes    = 256 * 1024
 	maxLogLineBytes    = 4096
 	maxDiagnosticsSize = 16 * 1024
+	maxAPIKeySize      = 16 * 1024
+	maxModelConfigSize = 2 * 1024 * 1024
 )
 
 // Config contains the non-sensitive process and sidecar values supplied to
@@ -58,8 +64,31 @@ type lifecycleService interface {
 }
 
 type agentService interface {
-	Preview(context.Context, []agent.Kind) (agent.Preview, error)
+	Render(context.Context, []agent.Kind, string, json.RawMessage) (agent.RenderResult, error)
 	Write(context.Context, agent.WriteRequest) (agent.WriteResult, error)
+}
+
+type agentCatalogBinder interface {
+	CatalogBinding(context.Context, []agent.Kind, string, json.RawMessage) (agent.CatalogBinding, error)
+}
+type agentPreviewValidator interface {
+	ValidatePreview(context.Context, agent.WriteRequest) error
+}
+
+type agentPreviewerV2 interface {
+	Preview(context.Context, []agent.Kind, ...any) (agent.Preview, error)
+}
+type agentPreviewerLegacy interface {
+	Preview(context.Context, []agent.Kind) (agent.Preview, error)
+}
+
+type agentModelsService interface {
+	DiscoverModels(context.Context, []agent.Kind, []string, modelconfig.CatalogClaims) (agent.ModelsResult, error)
+}
+
+type trustedRouterService interface {
+	Fetch(context.Context, protocol.RouterOwner, string) (trustedrouter.Result, *protocol.Error)
+	Revalidate(context.Context, protocol.RouterOwner, string, trustedrouter.Binding) ([]string, *protocol.Error)
 }
 
 type dependencies struct {
@@ -68,6 +97,8 @@ type dependencies struct {
 	lifecycle lifecycleService
 	detect    func() ([]agent.State, error)
 	agent     agentService
+	models    agentModelsService
+	trusted   trustedRouterService
 	now       func() time.Time
 }
 
@@ -98,7 +129,8 @@ func New(config Config) (*App, error) {
 	if config.ListenAddr == "" {
 		config.ListenAddr = defaultListenAddr
 	}
-	if err := validateListenAddr(config.ListenAddr); err != nil {
+	listener, err := trustedrouter.NormalizeListener(config.ListenAddr)
+	if err != nil {
 		return nil, err
 	}
 	if config.Stderr == nil {
@@ -141,7 +173,7 @@ func New(config Config) (*App, error) {
 		fmt.Fprintln(config.Stderr, "manager: Agent transaction recovery failed; writes are disabled")
 	}
 
-	baseURL := "http://" + config.ListenAddr
+	baseURL := listener.RouterBaseURL
 	discoverer := discovery.New(discovery.Config{
 		BaseURL:          baseURL,
 		DesktopStatePath: config.Paths.DesktopStateFile,
@@ -161,10 +193,24 @@ func New(config Config) (*App, error) {
 		RecentOutputBytes: maxLogReadBytes,
 	}, lifecycle.Dependencies{Discover: discoverer.Discover})
 
-	return newWithDependencies(config, dependencies{
+	trusted := &trustedrouter.Coordinator{
+		Listener: listener, DeploymentID: version.DeploymentID, ProtocolVersion: version.ManagementProtocolVersion,
+		Discover: discoverer.Discover, Lifecycle: lifecycleManager,
+		DesktopEligible: func() bool {
+			if config.DesktopSession == "" || !completeIdentity(config.ParentIdentity) {
+				return false
+			}
+			status, err := process.Validate(config.ParentIdentity, config.ParentIdentity.Executable)
+			return err == nil && status == process.StatusGenuine
+		},
+	}
+	app := newWithDependencies(config, dependencies{
 		info: metadata.Info, discover: discoverer.Discover, lifecycle: lifecycleManager,
-		detect: config.AgentDetector.Detect, agent: agentManager, now: time.Now,
-	}), nil
+		detect: func() ([]agent.State, error) { return agentManager.Detect(context.Background()) }, agent: agentManager,
+		models: agentManager, trusted: trusted, now: time.Now,
+	})
+	trusted.AbsentStartOK = app.absentStartOK
+	return app, nil
 }
 
 func newWithDependencies(config Config, deps dependencies) *App {
@@ -179,6 +225,8 @@ func newWithDependencies(config Config, deps dependencies) *App {
 		protocol.MethodRouterVersion:      app.routerVersion,
 		protocol.MethodRouterLogs:         app.routerLogs,
 		protocol.MethodAgentDetect:        app.agentDetect,
+		protocol.MethodAgentModels:        app.agentModels,
+		protocol.MethodAgentRender:        app.agentRender,
 		protocol.MethodAgentPreview:       app.agentPreview,
 		protocol.MethodAgentWrite:         app.agentWrite,
 	})
@@ -398,25 +446,34 @@ func (a *App) agentDetect(ctx context.Context, params json.RawMessage) (any, *pr
 			Agent: string(item.Agent), Name: item.Name, Detected: item.Detected, Command: item.Command,
 			Path: item.Path, AuthPath: item.AuthPath, Format: string(item.Format), Exists: item.Exists,
 			Writable: item.Writable, Configured: item.Configured, Invalid: item.Invalid,
+			Migratable: item.Migratable,
 		})
 	}
 	return result, nil
 }
 
 func (a *App) agentPreview(ctx context.Context, params json.RawMessage) (any, *protocol.Error) {
-	var request protocol.AgentSelection
-	if err := protocol.DecodeParams(params, &request); err != nil {
+	var request protocol.AgentConfigParams
+	if err := decodeAgentConfigParams(params, &request); err != nil {
 		return nil, err
 	}
 	selected, err := agentKinds(request.Agents)
 	if err != nil {
 		return nil, err
 	}
-	result, operationErr := a.deps.agent.Preview(ctx, selected)
-	if operationErr != nil {
-		return nil, mapAgentError(operationErr)
+	var preview agent.Preview
+	var previewErr error
+	if service, ok := a.deps.agent.(agentPreviewerV2); ok {
+		preview, previewErr = service.Preview(ctx, selected, request.CatalogToken, request.ModelConfig)
+	} else if service, ok := a.deps.agent.(agentPreviewerLegacy); ok {
+		preview, previewErr = service.Preview(ctx, selected)
+	} else {
+		return nil, modelContractUnavailable()
 	}
-	return result, nil
+	if previewErr != nil {
+		return nil, mapAgentError(previewErr)
+	}
+	return mapPreview(preview), nil
 }
 
 func (a *App) agentWrite(ctx context.Context, params json.RawMessage) (any, *protocol.Error) {
@@ -424,21 +481,224 @@ func (a *App) agentWrite(ctx context.Context, params json.RawMessage) (any, *pro
 	if err := protocol.DecodeParams(params, &request); err != nil {
 		return nil, err
 	}
+	if request.ApproveManagedOverwrite == nil || request.ApproveCodexAuthChange == nil {
+		request.APIKey = ""
+		return nil, invalidParams("write approval fields are required")
+	}
+	selected, err := validateAgentConfig(request.Agents, request.CatalogToken, request.ModelConfig)
+	if err != nil {
+		request.APIKey = ""
+		return nil, err
+	}
+	if strings.TrimSpace(request.RevisionToken) == "" || request.APIKey == "" || len(request.APIKey) > maxAPIKeySize {
+		request.APIKey = ""
+		return nil, invalidParams("revision_token and bounded api_key are required")
+	}
+	if a.deps.agent == nil || a.deps.trusted == nil {
+		request.APIKey = ""
+		return nil, modelContractUnavailable()
+	}
+	writeRequest := agent.WriteRequest{Agents: selected, CatalogToken: request.CatalogToken, ModelConfig: request.ModelConfig, RevisionToken: request.RevisionToken, ApproveManagedOverwrite: *request.ApproveManagedOverwrite, ApproveCodexAuthChange: *request.ApproveCodexAuthChange, APIKey: request.APIKey}
+	validator, ok := a.deps.agent.(agentPreviewValidator)
+	if !ok {
+		request.APIKey = ""
+		writeRequest.APIKey = ""
+		return nil, modelContractUnavailable()
+	}
+	if validateErr := validator.ValidatePreview(ctx, writeRequest); validateErr != nil {
+		request.APIKey = ""
+		writeRequest.APIKey = ""
+		return nil, mapAgentError(validateErr)
+	}
+	binder, ok := a.deps.agent.(agentCatalogBinder)
+	if !ok {
+		request.APIKey = ""
+		return nil, modelContractUnavailable()
+	}
+	binding, bindErr := binder.CatalogBinding(ctx, selected, request.CatalogToken, request.ModelConfig)
+	if bindErr != nil {
+		request.APIKey = ""
+		return nil, mapAgentError(bindErr)
+	}
+	apiBaseURL, parseErr := agentAPIURL(binding.RouterBaseURL)
+	if parseErr != nil {
+		request.APIKey = ""
+		return nil, &protocol.Error{Code: protocol.CodeModelCatalogStale, Message: "Agent model catalog is stale"}
+	}
+	refreshed, refreshErr := a.deps.trusted.Revalidate(ctx, protocol.RouterOwner(binding.Owner), request.APIKey, trustedrouter.Binding{RouterBaseURL: binding.RouterBaseURL, APIBaseURL: apiBaseURL, DeploymentID: binding.DeploymentID, ProtocolVersion: binding.ProtocolVersion})
+	if refreshErr != nil {
+		request.APIKey = ""
+		return nil, refreshErr
+	}
+	if err := agent.ValidateRefreshedModels(selected, request.ModelConfig, refreshed); err != nil {
+		request.APIKey = ""
+		return nil, mapAgentError(err)
+	}
+	request.APIKey = ""
+	result, writeErr := a.deps.agent.Write(ctx, writeRequest)
+	writeRequest.APIKey = ""
+	if writeErr != nil {
+		return nil, mapAgentError(writeErr)
+	}
+	return mapWrite(result), nil
+}
+
+func (a *App) agentModels(ctx context.Context, params json.RawMessage) (any, *protocol.Error) {
+	var request protocol.AgentModelsParams
+	if err := protocol.DecodeParams(params, &request); err != nil {
+		return nil, err
+	}
+	if request.Owner != protocol.RouterOwnerCLI && request.Owner != protocol.RouterOwnerDesktop {
+		request.APIKey = ""
+		return nil, invalidParams("owner must be cli or desktop")
+	}
+	selected, err := agentKinds(request.Agents)
+	if err != nil {
+		request.APIKey = ""
+		return nil, err
+	}
+	if request.APIKey == "" || len(request.APIKey) > maxAPIKeySize {
+		request.APIKey = ""
+		return nil, invalidParams("bounded api_key is required")
+	}
+	if a.deps.trusted == nil || a.deps.models == nil {
+		request.APIKey = ""
+		return nil, &protocol.Error{Code: protocol.CodeModelDiscoveryFailed, Message: "model discovery is unavailable"}
+	}
+	trusted, trustedErr := a.deps.trusted.Fetch(ctx, request.Owner, request.APIKey)
+	request.APIKey = ""
+	if trustedErr != nil {
+		return nil, trustedErr
+	}
+	modelAgents := make([]modelconfig.Agent, 0, len(selected))
+	for _, kind := range selected {
+		modelAgents = append(modelAgents, modelconfig.Agent(kind))
+	}
+	modelsResult, modelsErr := a.deps.models.DiscoverModels(ctx, selected, trusted.Models, modelconfig.CatalogClaims{
+		Models: trusted.Models, Agents: modelAgents, Owner: string(request.Owner),
+		RouterBaseURL: trusted.Binding.RouterBaseURL, DeploymentID: trusted.Binding.DeploymentID,
+		ProtocolVersion: trusted.Binding.ProtocolVersion,
+	})
+	if modelsErr != nil {
+		return nil, mapAgentError(modelsErr)
+	}
+	return protocol.AgentModelsResult{
+		Models: trusted.Models, CatalogToken: modelsResult.CatalogToken,
+		RouterBaseURL: trusted.Binding.RouterBaseURL, APIBaseURL: trusted.Binding.APIBaseURL,
+		Existing: protocol.AgentModelsExisting{
+			ModelConfig: modelsResult.Existing.ModelConfig, UnavailableModels: modelsResult.Existing.UnavailableModels,
+			DriftedAgents: modelsResult.Existing.DriftedAgents,
+		},
+	}, nil
+}
+
+func (a *App) agentRender(ctx context.Context, params json.RawMessage) (any, *protocol.Error) {
+	var request protocol.AgentConfigParams
+	if err := decodeAgentConfigParams(params, &request); err != nil {
+		return nil, err
+	}
+	if a.deps.agent == nil {
+		return nil, modelContractUnavailable()
+	}
 	selected, err := agentKinds(request.Agents)
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(request.RevisionToken) == "" || request.APIKey == "" {
-		return nil, invalidParams("revision_token and api_key are required")
+	result, renderErr := a.deps.agent.Render(ctx, selected, request.CatalogToken, request.ModelConfig)
+	if renderErr != nil {
+		return nil, mapAgentError(renderErr)
 	}
-	result, operationErr := a.deps.agent.Write(ctx, agent.WriteRequest{
-		Agents: selected, RevisionToken: request.RevisionToken, APIKey: request.APIKey,
-	})
-	request.APIKey = ""
-	if operationErr != nil {
-		return nil, mapAgentError(operationErr)
+	fragments := make([]protocol.AgentFragment, len(result.Fragments))
+	for i, fragment := range result.Fragments {
+		fragments[i] = protocol.AgentFragment{Agent: string(fragment.Agent), Role: fragment.Role, Path: fragment.Path, Format: string(fragment.Format), Content: fragment.Content}
 	}
-	return result, nil
+	return protocol.AgentRenderResult{ModelConfig: result.ModelConfig, Fragments: fragments}, nil
+}
+
+func decodeAgentConfigParams(params json.RawMessage, request *protocol.AgentConfigParams) *protocol.Error {
+	if err := protocol.DecodeParams(params, request); err != nil {
+		return err
+	}
+	_, err := validateAgentConfig(request.Agents, request.CatalogToken, request.ModelConfig)
+	return err
+}
+
+func validateAgentConfig(agents []string, catalogToken string, modelConfig json.RawMessage) ([]agent.Kind, *protocol.Error) {
+	selected, err := agentKinds(agents)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(catalogToken) == "" {
+		return nil, invalidParams("catalog_token is required")
+	}
+	trimmed := bytes.TrimSpace(modelConfig)
+	if len(trimmed) == 0 || len(trimmed) > maxModelConfigSize || trimmed[0] != '{' || !json.Valid(trimmed) {
+		return nil, invalidParams("model_config must be a bounded JSON object")
+	}
+	return selected, nil
+}
+
+func modelContractUnavailable() *protocol.Error {
+	return &protocol.Error{Code: protocol.CodeModelCatalogStale, Message: "model catalog validation is unavailable"}
+}
+
+func agentAPIURL(base string) (string, error) {
+	parsed, err := url.Parse(base)
+	if err != nil {
+		return "", err
+	}
+	parsed.Path = "/v1"
+	return strings.TrimSuffix(parsed.String(), "/"), nil
+}
+
+func mapPreview(value agent.Preview) protocol.AgentPreviewResult {
+	result := protocol.AgentPreviewResult{RevisionToken: value.RevisionToken, ModelConfig: value.ModelConfig, ManagedConfigDrift: value.ManagedConfigDrift, RequiresCodexAuthApproval: value.RequiresCodexAuthApproval}
+	for _, fragment := range value.Fragments {
+		result.Fragments = append(result.Fragments, protocol.AgentFragment{Agent: string(fragment.Agent), Role: fragment.Role, Path: fragment.Path, Format: string(fragment.Format), Content: fragment.Content})
+	}
+	for _, item := range value.Agents {
+		for _, file := range item.Files {
+			result.Files = append(result.Files, protocol.AgentFileEffect{Path: file.Path, Role: fileRole(item.Agent, file.Path), Format: string(file.Format), Operation: string(file.Operation)})
+		}
+	}
+	for _, kind := range value.DriftedAgents {
+		result.DriftedAgents = append(result.DriftedAgents, string(kind))
+	}
+	for _, collision := range value.ManagedCollisions {
+		result.ManagedCollisions = append(result.ManagedCollisions, protocol.ManagedCollision{Agent: string(collision.Agent), Path: collision.Path, Type: collision.Type, Action: collision.Action})
+	}
+	if value.StateChange != nil {
+		result.StateChange = &protocol.AgentFileEffect{Path: value.StateChange.Path, Role: "state", Format: string(value.StateChange.Format), Operation: string(value.StateChange.Operation)}
+	}
+	if value.StateBackup != nil {
+		result.StateBackup = &protocol.AgentFileEffect{Path: value.StateBackup.Path, Role: "state", Format: string(value.StateBackup.Format), Operation: "backup"}
+	}
+	return result
+}
+
+func fileRole(kind agent.Kind, path string) string {
+	if kind == agent.Codex && filepath.Base(path) == "auth.json" {
+		return "auth"
+	}
+	return "config"
+}
+
+func mapWrite(value agent.WriteResult) protocol.AgentWriteResult {
+	result := protocol.AgentWriteResult{TransactionID: value.TransactionID}
+	for _, status := range value.Agents {
+		result.Agents = append(result.Agents, protocol.AgentWriteStatus{Agent: string(status.Agent), Success: status.Success, Changed: status.Changed, Backups: status.Backups, ErrorCode: protocol.ErrorCode(status.ErrorCode)})
+	}
+	if value.StateChange != nil {
+		operation := "create"
+		if value.StateBackup != nil {
+			operation = "replace"
+		}
+		result.StateChange = &protocol.AgentFileEffect{Path: value.StateChange.Path, Role: "state", Format: "json", Operation: operation}
+	}
+	if value.StateBackup != nil {
+		result.StateBackup = &protocol.AgentFileEffect{Path: value.StateBackup.Path, Role: "state", Format: "json", Operation: "backup"}
+	}
+	return result
 }
 
 func decodeEmpty(params json.RawMessage) *protocol.Error {
@@ -594,15 +854,22 @@ func mapLifecycleError(err *lifecycle.Error) *protocol.Error {
 func mapAgentError(err error) *protocol.Error {
 	code := protocol.ErrorCode(agent.CodeOf(err))
 	messages := map[protocol.ErrorCode]string{
-		protocol.CodeInvalidParams:     "invalid Agent parameters",
-		protocol.CodeAgentNotFound:     "selected Agent was not found",
-		protocol.CodeConfigInvalid:     "Agent configuration is invalid",
-		protocol.CodeConfigNotWritable: "Agent configuration is not writable",
-		protocol.CodePreviewStale:      "Agent preview is stale",
-		protocol.CodeBackupFailed:      "Agent configuration backup failed",
-		protocol.CodeWriteFailed:       "Agent configuration write failed",
-		protocol.CodeRollbackFailed:    "Agent configuration rollback failed",
-		protocol.CodeOperationTimeout:  "Agent operation timed out",
+		protocol.CodeInvalidParams:        "invalid Agent parameters",
+		protocol.CodeAgentNotFound:        "selected Agent was not found",
+		protocol.CodeConfigInvalid:        "Agent configuration is invalid",
+		protocol.CodeConfigNotWritable:    "Agent configuration is not writable",
+		protocol.CodePreviewStale:         "Agent preview is stale",
+		protocol.CodeBackupFailed:         "Agent configuration backup failed",
+		protocol.CodeWriteFailed:          "Agent configuration write failed",
+		protocol.CodeRollbackFailed:       "Agent configuration rollback failed",
+		protocol.CodeOperationTimeout:     "Agent operation timed out",
+		protocol.CodeAgentOperationBusy:   "Another Agent operation is in progress",
+		protocol.CodeModelStateInvalid:    "Agent model state is invalid",
+		protocol.CodeModelCatalogStale:    "Agent model catalog is stale",
+		protocol.CodeModelConfigInvalid:   "Agent model configuration is invalid",
+		protocol.CodeModelNotAvailable:    "A selected model is no longer available",
+		protocol.CodeManagedConfigDrift:   "Managed Agent configuration drift requires approval",
+		protocol.CodeCodexAuthUnsupported: "Codex authentication policy is unsupported",
 	}
 	message, ok := messages[code]
 	if !ok {
@@ -626,15 +893,8 @@ func validateSidecar(path string) *protocol.Error {
 }
 
 func validateListenAddr(value string) error {
-	host, port, err := net.SplitHostPort(value)
-	if err != nil || port == "" {
-		return errors.New("listen must be a localhost host:port")
-	}
-	ip := net.ParseIP(host)
-	if !strings.EqualFold(host, "localhost") && (ip == nil || !ip.IsLoopback()) {
-		return errors.New("listen address must be localhost")
-	}
-	return nil
+	_, err := trustedrouter.NormalizeListener(value)
+	return err
 }
 
 func defaultRouterPath() (string, error) {
@@ -759,6 +1019,13 @@ func trustedLogPath(found discovery.Result) string {
 
 func completeIdentity(value process.Identity) bool {
 	return value.PID > 0 && value.StartedAt != "" && value.Executable != ""
+}
+
+func (a *App) absentStartOK() bool {
+	a.captureUnexpectedExits()
+	a.failureMu.Lock()
+	defer a.failureMu.Unlock()
+	return a.failure == nil
 }
 
 func invalidParams(message string) *protocol.Error {

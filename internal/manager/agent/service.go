@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -16,6 +15,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/codeasier/mtls-router/internal/manager/agent/modelconfig"
 )
 
 const journalFileName = "agent-write-journal.json"
@@ -25,15 +26,22 @@ const journalFileName = "agent-write-journal.json"
 type ErrorCode string
 
 const (
-	CodeInvalidParams     ErrorCode = "INVALID_PARAMS"
-	CodeAgentNotFound     ErrorCode = "AGENT_NOT_FOUND"
-	CodeConfigInvalid     ErrorCode = "CONFIG_INVALID"
-	CodeConfigNotWritable ErrorCode = "CONFIG_NOT_WRITABLE"
-	CodePreviewStale      ErrorCode = "PREVIEW_STALE"
-	CodeBackupFailed      ErrorCode = "BACKUP_FAILED"
-	CodeWriteFailed       ErrorCode = "WRITE_FAILED"
-	CodeRollbackFailed    ErrorCode = "ROLLBACK_FAILED"
-	CodeOperationTimeout  ErrorCode = "OPERATION_TIMEOUT"
+	CodeInvalidParams        ErrorCode = "INVALID_PARAMS"
+	CodeAgentNotFound        ErrorCode = "AGENT_NOT_FOUND"
+	CodeConfigInvalid        ErrorCode = "CONFIG_INVALID"
+	CodeConfigNotWritable    ErrorCode = "CONFIG_NOT_WRITABLE"
+	CodePreviewStale         ErrorCode = "PREVIEW_STALE"
+	CodeBackupFailed         ErrorCode = "BACKUP_FAILED"
+	CodeWriteFailed          ErrorCode = "WRITE_FAILED"
+	CodeRollbackFailed       ErrorCode = "ROLLBACK_FAILED"
+	CodeOperationTimeout     ErrorCode = "OPERATION_TIMEOUT"
+	CodeOperationBusy        ErrorCode = "AGENT_OPERATION_BUSY"
+	CodeModelStateInvalid    ErrorCode = "MODEL_STATE_INVALID"
+	CodeModelCatalogStale    ErrorCode = "MODEL_CATALOG_STALE"
+	CodeModelConfigInvalid   ErrorCode = "MODEL_CONFIG_INVALID"
+	CodeModelNotAvailable    ErrorCode = "MODEL_NOT_AVAILABLE"
+	CodeManagedConfigDrift   ErrorCode = "MANAGED_CONFIG_DRIFT"
+	CodeCodexAuthUnsupported ErrorCode = "CODEX_AUTH_UNSUPPORTED"
 )
 
 // OperationError is safe to return through the management protocol. It never
@@ -41,6 +49,84 @@ const (
 type OperationError struct {
 	Code ErrorCode
 	msg  string
+}
+
+// CatalogBinding verifies a catalog token without reading Agent files.
+type CatalogBinding struct {
+	Owner           string
+	RouterBaseURL   string
+	DeploymentID    string
+	ProtocolVersion string
+	Models          []string
+}
+
+func (s *Service) CatalogBinding(ctx context.Context, selected []Kind, token string, rawConfig json.RawMessage) (CatalogBinding, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	lock, err := acquireTransactionLock(ctx, s.stateDir)
+	if err != nil {
+		return CatalogBinding{}, err
+	}
+	defer lock.release()
+	if err := s.ensureExistingSigner(); err != nil {
+		return CatalogBinding{}, err
+	}
+	claims, _, _, err := s.validateV2(selected, token, rawConfig)
+	if err != nil {
+		return CatalogBinding{}, err
+	}
+	return CatalogBinding{Owner: claims.Owner, RouterBaseURL: claims.RouterBaseURL, DeploymentID: claims.DeploymentID, ProtocolVersion: claims.ProtocolVersion, Models: append([]string(nil), claims.Models...)}, nil
+}
+
+// ValidatePreview proves the revision and exact approval state without creating
+// backups, journals, temporary files, or target directories. Write repeats the
+// same checks under its transaction lock after catalog refresh.
+func (s *Service) ValidatePreview(ctx context.Context, request WriteRequest) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	lock, err := acquireTransactionLock(ctx, s.stateDir)
+	if err != nil {
+		return err
+	}
+	defer lock.release()
+	if err := s.ensureExistingSigner(); err != nil {
+		return err
+	}
+	claims, config, canonical, err := s.validateV2(request.Agents, request.CatalogToken, request.ModelConfig)
+	if err != nil {
+		return err
+	}
+	apiBaseURL, err := apiURL(claims.RouterBaseURL)
+	if err != nil {
+		return operationError(CodeModelCatalogStale, "model catalog router address is invalid")
+	}
+	s.currentInput = renderInput{config: config, routerBaseURL: claims.RouterBaseURL, apiBaseURL: apiBaseURL, ownRootModel: true}
+	defer func() { s.currentInput = renderInput{} }()
+	plan, err := s.buildPlan(request.Agents, s.currentInput, claims, canonical)
+	if err != nil {
+		return err
+	}
+	token, err := s.tokenForPlan(plan)
+	if err != nil || subtle.ConstantTimeCompare([]byte(token), []byte(request.RevisionToken)) != 1 {
+		return operationError(CodePreviewStale, "Agent configuration changed after preview")
+	}
+	if (len(plan.drifted) != 0) != request.ApproveManagedOverwrite {
+		return operationError(CodeManagedConfigDrift, "managed Agent configuration drift approval does not match preview")
+	}
+	if plan.requiresCodexAuthApproval != request.ApproveCodexAuthChange {
+		return operationError(CodeInvalidParams, "Codex authentication approval does not match preview")
+	}
+	return nil
+}
+
+// ValidateRefreshedModels requires every canonical selection in the current
+// write request to remain in the refreshed authenticated catalog.
+func ValidateRefreshedModels(selected []Kind, rawConfig json.RawMessage, refreshed []string) error {
+	agents := kindsToModelAgents(selected)
+	if _, err := modelconfig.Decode(rawConfig, agents, refreshed); err != nil {
+		return operationError(CodeModelNotAvailable, "a selected model is no longer available")
+	}
+	return nil
 }
 
 func (e *OperationError) Error() string { return e.msg }
@@ -97,20 +183,41 @@ type AgentPreview struct {
 	Warnings []string      `json:"warnings,omitempty"`
 }
 
+// ManagedCollision describes an exact manager-owned path that preview proposes
+// to replace, without exposing its current value.
+type ManagedCollision struct {
+	Agent  Kind   `json:"agent"`
+	Path   string `json:"path"`
+	Type   string `json:"type"`
+	Action string `json:"action"`
+}
+
 // Preview is an immutable approval boundary. The token is bound to the
 // selected Agents and every source and target revision observed by Preview.
 type Preview struct {
-	RevisionToken string         `json:"revision_token"`
-	Agents        []AgentPreview `json:"agents"`
-	Warnings      []string       `json:"warnings,omitempty"`
+	RevisionToken             string             `json:"revision_token"`
+	Agents                    []AgentPreview     `json:"agents"`
+	Warnings                  []string           `json:"warnings,omitempty"`
+	ModelConfig               json.RawMessage    `json:"model_config"`
+	Fragments                 []Fragment         `json:"fragments"`
+	ManagedConfigDrift        bool               `json:"managed_config_drift"`
+	DriftedAgents             []Kind             `json:"drifted_agents"`
+	ManagedCollisions         []ManagedCollision `json:"managed_collisions"`
+	RequiresCodexAuthApproval bool               `json:"requires_codex_auth_approval"`
+	StateChange               *FilePreview       `json:"state_change,omitempty"`
+	StateBackup               *FilePreview       `json:"state_backup,omitempty"`
 }
 
 // WriteRequest contains the transient secret and approved revision. APIKey is
 // consumed only in memory and is never included in results or journal state.
 type WriteRequest struct {
-	Agents        []Kind
-	RevisionToken string
-	APIKey        string
+	Agents                  []Kind
+	RevisionToken           string
+	APIKey                  string
+	CatalogToken            string
+	ModelConfig             json.RawMessage
+	ApproveManagedOverwrite bool
+	ApproveCodexAuthChange  bool
 }
 
 // AgentWriteStatus reports paths only. Backups and rollback backups are
@@ -142,6 +249,8 @@ type WriteResult struct {
 	Agents         []AgentWriteStatus `json:"agents"`
 	SensitiveFiles bool               `json:"sensitive_files"`
 	Warning        string             `json:"warning"`
+	StateChange    *FileWriteStatus   `json:"state_change,omitempty"`
+	StateBackup    *FileWriteStatus   `json:"state_backup,omitempty"`
 }
 
 // Options configures an Agent service. StateDir stores only the key-free
@@ -149,6 +258,17 @@ type WriteResult struct {
 type Options struct {
 	StateDir string
 	Detector Detector
+	// LegacyRenderInput keeps the pre-v2 transaction scaffold testable until
+	// Phase 4 replaces its request types. Production callers leave it nil.
+	LegacyRenderInput *LegacyRenderInput
+}
+
+// LegacyRenderInput supplies canonical data to the merge-aware Phase 4
+// scaffold. It exists only to prevent that scaffold from inventing models.
+type LegacyRenderInput struct {
+	Config        *modelconfig.Config
+	RouterBaseURL string
+	APIBaseURL    string
 }
 
 // Service serializes previews, writes, and recovery for one manager process.
@@ -156,10 +276,14 @@ type Service struct {
 	mu             sync.Mutex
 	stateDir       string
 	detector       Detector
-	revisionKey    [32]byte
+	signer         *modelconfig.TokenSigner
+	keyGeneration  string
 	writesDisabled bool
 	recoveryErr    error
 	hooks          serviceHooks
+	legacyRender   *renderInput
+	currentInput   renderInput
+	currentSidecar lastAppliedState
 }
 
 type serviceHooks struct {
@@ -177,7 +301,14 @@ func NewService(options Options) (*Service, error) {
 		return nil, operationError(CodeInvalidParams, "Agent transaction state directory is required")
 	}
 	service := &Service{stateDir: filepath.Clean(options.StateDir), detector: options.Detector}
-	service.revisionKey = sha256.Sum256([]byte("mtls-router-agent-revision-v1\x00" + service.stateDir))
+	if options.LegacyRenderInput != nil {
+		service.legacyRender = &renderInput{config: options.LegacyRenderInput.Config, routerBaseURL: options.LegacyRenderInput.RouterBaseURL, apiBaseURL: options.LegacyRenderInput.APIBaseURL}
+	}
+	lock, lockErr := acquireTransactionLock(context.Background(), service.stateDir)
+	if lockErr != nil {
+		return service, lockErr
+	}
+	defer lock.release()
 	if _, err := os.Stat(service.journalPath()); err == nil {
 		if err := restrictPrivate(service.stateDir, true); err != nil {
 			service.disableWrites(err)
@@ -202,6 +333,11 @@ func NewService(options Options) (*Service, error) {
 func (s *Service) WritesDisabled() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	lock, err := acquireTransactionLock(context.Background(), s.stateDir)
+	if err != nil {
+		return true
+	}
+	defer lock.release()
 	return s.writesDisabled
 }
 
@@ -209,22 +345,120 @@ func (s *Service) WritesDisabled() bool {
 func (s *Service) RecoveryError() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	lock, err := acquireTransactionLock(context.Background(), s.stateDir)
+	if err != nil {
+		return err
+	}
+	defer lock.release()
 	return s.recoveryErr
+}
+
+// Detect returns a lock-consistent snapshot of supported Agent state.
+func (s *Service) Detect(ctx context.Context) ([]State, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	lock, err := acquireTransactionLock(ctx, s.stateDir)
+	if err != nil {
+		return nil, err
+	}
+	defer lock.release()
+	if err := contextError(ctx); err != nil {
+		return nil, err
+	}
+	return s.detector.Detect()
 }
 
 // Preview validates selected targets and returns a structured, key-free change
 // set. It performs no writes, including directory or backup creation.
-func (s *Service) Preview(ctx context.Context, selected []Kind) (Preview, error) {
+func (s *Service) Preview(ctx context.Context, selected []Kind, values ...any) (Preview, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := contextError(ctx); err != nil {
-		return Preview{}, err
-	}
-	plan, err := s.buildPlan(selected)
+	lock, err := acquireTransactionLock(ctx, s.stateDir)
 	if err != nil {
 		return Preview{}, err
 	}
-	return s.previewForPlan(plan), nil
+	defer lock.release()
+	if err := contextError(ctx); err != nil {
+		return Preview{}, err
+	}
+	var catalogToken string
+	var rawConfig json.RawMessage
+	if len(values) == 2 {
+		if err := s.ensureExistingSigner(); err != nil {
+			return Preview{}, err
+		}
+		catalogToken, _ = values[0].(string)
+		rawConfig, _ = values[1].(json.RawMessage)
+	} else if len(values) == 0 && s.legacyRender != nil {
+		if err := s.ensureSigner(); err != nil {
+			return Preview{}, err
+		}
+		claims := modelconfig.CatalogClaims{Models: []string{"model-primary", "model-sonnet"}, Agents: kindsToModelAgents(selected), Owner: "cli", RouterBaseURL: s.legacyRender.routerBaseURL, DeploymentID: "legacy-tests", ProtocolVersion: "2"}
+		var err error
+		catalogToken, err = s.signer.SignCatalog(claims)
+		if err != nil {
+			return Preview{}, err
+		}
+		rawConfig, err = modelconfig.Canonical(projectConfig(s.legacyRender.config, selected))
+		if err != nil {
+			return Preview{}, err
+		}
+	} else {
+		return Preview{}, operationError(CodeInvalidParams, "catalog token and canonical model configuration are required")
+	}
+	claims, config, canonical, err := s.validateV2(selected, catalogToken, rawConfig)
+	if err != nil {
+		return Preview{}, err
+	}
+	apiBaseURL, err := apiURL(claims.RouterBaseURL)
+	if err != nil {
+		return Preview{}, operationError(CodeModelCatalogStale, "model catalog router address is invalid")
+	}
+	s.currentInput = renderInput{config: config, routerBaseURL: claims.RouterBaseURL, apiBaseURL: apiBaseURL, ownRootModel: len(values) == 2}
+	defer func() { s.currentInput = renderInput{} }()
+	plan, err := s.buildPlan(selected, s.currentInput, claims, canonical)
+	if err != nil {
+		return Preview{}, err
+	}
+	return s.previewForPlan(plan)
+}
+
+func projectConfig(config *modelconfig.Config, selected []Kind) *modelconfig.Config {
+	result := &modelconfig.Config{Version: config.Version}
+	for _, kind := range selected {
+		switch kind {
+		case ClaudeCode:
+			result.Claude = config.Claude
+		case OpenCode:
+			result.OpenCode = config.OpenCode
+		case Codex:
+			result.Codex = config.Codex
+		}
+	}
+	return result
+}
+
+func (s *Service) validateV2(selected []Kind, catalogToken string, rawConfig json.RawMessage) (modelconfig.CatalogClaims, *modelconfig.Config, json.RawMessage, error) {
+	claims, err := s.signer.VerifyCatalog(catalogToken)
+	if err != nil {
+		return modelconfig.CatalogClaims{}, nil, nil, operationError(CodeModelCatalogStale, "model catalog token is invalid")
+	}
+	normalized, err := normalizeSelection(selected)
+	if err != nil {
+		return modelconfig.CatalogClaims{}, nil, nil, err
+	}
+	if !sameModelAgents(normalized, claims.Agents) {
+		return modelconfig.CatalogClaims{}, nil, nil, operationError(CodeModelCatalogStale, "model catalog Agent scope changed")
+	}
+	config, err := modelconfig.Decode(rawConfig, claims.Agents, claims.Models)
+	if err != nil {
+		return modelconfig.CatalogClaims{}, nil, nil, operationError(CodeModelConfigInvalid, "canonical model configuration is invalid")
+	}
+	canonical, err := modelconfig.Canonical(config)
+	if err != nil {
+		return modelconfig.CatalogClaims{}, nil, nil, operationError(CodeModelConfigInvalid, "canonical model configuration is invalid")
+	}
+	return claims, config, canonical, nil
 }
 
 // Write revalidates the approved preview before creating any backup or
@@ -233,6 +467,11 @@ func (s *Service) Preview(ctx context.Context, selected []Kind) (Preview, error)
 func (s *Service) Write(ctx context.Context, request WriteRequest) (WriteResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	lock, err := acquireTransactionLock(ctx, s.stateDir)
+	if err != nil {
+		return WriteResult{}, err
+	}
+	defer lock.release()
 
 	if s.writesDisabled {
 		return WriteResult{}, operationError(CodeRollbackFailed, "Agent writes are disabled because transaction recovery failed")
@@ -242,12 +481,50 @@ func (s *Service) Write(ctx context.Context, request WriteRequest) (WriteResult,
 	}
 	key := []byte(request.APIKey)
 	defer zeroBytes(key)
+	if err := s.ensureSigner(); err != nil {
+		return WriteResult{}, err
+	}
+	legacyRequest := request.CatalogToken == "" && len(request.ModelConfig) == 0 && s.legacyRender != nil
+	if legacyRequest {
+		claims := modelconfig.CatalogClaims{Models: []string{"model-primary", "model-sonnet"}, Agents: kindsToModelAgents(request.Agents), Owner: "cli", RouterBaseURL: s.legacyRender.routerBaseURL, DeploymentID: "legacy-tests", ProtocolVersion: "2"}
+		request.CatalogToken, err = s.signer.SignCatalog(claims)
+		if err != nil {
+			return WriteResult{}, err
+		}
+		request.ModelConfig, err = modelconfig.Canonical(projectConfig(s.legacyRender.config, request.Agents))
+		if err != nil {
+			return WriteResult{}, err
+		}
+	}
 
-	plan, err := s.buildPlan(request.Agents)
+	claims, config, canonical, err := s.validateV2(request.Agents, request.CatalogToken, request.ModelConfig)
 	if err != nil {
 		return WriteResult{}, err
 	}
-	currentToken := s.tokenForPlan(plan)
+	apiBaseURL, err := apiURL(claims.RouterBaseURL)
+	if err != nil {
+		return WriteResult{}, operationError(CodeModelCatalogStale, "model catalog router address is invalid")
+	}
+	s.currentInput = renderInput{config: config, routerBaseURL: claims.RouterBaseURL, apiBaseURL: apiBaseURL, ownRootModel: !legacyRequest}
+	defer func() { s.currentInput = renderInput{} }()
+	plan, err := s.buildPlan(request.Agents, s.currentInput, claims, canonical)
+	if err != nil {
+		return WriteResult{}, err
+	}
+	if legacyRequest {
+		request.ApproveManagedOverwrite = len(plan.drifted) != 0
+		request.ApproveCodexAuthChange = plan.requiresCodexAuthApproval
+	}
+	if (len(plan.drifted) != 0) != request.ApproveManagedOverwrite {
+		return WriteResult{}, operationError(CodeManagedConfigDrift, "managed Agent configuration drift requires approval")
+	}
+	if plan.requiresCodexAuthApproval != request.ApproveCodexAuthChange {
+		return WriteResult{}, operationError(CodeInvalidParams, "Codex authentication approval does not match preview")
+	}
+	currentToken, err := s.tokenForPlan(plan)
+	if err != nil {
+		return WriteResult{}, operationError(CodeModelStateInvalid, "Agent revision token could not be created")
+	}
 	if subtle.ConstantTimeCompare([]byte(currentToken), []byte(request.RevisionToken)) != 1 {
 		return WriteResult{}, operationError(CodePreviewStale, "Agent configuration changed after preview")
 	}
@@ -256,14 +533,18 @@ func (s *Service) Write(ctx context.Context, request WriteRequest) (WriteResult,
 	}
 	for i := range plan.files {
 		file := &plan.files[i]
-		if err := verifyRevision(file.sourcePath, file.sourceRevision); err != nil {
+		if err := s.verifyPlannedRevision(file.sourcePath, file.sourceRevision, file.scope); err != nil {
 			return WriteResult{}, operationError(CodePreviewStale, "Agent configuration changed after preview")
 		}
 		if file.sourcePath != file.targetPath {
-			if err := verifyRevision(file.targetPath, file.targetRevision); err != nil {
+			if err := s.verifyPlannedRevision(file.targetPath, file.targetRevision, file.scope); err != nil {
 				return WriteResult{}, operationError(CodePreviewStale, "Agent configuration target changed after preview")
 			}
 		}
+	}
+	plan, err = s.appendSidecarPlan(plan, key)
+	if err != nil {
+		return WriteResult{}, err
 	}
 	if err := s.prepareStateDir(); err != nil {
 		return WriteResult{}, operationError(CodeWriteFailed, "could not prepare Agent transaction state")
@@ -274,7 +555,7 @@ func (s *Service) Write(ctx context.Context, request WriteRequest) (WriteResult,
 		return WriteResult{}, operationError(CodeWriteFailed, "could not initialize Agent transaction")
 	}
 	result := resultForPlan(transactionID, plan)
-	journal := transactionJournal{Version: 1, TransactionID: transactionID, Entries: make([]journalEntry, len(plan.files))}
+	journal := transactionJournal{Version: 2, KeyGeneration: s.keyGeneration, TransactionID: transactionID, Entries: make([]journalEntry, len(plan.files))}
 
 	for i := range plan.files {
 		file := &plan.files[i]
@@ -297,7 +578,11 @@ func (s *Service) Write(ctx context.Context, request WriteRequest) (WriteResult,
 				return result, failure
 			}
 			file.backupPath = backupPath
-			appendAgentBackup(&result, file.agent, file.targetPath, backupPath)
+			if file.scope == scopeManagerState {
+				result.StateBackup = &FileWriteStatus{Path: file.targetPath, BackupPath: backupPath}
+			} else {
+				appendAgentBackup(&result, file.agent, file.targetPath, backupPath)
+			}
 		}
 		output, err := file.render(key)
 		if err != nil {
@@ -309,17 +594,35 @@ func (s *Service) Write(ctx context.Context, request WriteRequest) (WriteResult,
 		if !file.targetRevision.Exists {
 			mode = 0o600
 		}
-		postRevision := revisionForContent(output, mode)
+		postRevision, err := s.keyedRevisionForContent(output, mode, revisionContextJournal, file.targetPath)
+		if err != nil {
+			zeroBytes(output)
+			return WriteResult{}, operationError(CodeModelStateInvalid, "Agent revision state could not be created")
+		}
+		preRevision, _, _, err := s.readKeyedRevision(file.targetPath, revisionContextJournal)
+		if err != nil {
+			zeroBytes(output)
+			return WriteResult{}, operationError(CodeWriteFailed, "could not snapshot Agent transaction state")
+		}
 		zeroBytes(output)
+		var backupRevision fileRevision
+		if file.backupPath != "" {
+			backupRevision, err = s.keyedRevisionForContent(file.sourceContent, file.sourceMode, revisionContextBackup, file.backupPath)
+			if err != nil {
+				return WriteResult{}, operationError(CodeModelStateInvalid, "Agent backup revision could not be created")
+			}
+		}
 		journal.Entries[i] = journalEntry{
-			Agent:        file.agent,
-			TargetPath:   file.targetPath,
-			PreRevision:  file.targetRevision,
-			PostRevision: postRevision,
-			BackupPath:   file.backupPath,
-			RestoreFrom:  file.restoreFrom,
-			TargetMode:   uint32(file.targetMode.Perm()),
-			Progress:     progressPending,
+			Scope:          file.scope,
+			Agent:          file.agent,
+			TargetPath:     file.targetPath,
+			PreRevision:    preRevision,
+			PostRevision:   postRevision,
+			BackupPath:     file.backupPath,
+			BackupRevision: backupRevision,
+			RestoreFrom:    file.restoreFrom,
+			TargetMode:     uint32(file.targetMode.Perm()),
+			Progress:       progressPending,
 		}
 	}
 
@@ -340,12 +643,12 @@ func (s *Service) Write(ctx context.Context, request WriteRequest) (WriteResult,
 		if err := contextError(ctx); err != nil {
 			return s.failAndRollback(ctx, &journal, result, err, replaced)
 		}
-		if err := verifyRevision(file.sourcePath, file.sourceRevision); err != nil {
+		if err := s.verifyPlannedRevision(file.sourcePath, file.sourceRevision, file.scope); err != nil {
 			failure := operationError(CodePreviewStale, "Agent configuration changed while writing")
 			return s.failAndRollback(ctx, &journal, result, failure, replaced)
 		}
 		if file.sourcePath != file.targetPath {
-			if err := verifyRevision(file.targetPath, file.targetRevision); err != nil {
+			if err := s.verifyPlannedRevision(file.targetPath, file.targetRevision, file.scope); err != nil {
 				failure := operationError(CodePreviewStale, "Agent configuration target changed while writing")
 				return s.failAndRollback(ctx, &journal, result, failure, replaced)
 			}
@@ -369,14 +672,14 @@ func (s *Service) Write(ctx context.Context, request WriteRequest) (WriteResult,
 			zeroBytes(output)
 			if replacementOccurred(err) {
 				replaced = true
-				markFileReplaced(&result, file.agent, file.targetPath)
+				markPlannedFileReplaced(&result, file)
 			}
 			failure := operationError(CodeWriteFailed, "could not replace an Agent configuration file")
 			return s.failAndRollback(ctx, &journal, result, failure, replaced)
 		}
 		zeroBytes(output)
 		replaced = true
-		markFileReplaced(&result, file.agent, file.targetPath)
+		markPlannedFileReplaced(&result, file)
 		journal.Entries[i].Progress = progressReplaced
 		if err := s.writeJournal(journal); err != nil {
 			failure := operationError(CodeWriteFailed, "could not record Agent transaction progress")
@@ -404,11 +707,33 @@ func (s *Service) Write(ctx context.Context, request WriteRequest) (WriteResult,
 	return result, nil
 }
 
+func (s *Service) verifyPlannedRevision(path string, expected fileRevision, scope journalScope) error {
+	contextName := revisionContextAgentFile
+	if scope == scopeManagerState {
+		contextName = revisionContextSidecar
+	}
+	return s.verifyKeyedRevision(path, expected, contextName)
+}
+
+func containsKind(kinds []Kind, want Kind) bool {
+	for _, kind := range kinds {
+		if kind == want {
+			return true
+		}
+	}
+	return false
+}
+
 // Recover completes startup recovery for an existing service. A prior recovery
 // failure remains fail-closed unless a later call proves full restoration.
 func (s *Service) Recover(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	lock, err := acquireTransactionLock(ctx, s.stateDir)
+	if err != nil {
+		return err
+	}
+	defer lock.release()
 	if err := s.recoverLocked(ctx); err != nil {
 		s.disableWrites(err)
 		return s.recoveryErr
@@ -471,22 +796,53 @@ func normalizeSelection(selected []Kind) ([]Kind, error) {
 	return result, nil
 }
 
-func (s *Service) tokenForPlan(plan writePlan) string {
-	hash := hmac.New(sha256.New, s.revisionKey[:])
+func (s *Service) tokenForPlan(plan writePlan) (string, error) {
+	agents := make([]modelconfig.Agent, 0, len(plan.selected))
+	bindings := make([]modelconfig.RevisionBinding, 0, len(plan.files)*2)
 	for _, kind := range plan.selected {
-		fmt.Fprintf(hash, "agent:%s\x00", kind)
+		agents = append(agents, modelAgent(kind))
 	}
 	for _, file := range plan.files {
-		fmt.Fprintf(hash, "source:%s\x00", filepath.Clean(file.sourcePath))
-		file.sourceRevision.writeTo(hash)
-		fmt.Fprintf(hash, "target:%s\x00", filepath.Clean(file.targetPath))
-		file.targetRevision.writeTo(hash)
+		bindings = append(bindings,
+			modelconfig.RevisionBinding{Context: "source", Identity: filepath.Clean(file.sourcePath), Revision: revisionTokenValue(file.sourceRevision)},
+			modelconfig.RevisionBinding{Context: "target", Identity: filepath.Clean(file.targetPath), Revision: revisionTokenValue(file.targetRevision)},
+		)
 	}
-	return hex.EncodeToString(hash.Sum(nil))
+	return s.signer.SignRevision(modelconfig.RevisionClaims{
+		Agents: agents, CanonicalConfig: plan.canonical, CatalogIdentity: catalogIdentity(plan.catalog),
+		SidecarRevision: revisionTokenValue(plan.sidecarRevision), RouterBaseURL: plan.catalog.RouterBaseURL,
+		DeploymentID: plan.catalog.DeploymentID, ProtocolVersion: plan.catalog.ProtocolVersion, Bindings: bindings,
+		ManagedDrift: len(plan.drifted) != 0, DriftedAgents: kindsToModelAgents(plan.drifted), RequiresCodexAuthApproval: plan.requiresCodexAuthApproval,
+	})
 }
 
-func (s *Service) previewForPlan(plan writePlan) Preview {
-	preview := Preview{RevisionToken: s.tokenForPlan(plan), Agents: make([]AgentPreview, 0, len(plan.selected))}
+func catalogIdentity(claims modelconfig.CatalogClaims) string {
+	encoded, _ := modelconfig.CanonicalValue(claims)
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:])
+}
+
+func kindsToModelAgents(kinds []Kind) []modelconfig.Agent {
+	result := make([]modelconfig.Agent, len(kinds))
+	for i, kind := range kinds {
+		result[i] = modelAgent(kind)
+	}
+	return result
+}
+
+func revisionTokenValue(revision fileRevision) string {
+	if !revision.Exists {
+		return "absent"
+	}
+	return revision.Digest
+}
+
+func (s *Service) previewForPlan(plan writePlan) (Preview, error) {
+	token, err := s.tokenForPlan(plan)
+	if err != nil {
+		return Preview{}, err
+	}
+	preview := Preview{RevisionToken: token, Agents: make([]AgentPreview, 0, len(plan.selected))}
 	for _, kind := range plan.selected {
 		agentPreview := AgentPreview{Agent: kind, Name: agentName(kind)}
 		for _, file := range plan.files {
@@ -526,7 +882,18 @@ func (s *Service) previewForPlan(plan writePlan) Preview {
 		preview.Agents = append(preview.Agents, agentPreview)
 	}
 	preview.Warnings = uniqueWarnings(preview.Warnings)
-	return preview
+	return preview, nil
+}
+
+func modelAgent(kind Kind) modelconfig.Agent {
+	switch kind {
+	case ClaudeCode:
+		return modelconfig.Claude
+	case OpenCode:
+		return modelconfig.OpenCode
+	default:
+		return modelconfig.Codex
+	}
 }
 
 func differentPath(source, target string) string {
@@ -559,6 +926,11 @@ func resultForPlan(transactionID string, plan writePlan) WriteResult {
 			}
 		}
 		result.Agents = append(result.Agents, status)
+	}
+	for _, file := range plan.files {
+		if file.scope == scopeManagerState {
+			result.StateChange = &FileWriteStatus{Path: file.targetPath}
+		}
 	}
 	return result
 }
@@ -608,6 +980,16 @@ func markFileReplaced(result *WriteResult, kind Kind, path string) {
 	}
 }
 
+func markPlannedFileReplaced(result *WriteResult, file *plannedFile) {
+	if file.scope == scopeManagerState {
+		if result.StateChange != nil {
+			result.StateChange.Replaced = true
+		}
+		return
+	}
+	markFileReplaced(result, file.agent, file.targetPath)
+}
+
 func markFileRestored(result *WriteResult, kind Kind, path string) {
 	for i := range result.Agents {
 		if result.Agents[i].Agent != kind {
@@ -635,6 +1017,52 @@ type fileRevision struct {
 	Size   int64  `json:"size,omitempty"`
 	Mode   uint32 `json:"mode,omitempty"`
 	Digest string `json:"digest,omitempty"`
+}
+
+const (
+	revisionContextAgentFile = "agent-file"
+	revisionContextJournal   = "journal-entry"
+	revisionContextBackup    = "backup-verification"
+	revisionContextSidecar   = "manager-state-sidecar"
+)
+
+func (s *Service) keyedRevisionForContent(content []byte, mode os.FileMode, revisionContext, identity string) (fileRevision, error) {
+	digest, err := s.signer.RevisionMAC(revisionContext, filepath.Clean(identity), content)
+	if err != nil {
+		return fileRevision{}, err
+	}
+	return fileRevision{Exists: true, Size: int64(len(content)), Mode: uint32(mode.Perm()), Digest: digest}, nil
+}
+
+func (s *Service) readKeyedRevision(path, revisionContext string) (fileRevision, []byte, os.FileMode, error) {
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return fileRevision{}, nil, 0o600, nil
+	}
+	if err != nil || !info.Mode().IsRegular() {
+		return fileRevision{}, nil, 0, errors.New("invalid revision target")
+	}
+	content, err := readConfig(path)
+	if err != nil {
+		return fileRevision{}, nil, 0, err
+	}
+	infoAfter, err := os.Stat(path)
+	if err != nil || !os.SameFile(info, infoAfter) || info.Size() != infoAfter.Size() || info.ModTime() != infoAfter.ModTime() {
+		return fileRevision{}, nil, 0, errors.New("file changed while reading")
+	}
+	revision, err := s.keyedRevisionForContent(content, infoAfter.Mode().Perm(), revisionContext, path)
+	return revision, content, infoAfter.Mode().Perm(), err
+}
+
+func (s *Service) verifyKeyedRevision(path string, expected fileRevision, revisionContext string) error {
+	current, _, _, err := s.readKeyedRevision(path, revisionContext)
+	if err != nil {
+		return err
+	}
+	if current != expected {
+		return errors.New("revision mismatch")
+	}
+	return nil
 }
 
 func (revision fileRevision) writeTo(dst io.Writer) {
@@ -747,15 +1175,21 @@ func decodeJournal(path string) (transactionJournal, error) {
 	if err := decoder.Decode(&extra); err != io.EOF {
 		return transactionJournal{}, errors.New("trailing journal data")
 	}
-	if journal.Version != 1 || journal.TransactionID == "" || len(journal.Entries) == 0 {
+	if (journal.Version != 1 && journal.Version != 2) || journal.TransactionID == "" || len(journal.Entries) == 0 {
 		return transactionJournal{}, errors.New("invalid journal")
 	}
+	if journal.Version == 2 && journal.KeyGeneration == "" {
+		return transactionJournal{}, errors.New("missing journal key generation")
+	}
 	for _, entry := range journal.Entries {
-		if entry.TargetPath == "" || !filepath.IsAbs(entry.TargetPath) || entry.Agent == "" {
+		if entry.TargetPath == "" || !filepath.IsAbs(entry.TargetPath) || (entry.Scope != scopeManagerState && entry.Agent == "") || (entry.Scope == scopeManagerState && entry.Agent != "") {
 			return transactionJournal{}, errors.New("invalid journal entry")
 		}
 		if entry.PreRevision.Exists && entry.BackupPath == "" {
 			return transactionJournal{}, errors.New("missing recovery backup")
+		}
+		if journal.Version == 2 && entry.PreRevision.Exists && !entry.BackupRevision.Exists {
+			return transactionJournal{}, errors.New("missing keyed backup revision")
 		}
 		if !entry.PostRevision.Exists || entry.PostRevision.Digest == "" {
 			return transactionJournal{}, errors.New("missing post-write revision")
@@ -817,6 +1251,11 @@ func (s *Service) recoverLocked(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if journal.Version == 2 {
+		if err := s.ensureSigner(); err != nil || journal.KeyGeneration != s.keyGeneration {
+			return errors.New("transaction signing key unavailable")
+		}
+	}
 	if journal.Committed {
 		return removeAndSync(path)
 	}
@@ -839,14 +1278,14 @@ func (s *Service) rollback(_ context.Context, journal *transactionJournal, resul
 	var conflict error
 	for i := len(journal.Entries) - 1; i >= 0; i-- {
 		entry := &journal.Entries[i]
-		if err := verifyRevision(entry.TargetPath, entry.PreRevision); err == nil {
+		if err := s.verifyJournalRevision(journal.Version, entry.TargetPath, entry.PreRevision); err == nil {
 			entry.Progress = progressRestored
 			if err := s.writeJournal(*journal); err != nil {
 				return err
 			}
 			continue
 		}
-		if err := verifyRevision(entry.TargetPath, entry.PostRevision); err != nil {
+		if err := s.verifyJournalRevision(journal.Version, entry.TargetPath, entry.PostRevision); err != nil {
 			if conflict == nil {
 				conflict = errors.New("target matches neither transaction revision")
 			}
@@ -857,7 +1296,7 @@ func (s *Service) rollback(_ context.Context, journal *transactionJournal, resul
 				return err
 			}
 		}
-		currentRevision, currentContent, currentMode, readErr := readRevision(entry.TargetPath)
+		currentRevision, currentContent, currentMode, readErr := s.readJournalRevision(journal.Version, entry.TargetPath)
 		if readErr != nil {
 			return readErr
 		}
@@ -868,8 +1307,10 @@ func (s *Service) rollback(_ context.Context, journal *transactionJournal, resul
 				return err
 			}
 			entry.RollbackBackupPath = rollbackBackup
-			if result != nil {
+			if result != nil && entry.Scope != scopeManagerState {
 				appendRollbackBackup(result, entry.Agent, entry.TargetPath, rollbackBackup)
+			} else if result != nil && result.StateChange != nil {
+				result.StateChange.RollbackBackupPath = rollbackBackup
 			}
 			if err := s.writeJournal(*journal); err != nil {
 				return err
@@ -880,8 +1321,7 @@ func (s *Service) rollback(_ context.Context, journal *transactionJournal, resul
 			if err != nil {
 				return err
 			}
-			digest := sha256.Sum256(backupContent)
-			if int64(len(backupContent)) != entry.PreRevision.Size || hex.EncodeToString(digest[:]) != entry.PreRevision.Digest {
+			if err := s.verifyBackupContent(journal.Version, entry.BackupPath, backupContent, entry.PreRevision, entry.BackupRevision); err != nil {
 				zeroBytes(backupContent)
 				return errors.New("recovery backup revision mismatch")
 			}
@@ -893,12 +1333,14 @@ func (s *Service) rollback(_ context.Context, journal *transactionJournal, resul
 		} else if err := removeAndSync(entry.TargetPath); err != nil {
 			return err
 		}
-		if err := verifyRevision(entry.TargetPath, entry.PreRevision); err != nil {
+		if err := s.verifyJournalRevision(journal.Version, entry.TargetPath, entry.PreRevision); err != nil {
 			return err
 		}
 		entry.Progress = progressRestored
-		if result != nil {
+		if result != nil && entry.Scope != scopeManagerState {
 			markFileRestored(result, entry.Agent, entry.TargetPath)
+		} else if result != nil && result.StateChange != nil {
+			result.StateChange.Restored = true
 		}
 		if err := s.writeJournal(*journal); err != nil {
 			return err
@@ -908,11 +1350,43 @@ func (s *Service) rollback(_ context.Context, journal *transactionJournal, resul
 		return conflict
 	}
 	for _, entry := range journal.Entries {
-		if err := verifyRevision(entry.TargetPath, entry.PreRevision); err != nil {
+		if err := s.verifyJournalRevision(journal.Version, entry.TargetPath, entry.PreRevision); err != nil {
 			return err
 		}
 	}
 	return removeAndSync(s.journalPath())
+}
+
+func (s *Service) readJournalRevision(version int, path string) (fileRevision, []byte, os.FileMode, error) {
+	if version == 1 {
+		return readRevision(path)
+	}
+	return s.readKeyedRevision(path, revisionContextJournal)
+}
+
+func (s *Service) verifyJournalRevision(version int, path string, expected fileRevision) error {
+	if version == 1 {
+		return verifyRevision(path, expected)
+	}
+	return s.verifyKeyedRevision(path, expected, revisionContextJournal)
+}
+
+func (s *Service) verifyBackupContent(version int, path string, content []byte, expected, backupExpected fileRevision) error {
+	if int64(len(content)) != expected.Size {
+		return errors.New("backup size mismatch")
+	}
+	if version == 1 {
+		digest := sha256.Sum256(content)
+		if hex.EncodeToString(digest[:]) != expected.Digest {
+			return errors.New("backup digest mismatch")
+		}
+		return nil
+	}
+	revision, err := s.keyedRevisionForContent(content, os.FileMode(backupExpected.Mode), revisionContextBackup, path)
+	if err != nil || revision != backupExpected {
+		return errors.New("backup MAC mismatch")
+	}
+	return nil
 }
 
 type journalProgress string
@@ -925,17 +1399,20 @@ const (
 
 type transactionJournal struct {
 	Version       int            `json:"version"`
+	KeyGeneration string         `json:"key_generation,omitempty"`
 	TransactionID string         `json:"transaction_id"`
 	Committed     bool           `json:"committed,omitempty"`
 	Entries       []journalEntry `json:"entries"`
 }
 
 type journalEntry struct {
-	Agent              Kind            `json:"agent"`
+	Scope              journalScope    `json:"scope,omitempty"`
+	Agent              Kind            `json:"agent,omitempty"`
 	TargetPath         string          `json:"target_path"`
 	PreRevision        fileRevision    `json:"pre_revision"`
 	PostRevision       fileRevision    `json:"post_revision"`
 	BackupPath         string          `json:"backup_path,omitempty"`
+	BackupRevision     fileRevision    `json:"backup_revision,omitempty"`
 	RestoreFrom        string          `json:"restore_from,omitempty"`
 	RollbackBackupPath string          `json:"rollback_backup_path,omitempty"`
 	TargetMode         uint32          `json:"target_mode"`

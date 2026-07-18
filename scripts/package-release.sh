@@ -7,6 +7,7 @@ case "$DOWNLOAD_BASE_URL" in https://*) ;; *) printf 'DOWNLOAD_BASE_URL must use
 test "$(grep -Fxc 'DEFAULT_DOWNLOAD_BASE_URL=""' setup.sh)" -eq 1
 test "$(grep -Fxc '$DefaultDownloadBaseUrl = '\'''\''' setup.ps1)" -eq 1
 test "$(od -An -tx1 -N3 setup.ps1 | tr -d ' \n')" = efbbbf
+./scripts/check-release-protocol.sh protocol-metadata
 
 mkdir -p release packages stage
 cp binaries/mtls-router-* release/

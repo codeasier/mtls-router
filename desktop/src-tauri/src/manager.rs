@@ -286,7 +286,7 @@ async fn run_actor(factory: Arc<dyn TransportFactory>, mut calls: mpsc::Receiver
     let mut request_id = 1_u64;
     let mut recovery_used = false;
     while let Some(mut call) = calls.recv().await {
-        let sensitive = call.method == "agent.write";
+        let sensitive = matches!(call.method, "agent.models" | "agent.write");
         let params = if sensitive {
             std::mem::take(&mut call.params)
         } else {
@@ -472,10 +472,14 @@ fn watchdog(method: &str) -> Result<Duration> {
     let manager_seconds = match method {
         "manager.info" | "router.status" | "router.version" => 1,
         "router.logs" => 2,
-        "diagnostics.collect" | "router.health" | "agent.detect" | "agent.preview" => 5,
+        "diagnostics.collect"
+        | "router.health"
+        | "agent.detect"
+        | "agent.render"
+        | "agent.preview" => 5,
         "router.stop" => 7,
         "router.start" => 20,
-        "agent.write" => 30,
+        "agent.models" | "agent.write" => 30,
         _ => return Err(CommandError::invalid_params("unknown manager method")),
     };
     Ok(Duration::from_secs(manager_seconds + 1))
@@ -659,6 +663,8 @@ mod tests {
         assert_eq!(watchdog("router.status").unwrap(), Duration::from_secs(2));
         assert_eq!(watchdog("router.start").unwrap(), Duration::from_secs(21));
         assert_eq!(watchdog("agent.write").unwrap(), Duration::from_secs(31));
+        assert_eq!(watchdog("agent.models").unwrap(), Duration::from_secs(31));
+        assert_eq!(watchdog("agent.render").unwrap(), Duration::from_secs(6));
     }
 
     #[test]
@@ -721,6 +727,30 @@ mod tests {
                 writes
                     .iter()
                     .filter(|request| request["method"] == "agent.write")
+                    .count(),
+                1
+            );
+        });
+    }
+
+    #[test]
+    fn agent_models_is_never_replayed_after_ambiguous_failure() {
+        runtime().block_on(async {
+            let (client, writes) = client(vec![Behavior::Malformed, Behavior::Valid]);
+            let error = client
+                .call::<Value>(
+                    "agent.models",
+                    json!({ "owner": "desktop", "agents": ["claude"], "api_key": "secret" }),
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(error.code, "INVALID_RESPONSE");
+            assert_eq!(
+                writes
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|request| request["method"] == "agent.models")
                     .count(),
                 1
             );

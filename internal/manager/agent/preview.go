@@ -3,10 +3,11 @@ package agent
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/codeasier/mtls-router/internal/manager/agent/modelconfig"
 )
 
 const (
@@ -16,8 +17,18 @@ const (
 )
 
 type writePlan struct {
-	selected []Kind
-	files    []plannedFile
+	selected                  []Kind
+	files                     []plannedFile
+	input                     renderInput
+	catalog                   modelconfig.CatalogClaims
+	canonical                 json.RawMessage
+	sidecar                   lastAppliedState
+	sidecarRevision           fileRevision
+	sidecarContent            []byte
+	sidecarMode               os.FileMode
+	drifted                   []Kind
+	collisions                []ManagedCollision
+	requiresCodexAuthApproval bool
 }
 
 type plannedFile struct {
@@ -39,9 +50,21 @@ type plannedFile struct {
 	backupPath     string
 	restoreFrom    string
 	render         func([]byte) ([]byte, error)
+	role           string
+	scope          journalScope
 }
 
-func (s *Service) buildPlan(selected []Kind) (writePlan, error) {
+type journalScope string
+
+const (
+	scopeAgent        journalScope = "agent"
+	scopeManagerState journalScope = "manager_state"
+)
+
+func (s *Service) buildPlan(selected []Kind, input renderInput, catalog modelconfig.CatalogClaims, canonical json.RawMessage) (writePlan, error) {
+	if input.config == nil {
+		return writePlan{}, operationError(CodeInvalidParams, "canonical model configuration is required")
+	}
 	normalized, err := normalizeSelection(selected)
 	if err != nil {
 		return writePlan{}, err
@@ -51,7 +74,13 @@ func (s *Service) buildPlan(selected []Kind) (writePlan, error) {
 		return writePlan{}, operationError(CodeAgentNotFound, "could not detect supported Agents")
 	}
 	byKind := orderedStates(states)
-	plan := writePlan{selected: normalized}
+	sidecar, sidecarRevision, sidecarContent, sidecarMode, err := s.readSidecar()
+	if err != nil {
+		return writePlan{}, err
+	}
+	plan := writePlan{selected: normalized, input: input, catalog: catalog, canonical: canonical, sidecar: sidecar, sidecarRevision: sidecarRevision, sidecarContent: sidecarContent, sidecarMode: sidecarMode}
+	s.currentSidecar = sidecar
+	defer func() { s.currentSidecar = lastAppliedState{} }()
 	for _, kind := range normalized {
 		state, ok := byKind[kind]
 		if !ok || !state.Detected {
@@ -63,25 +92,32 @@ func (s *Service) buildPlan(selected []Kind) (writePlan, error) {
 		var files []plannedFile
 		switch kind {
 		case ClaudeCode:
-			files, err = planClaude(state)
+			files, err = s.planClaude(state)
 		case OpenCode:
-			files, err = planOpenCode(state)
+			files, err = s.planOpenCode(state)
 		case Codex:
-			files, err = planCodex(state)
+			files, err = s.planCodex(state)
 		}
 		if err != nil {
 			return writePlan{}, err
 		}
+		for i := range files {
+			files[i].scope = scopeAgent
+			if files[i].role == "" {
+				files[i].role = "config"
+			}
+		}
 		plan.files = append(plan.files, files...)
 	}
+	s.inspectOwnership(&plan)
 	return plan, nil
 }
 
-func planClaude(state State) ([]plannedFile, error) {
+func (s *Service) planClaude(state State) ([]plannedFile, error) {
 	if err := ensureWritable(state.Path); err != nil {
 		return nil, err
 	}
-	revision, content, mode, err := readRevision(state.Path)
+	revision, content, mode, err := s.readKeyedRevision(state.Path, revisionContextAgentFile)
 	if err != nil {
 		return nil, operationError(CodeConfigInvalid, "Claude Code configuration cannot be read")
 	}
@@ -104,11 +140,13 @@ func planClaude(state State) ([]plannedFile, error) {
 		sourceMode: mode, targetMode: mode, backupRequired: revision.Exists,
 		backupSource: state.Path, restoreFrom: state.Path,
 	}
-	file.render = func(key []byte) ([]byte, error) { return renderClaude(root, key) }
+	file.render = func(key []byte) ([]byte, error) {
+		return mergeClaude(root, s.currentInput.config.Claude, s.currentInput.routerBaseURL, string(key), s.obsoleteClaudeExtras())
+	}
 	return []plannedFile{file}, nil
 }
 
-func planOpenCode(state State) ([]plannedFile, error) {
+func (s *Service) planOpenCode(state State) ([]plannedFile, error) {
 	sourcePath := state.Path
 	targetPath := state.Path
 	format := state.Format
@@ -136,7 +174,7 @@ func planOpenCode(state State) ([]plannedFile, error) {
 	if err := ensureWritable(targetPath); err != nil {
 		return nil, err
 	}
-	sourceRevision, sourceContent, sourceMode, err := readRevision(sourcePath)
+	sourceRevision, sourceContent, sourceMode, err := s.readKeyedRevision(sourcePath, revisionContextAgentFile)
 	if err != nil {
 		return nil, operationError(CodeConfigInvalid, "opencode configuration cannot be read")
 	}
@@ -160,7 +198,7 @@ func planOpenCode(state State) ([]plannedFile, error) {
 			}
 		}
 	}
-	targetRevision, _, targetMode, err := readRevision(targetPath)
+	targetRevision, _, targetMode, err := s.readKeyedRevision(targetPath, revisionContextAgentFile)
 	if err != nil {
 		return nil, operationError(CodeConfigInvalid, "opencode target cannot be read")
 	}
@@ -184,27 +222,32 @@ func planOpenCode(state State) ([]plannedFile, error) {
 		sourceMode: sourceMode, targetMode: targetMode, backupRequired: sourceRevision.Exists,
 		backupSource: sourcePath, restoreFrom: sourcePath,
 	}
-	file.render = func(key []byte) ([]byte, error) { return renderOpenCode(root, key) }
+	file.render = func(key []byte) ([]byte, error) {
+		return mergeOpenCode(root, s.currentInput.config.OpenCode, s.currentInput.apiBaseURL, string(key), s.currentInput.ownRootModel)
+	}
 	return []plannedFile{file}, nil
 }
 
-func planCodex(state State) ([]plannedFile, error) {
+func (s *Service) planCodex(state State) ([]plannedFile, error) {
 	if err := ensureWritable(state.Path); err != nil {
 		return nil, err
 	}
 	if err := ensureWritable(state.AuthPath); err != nil {
 		return nil, err
 	}
-	configRevision, configContent, configMode, err := readRevision(state.Path)
+	configRevision, configContent, configMode, err := s.readKeyedRevision(state.Path, revisionContextAgentFile)
 	if err != nil {
 		return nil, operationError(CodeConfigInvalid, "Codex configuration cannot be read")
 	}
+	var codexRoot map[string]any
 	if configRevision.Exists {
-		if _, valid := parseTOML(configContent); !valid {
+		var valid bool
+		codexRoot, valid = decodeTOML(configContent)
+		if !valid {
 			return nil, operationError(CodeConfigInvalid, "Codex configuration is invalid TOML")
 		}
 	}
-	authRevision, authContent, authMode, err := readRevision(state.AuthPath)
+	authRevision, authContent, authMode, err := s.readKeyedRevision(state.AuthPath, revisionContextAgentFile)
 	if err != nil {
 		return nil, operationError(CodeConfigInvalid, "Codex auth configuration cannot be read")
 	}
@@ -212,6 +255,11 @@ func planCodex(state State) ([]plannedFile, error) {
 		if _, valid := decodeObject(authContent); !valid {
 			return nil, operationError(CodeConfigInvalid, "Codex auth configuration is invalid JSON")
 		}
+	}
+	authRoot, _ := decodeObject(authContent)
+	assessment, assessErr := assessCodexMerge(codexRoot, authRoot)
+	if assessErr != nil {
+		return nil, assessErr
 	}
 	configOperation := OperationCreate
 	if configRevision.Exists {
@@ -228,88 +276,161 @@ func planCodex(state State) ([]plannedFile, error) {
 		sourceMode: configMode, targetMode: configMode, backupRequired: configRevision.Exists,
 		backupSource: state.Path, restoreFrom: state.Path,
 	}
-	config.render = func([]byte) ([]byte, error) { return renderCodex(configContent), nil }
+	config.role = "config"
+	migrateHistorical := assessment.HistoricalMigration
+	config.render = func([]byte) ([]byte, error) {
+		return mergeCodex(configContent, s.currentInput.config.Codex, s.currentInput.apiBaseURL, s.obsoleteCodexOptional(), migrateHistorical)
+	}
 	auth := plannedFile{
 		agent: Codex, format: FormatJSON, sourcePath: state.AuthPath, targetPath: state.AuthPath,
 		operation: authOperation, containsAPIKey: true,
-		warning:        "Codex auth.json is replaced with only OPENAI_API_KEY; existing auth fields are not preserved",
+		warning:        "Codex authentication changes to file-backed API-key login and requires separate approval",
 		sourceRevision: authRevision, targetRevision: authRevision, sourceContent: authContent,
 		sourceMode: authMode, targetMode: authMode, backupRequired: authRevision.Exists,
 		backupSource: state.AuthPath, restoreFrom: state.AuthPath,
 	}
-	auth.render = renderCodexAuth
+	auth.role = "auth"
+	auth.render = func(key []byte) ([]byte, error) { return renderCodexAuthFragment(string(key), authRoot) }
 	return []plannedFile{config, auth}, nil
 }
 
-func renderClaude(root map[string]json.RawMessage, key []byte) ([]byte, error) {
-	result := cloneRawObject(root)
-	env := map[string]string{
-		"ANTHROPIC_BASE_URL":                  "http://127.0.0.1:19099",
-		"ANTHROPIC_AUTH_TOKEN":                string(key),
-		"ANTHROPIC_DEFAULT_HAIKU_MODEL":       "gpt-5.5",
-		"ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME":  "gpt-5.5",
-		"ANTHROPIC_DEFAULT_OPUS_MODEL":        "gpt-5.5",
-		"ANTHROPIC_DEFAULT_OPUS_MODEL_NAME":   "gpt-5.5",
-		"ANTHROPIC_DEFAULT_SONNET_MODEL":      "gpt-5.4[1M]",
-		"ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "gpt-5.4",
-		"ANTHROPIC_MODEL":                     "gpt-5.5",
-		"ENABLE_TOOL_SEARCH":                  "true",
-		"DISABLE_AUTOUPDATER":                 "1",
+func (s *Service) obsoleteClaudeExtras() []string {
+	previous, ok := s.currentSidecar.Agents[ClaudeCode]
+	if !ok {
+		return nil
 	}
-	envJSON, err := json.Marshal(env)
-	if err != nil {
-		return nil, err
+	current := map[string]bool{}
+	for key := range s.currentInput.config.Claude.Extra {
+		current["env."+key] = true
 	}
-	result["env"] = envJSON
-	return marshalObject(result)
-}
-
-func renderOpenCode(root map[string]json.RawMessage, key []byte) ([]byte, error) {
-	result := cloneRawObject(root)
-	providers := make(map[string]json.RawMessage)
-	if raw, ok := result["provider"]; ok && !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-		var valid bool
-		providers, valid = decodeObject(raw)
-		if !valid {
-			return nil, errors.New("provider is not an object")
+	fixed := map[string]bool{}
+	for _, key := range claudeFixedEnvKeys {
+		fixed["env."+key] = true
+	}
+	var result []string
+	for _, path := range previous.OwnedPaths {
+		if strings.HasPrefix(path, "env.") && !fixed[path] && !current[path] {
+			result = append(result, strings.TrimPrefix(path, "env."))
 		}
 	}
-	providerJSON, err := json.Marshal(openCodeProvider(string(key)))
-	if err != nil {
-		return nil, err
-	}
-	providers["mtls-router"] = providerJSON
-	providersJSON, err := json.Marshal(providers)
-	if err != nil {
-		return nil, err
-	}
-	result["provider"] = providersJSON
-	return marshalObject(result)
+	return result
 }
 
-func openCodeProvider(key string) map[string]any {
-	return map[string]any{
-		"npm":  "@ai-sdk/openai-compatible",
-		"name": "mtls-router",
-		"options": map[string]any{
-			"baseURL": "http://127.0.0.1:19099/v1",
-			"apiKey":  key,
-		},
-		"models": map[string]any{
-			"gpt-5.5": map[string]any{
-				"name": "GPT-5.5", "reasoning": true, "attachment": true, "tool_call": true,
-				"limit":      map[string]int{"context": 272000, "input": 244800, "output": 27200},
-				"modalities": map[string][]string{"input": {"text", "image"}, "output": {"text"}},
-				"options":    map[string]string{"reasoningEffort": "medium"},
-			},
-			"gpt-5.4": map[string]any{
-				"name": "GPT-5.4", "reasoning": true, "attachment": true, "tool_call": true,
-				"limit":      map[string]int{"context": 1000000, "input": 900000, "output": 100000},
-				"modalities": map[string][]string{"input": {"text", "image"}, "output": {"text"}},
-				"options":    map[string]string{"reasoningEffort": "medium"},
-			},
-		},
+func (s *Service) obsoleteCodexOptional() []string {
+	previous, ok := s.currentSidecar.Agents[Codex]
+	if !ok {
+		return nil
 	}
+	current := codexManagedConfig(s.currentInput.config.Codex, s.currentInput.apiBaseURL)
+	var result []string
+	for _, path := range previous.OwnedPaths {
+		if strings.HasPrefix(path, "model_") {
+			if _, exists := current[path]; !exists {
+				result = append(result, path)
+			}
+		}
+	}
+	return result
+}
+
+func (s *Service) inspectOwnership(plan *writePlan) {
+	for _, kind := range plan.selected {
+		previous, exists := plan.sidecar.Agents[kind]
+		if exists {
+			for _, recorded := range previous.Files {
+				current, _, _, err := s.readKeyedRevision(recorded.Path, revisionContextAgentFile)
+				if err != nil || revisionTokenValue(current) != recorded.RevisionMAC {
+					plan.drifted = append(plan.drifted, kind)
+					break
+				}
+			}
+			continue
+		}
+		for _, file := range plan.files {
+			if file.agent != kind || !file.sourceRevision.Exists {
+				continue
+			}
+			collision := false
+			switch kind {
+			case ClaudeCode:
+				root, _ := decodeObject(file.sourceContent)
+				env, _ := decodeObject(root["env"])
+				for _, key := range claudeFixedEnvKeys {
+					if _, ok := env[key]; ok {
+						collision = true
+						break
+					}
+				}
+			case OpenCode:
+				content := file.sourceContent
+				if file.format == FormatJSONC {
+					content, _ = stripJSONC(content)
+				}
+				root, _ := decodeObject(content)
+				_, model := root["model"]
+				providers, _ := decodeObject(root["provider"])
+				_, provider := providers["mtls-router"]
+				collision = model || provider
+			case Codex:
+				if file.role == "config" {
+					root, _ := decodeTOML(file.sourceContent)
+					assessment, _ := assessCodexMerge(root, nil)
+					collision = assessment.ManagedConfigCollision
+				}
+			}
+			if collision {
+				plan.collisions = append(plan.collisions, ManagedCollision{Agent: kind, Path: managedNamespace(kind, file.role), Type: "fixed_managed_path", Action: "replace"})
+				plan.drifted = append(plan.drifted, kind)
+				break
+			}
+		}
+	}
+	configFile := planFile(plan.files, Codex, "config")
+	authFile := planFile(plan.files, Codex, "auth")
+	if authFile.targetPath != "" {
+		config, _ := decodeTOML(configFile.sourceContent)
+		auth, _ := decodeObject(authFile.sourceContent)
+		assessment, _ := assessCodexMerge(config, auth)
+		plan.requiresCodexAuthApproval = assessment.RequiresAuthApproval
+	}
+	plan.drifted = uniqueKinds(plan.drifted)
+}
+
+func managedNamespace(kind Kind, role string) string {
+	switch kind {
+	case ClaudeCode:
+		return "/env"
+	case OpenCode:
+		return "/provider/mtls-router"
+	default:
+		if role == "auth" {
+			return "/auth"
+		}
+		return "model_providers.mtls-router"
+	}
+}
+
+func planFile(files []plannedFile, kind Kind, role string) plannedFile {
+	for _, file := range files {
+		if file.agent == kind && file.role == role {
+			return file
+		}
+	}
+	return plannedFile{}
+}
+
+func uniqueKinds(values []Kind) []Kind {
+	seen := map[Kind]bool{}
+	result := []Kind{}
+	for _, kind := range []Kind{ClaudeCode, OpenCode, Codex} {
+		for _, value := range values {
+			if value == kind && !seen[kind] {
+				seen[kind] = true
+				result = append(result, kind)
+			}
+		}
+	}
+	return result
 }
 
 func cloneRawObject(source map[string]json.RawMessage) map[string]json.RawMessage {
@@ -321,64 +442,5 @@ func cloneRawObject(source map[string]json.RawMessage) map[string]json.RawMessag
 }
 
 func marshalObject(value map[string]json.RawMessage) ([]byte, error) {
-	content, err := json.MarshalIndent(value, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	return append(content, '\n'), nil
-}
-
-func renderCodex(content []byte) []byte {
-	lines := strings.SplitAfter(string(content), "\n")
-	kept := make([]string, 0, len(lines))
-	inRoot := true
-	skipCustom := false
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(strings.TrimSuffix(line, "\n"))
-		withoutComment, _ := stripTOMLComment(trimmed)
-		withoutComment = strings.TrimSpace(withoutComment)
-		if strings.HasPrefix(withoutComment, "[") {
-			inRoot = false
-			if skipCustom {
-				skipCustom = false
-			}
-			if withoutComment == "[model_providers.custom]" {
-				skipCustom = true
-				continue
-			}
-		}
-		if skipCustom {
-			continue
-		}
-		if inRoot {
-			if key, _, ok := splitTOMLAssignment(withoutComment); ok {
-				switch strings.TrimSpace(key) {
-				case "model_provider", "model", "disable_response_storage":
-					continue
-				}
-			}
-		}
-		kept = append(kept, line)
-	}
-	body := strings.Join(kept, "")
-	header := "model_provider = \"custom\"\n" +
-		"model = \"gpt-5.5\"\n" +
-		"disable_response_storage = true\n\n" +
-		"[model_providers.custom]\n" +
-		"name = \"9router\"\n" +
-		"wire_api = \"responses\"\n" +
-		"requires_openai_auth = true\n" +
-		"base_url = \"http://127.0.0.1:19099/v1\"\n"
-	if body != "" {
-		return []byte(header + "\n" + body)
-	}
-	return []byte(header)
-}
-
-func renderCodexAuth(key []byte) ([]byte, error) {
-	content, err := json.MarshalIndent(map[string]string{"OPENAI_API_KEY": string(key)}, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	return append(content, '\n'), nil
+	return marshalIndentedJSON(value)
 }

@@ -86,7 +86,32 @@ The manager preserves unrelated supported settings, but it does not attempt to g
 
 `PREVIEW_STALE` means a selected target changed after preview. The write is rejected before mutation.
 
-Return to detection, generate a new preview, review all paths and warnings again, then re-enter the key. For an explicit `OPENCODE_CONFIG`, verify that the exact override path was not changed after preview. Do not retry with an old revision token. The desktop clears transient key input when the stale preview is handled.
+Return to configuration and generate a new preview from the retained key-free catalog/config when the client permits it. If the catalog token is also stale, enter the key and discover models again. For an explicit `OPENCODE_CONFIG`, verify that the exact override path was not changed after preview. Do not retry with an old revision token.
+
+## Model configuration errors
+
+All model errors fail closed: no Agent or last-applied sidecar file is changed,
+and there is no static-model, cached-catalog, existing-model, or substitute-model
+fallback.
+
+| Code | Action |
+|---|---|
+| `MODEL_AUTH_FAILED` | Re-enter the API key; the catalog endpoint returned 401 or 403. |
+| `MODEL_DISCOVERY_FAILED` | Check the trusted local router, network, and upstream service, then retry. Redirects and non-auth HTTP failures use this code. |
+| `MODEL_RESPONSE_INVALID` | Report an upstream service-contract failure; the successful response was malformed, excessive, or not standard `data[].id` JSON. |
+| `MODEL_CATALOG_EMPTY` | Confirm that the account/key has visible models, then retry discovery. |
+| `MODEL_CATALOG_STALE` | Rediscover models. Router address, deployment, protocol, owner, or token trust state changed. |
+| `MODEL_CONFIG_INVALID` | Correct the canonical model config at the reported JSON Pointer. Do not place credentials, URLs, provider/header fields, or arbitrary Agent config in `extra`/`options`. |
+| `MODEL_NOT_AVAILABLE` | A selected model disappeared during the write-time refresh. Rediscover and select explicitly; the manager will not substitute one. |
+| `MANAGED_CONFIG_DRIFT` | Generate a new preview, inspect only the listed managed namespaces, and explicitly approve overwrite or cancel. |
+| `MODEL_STATE_INVALID` | Preserve Agent backups and resolve any transaction journal first. Move the entire invalid `agent-transactions` directory aside only after review; do not replace just the signing key or sidecar. |
+| `AGENT_OPERATION_BUSY` | Wait for the other desktop/CLI Agent operation to finish, then retry. Do not delete the lock or transaction state. |
+| `CODEX_AUTH_UNSUPPORTED` | Resolve forced ChatGPT login, managed policy, or incompatible credential-store policy before retrying. The manager will not weaken policy or delete OS keyring credentials. |
+
+`configured=true` in detection is not an authorization result. It means only
+that local managed structure is complete. Use model discovery to check current
+key visibility. Catalog refresh is manual; re-enter Agent configuration and
+supply the key. See [Agent Model Configuration](AGENT_MODELS.md).
 
 ## Write or rollback failed
 

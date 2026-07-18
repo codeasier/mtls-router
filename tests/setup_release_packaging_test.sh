@@ -5,6 +5,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKFLOW="$ROOT/.github/workflows/release.yml"
 RECOVERY="$ROOT/.github/workflows/recover-release.yml"
 PACKAGE_SCRIPT="$ROOT/scripts/package-release.sh"
+PROTOCOL_CHECK="$ROOT/scripts/check-release-protocol.sh"
+COMPATIBILITY="$ROOT/internal/manager/agent/testdata/compatibility.json"
 
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 contains() { grep -Fq -- "$1" "$WORKFLOW" || grep -Fq -- "$1" "$PACKAGE_SCRIPT" || fail "release implementation missing: $1"; }
@@ -39,6 +41,40 @@ package_contains 'test "$(find release -maxdepth 1 -type f -name '\''CodeasierRo
 package_contains 'test "$(find release -maxdepth 1 -type f -name '\''signing-status-*'\'' | wc -l)" -eq 6'
 package_contains 'test "$(find release -maxdepth 1 -type f | wc -l)" -eq 37'
 contains './scripts/package-release.sh'
+package_contains './scripts/check-release-protocol.sh protocol-metadata'
+[[ -x "$PROTOCOL_CHECK" ]] || fail 'release protocol preflight is missing or not executable'
+[[ "$(grep -Fc 'release-metadata-' "$WORKFLOW")" -ge 3 ]] || fail 'release producers/aggregation do not carry protocol metadata'
+grep -Fq 'mv binaries/release-metadata-*.json desktop-packages/release-metadata-*.json protocol-metadata/' "$RECOVERY" || fail 'recovery release does not collect protocol metadata'
+
+jq -e '
+  .manifest_version == 1 and .retrieved == "2026-07-18" and
+  ([.claude_code, .opencode, .codex] | all(
+    (.tested_version | type == "string" and length > 0) and
+    (.source | startswith("https://")) and
+    (.revision | type == "string" and length > 0) and
+    (.sha256 | test("^[0-9a-f]{64}$")) and
+    (.integrity | startswith("sha512-"))
+  )) and
+  (.opencode.schema_source | startswith("https://")) and
+  (.opencode.schema_revision | length > 0) and
+  (.opencode.schema_sha256 | test("^[0-9a-f]{64}$")) and
+  (.codex.config_revision | test("^[0-9a-f]{40}$")) and
+  (.codex.config_source_archive_sha256 | test("^[0-9a-f]{64}$"))
+' "$COMPATIBILITY" >/dev/null || fail 'Agent compatibility manifest pins are incomplete'
+
+protocol_tmp="$(mktemp -d)"
+trap 'rm -rf "$protocol_tmp"' EXIT
+for kind in cli desktop; do
+  for os_arch in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64 windows-arm64; do
+    printf '{"schema_version":1,"producer":"%s-%s","management_protocol_version":"2"}\n' "$kind" "$os_arch" >"$protocol_tmp/release-metadata-$kind-$os_arch.json"
+  done
+done
+"$PROTOCOL_CHECK" "$protocol_tmp" || fail 'matching protocol-v2 metadata was rejected'
+jq '.management_protocol_version = "1"' "$protocol_tmp/release-metadata-cli-linux-amd64.json" >"$protocol_tmp/mixed.json"
+mv "$protocol_tmp/mixed.json" "$protocol_tmp/release-metadata-cli-linux-amd64.json"
+if "$PROTOCOL_CHECK" "$protocol_tmp" >/dev/null 2>&1; then
+  fail 'mixed protocol-v1/v2 release metadata was accepted'
+fi
 [[ "$(grep -Fc 'version="${GITHUB_REF_NAME#v}"' "$WORKFLOW")" -eq 2 ]] || \
   fail 'CLI and desktop jobs must derive tag versions without the v prefix'
 [[ "$(grep -Fc 'version="$DISPATCH_VERSION"' "$WORKFLOW")" -eq 2 ]] || \

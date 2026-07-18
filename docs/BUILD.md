@@ -33,6 +33,8 @@ go build -trimpath -o mtls-router-manager ./cmd/mtls-router-manager
 
 `mtls-router-manager` has one command, `serve`. It reads one line-delimited JSON request at a time from stdin, processes requests sequentially, writes only protocol responses to stdout, and exits cleanly on stdin EOF. Diagnostics belong on stderr or in logs. Never add API keys to manager arguments or environment variables.
 
+Agent configuration uses management protocol v2. Release tests validate generated Claude JSON, opencode JSON, and Codex TOML/auth output through repository parser and snapshot coverage. The exact current stable Agent/schema inputs used by those tests, including source URL, revision, digest, and retrieval date, are pinned in [`internal/manager/agent/testdata/compatibility.json`](../internal/manager/agent/testdata/compatibility.json). Updating a pin requires reviewing the upstream schema, updating renderer/schema tests where necessary, and keeping English/Chinese Agent documentation aligned.
+
 ## Local placeholder router
 
 For local router development, run:
@@ -65,7 +67,7 @@ Link these shared metadata variables into both the router and manager:
 - `github.com/codeasier/mtls-router/internal/version.BuildDate`
 - `github.com/codeasier/mtls-router/internal/version.DeploymentID`
 
-`internal/version.ManagementProtocolVersion` is the code-owned protocol ID and is currently `1`; it is not an `-X` linker variable. `DeploymentID` is a non-sensitive identifier for the fixed service environment. A production build must use the same non-empty, non-`dev`, non-`unknown` deployment ID and protocol ID in router, manager, and desktop. External-router reuse is intentionally disabled for default development identities.
+`internal/version.ManagementProtocolVersion` is the code-owned protocol ID and is currently `2`; it is not an `-X` linker variable. `DeploymentID` is a non-sensitive identifier for the fixed service environment. A production build must use the same non-empty, non-`dev`, non-`unknown` deployment ID and protocol ID in router, manager, and desktop. External-router reuse is intentionally disabled for default development identities.
 
 Example router build:
 
@@ -135,7 +137,7 @@ The sidecar script uses all three real files in `secrets/` when present; if none
 For a local native development launch:
 
 ```bash
-DEPLOYMENT_ID=dev VERSION=dev MANAGEMENT_PROTOCOL_VERSION=1 npm run tauri -- dev
+DEPLOYMENT_ID=dev VERSION=dev MANAGEMENT_PROTOCOL_VERSION=2 npm run tauri -- dev
 ```
 
 For a native bundle build, set release metadata explicitly:
@@ -143,7 +145,7 @@ For a native bundle build, set release metadata explicitly:
 ```bash
 DEPLOYMENT_ID=production-service \
 VERSION=v0.2.0 \
-MANAGEMENT_PROTOCOL_VERSION=1 \
+MANAGEMENT_PROTOCOL_VERSION=2 \
 npm run tauri -- build --target aarch64-apple-darwin
 ```
 
@@ -172,7 +174,7 @@ That automated inspection does not install or launch the packaged application. B
 2. Inspect package contents for exactly one architecture-compatible manager and router sidecar and no raw PEM/key files.
 3. Confirm executable permissions on macOS/Linux and current-user installation/launch without elevation.
 4. Recompute and compare packaged sidecar SHA-256 values with the values embedded in the desktop build.
-5. Run `manager.info` and router `/version`; require matching version, non-default deployment ID, and management protocol `1` across desktop, manager, and router.
+5. Run `manager.info` and router `/version`; require matching version, non-default deployment ID, and management protocol `2` across desktop, manager, router, setup metadata, and release artifact metadata. Reject every mixed v1/v2 combination before key-bearing Agent requests.
 6. Verify Windows signature status or macOS code signature, notarization, and stapling with native platform tools; explicitly record absent status.
 7. Install and launch, validate first launch, second-instance activation, sidecar failure behavior, tray/close/quit, default autostart, external reuse, unknown port conflict, Agent preview/write/rollback, logs, and uninstall preparation/cleanup.
 8. Confirm Windows uninstall removes current-user autostart. Confirm macOS/Linux **Prepare for uninstall** removes autostart and exits before deletion.
@@ -186,6 +188,8 @@ Do not publish if any target lacks package-inspection, signing-status, and succe
 The current `.github/workflows/release.yml` builds router and manager binaries for all six Go targets and creates six platform archives containing the exact router/manager pair and setup script. In parallel, six native runners build and inspect Windows x86_64/arm64 NSIS installers, macOS Intel/Apple Silicon DMGs, and Linux x86_64/arm64 AppImages. A manual dispatch is validation-only; a version tag waits for all 12 build jobs, verifies the six desktop package checksums, assembles one `SHA256SUMS`, and publishes and mirrors the CLI and desktop assets plus six signing-status files.
 
 Production CLI and desktop sidecars require repository secrets `CLIENT_CERT_PEM`, `CLIENT_KEY_PEM`, and `UPSTREAM_CA_PEM`, plus variables `UPSTREAM_URL` and a non-default `DEPLOYMENT_ID`. Optional platform credentials select the signed/notarized release branches described above.
+
+Each CLI and desktop matrix producer emits code-owned protocol metadata. `scripts/package-release.sh` requires exactly one metadata file per producer and requires every file to declare schema `1` and management protocol `2` before it assembles archives. This preflight is shared by normal and recovery publication, so a valid but mixed v1/v2 artifact set is not publishable.
 
 Set release inputs with `gh`:
 

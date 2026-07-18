@@ -1,5 +1,14 @@
 # Tauri Desktop Application Specification
 
+> **Agent model behavior superseded:** `specs/agent-models-config/spec.md`
+> supersedes the Agent portions of FR-2, FR-8 through FR-11, and FR-15. In
+> particular, the old method list/deadlines, key-after-preview sequence,
+> key-free/static preview, whole Claude `env` replacement, static opencode
+> models, Codex `custom` provider/auth shape, and old `configured` meaning are
+> historical v1 behavior only. They are not protocol-v2 acceptance evidence.
+> Unrelated desktop, lifecycle, transaction, packaging, and security clauses in
+> this document remain current.
+
 ## Change ID
 
 `tauri-desktop-app`
@@ -193,7 +202,7 @@ Given the desktop is already running for the user, when it is launched again,
 then the existing window is activated and no second manager or router is
 created.
 
-### FR-2: Manager protocol
+### FR-2: Manager protocol (Agent subset superseded by protocol v2)
 
 The manager MUST support line-delimited JSON requests and responses over stdin
 and stdout. Every message MUST carry a request ID. Responses MUST use either a
@@ -423,7 +432,7 @@ window from the tray, then the router PID remains unchanged.
 Given an external compatible router, when the user chooses tray quit, then the
 desktop exits and the external router remains running.
 
-### FR-8: Agent detection
+### FR-8: Agent detection (configured semantics superseded)
 
 The manager MUST detect Claude Code, opencode, and Codex using current setup
 semantics, including environment-specific configuration locations and Codex
@@ -442,7 +451,7 @@ Given a detected Agent with invalid JSON, JSONC, or TOML for the required
 operation, when detection or preview runs, then the UI reports the invalid
 target and no file is modified.
 
-### FR-9: Agent preview
+### FR-9: Agent preview (request/config content superseded)
 
 Preview MUST read the current target files and return a structured change set
 containing affected paths, create/replace/preserve operations, backup plan,
@@ -471,7 +480,7 @@ Given Codex is selected, when preview runs, then it separately identifies
 changes to `config.toml` and `auth.json` and states that `auth.json` will contain
 the supplied API key without displaying it.
 
-### FR-10: Agent write transaction
+### FR-10: Agent write transaction (key timing/request shape superseded)
 
 The user MUST explicitly select Agents, approve a preview, and enter an API key
 before write. The key MUST travel through a controlled stdin/IPC payload and
@@ -528,7 +537,7 @@ Given an earlier file was replaced and a later required file fails, when the
 transaction ends, then the earlier file is restored and all Agents are reported
 accurately.
 
-### FR-11: Existing Agent semantics
+### FR-11: Existing Agent semantics (superseded by Agent-native v2 rendering)
 
 The manager MUST preserve these current behaviors:
 
@@ -588,7 +597,7 @@ explicitly.
 No platform uninstall path may restore, delete, or rewrite Agent
 configurations, backups, logs, or diagnostic state.
 
-### FR-15: CLI compatibility
+### FR-15: CLI compatibility (Agent automation subset superseded)
 
 The existing setup commands, compatibility aliases, secure download behavior,
 state safety, and documented outcomes MUST remain available after manager

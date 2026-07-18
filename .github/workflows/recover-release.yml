@@ -139,6 +139,10 @@ jobs:
           merge-multiple: true
           run-id: ${{ inputs.source_run_id }}
           github-token: ${{ github.token }}
+      - name: Collect protocol metadata
+        run: |
+          mkdir protocol-metadata
+          mv binaries/release-metadata-*.json desktop-packages/release-metadata-*.json protocol-metadata/
       - name: Preflight and package
         env:
           DOWNLOAD_BASE_URL: https://downloads.codeasier.top/${{ github.event.repository.name }}/${{ inputs.release_tag }}

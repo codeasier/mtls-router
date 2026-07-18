@@ -153,7 +153,7 @@ Returns JSON describing the running binary and process:
   "commit": "abc1234",
   "build_date": "2026-06-21T09:23:24Z",
   "deployment_id": "production-service",
-  "management_protocol_version": "1",
+  "management_protocol_version": "2",
   "pid": 12345,
   "started_at": "2026-06-21T09:23:24Z"
 }
@@ -197,15 +197,17 @@ The setup scripts separate router lifecycle commands from agent configuration co
 
 `router install` only downloads and installs the binary. `router start` only starts an already installed binary and fails with a clear message if it is missing. `router setup` installs and starts the router, matching the no-argument default behavior.
 
-`agent print-config` prints the established key-placeholder configuration snippets after the manager validates a key-free change preview. `agent write-config --agent=...` only writes agent configuration and requires an explicit `--agent=` value plus hidden interactive key input. The legacy top-level `--print-config` and `--write-config --agent=...` options remain compatibility aliases for the agent commands. Agent commands only execute a checksum-verified sibling manager or a receipt-verified installed manager; they never download a manager implicitly.
+`agent print-config` and `agent write-config --agent=...` both read the key without echo before discovering the complete authenticated `GET /v1/models` catalog. They require explicit Agent-native model choices and never select or infer a model automatically. Print returns manager-rendered, API-key-redacted managed fragments; write shows an exact preview and revalidates the catalog immediately before one transactional write. Add `--model-config=<path>` to supply the key-free canonical JSON choices instead of answering model prompts. The legacy top-level `--print-config` and `--write-config --agent=...` options remain compatibility aliases for the same v2 flow. Agent commands only execute a checksum-verified sibling manager or a receipt-verified installed manager; they never download a manager implicitly.
 
-`MTLS_ROUTER_OPENAI_API_KEY` has been removed because environment variables are an unsafe secret transport. It no longer supplies a key. Noninteractive automation must invoke the verified installed `mtls-router-manager serve`, obtain an `agent.preview` revision token, and send `api_key` only in a subsequent line-delimited `agent.write` request on stdin. The manager writes protocol responses only to stdout and processes requests sequentially until stdin EOF. Do not put the key in command-line arguments, environment variables, logs, shell history, or temporary request files. See the exact hidden-input, cross-platform [stdin manager automation](docs/DESKTOP.md#stdin-manager-automation).
+`MTLS_ROUTER_OPENAI_API_KEY` has been removed because environment variables are an unsafe secret transport. It no longer supplies a key. Noninteractive automation must verify `manager.info` protocol `2`, call `agent.models`, construct canonical model config, then call `agent.render` or `agent.preview` and `agent.write`. The key appears only in the `agent.models` and `agent.write` stdin request bodies. Do not put it in command-line arguments, environment variables, model config, logs, shell history, or temporary request files. See the complete [Agent Model Configuration](docs/AGENT_MODELS.md#protocol-v2-automation) contract.
 
 The `mtls-router` binary itself manages the router only; it does not provide agent configuration commands such as `print-config`.
 
-- Claude Code writes the `env` block into `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR/settings.json`).
-- opencode writes the `mtls-router` provider into the selected configuration path. With no explicit `OPENCODE_CONFIG`, an existing canonical `~/.config/opencode/opencode.jsonc` is migrated to sibling `opencode.json`; an explicit `.jsonc` override is normalized in place at that exact path. Both operations lose comments and formatting.
-- Codex CLI writes the `[model_providers.custom]` block (with `model_provider = "custom"` and `name = "9router"`) into `~/.codex/config.toml` (respecting `CODEX_HOME`).
+- Claude Code merges only its managed `env` keys into `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR/settings.json`) and supports primary plus inheritable Haiku, Sonnet, and Opus selections.
+- opencode writes the exact selected catalog subset under `provider.mtls-router` and its owned root default model. With no explicit `OPENCODE_CONFIG`, an existing canonical `~/.config/opencode/opencode.jsonc` is migrated to sibling `opencode.json`; an explicit `.jsonc` override is normalized in place at that exact path. Both operations lose comments and formatting.
+- Codex writes the dedicated `[model_providers.mtls-router]` Responses provider and selected typed model settings into `~/.codex/config.toml` (respecting `CODEX_HOME`). Switching shared CLI/IDE authentication to official file-backed API-key mode requires separate preview approval.
+
+Every model returned by the service is supported for Claude Messages and token counting, opencode Chat Completions, compatibility Completions, and Codex Responses, including streaming. `configured` detection means only that the local managed structure is complete; current authorization is established by discovery and write-time refresh. Optional model settings remain omitted when unset. Discovery failures, stale catalogs, removed models, drift, or invalid ownership state fail closed without static/cached fallback or partial changes. Unrelated settings are preserved; managed drift requires approval, and backups may contain keys and must be protected. See [Agent Model Configuration](docs/AGENT_MODELS.md) for the canonical schema, options, refresh, failures, migration, ownership, and backup contract.
 
 The setup scripts do not install any agent and do not launch any agent.
 

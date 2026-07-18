@@ -1,0 +1,23 @@
+[
+  {
+    "name": "all sections and unicode",
+    "agents": ["claude", "opencode", "codex"],
+    "catalog": ["model-a", "模型-β"],
+    "input": "{\"codex\":{\"verbosity\":\"medium\",\"model\":\"model-a\"},\"version\":1,\"opencode\":{\"models\":{\"模型-β\":{\"options\":{\"z\":1e-7,\"😀\":\"astral\",\"\":\"bmp\"}},\"model-a\":{}},\"default_model\":\"模型-β\"},\"claude\":{\"opus\":{\"inherit_primary\":true},\"primary\":{\"name\":\"Módèle\",\"model\":\"model-a\"},\"sonnet\":{\"model\":\"模型-β\"},\"haiku\":{\"inherit_primary\":true}}}",
+    "canonical": "{\"claude\":{\"haiku\":{\"inherit_primary\":true},\"opus\":{\"inherit_primary\":true},\"primary\":{\"model\":\"model-a\",\"name\":\"Módèle\"},\"sonnet\":{\"model\":\"模型-β\"}},\"codex\":{\"model\":\"model-a\",\"verbosity\":\"medium\"},\"opencode\":{\"default_model\":\"模型-β\",\"models\":{\"model-a\":{},\"模型-β\":{\"options\":{\"z\":1e-7,\"😀\":\"astral\",\"\":\"bmp\"}}}},\"version\":1}"
+  },
+  {
+    "name": "safe integer",
+    "agents": ["codex"],
+    "catalog": ["x"],
+    "input": "{\"version\":1,\"codex\":{\"model\":\"x\",\"context_window\":9007199254740991}}",
+    "canonical": "{\"codex\":{\"context_window\":9007199254740991,\"model\":\"x\"},\"version\":1}"
+  },
+  {
+    "name": "controls escapes and number forms",
+    "agents": ["opencode"],
+    "catalog": ["control-model"],
+    "input": "{\"opencode\":{\"models\":{\"control-model\":{\"name\":\"quote \\\" slash \\\\ snow 雪\",\"options\":{\"negativeZero\":-0,\"small\":0.000001,\"large\":1e21,\"control\":\"\\u0000\\n\"}}},\"default_model\":\"control-model\"},\"version\":1}",
+    "canonical": "{\"opencode\":{\"default_model\":\"control-model\",\"models\":{\"control-model\":{\"name\":\"quote \\\" slash \\\\ snow 雪\",\"options\":{\"control\":\"\\u0000\\n\",\"large\":1e+21,\"negativeZero\":0,\"small\":0.000001}}}},\"version\":1}"
+  }
+]
