@@ -10,6 +10,23 @@ on:
         description: Desktop SemVer for a validation-only build
         required: true
         default: 0.1.0-dev
+      target:
+        description: OS and architecture to validate
+        required: true
+        type: choice
+        default: all
+        options:
+          - all
+          - windows-amd64
+          - windows-arm64
+          - darwin-amd64
+          - darwin-arm64
+          - linux-amd64
+          - linux-arm64
+      upstream_url:
+        description: Optional HTTPS upstream override for this validation build
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -19,25 +36,61 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  prepare:
+    name: Prepare build matrices
+    runs-on: ubuntu-latest
+    outputs:
+      cli-matrix: ${{ steps.matrix.outputs.cli-matrix }}
+      desktop-matrix: ${{ steps.matrix.outputs.desktop-matrix }}
+    steps:
+      - name: Select build matrices
+        id: matrix
+        shell: bash
+        env:
+          SELECTED_TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.target || 'all' }}
+          VALIDATION_UPSTREAM: ${{ github.event_name == 'workflow_dispatch' && inputs.upstream_url || '' }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$VALIDATION_UPSTREAM" ]]; then
+            [[ "$VALIDATION_UPSTREAM" == https://* && "$VALIDATION_UPSTREAM" != *[[:space:]\'\"]* ]] || {
+              echo 'validation upstream must be an HTTPS URL without whitespace or quotes' >&2
+              exit 1
+            }
+          fi
+          cli='[
+            {"name":"linux-amd64","goos":"linux","goarch":"amd64"},
+            {"name":"linux-arm64","goos":"linux","goarch":"arm64"},
+            {"name":"darwin-amd64","goos":"darwin","goarch":"amd64"},
+            {"name":"darwin-arm64","goos":"darwin","goarch":"arm64"},
+            {"name":"windows-amd64","goos":"windows","goarch":"amd64"},
+            {"name":"windows-arm64","goos":"windows","goarch":"arm64"}
+          ]'
+          desktop='[
+            {"name":"windows-amd64","runner":"windows-2025","target":"x86_64-pc-windows-msvc","os":"windows","arch":"amd64","bundles":"nsis"},
+            {"name":"windows-arm64","runner":"windows-11-arm","target":"aarch64-pc-windows-msvc","os":"windows","arch":"arm64","bundles":"nsis"},
+            {"name":"darwin-amd64","runner":"macos-15-intel","target":"x86_64-apple-darwin","os":"darwin","arch":"amd64","bundles":"dmg"},
+            {"name":"darwin-arm64","runner":"macos-15","target":"aarch64-apple-darwin","os":"darwin","arch":"arm64","bundles":"dmg"},
+            {"name":"linux-amd64","runner":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu","os":"linux","arch":"amd64","bundles":"appimage"},
+            {"name":"linux-arm64","runner":"ubuntu-24.04-arm","target":"aarch64-unknown-linux-gnu","os":"linux","arch":"arm64","bundles":"appimage"}
+          ]'
+          if [[ "$SELECTED_TARGET" != all ]]; then
+            cli="$(jq -c --arg target "$SELECTED_TARGET" '[.[] | select(.name == $target)]' <<<"$cli")"
+            desktop="$(jq -c --arg target "$SELECTED_TARGET" '[.[] | select(.name == $target)]' <<<"$desktop")"
+            [[ "$(jq length <<<"$cli")" -eq 1 && "$(jq length <<<"$desktop")" -eq 1 ]] || {
+              echo "unsupported validation target: $SELECTED_TARGET" >&2
+              exit 1
+            }
+          fi
+          printf 'cli-matrix={"include":%s}\n' "$(jq -c . <<<"$cli")" >>"$GITHUB_OUTPUT"
+          printf 'desktop-matrix={"include":%s}\n' "$(jq -c . <<<"$desktop")" >>"$GITHUB_OUTPUT"
+
   build:
     name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: prepare
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-          - goos: linux
-            goarch: arm64
-          - goos: darwin
-            goarch: amd64
-          - goos: darwin
-            goarch: arm64
-          - goos: windows
-            goarch: amd64
-          - goos: windows
-            goarch: arm64
+      matrix: ${{ fromJSON(needs.prepare.outputs.cli-matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -64,7 +117,7 @@ jobs:
           CLIENT_CERT_PEM: ${{ secrets.CLIENT_CERT_PEM }}
           CLIENT_KEY_PEM: ${{ secrets.CLIENT_KEY_PEM }}
           UPSTREAM_CA_PEM: ${{ secrets.UPSTREAM_CA_PEM }}
-          UPSTREAM_URL: ${{ vars.UPSTREAM_URL }}
+          UPSTREAM_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.upstream_url || vars.UPSTREAM_URL }}
           DEPLOYMENT_ID: ${{ vars.DEPLOYMENT_ID }}
         run: |
           case "${DEPLOYMENT_ID:-}" in ""|dev|unknown) echo "DEPLOYMENT_ID must be a non-default production identifier" >&2; exit 1;; esac
@@ -88,46 +141,16 @@ jobs:
 
   desktop:
     name: Desktop ${{ matrix.target }}
+    needs: prepare
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - runner: windows-2025
-            target: x86_64-pc-windows-msvc
-            os: windows
-            arch: amd64
-            bundles: nsis
-          - runner: windows-11-arm
-            target: aarch64-pc-windows-msvc
-            os: windows
-            arch: arm64
-            bundles: nsis
-          - runner: macos-15-intel
-            target: x86_64-apple-darwin
-            os: darwin
-            arch: amd64
-            bundles: dmg
-          - runner: macos-15
-            target: aarch64-apple-darwin
-            os: darwin
-            arch: arm64
-            bundles: dmg
-          - runner: ubuntu-24.04
-            target: x86_64-unknown-linux-gnu
-            os: linux
-            arch: amd64
-            bundles: appimage
-          - runner: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
-            os: linux
-            arch: arm64
-            bundles: appimage
+      matrix: ${{ fromJSON(needs.prepare.outputs.desktop-matrix) }}
     env:
       CLIENT_CERT_PEM: ${{ secrets.CLIENT_CERT_PEM }}
       CLIENT_KEY_PEM: ${{ secrets.CLIENT_KEY_PEM }}
       UPSTREAM_CA_PEM: ${{ secrets.UPSTREAM_CA_PEM }}
-      UPSTREAM_URL: ${{ vars.UPSTREAM_URL }}
+      UPSTREAM_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.upstream_url || vars.UPSTREAM_URL }}
       DEPLOYMENT_ID: ${{ vars.DEPLOYMENT_ID }}
       MANAGEMENT_PROTOCOL_VERSION: '2'
       APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}

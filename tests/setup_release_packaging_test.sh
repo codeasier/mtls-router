@@ -112,27 +112,10 @@ desktop_download_glob="$(awk '
 [[ "$desktop_download_glob" == 'mtls-router-desktop-*' ]] || \
   fail "desktop aggregation glob is not mtls-router-desktop-*: $desktop_download_glob"
 
-desktop_matrix_entries="$(awk '
-  /^  desktop:$/ { capture=1; next }
-  capture && /^  release:$/ { exit }
-  capture && /^[[:space:]]+os: (windows|darwin|linux)$/ { os=$2; next }
-  capture && os != "" && /^[[:space:]]+arch: (amd64|arm64)$/ {
-    print os, $2
-    os=""
-  }
-' "$WORKFLOW")"
-[[ "$(printf '%s\n' "$desktop_matrix_entries" | awk 'NF == 2 {n++} END{print n+0}')" -eq 6 ]] || \
-  fail 'desktop release matrix must contain six os/arch producers'
-for expected in \
-  'windows amd64' 'windows arm64' \
-  'darwin amd64' 'darwin arm64' \
-  'linux amd64' 'linux arm64'; do
-  if ! printf '%s\n' "$desktop_matrix_entries" | awk -v expected="$expected" '$0 == expected {found=1} END{exit !found}'; then
-    fail "desktop release matrix is missing producer: $expected"
-  fi
-done
-
-while read -r os arch; do
+for os_arch in windows-amd64 windows-arm64 darwin-amd64 darwin-arm64 linux-amd64 linux-arm64; do
+  os=${os_arch%-*}
+  arch=${os_arch#*-}
+  grep -Fq "{\"name\":\"$os_arch\"" "$WORKFLOW" || fail "release matrix is missing target: $os_arch"
   producer_name="$(printf '%s\n' "$desktop_upload_template" | awk -v os="$os" -v arch="$arch" '{
     gsub(/\$\{\{ matrix\.os \}\}/, os)
     gsub(/\$\{\{ matrix\.arch \}\}/, arch)
@@ -145,7 +128,13 @@ while read -r os arch; do
     $desktop_download_glob) ;;
     *) fail "desktop producer $producer_name does not match $desktop_download_glob" ;;
   esac
-done <<< "$desktop_matrix_entries"
+done
+[[ "$(grep -Fc 'matrix: ${{ fromJSON(needs.prepare.outputs.' "$WORKFLOW")" -eq 2 ]] || \
+  fail 'release producer jobs must consume prepared dynamic matrices'
+grep -Fq 'SELECTED_TARGET: ${{ github.event_name == '\''workflow_dispatch'\'' && inputs.target || '\''all'\'' }}' "$WORKFLOW" || \
+  fail 'tag releases must select all build targets'
+[[ "$(grep -Fc 'UPSTREAM_URL: ${{ github.event_name == '\''workflow_dispatch'\'' && inputs.upstream_url || vars.UPSTREAM_URL }}' "$WORKFLOW")" -eq 2 ]] || \
+  fail 'validation upstream override must be isolated to producer jobs'
 
 if grep -Fq 'http://' "$WORKFLOW"; then
   fail "workflow contains a plaintext HTTP URL"
