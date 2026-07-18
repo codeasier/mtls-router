@@ -20,6 +20,7 @@ import (
 	"github.com/codeasier/mtls-router/internal/manager/discovery"
 	"github.com/codeasier/mtls-router/internal/manager/lifecycle"
 	"github.com/codeasier/mtls-router/internal/manager/metadata"
+	"github.com/codeasier/mtls-router/internal/manager/occupant"
 	managerpaths "github.com/codeasier/mtls-router/internal/manager/paths"
 	"github.com/codeasier/mtls-router/internal/manager/process"
 	"github.com/codeasier/mtls-router/internal/manager/protocol"
@@ -62,12 +63,18 @@ type agentService interface {
 	Write(context.Context, agent.WriteRequest) (agent.WriteResult, error)
 }
 
+type occupantService interface {
+	Inspect(context.Context) (occupant.Inspection, error)
+	ForceTerminate(context.Context, string) (occupant.Result, error)
+}
+
 type dependencies struct {
 	info      func() protocol.ManagerInfoResult
 	discover  func(context.Context) discovery.Result
 	lifecycle lifecycleService
 	detect    func() ([]agent.State, error)
 	agent     agentService
+	occupant  occupantService
 	now       func() time.Time
 }
 
@@ -160,27 +167,46 @@ func New(config Config) (*App, error) {
 		ParentIdentity:    config.ParentIdentity,
 		RecentOutputBytes: maxLogReadBytes,
 	}, lifecycle.Dependencies{Discover: discoverer.Discover})
+	occupantManager := occupant.New(occupant.Config{
+		ListenAddr: config.ListenAddr, DesktopPID: config.ParentIdentity.PID, ManagerIdentity: config.ManagerIdentity,
+		IsProtected: func(candidate occupant.Identity) bool {
+			for _, path := range []string{config.Paths.DesktopStateFile, config.Paths.CLIStateFile} {
+				value, err := state.Read(path)
+				if err != nil {
+					continue
+				}
+				managed := process.Identity{PID: value.PID, StartedAt: value.ProcessStartedAt, Executable: value.ProcessExecutable}
+				same, _ := process.SameIdentity(candidate.Process, managed)
+				if same {
+					return true
+				}
+			}
+			return false
+		},
+	}, occupant.Dependencies{Discover: discoverer.Discover})
 
 	return newWithDependencies(config, dependencies{
 		info: metadata.Info, discover: discoverer.Discover, lifecycle: lifecycleManager,
-		detect: config.AgentDetector.Detect, agent: agentManager, now: time.Now,
+		detect: config.AgentDetector.Detect, agent: agentManager, occupant: occupantManager, now: time.Now,
 	}), nil
 }
 
 func newWithDependencies(config Config, deps dependencies) *App {
 	app := &App{config: config, deps: deps}
 	app.server = protocol.NewServer(map[protocol.Method]protocol.Handler{
-		protocol.MethodManagerInfo:        app.managerInfo,
-		protocol.MethodDiagnosticsCollect: app.diagnosticsCollect,
-		protocol.MethodRouterStatus:       app.routerStatus,
-		protocol.MethodRouterStart:        app.routerStart,
-		protocol.MethodRouterStop:         app.routerStop,
-		protocol.MethodRouterHealth:       app.routerHealth,
-		protocol.MethodRouterVersion:      app.routerVersion,
-		protocol.MethodRouterLogs:         app.routerLogs,
-		protocol.MethodAgentDetect:        app.agentDetect,
-		protocol.MethodAgentPreview:       app.agentPreview,
-		protocol.MethodAgentWrite:         app.agentWrite,
+		protocol.MethodManagerInfo:                  app.managerInfo,
+		protocol.MethodDiagnosticsCollect:           app.diagnosticsCollect,
+		protocol.MethodRouterStatus:                 app.routerStatus,
+		protocol.MethodRouterStart:                  app.routerStart,
+		protocol.MethodRouterStop:                   app.routerStop,
+		protocol.MethodRouterHealth:                 app.routerHealth,
+		protocol.MethodRouterVersion:                app.routerVersion,
+		protocol.MethodRouterLogs:                   app.routerLogs,
+		protocol.MethodRouterInspectOccupant:        app.routerInspectOccupant,
+		protocol.MethodRouterForceTerminateOccupant: app.routerForceTerminateOccupant,
+		protocol.MethodAgentDetect:                  app.agentDetect,
+		protocol.MethodAgentPreview:                 app.agentPreview,
+		protocol.MethodAgentWrite:                   app.agentWrite,
 	})
 	return app
 }
@@ -379,6 +405,42 @@ func (a *App) routerLogs(ctx context.Context, params json.RawMessage) (any, *pro
 		lines = lastLines(recent, request.Limit)
 	}
 	return protocol.RouterLogsResult{Lines: lines}, nil
+}
+
+func (a *App) routerInspectOccupant(ctx context.Context, params json.RawMessage) (any, *protocol.Error) {
+	if err := decodeEmpty(params); err != nil {
+		return nil, err
+	}
+	if a.deps.occupant == nil {
+		return nil, mapOccupantError(occupant.ErrIdentityUnavailable)
+	}
+	inspection, err := a.deps.occupant.Inspect(ctx)
+	if err != nil {
+		return nil, mapOccupantError(err)
+	}
+	return protocol.RouterOccupantInspectionResult{
+		PID: inspection.PID, ProcessName: inspection.ProcessName, Executable: inspection.Executable,
+		ListenAddr: inspection.ListenAddr, ConfirmationToken: inspection.ConfirmationToken, ExpiresAt: inspection.ExpiresAt,
+	}, nil
+}
+
+func (a *App) routerForceTerminateOccupant(ctx context.Context, params json.RawMessage) (any, *protocol.Error) {
+	var request protocol.RouterForceTerminateOccupantParams
+	if err := protocol.DecodeParams(params, &request); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(request.ConfirmationToken) == "" {
+		return nil, invalidParams("confirmation_token is required")
+	}
+	if a.deps.occupant == nil {
+		return nil, mapOccupantError(occupant.ErrIdentityUnavailable)
+	}
+	result, err := a.deps.occupant.ForceTerminate(ctx, request.ConfirmationToken)
+	request.ConfirmationToken = ""
+	if err != nil {
+		return nil, mapOccupantError(err)
+	}
+	return protocol.RouterOccupantTerminationResult{State: result.State}, nil
 }
 
 func (a *App) agentDetect(ctx context.Context, params json.RawMessage) (any, *protocol.Error) {
@@ -609,6 +671,28 @@ func mapAgentError(err error) *protocol.Error {
 		return &protocol.Error{Code: protocol.CodeWriteFailed, Message: "Agent operation failed"}
 	}
 	return &protocol.Error{Code: code, Message: message}
+}
+
+func mapOccupantError(err error) *protocol.Error {
+	for _, item := range []struct {
+		err     error
+		code    protocol.ErrorCode
+		message string
+	}{
+		{occupant.ErrNotFound, protocol.CodeOccupantNotFound, "port occupant was not found"},
+		{occupant.ErrNotOwned, protocol.CodeOccupantNotOwned, "port occupant belongs to another user"},
+		{occupant.ErrIdentityUnavailable, protocol.CodeOccupantIdentityUnavailable, "port occupant identity is unavailable"},
+		{occupant.ErrChanged, protocol.CodeOccupantChanged, "port occupant changed"},
+		{occupant.ErrProtected, protocol.CodeOccupantProtected, "port occupant is protected"},
+		{occupant.ErrTerminationFailed, protocol.CodeOccupantTerminationFailed, "port occupant could not be terminated"},
+		{occupant.ErrPortReleaseTimeout, protocol.CodePortReleaseTimeout, "router port was not released"},
+		{occupant.ErrConfirmationExpired, protocol.CodeConfirmationExpired, "occupant confirmation expired"},
+	} {
+		if errors.Is(err, item.err) {
+			return &protocol.Error{Code: item.code, Message: item.message}
+		}
+	}
+	return &protocol.Error{Code: protocol.CodeOccupantIdentityUnavailable, Message: "port occupant identity is unavailable"}
 }
 
 func validateSidecar(path string) *protocol.Error {

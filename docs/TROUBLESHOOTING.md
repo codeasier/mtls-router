@@ -28,12 +28,15 @@ The desktop never repairs or downloads sidecars independently. If reinstalling t
 
 ## Port 19099 is occupied
 
-The desktop uses exactly `127.0.0.1:19099`. It never selects an alternate port and never kills an unknown occupant.
+The desktop uses exactly `127.0.0.1:19099`. It never selects an alternate port or terminates an occupant automatically. The regular Stop action, Quit, launch-at-login, and tray actions do not terminate unknown occupants.
 
 1. Check whether a CLI-managed router is running with `./setup.sh router status` or `.\setup.ps1 router status` from a verified setup package.
 2. If the desktop reports an external compatible router, reuse is intentional; the desktop will not own or stop it.
-3. If it reports an unknown occupant, identify the listener with operating-system tools and stop or reconfigure it only after confirming ownership.
-4. Retry from the Router page after the port is free.
+3. If the Router page identifies an inspectable current-user occupant, review its process name and PID, then select **Force terminate occupant**.
+4. In the confirmation dialog, verify the complete executable path as well as the process name and PID. Force termination is immediate, does not attempt graceful shutdown, and may lose unsaved data. Select Cancel if any detail is unexpected.
+5. Confirm only when the exact process is safe to terminate. The manager revalidates the listener and process identity, sends no signal to another user's, changed, protected, ambiguous, or unverifiable process, and never requests administrator or root elevation.
+6. After success, the port is released but the router remains stopped. Select Start router manually when ready; launch-at-login does not start it as part of this recovery.
+7. If inspection is unavailable or termination fails, use operating-system tools to identify the listener and stop or reconfigure it only after independently confirming ownership and identity. Then retry from the Router page.
 
 A manually started router is intentionally unknown unless complete CLI setup state proves its process identity and deployment/protocol compatibility.
 

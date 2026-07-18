@@ -38,7 +38,7 @@ The Router page distinguishes the local process from upstream health. A running 
 
 - **Desktop router:** the application supervises a foreground child. Stop and Quit may stop it only after PID, start identity, executable identity, and ownership checks pass.
 - **External router:** reuse is allowed only for a CLI setup-managed router whose recorded process identity, `deployment_id`, and `management_protocol_version` match the desktop build. A manually started process is not trusted from `/version` response shape alone.
-- **Unknown port occupant:** the application does not kill it and does not switch to another port. Resolve the process using `127.0.0.1:19099`, then retry.
+- **Unknown port occupant:** the application never terminates it automatically and never switches to another port. If the manager can prove that one identifiable listener belongs to the current user, the Router page offers an explicit **Force terminate occupant** recovery action. Its confirmation dialog shows the process name, PID, and complete executable path and warns that termination is immediate and may lose unsaved data. The action does not request elevation, does not apply to another user's, ambiguous, changed, protected, or unverifiable process, and does not start the router after releasing the port. If inspection or termination is unavailable, identify and stop or reconfigure the listener with operating-system tools, then retry.
 - **Stale state:** a PID or executable mismatch is reported as stale and no signal is sent. Inspect the process and state before making a manual cleanup.
 - **Degraded or stale health:** the router process may still accept local connections, but upstream service is not currently proven reachable. Use Retry health check and inspect Logs; do not treat stale health as healthy.
 
@@ -48,7 +48,7 @@ See [Troubleshooting](TROUBLESHOOTING.md) for recovery steps.
 
 Closing the main window hides it in the system tray and leaves the router unchanged. Use the tray icon to open the window, start or stop an eligible router, open logs, or quit.
 
-Quit is different from closing the window. Quit stops a verified desktop-owned router and exits the application. It never stops a compatible external router or an unverified process. Launch-at-login starts the desktop application on the next user login and applies the same discovery and ownership rules; it does not blindly start a second router.
+Quit is different from closing the window. Quit stops a verified desktop-owned router and exits the application. It never stops a compatible external router or an unverified process. The regular Stop action remains unavailable for an unknown occupant, and the tray provides no force-termination action; occupant termination is available only through explicit confirmation on the Router page. Launch-at-login starts the desktop application on the next user login and applies the same discovery and ownership rules; it never terminates an occupant or blindly starts a second router.
 
 ## Configure Agents
 

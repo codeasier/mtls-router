@@ -22,6 +22,7 @@ use zeroize::Zeroize;
 const MANAGER_INFO: &str = "manager.info";
 const ROUTER_STATUS: &str = "router.status";
 const ROUTER_START: &str = "router.start";
+const FORCE_TERMINATE_OCCUPANT: &str = "router.force_terminate_occupant";
 
 #[derive(Debug)]
 pub enum TransportEvent {
@@ -286,7 +287,8 @@ async fn run_actor(factory: Arc<dyn TransportFactory>, mut calls: mpsc::Receiver
     let mut request_id = 1_u64;
     let mut recovery_used = false;
     while let Some(mut call) = calls.recv().await {
-        let sensitive = call.method == "agent.write";
+        let sensitive = matches!(call.method, "agent.write" | FORCE_TERMINATE_OCCUPANT);
+        let replayable = !matches!(call.method, "agent.write" | FORCE_TERMINATE_OCCUPANT);
         let params = if sensitive {
             std::mem::take(&mut call.params)
         } else {
@@ -306,7 +308,7 @@ async fn run_actor(factory: Arc<dyn TransportFactory>, mut calls: mpsc::Receiver
             }
             match recover(factory.as_ref(), &mut request_id).await {
                 Ok(mut replacement) => {
-                    let retried = if sensitive {
+                    let retried = if !replayable {
                         result
                     } else {
                         let retried =
@@ -473,6 +475,8 @@ fn watchdog(method: &str) -> Result<Duration> {
         "manager.info" | "router.status" | "router.version" => 1,
         "router.logs" => 2,
         "diagnostics.collect" | "router.health" | "agent.detect" | "agent.preview" => 5,
+        "router.inspect_occupant" => 2,
+        FORCE_TERMINATE_OCCUPANT => 3,
         "router.stop" => 7,
         "router.start" => 20,
         "agent.write" => 30,
@@ -657,6 +661,14 @@ mod tests {
     #[test]
     fn watchdog_is_one_second_beyond_each_manager_deadline() {
         assert_eq!(watchdog("router.status").unwrap(), Duration::from_secs(2));
+        assert_eq!(
+            watchdog("router.inspect_occupant").unwrap(),
+            Duration::from_secs(3)
+        );
+        assert_eq!(
+            watchdog(FORCE_TERMINATE_OCCUPANT).unwrap(),
+            Duration::from_secs(4)
+        );
         assert_eq!(watchdog("router.start").unwrap(), Duration::from_secs(21));
         assert_eq!(watchdog("agent.write").unwrap(), Duration::from_secs(31));
     }
@@ -721,6 +733,30 @@ mod tests {
                 writes
                     .iter()
                     .filter(|request| request["method"] == "agent.write")
+                    .count(),
+                1
+            );
+        });
+    }
+
+    #[test]
+    fn force_termination_is_never_replayed_after_ambiguous_failure() {
+        runtime().block_on(async {
+            let (client, writes) = client(vec![Behavior::Malformed, Behavior::Valid]);
+            let error = client
+                .call::<Value>(
+                    FORCE_TERMINATE_OCCUPANT,
+                    json!({ "confirmation_token": "single-use" }),
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(error.code, "INVALID_RESPONSE");
+            assert_eq!(
+                writes
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|request| request["method"] == FORCE_TERMINATE_OCCUPANT)
                     .count(),
                 1
             );

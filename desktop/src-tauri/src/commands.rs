@@ -4,8 +4,8 @@ use crate::{
     scheduler::PollScheduler,
     types::{
         AgentDetect, AgentPreview, AgentWriteResult, ComponentVersions, DesktopPaths, Diagnostics,
-        ManagerInfo, NativeLanguage, PollSnapshot, RouterHealth, RouterLogs, RouterStatus,
-        RouterVersion,
+        ManagerInfo, NativeLanguage, OccupantInspection, PollSnapshot, RouterHealth, RouterLogs,
+        RouterStatus, RouterVersion,
     },
 };
 use serde::Deserialize;
@@ -35,6 +35,12 @@ pub struct AgentWriteRequest {
     pub api_key: String,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ForceTerminateOccupantRequest {
+    pub confirmation_token: String,
+}
+
 #[tauri::command]
 pub async fn router_status(state: tauri::State<'_, AppState>) -> Result<RouterStatus> {
     let value: RouterStatus = state.manager.call("router.status", json!({})).await?;
@@ -56,6 +62,39 @@ pub async fn router_start(
 #[tauri::command]
 pub async fn router_stop(state: tauri::State<'_, AppState>) -> Result<RouterStatus> {
     crate::orchestration::stop(&state.manager, &state.scheduler).await
+}
+
+#[tauri::command]
+pub async fn router_inspect_occupant(
+    state: tauri::State<'_, AppState>,
+) -> Result<OccupantInspection> {
+    state
+        .manager
+        .call("router.inspect_occupant", json!({}))
+        .await
+}
+
+#[tauri::command]
+pub async fn router_force_terminate_occupant(
+    request: ForceTerminateOccupantRequest,
+    state: tauri::State<'_, AppState>,
+) -> Result<RouterStatus> {
+    force_terminate_occupant_command(request, &state.manager, &state.scheduler).await
+}
+
+async fn force_terminate_occupant_command(
+    mut request: ForceTerminateOccupantRequest,
+    manager: &ManagerClient,
+    scheduler: &PollScheduler,
+) -> Result<RouterStatus> {
+    if request.confirmation_token.trim().is_empty() || request.confirmation_token.len() > 4096 {
+        request.confirmation_token.zeroize();
+        return Err(CommandError::invalid_params(
+            "confirmation token is invalid",
+        ));
+    }
+    let token = std::mem::take(&mut request.confirmation_token);
+    crate::orchestration::force_terminate_occupant(token, manager, scheduler).await
 }
 
 #[tauri::command]
@@ -330,6 +369,8 @@ mod tests {
                 "sensitive_files": true,
                 "warning": "backups are sensitive"
             }),
+            "router.force_terminate_occupant" => json!({ "state": "absent" }),
+            "router.status" => json!({ "state": "absent" }),
             method => panic!("unexpected fixture method {method}"),
         };
         json!({ "id": id, "result": result })
@@ -419,6 +460,39 @@ mod tests {
             .unwrap_err();
             assert_eq!(error.code, "PREVIEW_STALE");
             assert!(!error.message.contains(key));
+        });
+    }
+
+    #[test]
+    fn force_termination_command_submits_only_the_token_and_reconciles() {
+        runtime().block_on(async {
+            let (manager, writes) = fixture_client(false);
+            let scheduler = PollScheduler::new(manager.clone());
+            let result = force_terminate_occupant_command(
+                ForceTerminateOccupantRequest {
+                    confirmation_token: "opaque-token".to_owned(),
+                },
+                &manager,
+                &scheduler,
+            )
+            .await
+            .unwrap();
+            assert_eq!(result.state, "absent");
+
+            let writes = writes.lock().unwrap();
+            let request = writes
+                .iter()
+                .find(|request| request["method"] == "router.force_terminate_occupant")
+                .unwrap();
+            assert_eq!(
+                request["params"],
+                json!({ "confirmation_token": "opaque-token" })
+            );
+            assert!(request["params"].get("pid").is_none());
+            assert!(request["params"].get("executable").is_none());
+            assert!(writes
+                .iter()
+                .all(|request| request["method"] != "router.start"));
         });
     }
 }

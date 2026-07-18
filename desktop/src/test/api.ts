@@ -14,6 +14,17 @@ export function createMockApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
       listen_addr: "127.0.0.1:19099",
     }),
     stopRouter: vi.fn().mockResolvedValue({ state: "absent" }),
+    inspectRouterOccupant: vi.fn().mockResolvedValue({
+      pid: 4242,
+      process_name: "example-server",
+      executable: "/usr/local/bin/example-server",
+      listen_addr: "127.0.0.1:19099",
+      confirmation_token: "opaque-token",
+      expires_at: "2026-07-18T12:00:30Z",
+    }),
+    forceTerminateRouterOccupant: vi
+      .fn()
+      .mockResolvedValue({ state: "absent" }),
     retryRouterHealth: vi.fn().mockResolvedValue({
       status: "ok",
       checked_at: new Date().toISOString(),
