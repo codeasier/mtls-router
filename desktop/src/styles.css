@@ -1185,6 +1185,18 @@ main {
   font-size: clamp(21px, 3vw, 28px);
 }
 
+.agent-card__config-path {
+  min-width: 0;
+  max-width: 100%;
+  margin: 0 0 14px;
+  overflow: hidden;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .agent-card dl {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1679,9 +1691,7 @@ main {
 
 .catalog-search input,
 .option-field input,
-.option-field select,
-.role-row select,
-.omission-grid select {
+.agent-select-control select {
   width: 100%;
   min-height: 38px;
   padding: 7px 9px;
@@ -1689,6 +1699,48 @@ main {
   border: 1px solid var(--line-strong);
   border-radius: 8px;
   background: var(--surface-raised);
+}
+
+.agent-select-control {
+  position: relative;
+  display: block;
+  min-width: 0;
+  width: 100%;
+}
+
+.agent-select-control select {
+  min-width: 0;
+  padding-right: 36px;
+  appearance: none;
+  cursor: pointer;
+}
+
+.agent-select-control__chevron {
+  position: absolute;
+  top: 50%;
+  right: 15px;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--signal);
+  border-bottom: 1.5px solid var(--signal);
+  pointer-events: none;
+  transform: translateY(-65%) rotate(45deg);
+}
+
+.agent-select-control select:hover:not(:disabled) {
+  border-color: rgba(220, 91, 47, 0.45);
+  background: var(--signal-soft);
+}
+
+.agent-select-control select:disabled {
+  color: var(--muted);
+  background: var(--paper-deep);
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.agent-select-control:has(select:disabled) .agent-select-control__chevron {
+  border-color: var(--muted);
 }
 
 .catalog-list {
@@ -1764,7 +1816,7 @@ main {
   font-size: 11px;
 }
 
-.role-row select {
+.role-row .agent-select-control {
   flex: 1;
 }
 

@@ -1,4 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ComponentPropsWithoutRef,
+} from "react";
 
 import { useI18n } from "./i18n";
 import {
@@ -67,6 +72,19 @@ function emptyConfig(agents: AgentId[]): ModelConfig {
 function roleModel(role: ClaudeRole) {
   return "model" in role ? role.model : "";
 }
+
+function AgentSelect({
+  children,
+  ...props
+}: ComponentPropsWithoutRef<"select">) {
+  return (
+    <span className="agent-select-control">
+      <select {...props}>{children}</select>
+      <span className="agent-select-control__chevron" aria-hidden="true" />
+    </span>
+  );
+}
+
 function parseExtra(text: string): { value?: JsonObject; error?: string } {
   if (!text.trim()) return {};
   try {
@@ -214,7 +232,7 @@ function OptionalSelect({
   return (
     <label className="option-field">
       <span>{label}</span>
-      <select
+      <AgentSelect
         value={value ?? ""}
         onChange={(event) => onChange(event.target.value || undefined)}
       >
@@ -224,7 +242,7 @@ function OptionalSelect({
             {item}
           </option>
         ))}
-      </select>
+      </AgentSelect>
     </label>
   );
 }
@@ -614,7 +632,12 @@ export function AgentPage({ api }: { api: DesktopApi }) {
                   key={id}
                 >
                   <h3>{agentNames[id]}</h3>
-                  <p>{agent ? safe(agent.path) : t("agents.noResult")}</p>
+                  <p
+                    className="agent-card__config-path"
+                    title={agent ? safe(agent.path) : undefined}
+                  >
+                    {agent ? safe(agent.path) : t("agents.noResult")}
+                  </p>
                   <span className="agent-state">
                     {agent?.configured
                       ? t("agents.detection.configured")
@@ -725,7 +748,7 @@ export function AgentPage({ api }: { api: DesktopApi }) {
                 <h3>Claude Code</h3>
                 <label className="option-field">
                   <span>{t("agents.primaryModel")}</span>
-                  <select
+                  <AgentSelect
                     value={config.claude.primary.model}
                     onChange={(event) =>
                       setConfig({
@@ -741,7 +764,7 @@ export function AgentPage({ api }: { api: DesktopApi }) {
                     {discovery.models.map((model) => (
                       <option key={model}>{model}</option>
                     ))}
-                  </select>
+                  </AgentSelect>
                 </label>
                 {roleNames.map((role) => (
                   <div className="role-row" key={role}>
@@ -764,7 +787,7 @@ export function AgentPage({ api }: { api: DesktopApi }) {
                       {t("agents.inheritPrimary", { role })}
                     </label>
                     {!("inherit_primary" in config.claude![role]) && (
-                      <select
+                      <AgentSelect
                         aria-label={`${role} model`}
                         value={roleModel(config.claude![role])}
                         onChange={(event) =>
@@ -781,7 +804,7 @@ export function AgentPage({ api }: { api: DesktopApi }) {
                         {discovery.models.map((model) => (
                           <option key={model}>{model}</option>
                         ))}
-                      </select>
+                      </AgentSelect>
                     )}
                   </div>
                 ))}
@@ -839,7 +862,7 @@ export function AgentPage({ api }: { api: DesktopApi }) {
                 </div>
                 <label className="option-field">
                   <span>{t("agents.defaultModel")}</span>
-                  <select
+                  <AgentSelect
                     value={config.opencode.default_model}
                     onChange={(event) =>
                       setConfig({
@@ -855,7 +878,7 @@ export function AgentPage({ api }: { api: DesktopApi }) {
                     {Object.keys(config.opencode.models).map((model) => (
                       <option key={model}>{model}</option>
                     ))}
-                  </select>
+                  </AgentSelect>
                 </label>
                 {Object.entries(config.opencode.models).map(
                   ([model, settings]) => (
@@ -892,7 +915,7 @@ export function AgentPage({ api }: { api: DesktopApi }) {
                 <h3>Codex</h3>
                 <label className="option-field">
                   <span>{t("agents.activeModel")}</span>
-                  <select
+                  <AgentSelect
                     value={config.codex.model}
                     onChange={(event) =>
                       setConfig({
@@ -905,7 +928,7 @@ export function AgentPage({ api }: { api: DesktopApi }) {
                     {discovery.models.map((model) => (
                       <option key={model}>{model}</option>
                     ))}
-                  </select>
+                  </AgentSelect>
                 </label>
                 <div className="typed-grid">
                   <OptionalSelect
@@ -1224,7 +1247,7 @@ function OpenCodeSettings({
       <div className="omission-grid">
         {flags.map((flag) => (
           <label key={flag}>
-            <select
+            <AgentSelect
               aria-label={`${model} ${flag}`}
               value={settings[flag] === undefined ? "" : String(settings[flag])}
               onChange={(event) =>
@@ -1240,7 +1263,7 @@ function OpenCodeSettings({
               <option value="">{t("agents.unset")}</option>
               <option value="true">true</option>
               <option value="false">false</option>
-            </select>
+            </AgentSelect>
             <span>{flag}</span>
           </label>
         ))}

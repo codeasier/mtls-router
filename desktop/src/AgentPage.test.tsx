@@ -122,6 +122,19 @@ function completeRequiredConfig() {
 }
 
 describe("Agent model workbench", () => {
+  it("contains detected configuration paths and exposes their complete values", async () => {
+    const api = createMockApi({
+      detectAgents: vi.fn().mockResolvedValue(detection),
+    });
+    render(<AgentPage api={api} />);
+
+    for (const agent of detection.agents) {
+      const path = await screen.findByTitle(agent.path);
+      expect(path).toHaveClass("agent-card__config-path");
+      expect(path).toHaveTextContent(agent.path);
+    }
+  });
+
   it("does not auto-select models and clears the credential immediately on discovery submit", async () => {
     const { api, secret } = await reachConfigure();
     expect(api.discoverModels).toHaveBeenCalledWith(
@@ -139,6 +152,20 @@ describe("Agent model workbench", () => {
         ),
     ).toHaveLength(0);
     expect(document.body.textContent).toContain("gone-model");
+  });
+
+  it("keeps every configuration select native inside the Agent theme wrapper", async () => {
+    await reachConfigure();
+
+    const selects = screen.getAllByRole("combobox");
+    expect(selects.length).toBeGreaterThan(0);
+    for (const select of selects) {
+      expect(select.tagName).toBe("SELECT");
+      expect(select.parentElement).toHaveClass("agent-select-control");
+      expect(
+        select.parentElement?.querySelector(".agent-select-control__chevron"),
+      ).toHaveAttribute("aria-hidden", "true");
+    }
   });
 
   it("supports searchable catalog, Claude inheritance, opencode multi/default, Codex typed omission, and constrained extra", async () => {
