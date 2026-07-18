@@ -185,7 +185,7 @@ Do not publish if any target lacks package-inspection, signing-status, and succe
 
 ## Release workflow
 
-The current `.github/workflows/release.yml` builds router and manager binaries for all six Go targets and creates six platform archives containing the exact router/manager pair and setup script. In parallel, six native runners build and inspect Windows x86_64/arm64 NSIS installers, macOS Intel/Apple Silicon DMGs, and Linux x86_64/arm64 AppImages. A manual dispatch is validation-only; a version tag waits for all 12 build jobs, verifies the six desktop package checksums, assembles one `SHA256SUMS`, and publishes and mirrors the CLI and desktop assets plus six signing-status files.
+The current `.github/workflows/release.yml` builds router and manager binaries for all six Go targets and creates six platform archives containing the exact router/manager pair and setup script. In parallel, six native runners build and inspect Windows x86_64/arm64 NSIS installers, macOS Intel/Apple Silicon DMGs, and Linux x86_64/arm64 AppImages. A manual dispatch is validation-only and may select one paired CLI/desktop target plus an optional HTTPS upstream override. A version tag always ignores validation overrides, waits for all 12 build jobs, verifies the six desktop package checksums, assembles one `SHA256SUMS`, and publishes and mirrors the CLI and desktop assets plus six signing-status files.
 
 Production CLI and desktop sidecars require repository secrets `CLIENT_CERT_PEM`, `CLIENT_KEY_PEM`, and `UPSTREAM_CA_PEM`, plus variables `UPSTREAM_URL` and a non-default `DEPLOYMENT_ID`. Optional platform credentials select the signed/notarized release branches described above.
 
@@ -202,6 +202,19 @@ gh variable set DEPLOYMENT_ID --repo codeasier/mtls-router --body "production-se
 ```
 
 Configure the optional Windows signing and Apple signing/notarization secrets only through the repository's protected secret-management process. Do not put credential values in documentation, commands that persist in shell history, or repository files.
+
+Run a validation-only Windows amd64 build with `gh`:
+
+```bash
+gh workflow run release.yml \
+  --repo codeasier/mtls-router \
+  --ref main \
+  -f version=0.2.0-windows-test.1 \
+  -f target=windows-amd64 \
+  -f upstream_url=https://router.example.com
+```
+
+The selected target produces both `mtls-router-cli-windows-amd64` and `mtls-router-desktop-windows-amd64`. Omit `upstream_url` to use the repository `UPSTREAM_URL`; omit `target` to use `all`. Workflow inputs are visible in GitHub Actions metadata, so the override must not contain credentials, tokens, or sensitive query parameters. It must also be compatible with the client certificate and upstream CA stored in repository Secrets.
 
 Publish the CLI and desktop release by pushing a version tag only after the required target-platform launch evidence has been reviewed:
 

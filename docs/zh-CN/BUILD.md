@@ -185,7 +185,7 @@ Release workflow 实现了有条件的平台签名和状态验证：
 
 ## Release workflow
 
-当前 `.github/workflows/release.yml` 为六个 Go 目标构建 router 和 manager，并创建六个平台压缩包；每个包包含精确 router/manager 二进制对和安装脚本。同时，六个原生 runner 会构建并检查 Windows x86_64/arm64 NSIS 安装器、macOS Intel/Apple Silicon DMG，以及 Linux x86_64/arm64 AppImage。手工 dispatch 只用于验证；版本 tag 会等待全部 12 个构建 job，验证六个桌面包 checksum，汇总一个 `SHA256SUMS`，然后发布并镜像 CLI、桌面 asset 和六个签名状态文件。
+当前 `.github/workflows/release.yml` 为六个 Go 目标构建 router 和 manager，并创建六个平台压缩包；每个包包含精确 router/manager 二进制对和安装脚本。同时，六个原生 runner 会构建并检查 Windows x86_64/arm64 NSIS 安装器、macOS Intel/Apple Silicon DMG，以及 Linux x86_64/arm64 AppImage。手工 dispatch 只用于验证，可以选择一组配套 CLI/desktop 目标及可选 HTTPS upstream override。版本 tag 始终忽略验证 override，等待全部 12 个构建 job，验证六个桌面包 checksum，汇总一个 `SHA256SUMS`，然后发布并镜像 CLI、桌面 asset 和六个签名状态文件。
 
 生产 CLI 和桌面 sidecar 需要 repository secrets `CLIENT_CERT_PEM`、`CLIENT_KEY_PEM`、`UPSTREAM_CA_PEM`，以及 variables `UPSTREAM_URL` 和非默认 `DEPLOYMENT_ID`。可选平台凭据会选择上文所述的签名/notarization release 分支。
 
@@ -202,6 +202,19 @@ gh variable set DEPLOYMENT_ID --repo codeasier/mtls-router --body "production-se
 ```
 
 可选 Windows 签名和 Apple 签名/notarization secrets 只能通过仓库受保护的 secret 管理流程配置。不要把凭据值写入文档、会保留在 shell history 中的命令或仓库文件。
+
+使用 `gh` 执行仅验证的 Windows amd64 构建：
+
+```bash
+gh workflow run release.yml \
+  --repo codeasier/mtls-router \
+  --ref main \
+  -f version=0.2.0-windows-test.1 \
+  -f target=windows-amd64 \
+  -f upstream_url=https://router.example.com
+```
+
+所选目标会同时生成 `mtls-router-cli-windows-amd64` 和 `mtls-router-desktop-windows-amd64`。省略 `upstream_url` 时使用仓库 `UPSTREAM_URL`；省略 `target` 时使用 `all`。Workflow input 在 GitHub Actions 元数据中可见，因此 override 不得包含凭据、token 或敏感 query parameter，并且必须兼容 repository Secrets 中的客户端证书和 upstream CA。
 
 审查所需目标平台启动证据后，通过推送版本 tag 发布 CLI 和桌面 release：
 

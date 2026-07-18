@@ -281,6 +281,8 @@ ci_go_block="$(job_block "$CI" go-shell)"
 ci_frontend_block="$(job_block "$CI" frontend)"
 ci_rust_block="$(job_block "$CI" rust)"
 ci_package_block="$(job_block "$CI" desktop-package)"
+release_prepare_block="$(job_block "$RELEASE" prepare)"
+release_build_block="$(job_block "$RELEASE" build)"
 release_desktop_block="$(job_block "$RELEASE" desktop)"
 
 workflow_step() {
@@ -476,14 +478,37 @@ assert_exact_lines 'CI package matrix rows (runner|target|bundles)' \
   'windows-2025|x86_64-pc-windows-msvc|nsis' \
   'ubuntu-24.04-arm|aarch64-unknown-linux-gnu|appimage'
 
-assert_exact_lines 'release matrix rows (runner|target|bundles)' \
-  "$(matrix_rows "$release_desktop_block" runner target bundles)" \
-  'windows-2025|x86_64-pc-windows-msvc|nsis' \
-  'windows-11-arm|aarch64-pc-windows-msvc|nsis' \
-  'macos-15-intel|x86_64-apple-darwin|dmg' \
-  'macos-15|aarch64-apple-darwin|dmg' \
-  'ubuntu-24.04|x86_64-unknown-linux-gnu|appimage' \
-  'ubuntu-24.04-arm|aarch64-unknown-linux-gnu|appimage'
+for input in \
+  '      target:' \
+  '        type: choice' \
+  '        default: all' \
+  '      upstream_url:' \
+  '        description: Optional HTTPS upstream override for this validation build'; do
+  contains "$RELEASE" "$input"
+done
+for target in all windows-amd64 windows-arm64 darwin-amd64 darwin-arm64 linux-amd64 linux-arm64; do
+  [[ "$(grep -Fxc "          - $target" "$RELEASE")" -eq 1 ]] || \
+    fail "release dispatch choices must contain $target exactly once"
+done
+for row in \
+  '{"name":"windows-amd64","runner":"windows-2025","target":"x86_64-pc-windows-msvc","os":"windows","arch":"amd64","bundles":"nsis"}' \
+  '{"name":"windows-arm64","runner":"windows-11-arm","target":"aarch64-pc-windows-msvc","os":"windows","arch":"arm64","bundles":"nsis"}' \
+  '{"name":"darwin-amd64","runner":"macos-15-intel","target":"x86_64-apple-darwin","os":"darwin","arch":"amd64","bundles":"dmg"}' \
+  '{"name":"darwin-arm64","runner":"macos-15","target":"aarch64-apple-darwin","os":"darwin","arch":"arm64","bundles":"dmg"}' \
+  '{"name":"linux-amd64","runner":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu","os":"linux","arch":"amd64","bundles":"appimage"}' \
+  '{"name":"linux-arm64","runner":"ubuntu-24.04-arm","target":"aarch64-unknown-linux-gnu","os":"linux","arch":"arm64","bundles":"appimage"}'; do
+  [[ "$release_prepare_block" == *"$row"* ]] || fail "release prepare matrix missing desktop row: $row"
+done
+[[ "$release_build_block" == *'needs: prepare'* ]] || fail 'release CLI build must depend on matrix preparation'
+[[ "$release_build_block" == *'matrix: ${{ fromJSON(needs.prepare.outputs.cli-matrix) }}'* ]] || \
+  fail 'release CLI build must consume the prepared matrix'
+[[ "$release_desktop_block" == *'needs: prepare'* ]] || fail 'release desktop build must depend on matrix preparation'
+[[ "$release_desktop_block" == *'matrix: ${{ fromJSON(needs.prepare.outputs.desktop-matrix) }}'* ]] || \
+  fail 'release desktop build must consume the prepared matrix'
+[[ "$release_prepare_block" == *'SELECTED_TARGET: ${{ github.event_name == '\''workflow_dispatch'\'' && inputs.target || '\''all'\'' }}'* ]] || \
+  fail 'tag builds must force the complete target matrix'
+[[ "$(grep -Fc 'UPSTREAM_URL: ${{ github.event_name == '\''workflow_dispatch'\'' && inputs.upstream_url || vars.UPSTREAM_URL }}' "$RELEASE")" -eq 2 ]] || \
+  fail 'both producer jobs must use validation-only upstream overrides'
 
 [[ "$(awk '/^[[:space:]]+- run: npm ci$/{n++} END{print n+0}' "$CI")" -eq 2 ]] || \
   fail 'CI must contain exactly two npm ci commands'
