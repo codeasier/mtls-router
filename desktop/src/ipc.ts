@@ -7,6 +7,8 @@ export const COMMANDS = {
   routerStatus: "router_status",
   routerStart: "router_start",
   routerStop: "router_stop",
+  routerInspectOccupant: "router_inspect_occupant",
+  routerForceTerminateOccupant: "router_force_terminate_occupant",
   routerHealth: "router_health",
   pollSnapshot: "poll_snapshot",
   routerLogs: "router_logs",
@@ -54,6 +56,15 @@ export interface RouterStatus {
 export interface RouterHealth {
   status: "ok" | "degraded" | "unknown";
   checked_at: string;
+}
+
+export interface OccupantInspection {
+  pid: number;
+  process_name: string;
+  executable: string;
+  listen_addr: string;
+  confirmation_token: string;
+  expires_at: string;
 }
 
 export interface PollError {
@@ -243,6 +254,10 @@ export interface DesktopApi {
   getRouterStatus(): Promise<RouterStatus>;
   startRouter(): Promise<RouterStatus>;
   stopRouter(): Promise<RouterStatus>;
+  inspectRouterOccupant(): Promise<OccupantInspection>;
+  forceTerminateRouterOccupant(
+    confirmationToken: string,
+  ): Promise<RouterStatus>;
   retryRouterHealth(): Promise<RouterHealth>;
   getComponentVersions(): Promise<ComponentVersions>;
   getRouterLogs(limit?: number): Promise<RouterLogs>;
@@ -334,6 +349,11 @@ export function createDesktopApi(
     getRouterStatus: () => invoke(COMMANDS.routerStatus),
     startRouter: () => invoke(COMMANDS.routerStart, { owner: "desktop" }),
     stopRouter: () => invoke(COMMANDS.routerStop),
+    inspectRouterOccupant: () => invoke(COMMANDS.routerInspectOccupant),
+    forceTerminateRouterOccupant: (confirmationToken) =>
+      invoke(COMMANDS.routerForceTerminateOccupant, {
+        request: { confirmation_token: confirmationToken },
+      }),
     retryRouterHealth: () => invoke(COMMANDS.routerHealth),
     getComponentVersions: () => invoke(COMMANDS.componentVersions),
     getRouterLogs: async (limit = MAX_LOG_LINES) => {

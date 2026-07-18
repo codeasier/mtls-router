@@ -86,7 +86,18 @@ verification on the stated platform.
 - [x] A compatible setup-managed router is detected and shown as external.
 - [x] The desktop can use health/version information from an external router.
 - [x] Desktop quit does not stop an external router.
-- [x] An unknown process on port 19099 is reported and never killed.
+- [x] An unknown process on port 19099 is reported distinctly.
+- [ ] An unknown occupant is never terminated automatically, by regular Stop,
+  by Quit, by launch-at-login, or from the tray.
+- [ ] Only an inspectable current-user occupant with complete identity can be
+  offered force termination; other-user, ambiguous, changed, protected, and
+  unverifiable processes receive no signal and no elevation is requested.
+- [ ] Occupant termination requires explicit confirmation of process name, PID,
+  complete executable path, and an immediate unsaved-data-loss warning.
+- [ ] Confirmed occupant termination is immediate, revalidates complete identity
+  before signaling, and does not first send a graceful signal.
+- [ ] Releasing the port does not automatically start the router, and blocked or
+  failed in-app recovery provides a manual operating-system-tool fallback.
 - [x] External reuse requires complete CLI state, full process identity,
   matching deployment ID, and matching management protocol version.
 - [x] Endpoint-only or manually started routers without trusted setup state are
@@ -138,6 +149,13 @@ verification on the stated platform.
   versions.
 - [x] The UI represents not started, starting, healthy, degraded, external,
   occupied, failed, and stopping states.
+- [ ] The occupied state shows process name and PID only for an inspectable
+  current-user occupant and offers an explicit destructive recovery action.
+- [ ] The force-termination dialog shows process name, PID, a wrapping complete
+  executable path, and the immediate data-loss warning; Cancel has initial
+  focus and sends no termination request.
+- [ ] The tray exposes no force-termination action, and the regular Stop action
+  remains disabled for unknown occupants.
 - [x] Missing/invalid sidecars report reinstall required and do not download.
 - [ ] The Router page works at normal desktop and narrow window widths.
 - [ ] A second desktop launch activates the existing window and creates no
@@ -289,6 +307,10 @@ verification on the stated platform.
   packaging, signing, and notarization.
 - [x] Troubleshooting covers sidecar failure, unknown port occupation, stale
   state, degraded upstream, invalid Agent config, and stale preview.
+- [ ] English and Chinese live desktop and troubleshooting documentation are
+  verified to describe the narrow confirmed current-user exception, process
+  name/PID/path review, immediate data-loss risk, no elevation, no automatic
+  start, unchanged Stop/Quit/tray behavior, and manual fallback equivalently.
 - [x] Documentation explains that embedded shared credentials are extractable
   and rotated through replacement releases.
 - [x] Documentation explains that the desktop does not retain API keys beyond

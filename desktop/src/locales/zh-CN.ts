@@ -58,7 +58,7 @@ export const zhCN = {
   "router.state.occupied.title": "端口已被占用",
   "router.state.occupied.signal": "端口冲突",
   "router.state.occupied.detail":
-    "本地端口由未知进程占用。为安全起见，不会终止该进程。",
+    "本地端口由未知进程占用。只有在验证身份并得到明确确认后才能强制终止。",
   "router.state.failed.title": "路由启动失败",
   "router.state.failed.signal": "需要处理",
   "router.state.failed.detail":
@@ -94,6 +94,33 @@ export const zhCN = {
   "router.start": "启动路由",
   "router.stop": "停止路由",
   "router.retryHealth": "重试健康检查",
+  "router.occupant.overline": "端口恢复",
+  "router.occupant.heading": "检查端口占用进程",
+  "router.occupant.inspecting": "正在安全检查占用进程...",
+  "router.occupant.process": "进程",
+  "router.occupant.pid": "PID",
+  "router.occupant.executable": "可执行文件完整路径",
+  "router.occupant.forceAction": "强制终止占用进程",
+  "router.occupant.retry": "重试检查",
+  "router.occupant.error.not-owned":
+    "该进程不属于当前用户，应用不会请求提权或终止它。",
+  "router.occupant.error.unverifiable":
+    "无法完整验证占用进程身份，不能安全地终止它。",
+  "router.occupant.error.protected":
+    "该进程受桌面生命周期保护，不能通过端口恢复操作终止。",
+  "router.occupant.error.changed":
+    "端口占用进程已变化或确认已过期。请重新检查后再确认。",
+  "router.occupant.error.temporary":
+    "暂时无法检查占用进程。未发送任何终止请求。",
+  "router.occupant.dialogOverline": "不可撤销操作",
+  "router.occupant.dialogTitle": "确认强制终止占用进程",
+  "router.occupant.warning":
+    "终止会立即执行，不会先尝试正常退出。该进程中未保存的数据可能丢失。",
+  "router.occupant.cancel": "取消",
+  "router.occupant.confirm": "强制终止",
+  "router.occupant.terminating": "正在终止...",
+  "router.occupant.released":
+    "端口已释放。路由仍保持停止，选择“启动路由”后才会启动。",
   "router.desktop": "桌面应用",
   "router.manager": "管理器",
   "router.router": "路由",

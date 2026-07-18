@@ -5,8 +5,8 @@ use crate::{
     scheduler::PollScheduler,
     types::{
         AgentDetect, AgentFragment, AgentPreview, AgentWriteResult, ComponentVersions,
-        DesktopPaths, Diagnostics, ManagerInfo, NativeLanguage, PollSnapshot, RouterHealth,
-        RouterLogs, RouterStatus, RouterVersion,
+        DesktopPaths, Diagnostics, ManagerInfo, NativeLanguage, OccupantInspection, PollSnapshot,
+        RouterHealth, RouterLogs, RouterStatus, RouterVersion,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -115,6 +115,12 @@ pub struct AgentRenderResult {
     pub fragments: Vec<AgentFragment>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ForceTerminateOccupantRequest {
+    pub confirmation_token: String,
+}
+
 #[tauri::command]
 pub async fn router_status(state: tauri::State<'_, AppState>) -> Result<RouterStatus> {
     let value: RouterStatus = state.manager.call("router.status", json!({})).await?;
@@ -136,6 +142,39 @@ pub async fn router_start(
 #[tauri::command]
 pub async fn router_stop(state: tauri::State<'_, AppState>) -> Result<RouterStatus> {
     crate::orchestration::stop(&state.manager, &state.scheduler).await
+}
+
+#[tauri::command]
+pub async fn router_inspect_occupant(
+    state: tauri::State<'_, AppState>,
+) -> Result<OccupantInspection> {
+    state
+        .manager
+        .call("router.inspect_occupant", json!({}))
+        .await
+}
+
+#[tauri::command]
+pub async fn router_force_terminate_occupant(
+    request: ForceTerminateOccupantRequest,
+    state: tauri::State<'_, AppState>,
+) -> Result<RouterStatus> {
+    force_terminate_occupant_command(request, &state.manager, &state.scheduler).await
+}
+
+async fn force_terminate_occupant_command(
+    mut request: ForceTerminateOccupantRequest,
+    manager: &ManagerClient,
+    scheduler: &PollScheduler,
+) -> Result<RouterStatus> {
+    if request.confirmation_token.trim().is_empty() || request.confirmation_token.len() > 4096 {
+        request.confirmation_token.zeroize();
+        return Err(CommandError::invalid_params(
+            "confirmation token is invalid",
+        ));
+    }
+    let token = std::mem::take(&mut request.confirmation_token);
+    crate::orchestration::force_terminate_occupant(token, manager, scheduler).await
 }
 
 #[tauri::command]
@@ -719,5 +758,42 @@ mod tests {
 
     fn minimal_model_config() -> ModelConfig {
         serde_json::from_value(json!({"version":1,"claude":{"primary":{"model":"m1"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true}}})).unwrap()
+    }
+
+    #[test]
+    fn force_termination_command_submits_only_the_token_and_reconciles() {
+        tauri::async_runtime::block_on(async {
+            let force =
+                serde_json::to_vec(&json!({"id":"desktop-1","result":{"state":"absent"}})).unwrap();
+            let status =
+                serde_json::to_vec(&json!({"id":"desktop-2","result":{"state":"absent"}})).unwrap();
+            let (manager, writes) = fake_client(vec![force, status]);
+            let scheduler = PollScheduler::new(manager.clone());
+            let result = force_terminate_occupant_command(
+                ForceTerminateOccupantRequest {
+                    confirmation_token: "opaque-token".to_owned(),
+                },
+                &manager,
+                &scheduler,
+            )
+            .await
+            .unwrap();
+            assert_eq!(result.state, "absent");
+
+            let writes = writes.lock().unwrap();
+            let request = writes
+                .iter()
+                .find(|request| request["method"] == "router.force_terminate_occupant")
+                .unwrap();
+            assert_eq!(
+                request["params"],
+                json!({ "confirmation_token": "opaque-token" })
+            );
+            assert!(request["params"].get("pid").is_none());
+            assert!(request["params"].get("executable").is_none());
+            assert!(writes
+                .iter()
+                .all(|request| request["method"] != "router.start"));
+        });
     }
 }

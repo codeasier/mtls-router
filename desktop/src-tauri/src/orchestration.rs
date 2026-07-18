@@ -50,6 +50,22 @@ pub async fn stop(manager: &ManagerClient, scheduler: &PollScheduler) -> Result<
     }
 }
 
+pub async fn force_terminate_occupant(
+    confirmation_token: String,
+    manager: &ManagerClient,
+    scheduler: &PollScheduler,
+) -> Result<RouterStatus> {
+    scheduler.request_status_refresh();
+    let status = manager
+        .call::<RouterStatus>(
+            "router.force_terminate_occupant",
+            json!({ "confirmation_token": confirmation_token }),
+        )
+        .await?;
+    scheduler.set_status(status.clone()).await;
+    Ok(status)
+}
+
 pub async fn first_launch(
     manager: &ManagerClient,
     scheduler: &PollScheduler,
@@ -112,6 +128,7 @@ mod tests {
                 "router.status" | "router.start" => {
                     json!({ "state": state, "owner": if matches!(state, "desktop_owned" | "degraded") { "desktop" } else { "external" } })
                 }
+                "router.force_terminate_occupant" => json!({ "state": "absent" }),
                 "router.version" => {
                     json!({ "version": "router", "deployment_id": env!("MTLS_DEPLOYMENT_ID"), "management_protocol_version": env!("MTLS_MANAGEMENT_PROTOCOL_VERSION") })
                 }
@@ -220,6 +237,31 @@ mod tests {
             assert_eq!(
                 &calls.lock().unwrap()[1..],
                 ["router.start", "router.status"]
+            );
+            assert_eq!(scheduler.snapshot().await.status, Some(status));
+        });
+    }
+
+    #[test]
+    fn force_termination_reconciles_status_without_starting_router() {
+        runtime().block_on(async {
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            let manager = ManagerClient::new(Arc::new(Factory {
+                calls: calls.clone(),
+                initial: "absent",
+                degraded_start: false,
+            }));
+            let scheduler = PollScheduler::new(manager.clone());
+
+            let status =
+                force_terminate_occupant("single-use-token".to_owned(), &manager, &scheduler)
+                    .await
+                    .unwrap();
+
+            assert_eq!(status.state, "absent");
+            assert_eq!(
+                &calls.lock().unwrap()[1..],
+                ["router.force_terminate_occupant"]
             );
             assert_eq!(scheduler.snapshot().await.status, Some(status));
         });

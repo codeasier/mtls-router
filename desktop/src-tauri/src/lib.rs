@@ -169,6 +169,8 @@ pub fn run() {
             commands::router_status,
             commands::router_start,
             commands::router_stop,
+            commands::router_inspect_occupant,
+            commands::router_force_terminate_occupant,
             commands::router_health,
             commands::poll_snapshot,
             commands::router_logs,

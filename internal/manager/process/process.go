@@ -109,6 +109,36 @@ func sameExecutable(left, right string) bool {
 	return left == right
 }
 
+// SameIdentity compares complete process identities after normalizing both
+// executable paths.
+func SameIdentity(left, right Identity) (bool, error) {
+	if left.PID <= 0 || right.PID <= 0 || left.StartedAt == "" || right.StartedAt == "" || left.Executable == "" || right.Executable == "" {
+		return false, nil
+	}
+	leftExecutable, err := NormalizeExecutable(left.Executable)
+	if err != nil {
+		return false, err
+	}
+	rightExecutable, err := NormalizeExecutable(right.Executable)
+	if err != nil {
+		return false, err
+	}
+	return left.PID == right.PID && sameStartIdentity(left.StartedAt, right.StartedAt) && sameExecutable(leftExecutable, rightExecutable), nil
+}
+
+// SignalIdentity validates a complete identity immediately before signaling.
+// Unlike Signal, it does not impose the managed-router binary-path check.
+func SignalIdentity(expected Identity, signal os.Signal) error {
+	status, err := Validate(expected, expected.Executable)
+	if err != nil {
+		return err
+	}
+	if status != StatusGenuine {
+		return fmt.Errorf("%w: %s", ErrIdentityMismatch, status)
+	}
+	return signalProcess(expected.PID, signal)
+}
+
 // Signal validates complete identity immediately before signaling. Callers do
 // not receive a PID-only signaling API from this package.
 func Signal(expected Identity, binaryPath string, signal os.Signal) error {

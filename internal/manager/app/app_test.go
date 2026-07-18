@@ -17,6 +17,7 @@ import (
 	"github.com/codeasier/mtls-router/internal/manager/agent/modelconfig"
 	"github.com/codeasier/mtls-router/internal/manager/discovery"
 	"github.com/codeasier/mtls-router/internal/manager/lifecycle"
+	"github.com/codeasier/mtls-router/internal/manager/occupant"
 	managerpaths "github.com/codeasier/mtls-router/internal/manager/paths"
 	"github.com/codeasier/mtls-router/internal/manager/process"
 	"github.com/codeasier/mtls-router/internal/manager/protocol"
@@ -88,6 +89,19 @@ func (f fakeTrustedRouter) Revalidate(ctx context.Context, owner protocol.Router
 		return nil, nil
 	}
 	return f.revalidate(ctx, owner, key, binding)
+}
+
+type fakeOccupant struct {
+	inspect        func(context.Context) (occupant.Inspection, error)
+	forceTerminate func(context.Context, string) (occupant.Result, error)
+}
+
+func (f *fakeOccupant) Inspect(ctx context.Context) (occupant.Inspection, error) {
+	return f.inspect(ctx)
+}
+
+func (f *fakeOccupant) ForceTerminate(ctx context.Context, token string) (occupant.Result, error) {
+	return f.forceTerminate(ctx, token)
 }
 
 func TestDesktopSessionEOFStopsOwnedRouter(t *testing.T) {
@@ -567,6 +581,94 @@ func writeParams(config json.RawMessage, includeApprovals, approvals bool) json.
 	}
 	raw, _ := json.Marshal(request)
 	return raw
+}
+
+func TestOccupantHandlersExposeSafeResultAndSubmitOnlyToken(t *testing.T) {
+	expiresAt := time.Date(2026, 7, 18, 1, 2, 33, 0, time.UTC)
+	token := "opaque-confirmation"
+	executable := filepath.Join(t.TempDir(), "listener")
+	forceCalls := 0
+	manager := newWithDependencies(Config{}, dependencies{occupant: &fakeOccupant{
+		inspect: func(context.Context) (occupant.Inspection, error) {
+			return occupant.Inspection{PID: 42, ProcessName: "listener", Executable: executable, ListenAddr: "127.0.0.1:19099", ConfirmationToken: token, ExpiresAt: expiresAt}, nil
+		},
+		forceTerminate: func(_ context.Context, got string) (occupant.Result, error) {
+			forceCalls++
+			if got != token {
+				t.Fatalf("token = %q", got)
+			}
+			return occupant.Result{State: "absent"}, nil
+		},
+	}})
+	input := strings.NewReader(strings.Join([]string{
+		`{"id":"inspect","method":"router.inspect_occupant"}`,
+		`{"id":"terminate","method":"router.force_terminate_occupant","params":{"confirmation_token":"` + token + `"}}`,
+	}, "\n") + "\n")
+	var output bytes.Buffer
+	if err := manager.Serve(context.Background(), input, &output); err != nil {
+		t.Fatal(err)
+	}
+	if forceCalls != 1 || !strings.Contains(output.String(), `"process_name":"listener"`) || !strings.Contains(output.String(), `"state":"absent"`) {
+		t.Fatalf("force calls=%d output=%s", forceCalls, output.String())
+	}
+	if strings.Contains(output.String(), "started_at") || strings.Contains(output.String(), "user") || strings.Contains(output.String(), "socket") {
+		t.Fatalf("inspection exposed internal identity: %s", output.String())
+	}
+}
+
+func TestOccupantHandlersRejectInvalidShapesAndMapSanitizedErrors(t *testing.T) {
+	tokenCanary := "confirmation-token-canary"
+	pathCanary := "/sensitive/full/path/listener"
+	manager := newWithDependencies(Config{}, dependencies{occupant: &fakeOccupant{
+		inspect: func(context.Context) (occupant.Inspection, error) {
+			return occupant.Inspection{}, fmt.Errorf("%w: %s %s", occupant.ErrChanged, tokenCanary, pathCanary)
+		},
+		forceTerminate: func(context.Context, string) (occupant.Result, error) {
+			return occupant.Result{}, fmt.Errorf("%w: %s %s", occupant.ErrTerminationFailed, tokenCanary, pathCanary)
+		},
+	}})
+	requests := []string{
+		`{"id":"inspect-shape","method":"router.inspect_occupant","params":{"extra":true}}`,
+		`{"id":"missing","method":"router.force_terminate_occupant"}`,
+		`{"id":"blank","method":"router.force_terminate_occupant","params":{"confirmation_token":" "}}`,
+		`{"id":"extra","method":"router.force_terminate_occupant","params":{"confirmation_token":"x","pid":42}}`,
+		`{"id":"inspect-error","method":"router.inspect_occupant"}`,
+		`{"id":"terminate-error","method":"router.force_terminate_occupant","params":{"confirmation_token":"x"}}`,
+	}
+	var output bytes.Buffer
+	if err := manager.Serve(context.Background(), strings.NewReader(strings.Join(requests, "\n")+"\n"), &output); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+	for index := 0; index < 4; index++ {
+		if !strings.Contains(lines[index], `"code":"INVALID_PARAMS"`) {
+			t.Fatalf("response %d = %s", index, lines[index])
+		}
+	}
+	if !strings.Contains(lines[4], `"code":"OCCUPANT_CHANGED"`) || !strings.Contains(lines[5], `"code":"OCCUPANT_TERMINATION_FAILED"`) {
+		t.Fatalf("mapped responses = %s", output.String())
+	}
+	if strings.Contains(output.String(), tokenCanary) || strings.Contains(output.String(), pathCanary) {
+		t.Fatalf("error exposed internal detail: %s", output.String())
+	}
+}
+
+func TestMapOccupantErrorCoversStableCodes(t *testing.T) {
+	tests := map[error]protocol.ErrorCode{
+		occupant.ErrNotFound:            protocol.CodeOccupantNotFound,
+		occupant.ErrNotOwned:            protocol.CodeOccupantNotOwned,
+		occupant.ErrIdentityUnavailable: protocol.CodeOccupantIdentityUnavailable,
+		occupant.ErrChanged:             protocol.CodeOccupantChanged,
+		occupant.ErrProtected:           protocol.CodeOccupantProtected,
+		occupant.ErrTerminationFailed:   protocol.CodeOccupantTerminationFailed,
+		occupant.ErrPortReleaseTimeout:  protocol.CodePortReleaseTimeout,
+		occupant.ErrConfirmationExpired: protocol.CodeConfirmationExpired,
+	}
+	for input, code := range tests {
+		if got := mapOccupantError(input); got.Code != code {
+			t.Errorf("mapOccupantError(%v) = %q, want %q", input, got.Code, code)
+		}
+	}
 }
 
 func TestDeadlineWaitsForLifecycleCleanup(t *testing.T) {

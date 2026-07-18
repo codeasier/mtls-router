@@ -57,6 +57,23 @@ describe("typed desktop API", () => {
     expect(unlisten).toHaveBeenCalledOnce();
   });
 
+  it("submits only the opaque token to the occupant termination command", async () => {
+    const invoke = vi.fn().mockResolvedValue({ state: "absent" });
+    const api = createDesktopApi(invoke as InvokeFn);
+
+    await api.inspectRouterOccupant();
+    await api.forceTerminateRouterOccupant("opaque-token");
+
+    expect(invoke).toHaveBeenNthCalledWith(1, COMMANDS.routerInspectOccupant);
+    expect(invoke).toHaveBeenNthCalledWith(
+      2,
+      COMMANDS.routerForceTerminateOccupant,
+      { request: { confirmation_token: "opaque-token" } },
+    );
+    expect(JSON.stringify(invoke.mock.calls)).not.toContain("executable");
+    expect(JSON.stringify(invoke.mock.calls)).not.toContain("pid");
+  });
+
   it("uses focused v2 Agent commands and never sends a key at write", async () => {
     const invoke = vi.fn().mockResolvedValue({ agents: [] });
     const api = createDesktopApi(invoke as InvokeFn);
