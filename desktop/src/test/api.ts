@@ -50,6 +50,7 @@ export function createMockApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
         unavailable_models: {},
         drifted_agents: [],
       },
+      preset: { model_config: {}, unavailable_agents: {} },
     }),
     renderAgentConfig: vi
       .fn()

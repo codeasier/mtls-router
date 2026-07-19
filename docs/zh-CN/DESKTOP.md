@@ -58,8 +58,8 @@ Agent 配置必须显式执行 key-before-discovery 流程：
 
 1. 刷新检测，只选择有效且可写的 Agent。
 2. 输入 API key。React 会立即清空输入框；Rust 只在一次性且不可 replay 的临时流程中保留它。
-3. 通过可信本地 router 发现完整的认证模型目录。所有已选 Agent 使用同一个目录，绝不自动选择模型。
-4. 配置各 Agent 原生选择：Claude 主模型/角色继承、opencode 模型子集/默认/选项，以及一个 Codex 模型/选项。未设置的可选字段保持省略。可以导入或导出无 key 的规范 model config。
+3. 通过可信本地 router 发现完整的认证模型目录。所有已选 Agent 使用同一个目录。桌面端绝不会选择第一个模型、按模型名称或能力推断选择，也不会替换模型。可见的构建 preset 只有在 manager 根据该目录验证某个 section 的全部精确 ID 后，才能提供该 section 作为可编辑初始值。
+4. 每个 Agent 独立采用 `existing > preset > empty` 初始化；界面会标明 section 来自 existing 配置还是推荐 preset，并为不可用的完整 preset section 列出缺失 base ID。配置各 Agent 原生选择：Claude 主模型/角色继承以及可选显示名称和 Standard/1M context、opencode 模型子集/默认/选项，以及一个 Codex 模型/选项。Preset 值始终可编辑且不代表任何批准。未设置的可选字段保持省略。可以导入或导出无 key 的规范 model config；导入会完整替换当前表单，而不是与 existing 或 preset 值合并。
 5. 生成结构化预览，审查脱敏片段以及每个创建、替换、保留、迁移、漂移批准、状态和备份操作。不设置显式 `OPENCODE_CONFIG` 时，标准 `~/.config/opencode/opencode.jsonc` 会迁移到同目录的 `opencode.json`；已有同名 sibling 会构成迁移冲突。显式 `OPENCODE_CONFIG` 指定 `.jsonc` 文件时，只会在该精确路径原地替换为 strict JSON；已有文件会备份，并且不会触碰 sibling `opencode.json`。两种 JSONC 操作都会丢失注释和格式。Codex 可能同时修改 `config.toml` 和 `auth.json`，切换 file-backed API-key auth 需要单独批准。
 6. 批准并写入。Manager 会消耗内存中的 key，在创建任何写入产物前刷新目录，随后检查修改和备份路径。
 
@@ -68,6 +68,8 @@ Agent 配置必须显式执行 key-before-discovery 流程：
 备份保留在原配置旁边，可能包含旧 API key。它们属于敏感恢复产物，应当像原 Agent 文件一样保护、保留或删除。预览和结果页面会标明备份路径，但绝不会显示备份内容。
 
 检测中的 `configured` 仅表示本地托管字段结构完整且内部一致，不证明所选模型当前已获授权。需要手工刷新时重新进入配置并提供 key；系统不会后台同步目录或重写 Agent 文件。目录/认证/校验失败、模型消失、未批准漂移或所有权状态无效都会安全失败，不使用静态/cache fallback，也不会部分写入。服务契约、规范 schema、省略、迁移与所有权规则见 [Agent 模型配置](AGENT_MODELS.md)。
+
+对于 Claude，规范配置会分别存储认证 base model ID 和可选精确字段 `context: "1m"`。Manager 只在渲染 Claude 模型环境变量时追加 `[1m]`；它不会推断 1M 支持，也不会写入 `CLAUDE_CODE_DISABLE_1M_CONTEXT`。运行时拒绝不会触发 fallback 或重写。Preset discovery 本身不会写 Agent 文件或 manager 事务状态，preset 数据也不会存入桌面端 secret-bearing flow。
 
 ## API key 边界和限制
 

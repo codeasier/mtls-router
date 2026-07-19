@@ -119,6 +119,36 @@ func TestClaudeInheritanceNameExtraAndDriftCombinations(t *testing.T) {
 	}
 }
 
+func TestClaudeContextRenderingUsesEffectiveSelections(t *testing.T) {
+	oneMillion := modelconfig.ClaudeContext1M
+	primaryName := "Primary 1M"
+	haikuName := "Haiku standard"
+	config := &modelconfig.ClaudeConfig{
+		Primary: modelconfig.Model{Model: "primary", Name: &primaryName, Context: &oneMillion},
+		Haiku:   modelconfig.ClaudeRole{Selection: &modelconfig.Model{Model: "haiku", Name: &haikuName}},
+		Sonnet:  modelconfig.ClaudeRole{InheritPrimary: true},
+		Opus:    modelconfig.ClaudeRole{Selection: &modelconfig.Model{Model: "opus", Context: &oneMillion}},
+	}
+	env := claudeManagedEnv(config, "http://127.0.0.1:19099", "key")
+	for key, want := range map[string]string{
+		"ANTHROPIC_MODEL":                     "primary[1m]",
+		"ANTHROPIC_CUSTOM_MODEL_OPTION":       "primary[1m]",
+		"ANTHROPIC_CUSTOM_MODEL_OPTION_NAME":  primaryName,
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL":       "haiku",
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME":  haikuName,
+		"ANTHROPIC_DEFAULT_SONNET_MODEL":      "primary[1m]",
+		"ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": primaryName,
+		"ANTHROPIC_DEFAULT_OPUS_MODEL":        "opus[1m]",
+	} {
+		if env[key] != want {
+			t.Errorf("%s = %q, want %q", key, env[key], want)
+		}
+	}
+	if _, present := env["CLAUDE_CODE_DISABLE_1M_CONTEXT"]; present {
+		t.Fatal("managed CLAUDE_CODE_DISABLE_1M_CONTEXT")
+	}
+}
+
 func TestOpenCodeExactSubsetTypedExtrasAndRootOwnership(t *testing.T) {
 	input := legacyTestRenderInput()
 	truth := true
@@ -364,6 +394,20 @@ func TestCompatibilityManifestAndGeneratedFormats(t *testing.T) {
 			Revision  string `json:"revision"`
 			SHA256    string `json:"sha256"`
 			Integrity string `json:"integrity"`
+			Evidence  struct {
+				Platform                          string   `json:"platform"`
+				Source                            string   `json:"source"`
+				Revision                          string   `json:"revision"`
+				SHA256                            string   `json:"sha256"`
+				Integrity                         string   `json:"integrity"`
+				BinaryPath                        string   `json:"binary_path"`
+				BinarySHA256                      string   `json:"binary_sha256"`
+				Extraction                        string   `json:"extraction"`
+				CustomModelNameVariables          []string `json:"custom_model_name_variables"`
+				SelectionSyntax                   string   `json:"selection_syntax"`
+				TerminalSuffixMarker              string   `json:"terminal_suffix_marker"`
+				RepeatedSuffixNormalizationMarker string   `json:"repeated_suffix_normalization_marker"`
+			} `json:"implementation_evidence"`
 		} `json:"claude_code"`
 		OpenCode struct {
 			Version      string `json:"tested_version"`
@@ -401,6 +445,51 @@ func TestCompatibilityManifestAndGeneratedFormats(t *testing.T) {
 	}
 	if !strings.HasPrefix(manifest.OpenCode.SchemaSource, "https://") || len(manifest.OpenCode.SchemaSHA256) != 64 || len(manifest.Codex.ConfigRevision) != 40 || len(manifest.Codex.ConfigArchiveSHA256) != 64 {
 		t.Fatal("schema/source revisions are not pinned")
+	}
+	if manifest.ClaudeCode.Version != "2.1.214" || manifest.ClaudeCode.Evidence.Platform != "darwin-arm64" ||
+		manifest.ClaudeCode.Evidence.Source != "https://registry.npmjs.org/@anthropic-ai/claude-code-darwin-arm64/-/claude-code-darwin-arm64-2.1.214.tgz" ||
+		manifest.ClaudeCode.Evidence.Revision != "npm:@anthropic-ai/claude-code-darwin-arm64@2.1.214" ||
+		manifest.ClaudeCode.Evidence.SHA256 != "063331d0cf00f73f21a2f94d779788c1a1ce783d2f11286a2b5fc77cfaaba6bb" ||
+		manifest.ClaudeCode.Evidence.Integrity != "sha512-z99kjSImARBWdE6lGoCXSi83tbiabtIv7vtFyuwrHD56WZTFSguedBb9F8wlUncEEfUVtqHKa9nCZ55j6spiIA==" ||
+		manifest.ClaudeCode.Evidence.BinaryPath != "package/claude" || manifest.ClaudeCode.Evidence.BinarySHA256 != "59796dd18e9d77f1256f367db6d28ce4bd9cd5968e402ad3a327aac36abc6dec" ||
+		manifest.ClaudeCode.Evidence.Extraction != "tar -xzf ARTIFACT && strings -a package/claude" {
+		t.Fatalf("incomplete Claude implementation evidence: %#v", manifest.ClaudeCode.Evidence)
+	}
+	wantNameVariables := []string{
+		"ANTHROPIC_CUSTOM_MODEL_OPTION_NAME",
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+		"ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+		"ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+	}
+	if strings.Join(manifest.ClaudeCode.Evidence.CustomModelNameVariables, "\n") != strings.Join(wantNameVariables, "\n") ||
+		manifest.ClaudeCode.Evidence.SelectionSyntax != "[1m]" || manifest.ClaudeCode.Evidence.TerminalSuffixMarker != `\[1m\]$` ||
+		manifest.ClaudeCode.Evidence.RepeatedSuffixNormalizationMarker != `(\[1m\])+$` {
+		t.Fatalf("Claude compatibility markers changed: %#v", manifest.ClaudeCode.Evidence)
+	}
+
+	oneMillion := modelconfig.ClaudeContext1M
+	primaryName, haikuName, sonnetName, opusName := "Primary", "Fast", "Balanced", "Deep"
+	compatibilityConfig := &modelconfig.ClaudeConfig{
+		Primary: modelconfig.Model{Model: "primary", Name: &primaryName, Context: &oneMillion},
+		Haiku:   modelconfig.ClaudeRole{Selection: &modelconfig.Model{Model: "haiku", Name: &haikuName}},
+		Sonnet:  modelconfig.ClaudeRole{Selection: &modelconfig.Model{Model: "sonnet", Name: &sonnetName, Context: &oneMillion}},
+		Opus:    modelconfig.ClaudeRole{Selection: &modelconfig.Model{Model: "opus", Name: &opusName, Context: &oneMillion}},
+	}
+	compatibilityEnv := claudeManagedEnv(compatibilityConfig, "http://127.0.0.1:19099", RedactedAPIKey)
+	for key, want := range map[string]string{
+		"ANTHROPIC_MODEL":                     "primary[1m]",
+		"ANTHROPIC_CUSTOM_MODEL_OPTION":       "primary[1m]",
+		"ANTHROPIC_CUSTOM_MODEL_OPTION_NAME":  primaryName,
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL":       "haiku",
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME":  haikuName,
+		"ANTHROPIC_DEFAULT_SONNET_MODEL":      "sonnet[1m]",
+		"ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": sonnetName,
+		"ANTHROPIC_DEFAULT_OPUS_MODEL":        "opus[1m]",
+		"ANTHROPIC_DEFAULT_OPUS_MODEL_NAME":   opusName,
+	} {
+		if got := compatibilityEnv[key]; got != want {
+			t.Errorf("Claude compatibility env %s = %q, want %q", key, got, want)
+		}
 	}
 
 	input := legacyTestRenderInput()

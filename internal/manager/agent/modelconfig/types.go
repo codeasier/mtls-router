@@ -5,9 +5,10 @@ package modelconfig
 import "fmt"
 
 const (
-	Version        = 1
-	MaxConfigSize  = 2 << 20
-	MaxSafeInteger = int64(9007199254740991)
+	Version                     = 1
+	MaxConfigSize               = 2 << 20
+	MaxReferencedModelsPerAgent = 1000
+	MaxSafeInteger              = int64(9007199254740991)
 )
 
 type Agent string
@@ -26,9 +27,14 @@ type Config struct {
 }
 
 type Model struct {
-	Model string  `json:"model"`
-	Name  *string `json:"name,omitempty"`
+	Model   string         `json:"model"`
+	Name    *string        `json:"name,omitempty"`
+	Context *ClaudeContext `json:"context,omitempty"`
 }
+
+type ClaudeContext string
+
+const ClaudeContext1M ClaudeContext = "1m"
 
 type ClaudeRole struct {
 	InheritPrimary bool

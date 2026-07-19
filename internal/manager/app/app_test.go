@@ -19,6 +19,7 @@ import (
 	"github.com/codeasier/mtls-router/internal/manager/lifecycle"
 	"github.com/codeasier/mtls-router/internal/manager/occupant"
 	managerpaths "github.com/codeasier/mtls-router/internal/manager/paths"
+	"github.com/codeasier/mtls-router/internal/manager/preset"
 	"github.com/codeasier/mtls-router/internal/manager/process"
 	"github.com/codeasier/mtls-router/internal/manager/protocol"
 	"github.com/codeasier/mtls-router/internal/manager/state"
@@ -389,6 +390,9 @@ func TestAgentModelsReturnsCompleteKeyFreeCatalogResult(t *testing.T) {
 			return agent.ModelsResult{CatalogToken: "signed-catalog", Existing: agent.ModelsExisting{
 				ModelConfig:       json.RawMessage(`{"version":1,"codex":{"model":"model-a"}}`),
 				UnavailableModels: map[string][]string{"claude": {"old-model"}}, DriftedAgents: []string{"claude", "codex"},
+			}, Preset: agent.ModelsPreset{
+				ModelConfig:       json.RawMessage(`{"version":1,"codex":{"model":"model-a"}}`),
+				UnavailableAgents: map[string][]string{"claude": {"missing-a", "missing-z"}},
 			}}, nil
 		}},
 	})
@@ -414,8 +418,53 @@ func TestAgentModelsReturnsCompleteKeyFreeCatalogResult(t *testing.T) {
 	if strings.Join(result.Models, ",") != "model-a,model-b" || result.CatalogToken != "signed-catalog" ||
 		result.RouterBaseURL != binding.RouterBaseURL || result.APIBaseURL != binding.APIBaseURL ||
 		strings.Join(result.Existing.UnavailableModels["claude"], ",") != "old-model" ||
-		strings.Join(result.Existing.DriftedAgents, ",") != "claude,codex" {
+		strings.Join(result.Existing.DriftedAgents, ",") != "claude,codex" ||
+		string(result.Preset.ModelConfig) != `{"version":1,"codex":{"model":"model-a"}}` ||
+		result.Preset.UnavailableAgents["claude"].Code != protocol.CodeModelNotAvailable ||
+		strings.Join(result.Preset.UnavailableAgents["claude"].Models, ",") != "missing-a,missing-z" {
 		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestAgentModelsNoPresetUsesStableEmptyObjects(t *testing.T) {
+	manager := newWithDependencies(Config{}, dependencies{
+		trusted: fakeTrustedRouter{fetch: func(context.Context, protocol.RouterOwner, string) (trustedrouter.Result, *protocol.Error) {
+			return trustedrouter.Result{Models: []string{"model-a"}, Binding: trustedrouter.Binding{RouterBaseURL: "http://127.0.0.1:19099", APIBaseURL: "http://127.0.0.1:19099/v1", DeploymentID: "prod-a", ProtocolVersion: "2"}}, nil
+		}},
+		models: fakeModelsService{discover: func(context.Context, []agent.Kind, []string, modelconfig.CatalogClaims) (agent.ModelsResult, error) {
+			return agent.ModelsResult{CatalogToken: "token", Existing: agent.ModelsExisting{ModelConfig: json.RawMessage(`{}`), UnavailableModels: map[string][]string{}, DriftedAgents: []string{}}}, nil
+		}},
+	})
+	var output bytes.Buffer
+	request := `{"id":"models","method":"agent.models","params":{"owner":"cli","agents":["claude"],"api_key":"secret"}}` + "\n"
+	if err := manager.Serve(context.Background(), strings.NewReader(request), &output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), `"preset":{"model_config":{},"unavailable_agents":{}}`) || strings.Contains(output.String(), "secret") {
+		t.Fatalf("response = %s", output.String())
+	}
+}
+
+func TestNewRejectsMalformedPresetBeforeRecovery(t *testing.T) {
+	previous := preset.Encoded
+	preset.Encoded = "malformed-preset-canary%%%"
+	t.Cleanup(func() { preset.Encoded = previous })
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, "agent-transactions")
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	journal := filepath.Join(stateDir, "agent-write-journal.json")
+	if err := os.WriteFile(journal, []byte(`not-json-recovery-canary`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	_, err := New(Config{ListenAddr: "127.0.0.1:19099", RouterPath: os.Args[0], ManagerIdentity: process.Identity{PID: 1, StartedAt: "test", Executable: os.Args[0]}, Paths: managerpaths.Paths{DesktopDataDir: dir}, Stderr: &stderr})
+	if err == nil || err.Error() != "invalid embedded Agent model preset" {
+		t.Fatalf("error = %v", err)
+	}
+	if stderr.Len() != 0 || strings.Contains(err.Error(), "malformed-preset-canary") {
+		t.Fatalf("startup leaked or attempted recovery: err=%v stderr=%q", err, stderr.String())
 	}
 }
 

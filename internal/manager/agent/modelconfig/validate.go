@@ -13,7 +13,7 @@ import (
 // over-match keeps connection and credential-bearing settings manager-owned.
 var protectedFragments = []string{"apikey", "credential", "auth", "token", "secret", "password", "bearer", "header", "url", "endpoint", "provider", "connection", "transport", "proxy", "fetch"}
 
-func parseConfig(o object, selected []Agent, catalog []string) (*Config, error) {
+func parseConfig(o object, selected []Agent, catalog []string, requireCatalog bool) (*Config, error) {
 	if err := exactKeys(o, "", "version", "claude", "opencode", "codex"); err != nil {
 		return nil, err
 	}
@@ -49,19 +49,19 @@ func parseConfig(o object, selected []Agent, catalog []string) (*Config, error) 
 	c := &Config{Version: Version}
 	var err error
 	if want[Claude] {
-		c.Claude, err = parseClaude(asObject(o["claude"]), cat)
+		c.Claude, err = parseClaude(asObject(o["claude"]), cat, requireCatalog)
 		if err != nil {
 			return nil, err
 		}
 	}
 	if want[OpenCode] {
-		c.OpenCode, err = parseOpenCode(asObject(o["opencode"]), cat)
+		c.OpenCode, err = parseOpenCode(asObject(o["opencode"]), cat, requireCatalog)
 		if err != nil {
 			return nil, err
 		}
 	}
 	if want[Codex] {
-		c.Codex, err = parseCodex(asObject(o["codex"]), cat)
+		c.Codex, err = parseCodex(asObject(o["codex"]), cat, requireCatalog)
 		if err != nil {
 			return nil, err
 		}
@@ -69,20 +69,20 @@ func parseConfig(o object, selected []Agent, catalog []string) (*Config, error) 
 	return c, nil
 }
 
-func parseClaude(o object, cat map[string]bool) (*ClaudeConfig, error) {
+func parseClaude(o object, cat map[string]bool, requireCatalog bool) (*ClaudeConfig, error) {
 	if o == nil {
 		return nil, invalid("/claude", "object")
 	}
 	if err := exactKeys(o, "/claude", "primary", "haiku", "sonnet", "opus", "extra"); err != nil {
 		return nil, err
 	}
-	p, err := parseModel(asObject(o["primary"]), "/claude/primary", cat)
+	p, err := parseModel(asObject(o["primary"]), "/claude/primary", cat, requireCatalog)
 	if err != nil {
 		return nil, err
 	}
 	c := &ClaudeConfig{Primary: *p}
 	for key, dst := range map[string]*ClaudeRole{"haiku": &c.Haiku, "sonnet": &c.Sonnet, "opus": &c.Opus} {
-		*dst, err = parseRole(asObject(o[key]), "/claude/"+key, cat)
+		*dst, err = parseRole(asObject(o[key]), "/claude/"+key, cat, requireCatalog)
 		if err != nil {
 			return nil, err
 		}
@@ -105,15 +105,18 @@ func parseClaude(o object, cat map[string]bool) (*ClaudeConfig, error) {
 	return c, nil
 }
 
-func parseModel(o object, path string, cat map[string]bool) (*Model, error) {
+func parseModel(o object, path string, cat map[string]bool, requireCatalog bool) (*Model, error) {
 	if o == nil {
 		return nil, invalid(path, "object")
 	}
-	if err := exactKeys(o, path, "model", "name"); err != nil {
+	if err := exactKeys(o, path, "model", "name", "context"); err != nil {
 		return nil, err
 	}
 	id, ok := o["model"].(string)
-	if !ok || !cat[id] || !validID(id) {
+	if !ok || !validID(id) || strings.HasSuffix(id, "[1m]") {
+		return nil, invalid(path+"/model", "model_id")
+	}
+	if requireCatalog && !cat[id] {
 		return nil, invalid(path+"/model", "catalog")
 	}
 	m := &Model{Model: id}
@@ -124,10 +127,18 @@ func parseModel(o object, path string, cat map[string]bool) (*Model, error) {
 		}
 		m.Name = &s
 	}
+	if x, ok := o["context"]; ok {
+		s, good := x.(string)
+		if !good || s != string(ClaudeContext1M) {
+			return nil, invalid(path+"/context", "enum")
+		}
+		context := ClaudeContext(s)
+		m.Context = &context
+	}
 	return m, nil
 }
 
-func parseRole(o object, path string, cat map[string]bool) (ClaudeRole, error) {
+func parseRole(o object, path string, cat map[string]bool, requireCatalog bool) (ClaudeRole, error) {
 	if o == nil {
 		return ClaudeRole{}, invalid(path, "object")
 	}
@@ -136,14 +147,14 @@ func parseRole(o object, path string, cat map[string]bool) (ClaudeRole, error) {
 			return ClaudeRole{InheritPrimary: true}, nil
 		}
 	}
-	m, err := parseModel(o, path, cat)
+	m, err := parseModel(o, path, cat, requireCatalog)
 	if err != nil {
 		return ClaudeRole{}, err
 	}
 	return ClaudeRole{Selection: m}, nil
 }
 
-func parseOpenCode(o object, cat map[string]bool) (*OpenCodeConfig, error) {
+func parseOpenCode(o object, cat map[string]bool, requireCatalog bool) (*OpenCodeConfig, error) {
 	if o == nil {
 		return nil, invalid("/opencode", "object")
 	}
@@ -158,10 +169,13 @@ func parseOpenCode(o object, cat map[string]bool) (*OpenCodeConfig, error) {
 	if len(models) == 0 {
 		return nil, invalid("/opencode/models", "min_properties")
 	}
+	if len(models) > MaxReferencedModelsPerAgent {
+		return nil, invalid("/opencode/models", "max_properties")
+	}
 	c := &OpenCodeConfig{DefaultModel: def, Models: map[string]OpenCodeModelConfig{}}
 	for id, raw := range models {
 		p := pointer("/opencode/models", id)
-		if !cat[id] || !validID(id) {
+		if !validID(id) || requireCatalog && !cat[id] {
 			return nil, invalid(p, "catalog")
 		}
 		m, err := parseOpenCodeModel(asObject(raw), p)
@@ -318,7 +332,7 @@ func parseModalities(o object, path string) (*Modalities, error) {
 	return m, nil
 }
 
-func parseCodex(o object, cat map[string]bool) (*CodexConfig, error) {
+func parseCodex(o object, cat map[string]bool, requireCatalog bool) (*CodexConfig, error) {
 	if o == nil {
 		return nil, invalid("/codex", "object")
 	}
@@ -326,7 +340,7 @@ func parseCodex(o object, cat map[string]bool) (*CodexConfig, error) {
 		return nil, err
 	}
 	id, ok := o["model"].(string)
-	if !ok || !cat[id] || !validID(id) {
+	if !ok || !validID(id) || requireCatalog && !cat[id] {
 		return nil, invalid("/codex/model", "catalog")
 	}
 	c := &CodexConfig{Model: id}

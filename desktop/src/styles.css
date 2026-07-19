@@ -1947,6 +1947,54 @@ main {
   font-size: 11px;
 }
 
+.claude-selection-fields {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.3fr) minmax(150px, 1fr) minmax(
+      180px,
+      auto
+    );
+  gap: 10px;
+  align-items: end;
+  width: 100%;
+}
+
+.role-row {
+  align-items: start;
+}
+
+.context-selector {
+  display: flex;
+  gap: 12px;
+  min-height: 38px;
+  margin: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+}
+
+.context-selector legend {
+  padding-inline: 4px;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.context-selector label {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  font-size: 10px;
+}
+
+.source-note {
+  padding: 10px;
+  color: var(--good);
+  border-radius: 8px;
+  background: var(--good-soft);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+}
+
 .role-row .agent-select-control {
   flex: 1;
 }
@@ -2198,6 +2246,15 @@ main {
   .preview-layout,
   .result-grid {
     grid-template-columns: 1fr;
+  }
+
+  .claude-selection-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .role-row {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .catalog-rail {

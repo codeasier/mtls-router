@@ -8,6 +8,7 @@ import {
 import { useI18n } from "./i18n";
 import {
   sanitizeSensitiveText,
+  initializeAgentConfig,
   type AgentDetection,
   type AgentFileEffect,
   type AgentId,
@@ -15,10 +16,11 @@ import {
   type AgentPreview,
   type AgentState,
   type AgentWriteResult,
-  type ClaudeRole,
   type DesktopApi,
   type JsonObject,
   type ModelConfig,
+  type ModelSelection,
+  type InitializationSource,
   type OpenCodeModelConfig,
 } from "./ipc";
 
@@ -55,22 +57,68 @@ function selectable(agent: AgentState) {
 function initialSelection(detection: AgentDetection) {
   return detection.agents.filter(selectable).map((agent) => agent.agent);
 }
-function emptyConfig(agents: AgentId[]): ModelConfig {
-  const config: ModelConfig = { version: 1 };
-  if (agents.includes("claude"))
-    config.claude = {
-      primary: { model: "" },
-      haiku: { inherit_primary: true },
-      sonnet: { inherit_primary: true },
-      opus: { inherit_primary: true },
-    };
-  if (agents.includes("opencode"))
-    config.opencode = { default_model: "", models: {} };
-  if (agents.includes("codex")) config.codex = { model: "" };
-  return config;
-}
-function roleModel(role: ClaudeRole) {
-  return "model" in role ? role.model : "";
+function ClaudeSelectionFields({
+  id,
+  selection,
+  models,
+  modelLabel,
+  onChange,
+}: {
+  id: string;
+  selection: ModelSelection;
+  models: string[];
+  modelLabel: string;
+  onChange: (selection: ModelSelection) => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="claude-selection-fields">
+      <label className="option-field">
+        <span>{modelLabel}</span>
+        <AgentSelect
+          value={selection.model}
+          onChange={(event) => onChange({ model: event.target.value })}
+        >
+          <option value="">{t("agents.chooseModel")}</option>
+          {models.map((model) => (
+            <option key={model}>{model}</option>
+          ))}
+        </AgentSelect>
+      </label>
+      <label className="option-field">
+        <span>{t("agents.displayName")}</span>
+        <input
+          aria-label={`${id} ${t("agents.displayName")}`}
+          value={selection.name ?? ""}
+          placeholder={t("agents.unset")}
+          onChange={(event) =>
+            onChange({ ...selection, name: event.target.value || undefined })
+          }
+        />
+      </label>
+      <fieldset className="context-selector">
+        <legend>{t("agents.contextMode")}</legend>
+        <label>
+          <input
+            type="radio"
+            name={`${id}-context`}
+            checked={!selection.context}
+            onChange={() => onChange({ ...selection, context: undefined })}
+          />
+          {t("agents.contextStandard")}
+        </label>
+        <label>
+          <input
+            type="radio"
+            name={`${id}-context`}
+            checked={selection.context === "1m"}
+            onChange={() => onChange({ ...selection, context: "1m" })}
+          />
+          {t("agents.context1m")}
+        </label>
+      </fieldset>
+    </div>
+  );
 }
 
 function AgentSelect({
@@ -338,6 +386,9 @@ export function AgentPage({ api }: { api: DesktopApi }) {
   const [key, setKey] = useState("");
   const [discovery, setDiscovery] = useState<AgentModelsResult | null>(null);
   const [config, setConfig] = useState<ModelConfig>({ version: 1 });
+  const [sources, setSources] = useState<Record<AgentId, InitializationSource>>(
+    { claude: "empty", opencode: "empty", codex: "empty" },
+  );
   const [preview, setPreview] = useState<AgentPreview | null>(null);
   const [result, setResult] = useState<AgentWriteResult | null>(null);
   const [search, setSearch] = useState("");
@@ -407,12 +458,13 @@ export function AgentPage({ api }: { api: DesktopApi }) {
       const value = await api.discoverModels(selected, transient);
       flowRef.current = value.flow_id;
       setDiscovery(value);
-      const prefill = value.existing.model_config;
-      setConfig(
-        Object.keys(prefill).length
-          ? { version: 1, ...prefill }
-          : emptyConfig(selected),
+      const initialized = initializeAgentConfig(
+        selected,
+        value.existing.model_config,
+        value.preset.model_config,
       );
+      setConfig(initialized.config);
+      setSources(initialized.sources);
       setStage("configure");
     } catch (error) {
       setMessage(
@@ -431,6 +483,14 @@ export function AgentPage({ api }: { api: DesktopApi }) {
     if (!discovery) return "/: catalog_required";
     if (config.claude && !config.claude.primary.model)
       return "/claude/primary/model: required";
+    if (config.claude) {
+      for (const role of roleNames)
+        if (
+          !("inherit_primary" in config.claude[role]) &&
+          !config.claude[role].model
+        )
+          return `/claude/${role}/model: required`;
+    }
     if (
       config.opencode &&
       (!Object.keys(config.opencode.models).length ||
@@ -553,6 +613,7 @@ export function AgentPage({ api }: { api: DesktopApi }) {
         ),
       );
       setExtras({ claude: "", opencode: "", codex: "" });
+      setSources({ claude: "empty", opencode: "empty", codex: "empty" });
       setMessage(t("agents.imported"));
     } catch {
       setMessage(t("agents.error.import"));
@@ -743,29 +804,50 @@ export function AgentPage({ api }: { api: DesktopApi }) {
                   </p>
                 ) : null,
             )}
+            {selected.filter((agent) => sources[agent] !== "empty").length >
+              0 && (
+              <p className="source-note" role="note">
+                {selected
+                  .filter((agent) => sources[agent] !== "empty")
+                  .map((agent) =>
+                    t("agents.initializationSource", {
+                      agent: agentNames[agent],
+                      source: t(
+                        sources[agent] === "existing"
+                          ? "agents.source.existing"
+                          : "agents.source.preset",
+                      ),
+                    }),
+                  )
+                  .join(" · ")}
+              </p>
+            )}
+            {Object.entries(discovery.preset.unavailable_agents).map(
+              ([agent, unavailable]) =>
+                unavailable?.models.length ? (
+                  <p className="drift-note" role="note" key={`preset-${agent}`}>
+                    {t("agents.presetUnavailable", {
+                      agent: agentNames[agent as AgentId],
+                      models: unavailable.models.join(", "),
+                    })}
+                  </p>
+                ) : null,
+            )}
             {selected.includes("claude") && config.claude && (
               <section className="model-agent-panel">
                 <h3>Claude Code</h3>
-                <label className="option-field">
-                  <span>{t("agents.primaryModel")}</span>
-                  <AgentSelect
-                    value={config.claude.primary.model}
-                    onChange={(event) =>
-                      setConfig({
-                        ...config,
-                        claude: {
-                          ...config.claude!,
-                          primary: { model: event.target.value },
-                        },
-                      })
-                    }
-                  >
-                    <option value="">{t("agents.chooseModel")}</option>
-                    {discovery.models.map((model) => (
-                      <option key={model}>{model}</option>
-                    ))}
-                  </AgentSelect>
-                </label>
+                <ClaudeSelectionFields
+                  id="claude-primary"
+                  selection={config.claude.primary}
+                  models={discovery.models}
+                  modelLabel={t("agents.primaryModel")}
+                  onChange={(primary) =>
+                    setConfig({
+                      ...config,
+                      claude: { ...config.claude!, primary },
+                    })
+                  }
+                />
                 {roleNames.map((role) => (
                   <div className="role-row" key={role}>
                     <label>
@@ -787,24 +869,18 @@ export function AgentPage({ api }: { api: DesktopApi }) {
                       {t("agents.inheritPrimary", { role })}
                     </label>
                     {!("inherit_primary" in config.claude![role]) && (
-                      <AgentSelect
-                        aria-label={`${role} model`}
-                        value={roleModel(config.claude![role])}
-                        onChange={(event) =>
+                      <ClaudeSelectionFields
+                        id={`claude-${role}`}
+                        selection={config.claude![role] as ModelSelection}
+                        models={discovery.models}
+                        modelLabel={t("agents.roleModel", { role })}
+                        onChange={(selection) =>
                           setConfig({
                             ...config,
-                            claude: {
-                              ...config.claude!,
-                              [role]: { model: event.target.value },
-                            },
+                            claude: { ...config.claude!, [role]: selection },
                           })
                         }
-                      >
-                        <option value="">{t("agents.chooseModel")}</option>
-                        {discovery.models.map((model) => (
-                          <option key={model}>{model}</option>
-                        ))}
-                      </AgentSelect>
+                      />
                     )}
                   </div>
                 ))}

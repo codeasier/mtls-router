@@ -17,7 +17,7 @@
 | 兼容客户端 | `POST /v1/completions` | OpenAI Completions 与可选流式响应 |
 | Codex | `POST /v1/responses` | OpenAI Responses 与 SSE 流式响应 |
 
-Claude deferred tool 字段以及未来开放列表 Anthropic 请求字段会原样透传。配置过程绝不调用 inference endpoint。Router 会保留 authorization，但不选择模型，也不存储 key。
+Claude deferred tool 字段以及未来开放列表 Anthropic 请求字段会原样透传。配置过程绝不调用 inference endpoint，也绝不会根据 ID、名称、目录位置或其他能力信号推断 1M context 支持。Router 会保留 authorization，但不选择模型，也不存储 key。
 
 ## 交互流程
 
@@ -26,13 +26,19 @@ Shell、PowerShell 和桌面端都使用以下顺序：
 1. 检测并选择 Claude Code、opencode 和/或 Codex。
 2. 隐藏读取 API key，并建立可信的 protocol-v2 loopback router。
 3. 调用 `agent.models`，然后才显示共同的已排序目录。
-4. 要求明确选择各 Agent 的原生模型。绝不自动选择第一个模型，也不按名称推断偏好。
+4. 每个已选 Agent 优先使用有效 existing section，其次使用可见且已认证的 preset section，否则使用 empty section；用户必须检查或补全可编辑的 Agent 原生选择。绝不选择第一个模型，不使用模型名称或能力 heuristic，不修复不可用 preset，也不替换为其他模型。
 5. Print 时渲染脱敏片段；write 时预览精确文件、备份、迁移、所有权和漂移影响。
 6. 写入前用临时 key 重新获取目录，再执行一次原子多文件事务。
 
 `agent print-config` 同样需要 key，因为它必须根据当前目录验证选择。它不会修改 Agent 文件、事务 journal、备份或 last-applied sidecar。模型发现可能启动 router，首次使用可能创建私有 token signing key。
 
 模型目录只是配置时快照。系统不会后台刷新或重写 Agent 文件。需要刷新时重新进入配置并提供 key。
+
+### 构建 preset
+
+Release 可以向 manager 注入一份不可变、无 key 的规范 preset。Manager 启动时会严格解码并执行结构校验；调用 `agent.models` 时，会把 preset 裁剪到请求的 Agent，并根据当前认证目录逐个独立校验 Agent section。只有全部引用的 base model ID 均可用时，才会完整返回该 section。任一 ID 缺失都会省略整个 section，并以非致命 `MODEL_NOT_AVAILABLE` metadata 报告已排序的缺失 base ID；其他 Agent 的有效 section 仍可使用。Manager 绝不会部分修复、deep-merge 或替换 preset section。
+
+客户端对每个已选 Agent 独立采用 `existing > preset > empty` 初始化。Preset 值是可见、可编辑的默认值，不代表预览批准、写入确认或能力证明。交互编辑覆盖这些默认值。`--model-config=<path>` 和桌面导入会完整替换表单，并覆盖 existing/preset 初始化，而不是与其合并。
 
 ## 规范模型配置
 
@@ -61,7 +67,7 @@ Shell、PowerShell 和桌面端都使用以下顺序：
 
 ### Claude Code
 
-`primary` 必填。`haiku`、`sonnet` 和 `opus` 各自继承主模型，或明确选择另一个目录模型。每个显式模型都可包含可选显示 `name`。`extra` 是字符串 map，仅允许以下 description key：
+`primary` 必填。`haiku`、`sonnet` 和 `opus` 各自继承 primary selection，或明确选择另一个目录模型。每个显式选择都可包含可选显示 `name` 和可选 `context`。省略 `context` 表示 Claude 的 standard/default 行为；唯一允许的值是精确字符串 `"1m"`。规范 `model` 始终是已认证 base ID，不得以 `[1m]` 结尾。继承角色只能包含 `{"inherit_primary":true}`，并同时继承 model、name 和 context。`extra` 是字符串 map，仅允许以下 description key：
 
 - `ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION`
 - `ANTHROPIC_DEFAULT_HAIKU_MODEL_DESCRIPTION`
@@ -69,6 +75,8 @@ Shell、PowerShell 和桌面端都使用以下顺序：
 - `ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION`
 
 Manager 只拥有文档声明的 `env` key，将它们合并到现有 `env`，并保留无关顶层和环境值。
+
+Standard context 下，manager 原样渲染 base ID。使用 `context: "1m"` 时，仅在 Claude 文件渲染边界为 `ANTHROPIC_MODEL`、`ANTHROPIC_CUSTOM_MODEL_OPTION` 以及有效 Haiku、Sonnet、Opus 模型值追加一个精确的末尾 `[1m]`。显示名称保持不变，manager 不写入 `CLAUDE_CODE_DISABLE_1M_CONTEXT`。已有值带一个精确末尾 `[1m]` 时，会投影回 base ID 加规范 context；错误、重复或位于中间的 marker 不会被修复。目录与写入时可用性校验始终使用 base ID。配置阶段不会推断模型是否支持 1M context；运行时拒绝不会触发模型 fallback 或配置重写。
 
 ### opencode
 
@@ -88,9 +96,13 @@ Manager 只拥有文档声明的 `env` key，将它们合并到现有 `env`，�
 
 发现和写入始终 fail closed。`MODEL_AUTH_FAILED`、`MODEL_DISCOVERY_FAILED`、`MODEL_RESPONSE_INVALID`、`MODEL_CATALOG_EMPTY`、`MODEL_CATALOG_STALE`、`MODEL_CONFIG_INVALID`、`MODEL_NOT_AVAILABLE`、`MANAGED_CONFIG_DRIFT`、`MODEL_STATE_INVALID`、`AGENT_OPERATION_BUSY` 和 `CODEX_AUTH_UNSUPPORTED` 都不会触发静态模型、旧目录 cache、隐式复用现有模型、替换模型或部分文件变更。处理方式见[故障排查](TROUBLESHOOTING.md#模型配置错误)。
 
+Preset 模型不可用是唯一不导致 discovery 整体失败的情况：它会在 `preset.unavailable_agents` 中报告，省略不可用的完整 preset section，并继续提供 existing 配置和其他有效 preset section。它仍然绝不会触发替换或部分使用 preset。
+
 ## 所有权、迁移与备份
 
 Manager 只在私有 `agent-transactions/last-applied-model-config.json` sidecar 中记录规范已选模型 section、owned path、target path 和 keyed revision MAC。它不存储 key、目录、渲染文件、原始响应或无关 Agent 设置。OS-backed 当前用户 lock 会串行化桌面端与 CLI 操作。
+
+注入的 preset 属于构建 metadata；仅执行 discovery 绝不会把它写入 Agent 文件、last-applied sidecar、journal、revision claim、备份、日志或诊断。只有用户通过正常 preview/write 流程批准的精确规范配置，才能进入 Agent 文件和事务状态。
 
 已知 manager-owned 路径可以更新或删除，无关设置会保留。未知 extension 冲突会被拒绝；托管 namespace 漂移必须通过绑定预览的 overwrite 批准。创建任何写入产物前，write 会重新检查 Agent 文件、sidecar revision、router identity 和当前模型可用性。
 
@@ -105,6 +117,19 @@ Manager 只在私有 `agent-transactions/last-applied-model-config.json` sidecar
 1. `agent.models`，提供 `owner`、`agents` 和临时 `api_key`。
 2. `agent.render` 获取 key 脱敏托管片段；或使用 `agents`、`catalog_token`、`model_config` 调用 `agent.preview`。
 3. `agent.write`，提供上述字段、预览返回的 `revision_token`、两个显式 approval boolean 和临时 `api_key`。
+
+即使没有 preset 或没有有效的已请求 section，`agent.models` 也始终包含稳定 preset object：
+
+```json
+{
+  "preset": {
+    "model_config": {},
+    "unavailable_agents": {}
+  }
+}
+```
+
+`model_config` 是仅包含完整有效已请求 section 的 versioned 规范文档。不可用 entry 为 `{"code":"MODEL_NOT_AVAILABLE","models":["missing-base-id"]}`。两个字段始终为 object，绝不会是 `null` 或省略；该 metadata 不含 key，也不会让本来成功的 discovery 变为失败。
 
 Key 只能出现在两次 secret-bearing stdin/IPC 请求体中。不得放入参数、环境变量、model config、日志、shell history 或临时请求文件。Protocol v1 请求以及混合 v1/v2 router、manager、setup receipt 或 desktop artifact 都会被拒绝；必须整体更新同一 release。
 

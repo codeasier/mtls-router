@@ -9,7 +9,7 @@ func GenerateSchema() ([]byte, error) {
 	integer := map[string]any{"type": "integer", "minimum": 1, "maximum": MaxSafeInteger}
 	model := map[string]any{
 		"type": "object", "additionalProperties": false, "required": []string{"model"},
-		"properties": map[string]any{"model": map[string]any{"type": "string", "minLength": 1, "maxLength": 256}, "name": map[string]any{"type": "string", "minLength": 1}},
+		"properties": map[string]any{"model": map[string]any{"type": "string", "minLength": 1, "maxLength": 256, "not": map[string]any{"pattern": `\[1m\]$`}}, "name": map[string]any{"type": "string", "minLength": 1}, "context": map[string]any{"enum": []string{"1m"}}},
 	}
 	role := map[string]any{"oneOf": []any{
 		map[string]any{"type": "object", "additionalProperties": false, "required": []string{"inherit_primary"}, "properties": map[string]any{"inherit_primary": map[string]any{"const": true}}},
@@ -32,7 +32,7 @@ func GenerateSchema() ([]byte, error) {
 		"properties": map[string]any{
 			"version":  map[string]any{"const": Version},
 			"claude":   map[string]any{"type": "object", "additionalProperties": false, "required": []string{"primary", "haiku", "sonnet", "opus"}, "properties": map[string]any{"primary": map[string]any{"$ref": "#/$defs/model"}, "haiku": map[string]any{"$ref": "#/$defs/role"}, "sonnet": map[string]any{"$ref": "#/$defs/role"}, "opus": map[string]any{"$ref": "#/$defs/role"}, "extra": claudeExtra}},
-			"opencode": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"default_model", "models"}, "properties": map[string]any{"default_model": map[string]any{"type": "string"}, "models": map[string]any{"type": "object", "minProperties": 1, "additionalProperties": map[string]any{"$ref": "#/$defs/openCodeModel"}}}},
+			"opencode": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"default_model", "models"}, "properties": map[string]any{"default_model": map[string]any{"type": "string"}, "models": map[string]any{"type": "object", "minProperties": 1, "maxProperties": MaxReferencedModelsPerAgent, "additionalProperties": map[string]any{"$ref": "#/$defs/openCodeModel"}}}},
 			"codex":    map[string]any{"type": "object", "additionalProperties": false, "required": []string{"model"}, "properties": map[string]any{"model": map[string]any{"type": "string"}, "reasoning_effort": map[string]any{"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z0-9_-]+$"}, "reasoning_summary": map[string]any{"enum": []string{"auto", "concise", "detailed", "none"}}, "verbosity": map[string]any{"enum": []string{"low", "medium", "high"}}, "context_window": integer, "auto_compact_token_limit": integer, "extra": map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{"model_auto_compact_token_limit_scope": map[string]any{"enum": []string{"total", "body_after_prefix"}}}}}},
 		},
 		"$defs": map[string]any{"model": model, "role": role, "limit": limit, "modalities": modalities, "interleaved": interleaved, "openCodeModel": openModel},

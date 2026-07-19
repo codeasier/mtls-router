@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -246,7 +247,75 @@ func TestManagerSubprocessModelsPreviewRefreshWriteAcrossRequests(t *testing.T) 
 	assertTreeExcludesExcept(t, dataDir, subprocessKey, filepath.Join(dataDir, "claude", "settings.json"))
 }
 
+func TestManagerSubprocessReturnsPresetWithoutCanaryLeaks(t *testing.T) {
+	const presetCanary = "preset-subprocess-canary"
+	presetJSON := `{"version":1,"claude":{"primary":{"model":"model-a","name":"` + presetCanary + `"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true}}}`
+	binary := buildManagerWithPreset(t, base64.StdEncoding.EncodeToString([]byte(presetJSON)))
+	dataDir := t.TempDir()
+	ready := filepath.Join(dataDir, "router-ready")
+	requestLog := filepath.Join(dataDir, "router-requests")
+	router := exec.Command(os.Args[0], "-test.run=^TestTrustedRouterHelperProcess$")
+	router.Env = append(os.Environ(), "MTLS_TEST_ROUTER_HELPER=1", "MTLS_TEST_ROUTER_READY="+ready, "MTLS_TEST_ROUTER_REQUESTS="+requestLog)
+	if err := router.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = router.Process.Kill(); _ = router.Wait() })
+	authority := waitForContent(t, ready)
+	identity, err := process.Inspect(router.Process.Pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cliDir := filepath.Join(dataDir, "cli")
+	if err := os.MkdirAll(cliDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Write(filepath.Join(cliDir, "setup-state.json"), state.RouterState{
+		PID: router.Process.Pid, Owner: "cli", ListenAddr: "http://" + authority,
+		BinaryPath: identity.Executable, ProcessStartedAt: identity.StartedAt, ProcessExecutable: identity.Executable,
+		RouterVersion: "fixture", DeploymentID: "deployment-test", ManagementProtocolVersion: "2",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	input := `{"id":"models","method":"agent.models","params":{"owner":"cli","agents":["claude"],"api_key":"` + subprocessKey + `"}}` + "\n"
+	command := exec.Command(binary, "serve", "--listen", authority)
+	command.Env = managerEnv(dataDir)
+	command.Stdin = strings.NewReader(input)
+	var stdout, stderr bytes.Buffer
+	command.Stdout, command.Stderr = &stdout, &stderr
+	if err := command.Run(); err != nil {
+		t.Fatalf("manager failed: %v stderr=%s", err, stderr.String())
+	}
+	if strings.Contains(stdout.String(), subprocessKey) || strings.Contains(stderr.String(), subprocessKey) || strings.Contains(stderr.String(), presetCanary) {
+		t.Fatalf("canary leaked: stdout=%s stderr=%s", stdout.String(), stderr.String())
+	}
+	var response protocol.Response
+	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &response); err != nil {
+		t.Fatal(err)
+	}
+	var result protocol.AgentModelsResult
+	if response.Error != nil || json.Unmarshal(response.Result, &result) != nil || !strings.Contains(string(result.Preset.ModelConfig), presetCanary) {
+		t.Fatalf("preset response = %#v stdout=%s", response, stdout.String())
+	}
+	assertTreeExcludes(t, dataDir, presetCanary)
+	assertTreeExcludes(t, dataDir, subprocessKey)
+}
+
+func TestManagerSubprocessRejectsMalformedPresetBeforeServing(t *testing.T) {
+	binary := buildManagerWithPreset(t, "malformed-encoded-preset-canary%%")
+	stdout, stderr, err := runManager(binary, t.TempDir(), `{"id":"info","method":"manager.info"}`+"\n")
+	if err == nil || stdout != "" {
+		t.Fatalf("err=%v stdout=%q stderr=%q", err, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "invalid embedded Agent model preset") || strings.Contains(stderr, "malformed-encoded-preset-canary") {
+		t.Fatalf("unsanitized startup failure: %s", stderr)
+	}
+}
+
 func buildManager(t *testing.T) string {
+	return buildManagerWithPreset(t, "")
+}
+
+func buildManagerWithPreset(t *testing.T, encodedPreset string) string {
 	t.Helper()
 	dir := t.TempDir()
 	binary := filepath.Join(dir, "mtls-router-manager")
@@ -255,6 +324,7 @@ func buildManager(t *testing.T) string {
 		"-X github.com/codeasier/mtls-router/internal/version.Commit=abc123test",
 		"-X github.com/codeasier/mtls-router/internal/version.BuildDate=2026-07-12T00:00:00Z",
 		"-X github.com/codeasier/mtls-router/internal/version.DeploymentID=deployment-test",
+		"-X github.com/codeasier/mtls-router/internal/manager/preset.Encoded=" + encodedPreset,
 	}, " "), "-o", binary, ".")
 	command.Dir = "."
 	if output, err := command.CombinedOutput(); err != nil {

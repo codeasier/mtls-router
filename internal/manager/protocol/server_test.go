@@ -87,8 +87,9 @@ func TestProtocolResultJSONExactShapes(t *testing.T) {
 		value any
 		keys  []string
 	}{
-		{name: "models", value: AgentModelsResult{}, keys: []string{"api_base_url", "catalog_token", "existing", "models", "router_base_url"}},
+		{name: "models", value: AgentModelsResult{}, keys: []string{"api_base_url", "catalog_token", "existing", "models", "preset", "router_base_url"}},
 		{name: "models existing", value: AgentModelsExisting{}, keys: []string{"drifted_agents", "model_config", "unavailable_models"}},
+		{name: "models preset", value: AgentModelsPreset{ModelConfig: json.RawMessage(`{}`), UnavailableAgents: map[string]AgentPresetUnavailable{}}, keys: []string{"model_config", "unavailable_agents"}},
 		{name: "render", value: AgentRenderResult{}, keys: []string{"fragments", "model_config"}},
 		{name: "preview", value: AgentPreviewResult{}, keys: []string{"drifted_agents", "files", "fragments", "managed_collisions", "managed_config_drift", "model_config", "requires_codex_auth_approval", "revision_token"}},
 		{name: "write", value: AgentWriteResult{}, keys: []string{"agents", "transaction_id"}},

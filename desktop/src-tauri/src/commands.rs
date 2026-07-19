@@ -84,19 +84,42 @@ pub struct AgentWriteRequest {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct AgentModelsExisting {
     pub model_config: Value,
     pub unavailable_models: HashMap<String, Vec<String>>,
     pub drifted_agents: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct ManagerModelsResult {
     models: Vec<String>,
     catalog_token: String,
     router_base_url: String,
     api_base_url: String,
     existing: AgentModelsExisting,
+    preset: AgentModelsPreset,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentPresetUnavailable {
+    code: ModelUnavailableCode,
+    models: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+enum ModelUnavailableCode {
+    #[serde(rename = "MODEL_NOT_AVAILABLE")]
+    ModelNotAvailable,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentModelsPreset {
+    pub model_config: Value,
+    pub unavailable_agents: HashMap<String, AgentPresetUnavailable>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -107,6 +130,7 @@ pub struct AgentModelsResult {
     pub router_base_url: String,
     pub api_base_url: String,
     pub existing: AgentModelsExisting,
+    pub preset: AgentModelsPreset,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -276,7 +300,7 @@ async fn agent_models_command(
         json!({ "owner": "desktop", "agents": request.agents, "api_key": flow.api_key.as_str() })
     };
     let result: ManagerModelsResult = manager.call("agent.models", params).await?;
-    validate_models_result(&result)?;
+    validate_models_result(&result, &request.agents)?;
     {
         let mut flows = model_flows.lock().await;
         let flow = flows.get_mut(&flow_id).ok_or_else(flow_expired)?;
@@ -291,6 +315,7 @@ async fn agent_models_command(
         router_base_url: result.router_base_url,
         api_base_url: result.api_base_url,
         existing: result.existing,
+        preset: result.preset,
     })
 }
 
@@ -482,23 +507,78 @@ fn flow_expired() -> CommandError {
     )
 }
 
-fn validate_models_result(result: &ManagerModelsResult) -> Result<()> {
+fn validate_models_result(result: &ManagerModelsResult, requested_agents: &[String]) -> Result<()> {
     let mut seen = std::collections::HashSet::new();
     if result.models.is_empty()
-        || result.models.len() > 1000
+        || result.models.len() > model_config::MAX_REFERENCED_MODELS_PER_AGENT
         || result.catalog_token.is_empty()
         || result.catalog_token.len() > 512 * 1024
-        || result.models.iter().any(|model| {
-            model.is_empty()
-                || model.len() > 256
-                || model.chars().any(char::is_control)
-                || !seen.insert(model)
-        })
+        || result
+            .models
+            .iter()
+            .any(|model| !model_config::valid_model_id(model) || !seen.insert(model))
     {
         return Err(CommandError::new(
             "INVALID_RESPONSE",
             "manager returned an invalid model catalog",
         ));
+    }
+    validate_preset_result(&result.preset, &result.models, requested_agents)?;
+    Ok(())
+}
+
+fn validate_preset_result(
+    preset: &AgentModelsPreset,
+    catalog: &[String],
+    requested_agents: &[String],
+) -> Result<()> {
+    let invalid_response = || {
+        CommandError::new(
+            "INVALID_RESPONSE",
+            "manager returned invalid model preset metadata",
+        )
+    };
+    let object = preset
+        .model_config
+        .as_object()
+        .ok_or_else(invalid_response)?;
+    let allowed = ["version", "claude", "opencode", "codex"];
+    if object.keys().any(|key| !allowed.contains(&key.as_str())) {
+        return Err(invalid_response());
+    }
+    let agents: Vec<String> = ["claude", "opencode", "codex"]
+        .into_iter()
+        .filter(|agent| object.contains_key(*agent))
+        .map(str::to_owned)
+        .collect();
+    if agents.iter().any(|agent| !requested_agents.contains(agent)) {
+        return Err(invalid_response());
+    }
+    if agents.is_empty() {
+        if !object.is_empty() {
+            return Err(invalid_response());
+        }
+    } else {
+        let config: ModelConfig =
+            serde_json::from_value(preset.model_config.clone()).map_err(|_| invalid_response())?;
+        model_config::validate(&config, &agents, catalog).map_err(|_| invalid_response())?;
+    }
+    for (agent, unavailable) in &preset.unavailable_agents {
+        if !requested_agents.contains(agent)
+            || unavailable.models.is_empty()
+            || unavailable.models.len() > model_config::MAX_REFERENCED_MODELS_PER_AGENT
+            || agents.contains(agent)
+        {
+            return Err(invalid_response());
+        }
+        if unavailable
+            .models
+            .iter()
+            .any(|model| !model_config::valid_model_id(model) || catalog.contains(model))
+            || unavailable.models.windows(2).any(|pair| pair[0] >= pair[1])
+        {
+            return Err(invalid_response());
+        }
     }
     Ok(())
 }
@@ -640,8 +720,119 @@ mod tests {
                 unavailable_models: HashMap::new(),
                 drifted_agents: vec![],
             },
+            preset: AgentModelsPreset {
+                model_config: json!({}),
+                unavailable_agents: HashMap::new(),
+            },
         };
-        assert!(validate_models_result(&result).is_ok());
+        assert!(validate_models_result(&result, &["claude".into()]).is_ok());
+    }
+
+    #[test]
+    fn preset_result_shape_models_and_agent_keys_are_strict() {
+        let valid: ManagerModelsResult = serde_json::from_value(json!({
+            "models": ["m1"],
+            "catalog_token": "token",
+            "router_base_url": "http://127.0.0.1:19099",
+            "api_base_url": "http://127.0.0.1:19099/v1",
+            "existing": {"model_config": {}, "unavailable_models": {}, "drifted_agents": []},
+            "preset": {
+                "model_config": {"version":1,"claude":{"primary":{"model":"m1","context":"1m"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true}}},
+                "unavailable_agents": {"codex":{"code":"MODEL_NOT_AVAILABLE","models":["missing"]}}
+            }
+        })).unwrap();
+        assert!(validate_models_result(&valid, &["claude".into(), "codex".into()]).is_ok());
+
+        for invalid in [
+            json!({"model_config": {}, "unavailable_agents": {"shell":{"code":"MODEL_NOT_AVAILABLE","models":["missing"]}}}),
+            json!({"model_config": {}, "unavailable_agents": {"codex":{"code":"OTHER","models":["missing"]}}}),
+            json!({"model_config": {"version":1,"codex":{"model":"missing"}}, "unavailable_agents": {}}),
+            json!({"model_config": {}, "unavailable_agents": {}, "secret":"canary"}),
+        ] {
+            let mut response = serde_json::to_value(&valid).unwrap();
+            response["preset"] = invalid;
+            match serde_json::from_value::<ManagerModelsResult>(response) {
+                Ok(result) => assert!(validate_models_result(
+                    &result,
+                    &["claude".into(), "codex".into()]
+                )
+                .is_err()),
+                Err(_) => {}
+            }
+        }
+    }
+
+    #[test]
+    fn preset_unavailable_models_accept_boundary_and_reject_malformed_metadata() {
+        let unavailable = (0..model_config::MAX_REFERENCED_MODELS_PER_AGENT)
+            .map(|index| format!("missing-{index:04}"))
+            .collect::<Vec<_>>();
+        let response = |models: Vec<String>| {
+            serde_json::from_value::<ManagerModelsResult>(json!({
+                "models": ["available"],
+                "catalog_token": "token",
+                "router_base_url": "http://127.0.0.1:19099",
+                "api_base_url": "http://127.0.0.1:19099/v1",
+                "existing": {"model_config": {}, "unavailable_models": {}, "drifted_agents": []},
+                "preset": {"model_config": {}, "unavailable_agents": {
+                    "opencode": {"code": "MODEL_NOT_AVAILABLE", "models": models}
+                }}
+            }))
+            .unwrap()
+        };
+
+        assert!(
+            validate_models_result(&response(unavailable.clone()), &["opencode".into()]).is_ok()
+        );
+        for malformed in [
+            {
+                let mut values = unavailable.clone();
+                values.push("missing-overflow".into());
+                values
+            },
+            vec![" leading-space".into()],
+            vec!["trailing-space\u{00a0}".into()],
+            vec!["available".into()],
+            vec!["duplicate".into(), "duplicate".into()],
+            vec!["z".into(), "a".into()],
+        ] {
+            assert!(validate_models_result(&response(malformed), &["opencode".into()]).is_err());
+        }
+
+        let mut contradictory = response(vec!["missing".into()]);
+        contradictory.preset.model_config = json!({
+            "version": 1,
+            "opencode": {"default_model": "available", "models": {"available": {}}}
+        });
+        assert!(validate_models_result(&contradictory, &["opencode".into()]).is_err());
+    }
+
+    #[test]
+    fn preset_is_forwarded_without_entering_secret_flow() {
+        tauri::async_runtime::block_on(async {
+            let response = serde_json::to_vec(&json!({"id":"desktop-1","result":{
+                "models":["m1"],"catalog_token":"catalog","router_base_url":"http://127.0.0.1:19099","api_base_url":"http://127.0.0.1:19099/v1",
+                "existing":{"model_config":{},"unavailable_models":{},"drifted_agents":[]},
+                "preset":{"model_config":{"version":1,"codex":{"model":"m1"}},"unavailable_agents":{}}
+            }})).unwrap();
+            let (manager, _) = fake_client(vec![response]);
+            let flows = Arc::new(Mutex::new(HashMap::new()));
+            let result = agent_models_command(
+                AgentModelsRequest {
+                    agents: vec!["codex".into()],
+                    api_key: "flow-secret".into(),
+                },
+                &manager,
+                flows.clone(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(result.preset.model_config["codex"]["model"], "m1");
+            let flows = flows.lock().await;
+            let flow = flows.get(&result.flow_id).unwrap();
+            assert_eq!(flow.api_key.as_str(), "flow-secret");
+            assert!(!format!("{:?}", flow.models).contains("preset"));
+        });
     }
 
     #[test]

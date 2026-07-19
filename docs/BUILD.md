@@ -31,6 +31,16 @@ go build -trimpath -o mtls-router .
 go build -trimpath -o mtls-router-manager ./cmd/mtls-router-manager
 ```
 
+The manager accepts one optional build-time Agent model preset from
+`AGENT_MODEL_PRESET_BASE64`. The value must be strict standard Base64 of a
+key-free canonical version-1 model-config document containing at least one Agent
+section. `scripts/build.sh` and `desktop/scripts/build-sidecars.sh` inject it
+only into `github.com/codeasier/mtls-router/internal/manager/preset.Encoded` in
+manager binaries; the router binary never receives the value. Unset or empty
+means no preset. A malformed nonempty value makes the manager fail startup
+before protocol serving or Agent transaction recovery, without printing the
+encoded or decoded content.
+
 `mtls-router-manager` has one command, `serve`. It reads one line-delimited JSON request at a time from stdin, processes requests sequentially, writes only protocol responses to stdout, and exits cleanly on stdin EOF. Diagnostics belong on stderr or in logs. Never add API keys to manager arguments or environment variables.
 
 Agent configuration uses management protocol v2. Release tests validate generated Claude JSON, opencode JSON, and Codex TOML/auth output through repository parser and snapshot coverage. The exact current stable Agent/schema inputs used by those tests, including source URL, revision, digest, and retrieval date, are pinned in [`internal/manager/agent/testdata/compatibility.json`](../internal/manager/agent/testdata/compatibility.json). Updating a pin requires reviewing the upstream schema, updating renderer/schema tests where necessary, and keeping English/Chinese Agent documentation aligned.
@@ -134,6 +144,9 @@ Supported mappings are:
 
 The sidecar script uses all three real files in `secrets/` when present; if none is present, it generates temporary placeholders. A production package must therefore fail preflight unless all real credential inputs are deliberately supplied. The Rust build script rejects missing, non-native, wrong-format, wrong-architecture, or non-executable sidecars and embeds each sidecar SHA-256. Runtime startup rechecks files against those hashes and performs a manager target/version/deployment/protocol handshake.
 
+`AGENT_MODEL_PRESET_BASE64` is forwarded only to the packaged manager sidecar.
+It is not injected into the router sidecar and is not a desktop runtime setting.
+
 For a local native development launch:
 
 ```bash
@@ -187,7 +200,7 @@ Do not publish if any target lacks package-inspection, signing-status, and succe
 
 The current `.github/workflows/release.yml` builds router and manager binaries for all six Go targets and creates six platform archives containing the exact router/manager pair and setup script. In parallel, six native runners build and inspect Windows x86_64/arm64 NSIS installers, macOS Intel/Apple Silicon DMGs, and Linux x86_64/arm64 AppImages. A manual dispatch is validation-only and may select one paired CLI/desktop target plus an optional HTTPS upstream override. A version tag always ignores validation overrides, waits for all 12 build jobs, verifies the six desktop package checksums, assembles one `SHA256SUMS`, and publishes and mirrors the CLI and desktop assets plus six signing-status files.
 
-Production CLI and desktop sidecars require repository secrets `CLIENT_CERT_PEM`, `CLIENT_KEY_PEM`, and `UPSTREAM_CA_PEM`, plus variables `UPSTREAM_URL` and a non-default `DEPLOYMENT_ID`. Optional platform credentials select the signed/notarized release branches described above.
+Production CLI and desktop sidecars require repository secrets `CLIENT_CERT_PEM`, `CLIENT_KEY_PEM`, and `UPSTREAM_CA_PEM`, plus variables `UPSTREAM_URL` and a non-default `DEPLOYMENT_ID`. Optional repository variable `AGENT_MODEL_PRESET_BASE64` supplies the same preset to every standalone manager and desktop manager sidecar; empty is valid and means no preset. Release preflight validates a configured value through the manager loader before matrix builds without printing its contents. The router builds never receive it. Optional platform credentials select the signed/notarized release branches described above.
 
 Each CLI and desktop matrix producer emits code-owned protocol metadata. `scripts/package-release.sh` requires exactly one metadata file per producer and requires every file to declare schema `1` and management protocol `2` before it assembles archives. This preflight is shared by normal and recovery publication, so a valid but mixed v1/v2 artifact set is not publishable.
 
@@ -200,6 +213,11 @@ gh secret set UPSTREAM_CA_PEM --repo codeasier/mtls-router < secrets/upstream-ca
 gh variable set UPSTREAM_URL --repo codeasier/mtls-router --body "https://router.example.com"
 gh variable set DEPLOYMENT_ID --repo codeasier/mtls-router --body "production-service"
 ```
+
+Set `AGENT_MODEL_PRESET_BASE64` only through the protected repository-variable
+process after producing strict standard Base64 from the reviewed key-free
+canonical document. Do not place API keys, URLs, provider identities, headers,
+catalog responses, or arbitrary Agent settings in a preset.
 
 Configure the optional Windows signing and Apple signing/notarization secrets only through the repository's protected secret-management process. Do not put credential values in documentation, commands that persist in shell history, or repository files.
 
