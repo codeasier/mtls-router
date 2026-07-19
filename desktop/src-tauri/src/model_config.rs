@@ -56,6 +56,10 @@ pub struct ClaudeConfig {
     pub sonnet: ClaudeRole,
     pub opus: ClaudeRole,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub extra: Option<HashMap<String, String>>,
 }
 
@@ -87,6 +91,8 @@ pub struct OpenCodeModel {
     pub interleaved: Option<Interleaved>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub options: Option<Map<String, Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variants: Option<HashMap<String, Map<String, Value>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extra: Option<Map<String, Value>>,
 }
@@ -196,6 +202,44 @@ pub fn validate(config: &ModelConfig, agents: &[String], catalog: &[String]) -> 
                 _ => return Err(invalid(&format!("/claude/{name}"), "one_of")),
             }
         }
+        for (path, value) in [
+            ("/claude/context_window", claude.context_window),
+            ("/claude/max_output_tokens", claude.max_output_tokens),
+        ] {
+            if value.is_some_and(|value| value == 0 || value > MAX_SAFE_INTEGER) {
+                return Err(invalid(path, "positive_integer"));
+            }
+        }
+        if claude.context_window.is_some_and(|context| {
+            claude
+                .max_output_tokens
+                .is_some_and(|output| output >= context)
+        }) {
+            return Err(invalid("/claude/max_output_tokens", "integer_relationship"));
+        }
+        if claude.context_window.is_some() {
+            if claude.primary.context == Some(ClaudeContext::OneMillion) {
+                return Err(invalid("/claude/primary/context", "context_conflict"));
+            }
+            for (name, role) in [
+                ("haiku", &claude.haiku),
+                ("sonnet", &claude.sonnet),
+                ("opus", &claude.opus),
+            ] {
+                if matches!(
+                    role,
+                    ClaudeRole::Selection(ModelSelection {
+                        context: Some(ClaudeContext::OneMillion),
+                        ..
+                    })
+                ) {
+                    return Err(invalid(
+                        &format!("/claude/{name}/context"),
+                        "context_conflict",
+                    ));
+                }
+            }
+        }
         if let Some(extra) = &claude.extra {
             let allowed = [
                 "ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION",
@@ -266,7 +310,29 @@ pub fn validate(config: &ModelConfig, agents: &[String], catalog: &[String]) -> 
             if let Some(value) = &model.options {
                 validate_extension(value, 0, "/opencode/models/options")?;
             }
+            if let Some(variants) = &model.variants {
+                for (name, value) in variants {
+                    if !valid_text(name, 128) {
+                        return Err(invalid("/opencode/models/variants", "key"));
+                    }
+                    validate_extension(value, 0, "/opencode/models/variants")?;
+                }
+            }
             if let Some(value) = &model.extra {
+                let allowed = [
+                    "family",
+                    "release_date",
+                    "cost",
+                    "status",
+                    "experimental",
+                    "variants",
+                ];
+                if value.keys().any(|key| !allowed.contains(&key.as_str())) {
+                    return Err(invalid("/opencode/models/extra", "allowlist"));
+                }
+                if model.variants.is_some() && value.contains_key("variants") {
+                    return Err(invalid("/opencode/models/variants", "field_conflict"));
+                }
                 validate_extension(value, 0, "/opencode/models/extra")?;
             }
         }
@@ -332,11 +398,11 @@ pub fn validate(config: &ModelConfig, agents: &[String], catalog: &[String]) -> 
 }
 
 fn validate_extension(value: &Map<String, Value>, depth: usize, path: &str) -> Result<()> {
-    if depth > 16 {
+    if depth >= 16 {
         return Err(invalid(path, "max_depth"));
     }
     for (key, value) in value {
-        if key.is_empty() || key.len() > 128 || key.chars().any(char::is_control) {
+        if key.len() > 128 || key.chars().any(char::is_control) {
             return Err(invalid(path, "key"));
         }
         let normalized: String = key
@@ -356,6 +422,7 @@ fn validate_extension(value: &Map<String, Value>, depth: usize, path: &str) -> R
             "url",
             "endpoint",
             "provider",
+            "connection",
             "transport",
             "proxy",
             "fetch",
@@ -365,17 +432,30 @@ fn validate_extension(value: &Map<String, Value>, depth: usize, path: &str) -> R
         {
             return Err(invalid(path, "protected_path"));
         }
-        match value {
-            Value::Null => return Err(invalid(path, "non_null")),
-            Value::String(value) if value.len() > 16 * 1024 => {
-                return Err(invalid(path, "max_length"))
-            }
-            Value::Array(value) if value.len() > 1024 => return Err(invalid(path, "max_items")),
-            Value::Object(value) => validate_extension(value, depth + 1, path)?,
-            _ => {}
-        }
+        validate_extension_value(value, depth + 1, path)?;
     }
     Ok(())
+}
+
+fn validate_extension_value(value: &Value, depth: usize, path: &str) -> Result<()> {
+    match value {
+        Value::Null => Err(invalid(path, "non_null")),
+        Value::String(value) if value.len() > 16 * 1024 => Err(invalid(path, "max_length")),
+        Value::Array(values) => {
+            if depth >= 16 {
+                return Err(invalid(path, "max_depth"));
+            }
+            if values.len() > 1024 {
+                return Err(invalid(path, "max_items"));
+            }
+            for value in values {
+                validate_extension_value(value, depth + 1, path)?;
+            }
+            Ok(())
+        }
+        Value::Object(value) => validate_extension(value, depth, path),
+        _ => Ok(()),
+    }
 }
 
 pub fn import_json(content: &str, agents: &[String], catalog: &[String]) -> Result<ModelConfig> {
@@ -472,6 +552,8 @@ mod tests {
                 opus: ClaudeRole::Inherit(InheritPrimary {
                     inherit_primary: true,
                 }),
+                context_window: None,
+                max_output_tokens: None,
                 extra: None,
             }),
             opencode: None,
@@ -513,6 +595,134 @@ mod tests {
         }
         let suffixed = one_million.replace(r#""m1""#, r#""m1[1m]""#);
         assert!(import_json(&suffixed, &agents, &catalog).is_err());
+    }
+
+    #[test]
+    fn claude_budgets_and_opencode_variants_round_trip() {
+        let agents = vec!["claude".into(), "opencode".into()];
+        let catalog = vec!["m1".into()];
+        let content = r#"{"version":1,"claude":{"primary":{"model":"m1"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true},"context_window":353400,"max_output_tokens":100000},"opencode":{"default_model":"m1","models":{"m1":{"variants":{"medium":{"reasoningEffort":"medium"}}}}}}"#;
+        let config = import_json(content, &agents, &catalog).unwrap();
+        let claude = config.claude.as_ref().unwrap();
+        assert_eq!(claude.context_window, Some(353400));
+        assert_eq!(claude.max_output_tokens, Some(100000));
+        assert_eq!(
+            config.opencode.as_ref().unwrap().models["m1"]
+                .variants
+                .as_ref()
+                .unwrap()["medium"]["reasoningEffort"],
+            "medium"
+        );
+        assert!(export_json(&config, &agents, &catalog)
+            .unwrap()
+            .contains(r#""variants":{"medium":{"reasoningEffort":"medium"}}"#));
+    }
+
+    #[test]
+    fn rejects_invalid_claude_budgets_and_variant_trees() {
+        let claude_agents = vec!["claude".into()];
+        let opencode_agents = vec!["opencode".into()];
+        let catalog = vec!["m1".into()];
+        let assert_rule = |content: &str, agents: &[String], rule: &str| {
+            let error = import_json(content, agents, &catalog).unwrap_err();
+            assert!(
+                error.message.contains(rule),
+                "expected {rule}, got {}",
+                error.message
+            );
+        };
+
+        let claude = r#"{"version":1,"claude":{"primary":{"model":"m1"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true},"context_window":100,"max_output_tokens":50}}"#;
+        assert_rule(
+            &claude.replace(r#""context_window":100"#, r#""context_window":0"#),
+            &claude_agents,
+            "positive_integer",
+        );
+        assert_rule(
+            &claude.replace(
+                r#""context_window":100"#,
+                r#""context_window":9007199254740992"#,
+            ),
+            &claude_agents,
+            "positive_integer",
+        );
+        assert_rule(
+            &claude.replace(r#""max_output_tokens":50"#, r#""max_output_tokens":100"#),
+            &claude_agents,
+            "integer_relationship",
+        );
+        assert_rule(
+            &claude.replace(
+                r#""primary":{"model":"m1"}"#,
+                r#""primary":{"model":"m1","context":"1m"}"#,
+            ),
+            &claude_agents,
+            "context_conflict",
+        );
+        assert_rule(
+            &claude.replace(
+                r#""sonnet":{"inherit_primary":true}"#,
+                r#""sonnet":{"model":"m1","context":"1m"}"#,
+            ),
+            &claude_agents,
+            "context_conflict",
+        );
+
+        let opencode = r#"{"version":1,"opencode":{"default_model":"m1","models":{"m1":{"variants":{"high":{"reasoningEffort":"high"}}}}}}"#;
+        assert_rule(
+            &opencode.replace("reasoningEffort", "api_key"),
+            &opencode_agents,
+            "protected_path",
+        );
+        assert_rule(
+            &opencode.replace(
+                r#""reasoningEffort":"high""#,
+                r#""safe":{"connection":"local"}"#,
+            ),
+            &opencode_agents,
+            "protected_path",
+        );
+        assert_rule(
+            &opencode.replace(
+                r#"{"reasoningEffort":"high"}"#,
+                &format!(r#"{{"values":{}0{}}}"#, "[".repeat(17), "]".repeat(17)),
+            ),
+            &opencode_agents,
+            "max_depth",
+        );
+        assert_rule(
+            &opencode.replace(
+                r#""variants":{"high":{"reasoningEffort":"high"}}"#,
+                r#""variants":{"high":{"reasoningEffort":"high"}},"extra":{"variants":{"low":{"reasoningEffort":"low"}}}"#,
+            ),
+            &opencode_agents,
+            "field_conflict",
+        );
+        assert!(import_json(
+            &opencode.replace(
+                r#""variants":{"high":{"reasoningEffort":"high"}}"#,
+                r#""extra":{"variants":{"high":{"reasoningEffort":"high"}}}"#,
+            ),
+            &opencode_agents,
+            &catalog,
+        )
+        .is_ok());
+        assert_rule(
+            &opencode.replace(
+                r#""variants":{"high":{"reasoningEffort":"high"}}"#,
+                r#""extra":{"variants":{"high":[{"api_key":"secret"}]}}"#,
+            ),
+            &opencode_agents,
+            "protected_path",
+        );
+        assert_rule(
+            &opencode.replace(
+                r#""variants":{"high":{"reasoningEffort":"high"}}"#,
+                r#""extra":{"variants":[{"safe":{"connection":"local"}}]}"#,
+            ),
+            &opencode_agents,
+            "protected_path",
+        );
     }
 
     #[test]
@@ -597,6 +807,19 @@ mod tests {
                 "reasoning",
                 "temperature",
                 "tool_call",
+                "variants",
+            ]
+        );
+        assert_eq!(
+            sorted_keys(&schema["properties"]["claude"]["properties"]),
+            [
+                "context_window",
+                "extra",
+                "haiku",
+                "max_output_tokens",
+                "opus",
+                "primary",
+                "sonnet",
             ]
         );
         assert_eq!(

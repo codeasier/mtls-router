@@ -116,6 +116,8 @@ export interface ClaudeModelConfig {
   haiku: ClaudeRole;
   sonnet: ClaudeRole;
   opus: ClaudeRole;
+  context_window?: number;
+  max_output_tokens?: number;
   extra?: Record<string, string>;
 }
 export interface ModelLimit {
@@ -138,6 +140,7 @@ export interface OpenCodeModelConfig {
   interleaved?:
     true | { field: "reasoning" | "reasoning_content" | "reasoning_details" };
   options?: JsonObject;
+  variants?: Record<string, JsonObject>;
   extra?: JsonObject;
 }
 export interface OpenCodeConfig {

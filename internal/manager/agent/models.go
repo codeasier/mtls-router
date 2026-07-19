@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/codeasier/mtls-router/internal/manager/agent/modelconfig"
@@ -335,7 +336,38 @@ func currentClaude(path string) (any, []string, bool) {
 			*target = modelconfig.ClaudeRole{Selection: &selection}
 		}
 	}
-	return config, ids, true
+	config.ContextWindow, ok = rawPositiveIntString(env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"])
+	if !ok {
+		return nil, nil, false
+	}
+	config.MaxOutputTokens, ok = rawPositiveIntString(env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"])
+	if !ok {
+		return nil, nil, false
+	}
+	document, err := json.Marshal(map[string]any{"version": modelconfig.Version, "claude": config})
+	if err != nil {
+		return nil, nil, false
+	}
+	decoded, err := modelconfig.DecodeStructural(document)
+	if err != nil {
+		return nil, nil, false
+	}
+	return decoded.Claude, ids, true
+}
+
+func rawPositiveIntString(raw json.RawMessage) (*int64, bool) {
+	if raw == nil {
+		return nil, true
+	}
+	var value string
+	if json.Unmarshal(raw, &value) != nil || value == "" {
+		return nil, false
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || parsed <= 0 || parsed > modelconfig.MaxSafeInteger || strconv.FormatInt(parsed, 10) != value {
+		return nil, false
+	}
+	return &parsed, true
 }
 
 func projectClaudeSelection(value string) (modelconfig.Model, bool) {
@@ -403,9 +435,29 @@ func currentOpenCode(path string, format Format) (any, []string, bool) {
 			return nil, nil, false
 		}
 		projected := map[string]json.RawMessage{}
-		for _, key := range []string{"name", "reasoning", "attachment", "tool_call", "temperature", "limit", "modalities", "interleaved"} {
+		for _, key := range []string{"name", "reasoning", "attachment", "tool_call", "temperature", "limit", "modalities", "interleaved", "options"} {
 			if value, present := object[key]; present {
 				projected[key] = value
+			}
+		}
+		if variants, present := object["variants"]; present {
+			typed, isTyped := decodeObject(variants)
+			if isTyped {
+				for _, variant := range typed {
+					if _, valid := decodeObject(variant); !valid {
+						isTyped = false
+						break
+					}
+				}
+			}
+			if isTyped {
+				projected["variants"] = variants
+			} else {
+				extra, err := json.Marshal(map[string]json.RawMessage{"variants": variants})
+				if err != nil {
+					return nil, nil, false
+				}
+				projected["extra"] = extra
 			}
 		}
 		encoded, encodeErr := json.Marshal(projected)

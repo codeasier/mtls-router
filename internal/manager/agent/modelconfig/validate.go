@@ -73,7 +73,7 @@ func parseClaude(o object, cat map[string]bool, requireCatalog bool) (*ClaudeCon
 	if o == nil {
 		return nil, invalid("/claude", "object")
 	}
-	if err := exactKeys(o, "/claude", "primary", "haiku", "sonnet", "opus", "extra"); err != nil {
+	if err := exactKeys(o, "/claude", "primary", "haiku", "sonnet", "opus", "context_window", "max_output_tokens", "extra"); err != nil {
 		return nil, err
 	}
 	p, err := parseModel(asObject(o["primary"]), "/claude/primary", cat, requireCatalog)
@@ -85,6 +85,36 @@ func parseClaude(o object, cat map[string]bool, requireCatalog bool) (*ClaudeCon
 		*dst, err = parseRole(asObject(o[key]), "/claude/"+key, cat, requireCatalog)
 		if err != nil {
 			return nil, err
+		}
+	}
+	if x, ok := o["context_window"]; ok {
+		n, good := positive(x)
+		if !good {
+			return nil, invalid("/claude/context_window", "positive_integer")
+		}
+		c.ContextWindow = &n
+	}
+	if x, ok := o["max_output_tokens"]; ok {
+		n, good := positive(x)
+		if !good {
+			return nil, invalid("/claude/max_output_tokens", "positive_integer")
+		}
+		c.MaxOutputTokens = &n
+	}
+	if c.ContextWindow != nil && c.MaxOutputTokens != nil && *c.MaxOutputTokens >= *c.ContextWindow {
+		return nil, invalid("/claude/max_output_tokens", "integer_relationship")
+	}
+	if c.ContextWindow != nil {
+		if c.Primary.Context != nil {
+			return nil, invalid("/claude/primary/context", "context_conflict")
+		}
+		for _, role := range []struct {
+			key   string
+			value ClaudeRole
+		}{{"haiku", c.Haiku}, {"sonnet", c.Sonnet}, {"opus", c.Opus}} {
+			if role.value.Selection != nil && role.value.Selection.Context != nil {
+				return nil, invalid("/claude/"+role.key+"/context", "context_conflict")
+			}
 		}
 	}
 	if raw, ok := o["extra"]; ok {
@@ -194,7 +224,7 @@ func parseOpenCodeModel(o object, path string) (*OpenCodeModelConfig, error) {
 	if o == nil {
 		return nil, invalid(path, "object")
 	}
-	if err := exactKeys(o, path, "name", "reasoning", "attachment", "tool_call", "temperature", "limit", "modalities", "interleaved", "options", "extra"); err != nil {
+	if err := exactKeys(o, path, "name", "reasoning", "attachment", "tool_call", "temperature", "limit", "modalities", "interleaved", "options", "variants", "extra"); err != nil {
 		return nil, err
 	}
 	m := &OpenCodeModelConfig{}
@@ -258,10 +288,36 @@ func parseOpenCodeModel(o object, path string) (*OpenCodeModelConfig, error) {
 		}
 		m.Options = mapFromObject(v)
 	}
+	if x, ok := o["variants"]; ok {
+		v := asObject(x)
+		if v == nil {
+			return nil, invalid(path+"/variants", "object")
+		}
+		m.Variants = make(map[string]map[string]any, len(v))
+		for name, raw := range v {
+			variantPath := pointer(path+"/variants", name)
+			if name == "" || len(name) > 128 || hasControl(name) {
+				return nil, invalid(variantPath, "key")
+			}
+			options := asObject(raw)
+			if options == nil {
+				return nil, invalid(variantPath, "object")
+			}
+			if err := validateTree(options, variantPath, 0, nil); err != nil {
+				return nil, err
+			}
+			m.Variants[name] = mapFromObject(options)
+		}
+	}
 	if x, ok := o["extra"]; ok {
 		v := asObject(x)
 		if v == nil {
 			return nil, invalid(path+"/extra", "object")
+		}
+		if m.Variants != nil {
+			if _, duplicate := v["variants"]; duplicate {
+				return nil, invalid(path+"/variants", "field_conflict")
+			}
 		}
 		allowed := map[string]bool{"family": true, "release_date": true, "cost": true, "status": true, "experimental": true, "variants": true}
 		if err := validateTree(v, path+"/extra", 0, allowed); err != nil {

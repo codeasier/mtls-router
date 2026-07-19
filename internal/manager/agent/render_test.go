@@ -149,11 +149,35 @@ func TestClaudeContextRenderingUsesEffectiveSelections(t *testing.T) {
 	}
 }
 
+func TestClaudeBudgetRenderingPreservesUnownedValues(t *testing.T) {
+	contextWindow, maxOutput := int64(353400), int64(100000)
+	config := legacyTestRenderInput().Config.Claude
+	config.ContextWindow = &contextWindow
+	config.MaxOutputTokens = &maxOutput
+	env := claudeManagedEnv(config, "http://127.0.0.1:19099", "key")
+	if env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] != "353400" || env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] != "100000" {
+		t.Fatalf("budget env = %#v", env)
+	}
+
+	config.ContextWindow = nil
+	config.MaxOutputTokens = nil
+	root, _ := decodeObject([]byte(`{"env":{"CLAUDE_CODE_MAX_CONTEXT_TOKENS":"999","CLAUDE_CODE_MAX_OUTPUT_TOKENS":"888","UNRELATED":"keep"}}`))
+	content, err := mergeClaude(root, config, "http://127.0.0.1:19099", "key", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	merged, _ := decodeObject(content)
+	mergedEnv, _ := decodeObject(merged["env"])
+	if jsonString(t, mergedEnv["CLAUDE_CODE_MAX_CONTEXT_TOKENS"]) != "999" || jsonString(t, mergedEnv["CLAUDE_CODE_MAX_OUTPUT_TOKENS"]) != "888" || jsonString(t, mergedEnv["UNRELATED"]) != "keep" {
+		t.Fatalf("unowned budgets were not preserved = %s", content)
+	}
+}
+
 func TestOpenCodeExactSubsetTypedExtrasAndRootOwnership(t *testing.T) {
 	input := legacyTestRenderInput()
 	truth := true
 	input.Config.OpenCode.Models = map[string]modelconfig.OpenCodeModelConfig{
-		"model-primary": {Reasoning: &truth, Options: map[string]any{"reasoningEffort": "high"}, Extra: map[string]any{"status": "active"}},
+		"model-primary": {Reasoning: &truth, Options: map[string]any{"reasoningEffort": "high"}, Variants: map[string]map[string]any{"medium": {"reasoningEffort": "medium"}}, Extra: map[string]any{"status": "active"}},
 	}
 	root, _ := decodeObject([]byte(`{"model":"user/default","small_model":"keep","provider":{"other":{"keep":true},"mtls-router":{"models":{"stale":{}}}}}`))
 	content, err := mergeOpenCode(root, input.Config.OpenCode, input.APIBaseURL, "secret", false)
@@ -170,10 +194,37 @@ func TestOpenCodeExactSubsetTypedExtrasAndRootOwnership(t *testing.T) {
 	if len(models) != 1 || models["stale"] != nil {
 		t.Fatalf("selected subset not exact: %s", content)
 	}
+	model, _ := decodeObject(models["model-primary"])
+	variants, _ := decodeObject(model["variants"])
+	medium, _ := decodeObject(variants["medium"])
+	if jsonString(t, medium["reasoningEffort"]) != "medium" {
+		t.Fatalf("typed variants missing: %s", content)
+	}
 	content, _ = mergeOpenCode(root, input.Config.OpenCode, input.APIBaseURL, "secret", true)
 	merged, _ = decodeObject(content)
 	if jsonString(t, merged["model"]) != "mtls-router/model-primary" {
 		t.Fatalf("owned root not replaced: %s", content)
+	}
+}
+
+func TestOpenCodeLegacyExtraVariantsRenderAtModelTopLevel(t *testing.T) {
+	input := legacyTestRenderInput()
+	input.Config.OpenCode.Models = map[string]modelconfig.OpenCodeModelConfig{
+		"model-primary": {Extra: map[string]any{"variants": map[string]any{"legacy": map[string]any{"reasoningEffort": "high"}}}},
+	}
+	content, err := renderOpenCodeFragment(input.Config.OpenCode, input.APIBaseURL, "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, _ := decodeObject(content)
+	providers, _ := decodeObject(root["provider"])
+	provider, _ := decodeObject(providers["mtls-router"])
+	models, _ := decodeObject(provider["models"])
+	model, _ := decodeObject(models["model-primary"])
+	variants, _ := decodeObject(model["variants"])
+	legacy, _ := decodeObject(variants["legacy"])
+	if jsonString(t, legacy["reasoningEffort"]) != "high" {
+		t.Fatalf("legacy extra variants not rendered at model top level: %s", content)
 	}
 }
 

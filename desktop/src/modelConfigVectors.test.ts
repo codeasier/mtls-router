@@ -90,6 +90,18 @@ describe("canonical model config interchange", () => {
       "reasoning",
       "temperature",
       "tool_call",
+      "variants",
+    ]);
+    expect(
+      Object.keys(schema.properties.claude.properties ?? {}).sort(),
+    ).toEqual([
+      "context_window",
+      "extra",
+      "haiku",
+      "max_output_tokens",
+      "opus",
+      "primary",
+      "sonnet",
     ]);
     expect(
       Object.keys(schema.properties.codex.properties ?? {}).sort(),
