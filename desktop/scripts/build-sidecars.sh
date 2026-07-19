@@ -77,13 +77,15 @@ fi
 commit="$(git -C "$repo_dir" rev-parse --short HEAD 2>/dev/null || printf unknown)"
 build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 metadata="-s -w -X 'github.com/codeasier/mtls-router/internal/version.Version=$version' -X 'github.com/codeasier/mtls-router/internal/version.Commit=$commit' -X 'github.com/codeasier/mtls-router/internal/version.BuildDate=$build_date' -X 'github.com/codeasier/mtls-router/internal/version.DeploymentID=$deployment_id'"
+agent_model_preset_base64="${AGENT_MODEL_PRESET_BASE64:-}"
+manager_metadata="$metadata -X 'github.com/codeasier/mtls-router/internal/manager/preset.Encoded=$agent_model_preset_base64'"
 
 router="$out_dir/mtls-router-$target$extension"
 manager="$out_dir/mtls-router-manager-$target$extension"
 (
   cd "$repo_dir"
   GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 go build -trimpath -ldflags "$metadata -X 'main.clientCertPEM=$(cat "$cert")' -X 'main.clientKeyPEM=$(cat "$key")' -X 'main.upstreamCAPEM=$(cat "$ca")' -X 'main.upstreamURL=$upstream_url'" -o "$router" .
-  GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 go build -trimpath -ldflags "$metadata" -o "$manager" ./cmd/mtls-router-manager
+  GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 go build -trimpath -ldflags "$manager_metadata" -o "$manager" ./cmd/mtls-router-manager
 )
 
 printf 'built %s\nbuilt %s\n' "$manager" "$router"

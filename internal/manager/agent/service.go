@@ -265,6 +265,7 @@ type WriteResult struct {
 type Options struct {
 	StateDir string
 	Detector Detector
+	Preset   *modelconfig.Config
 	// LegacyRenderInput keeps the pre-v2 transaction scaffold testable until
 	// Phase 4 replaces its request types. Production callers leave it nil.
 	LegacyRenderInput *LegacyRenderInput
@@ -291,6 +292,7 @@ type Service struct {
 	legacyRender   *renderInput
 	currentInput   renderInput
 	currentSidecar lastAppliedState
+	preset         *modelconfig.Config
 }
 
 type serviceHooks struct {
@@ -308,6 +310,16 @@ func NewService(options Options) (*Service, error) {
 		return nil, operationError(CodeInvalidParams, "Agent transaction state directory is required")
 	}
 	service := &Service{stateDir: filepath.Clean(options.StateDir), detector: options.Detector}
+	if options.Preset != nil {
+		canonical, err := modelconfig.Canonical(options.Preset)
+		if err != nil {
+			return nil, operationError(CodeModelConfigInvalid, "Agent model preset is invalid")
+		}
+		service.preset, err = modelconfig.DecodeStructural(canonical)
+		if err != nil {
+			return nil, operationError(CodeModelConfigInvalid, "Agent model preset is invalid")
+		}
+	}
 	if options.LegacyRenderInput != nil {
 		service.legacyRender = &renderInput{config: options.LegacyRenderInput.Config, routerBaseURL: options.LegacyRenderInput.RouterBaseURL, apiBaseURL: options.LegacyRenderInput.APIBaseURL}
 	}

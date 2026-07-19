@@ -15,6 +15,31 @@ type object map[string]any
 // Decode strictly decodes, validates, and catalog-checks one canonical model
 // configuration. selected is authoritative and must contain unique Agents.
 func Decode(data []byte, selected []Agent, catalog []string) (*Config, error) {
+	o, err := decodeConfigObject(data)
+	if err != nil {
+		return nil, err
+	}
+	return parseConfig(o, selected, catalog, true)
+}
+
+// DecodeStructural strictly decodes and validates a canonical model
+// configuration without requiring a live catalog. It is used for immutable
+// build inputs that are catalog-checked later.
+func DecodeStructural(data []byte) (*Config, error) {
+	o, err := decodeConfigObject(data)
+	if err != nil {
+		return nil, err
+	}
+	selected := make([]Agent, 0, 3)
+	for _, agent := range []Agent{Claude, OpenCode, Codex} {
+		if _, ok := o[string(agent)]; ok {
+			selected = append(selected, agent)
+		}
+	}
+	return parseConfig(o, selected, nil, false)
+}
+
+func decodeConfigObject(data []byte) (object, error) {
 	if len(data) > MaxConfigSize {
 		return nil, invalid("", "size")
 	}
@@ -32,7 +57,7 @@ func Decode(data []byte, selected []Agent, catalog []string) (*Config, error) {
 	if !ok {
 		return nil, invalid("", "object")
 	}
-	return parseConfig(o, selected, catalog)
+	return o, nil
 }
 
 func validUnicodeEscapes(data []byte) bool {

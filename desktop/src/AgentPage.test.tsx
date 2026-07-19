@@ -2,11 +2,12 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { AgentPage } from "./AgentPage";
-import type {
-  AgentDetection,
-  AgentModelsResult,
-  AgentPreview,
-  ModelConfig,
+import {
+  initializeAgentConfig,
+  type AgentDetection,
+  type AgentModelsResult,
+  type AgentPreview,
+  type ModelConfig,
 } from "./ipc";
 import { createMockApi } from "./test/api";
 
@@ -34,6 +35,7 @@ const discovery: AgentModelsResult = {
     unavailable_models: { claude: ["gone-model"] },
     drifted_agents: [],
   },
+  preset: { model_config: {}, unavailable_agents: {} },
 };
 const configured: ModelConfig = {
   version: 1,
@@ -122,6 +124,31 @@ function completeRequiredConfig() {
 }
 
 describe("Agent model workbench", () => {
+  it("initializes each Agent independently without merging existing and preset sections", () => {
+    const existingClaude = configured.claude!;
+    const preset = {
+      version: 1 as const,
+      claude: {
+        ...existingClaude,
+        primary: { model: "preset-must-not-merge" },
+      },
+      opencode: configured.opencode,
+    };
+    const initialized = initializeAgentConfig(
+      ["claude", "opencode", "codex"],
+      { version: 1, claude: existingClaude },
+      preset,
+    );
+    expect(initialized.config.claude).toEqual(existingClaude);
+    expect(initialized.config.opencode).toEqual(configured.opencode);
+    expect(initialized.config.codex).toEqual({ model: "" });
+    expect(initialized.sources).toEqual({
+      claude: "existing",
+      opencode: "preset",
+      codex: "empty",
+    });
+  });
+
   it("contains detected configuration paths and exposes their complete values", async () => {
     const api = createMockApi({
       detectAgents: vi.fn().mockResolvedValue(detection),
@@ -195,6 +222,208 @@ describe("Agent model workbench", () => {
       editor.closest("details")!.querySelector<HTMLButtonElement>("button")!,
     );
     expect(editor).toHaveValue('{\n  "status": "active"\n}');
+  });
+
+  it("preserves preset Claude metadata, clears it on model changes, and resets explicit roles on inheritance", async () => {
+    const presetClaude: NonNullable<ModelConfig["claude"]> = {
+      primary: { model: "model-a", name: "Primary 1M", context: "1m" },
+      haiku: { model: "model-a", name: "Fast 1M", context: "1m" },
+      sonnet: { inherit_primary: true },
+      opus: { inherit_primary: true },
+    };
+    const api = createMockApi({
+      detectAgents: vi.fn().mockResolvedValue(detection),
+      discoverModels: vi.fn().mockResolvedValue({
+        ...discovery,
+        preset: {
+          model_config: { version: 1, claude: presetClaude },
+          unavailable_agents: {
+            codex: { code: "MODEL_NOT_AVAILABLE", models: ["missing-codex"] },
+          },
+        },
+      }),
+    });
+    await reachCredential(api);
+    fireEvent.change(screen.getByLabelText(/API (?:key|密钥)/), {
+      target: { value: "preset-secret" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: /发现模型|Discover models/ }),
+    );
+    expect(await screen.findByDisplayValue("Primary 1M")).toBeVisible();
+    expect(screen.getByDisplayValue("Fast 1M")).toBeVisible();
+    expect(screen.getByText(/missing-codex/)).toBeVisible();
+    expect(
+      screen.getAllByText(/推荐预设|recommended preset/).length,
+    ).toBeGreaterThan(0);
+    expect(screen.getAllByRole("radio", { name: "1M" })[0]).toBeChecked();
+
+    fireEvent.change(screen.getByLabelText(/^主模型$|^Primary model$/), {
+      target: { value: "model-b" },
+    });
+    expect(screen.queryByDisplayValue("Primary 1M")).not.toBeInTheDocument();
+    expect(
+      screen.getAllByRole("radio", { name: /标准|Standard/ })[0],
+    ).toBeChecked();
+
+    const inheritHaiku = screen.getByLabelText(
+      /haiku 继承主模型|haiku inherits primary/,
+    );
+    fireEvent.click(inheritHaiku);
+    expect(screen.queryByDisplayValue("Fast 1M")).not.toBeInTheDocument();
+    fireEvent.click(inheritHaiku);
+    expect(screen.getByLabelText(/haiku 模型|haiku model/)).toHaveValue("");
+    expect(
+      screen.getByRole("button", {
+        name: /生成写入预览|Generate write preview/,
+      }),
+    ).toBeDisabled();
+  });
+
+  it("previews edited explicit Claude roles with independent names and contexts", async () => {
+    const { api } = await reachConfigure();
+    fireEvent.change(screen.getByLabelText(/^主模型$|^Primary model$/), {
+      target: { value: "model-a" },
+    });
+
+    const roles = [
+      ["haiku", "model-a", "Haiku display", false],
+      ["sonnet", "model-b", "Sonnet display", true],
+      ["opus", "model-a", "Opus display", true],
+    ] as const;
+    for (const [role, model, name, oneMillion] of roles) {
+      fireEvent.click(
+        screen.getByLabelText(
+          new RegExp(`${role} (?:继承主模型|inherits primary)`),
+        ),
+      );
+      fireEvent.change(
+        screen.getByLabelText(new RegExp(`${role} (?:模型|model)`)),
+        { target: { value: model } },
+      );
+      const nameInput = screen.getByLabelText(
+        new RegExp(`claude-${role} (?:显示名称|Display name)`),
+      );
+      fireEvent.change(nameInput, { target: { value: name } });
+      if (oneMillion) {
+        const fields = nameInput.closest(".claude-selection-fields")!;
+        fireEvent.click(
+          fields.querySelectorAll<HTMLInputElement>('input[type="radio"]')[1],
+        );
+      }
+    }
+
+    completeRequiredConfig();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /生成写入预览|Generate write preview/,
+      }),
+    );
+    await waitFor(() => expect(api.previewAgents).toHaveBeenCalledTimes(1));
+    expect(api.previewAgents).toHaveBeenCalledWith(
+      ["claude", "opencode", "codex"],
+      discovery.flow_id,
+      discovery.catalog_token,
+      {
+        version: 1,
+        claude: {
+          primary: { model: "model-a" },
+          haiku: { model: "model-a", name: "Haiku display" },
+          sonnet: {
+            model: "model-b",
+            name: "Sonnet display",
+            context: "1m",
+          },
+          opus: {
+            model: "model-a",
+            name: "Opus display",
+            context: "1m",
+          },
+        },
+        opencode: { default_model: "model-a", models: { "model-a": {} } },
+        codex: { model: "model-b" },
+      },
+    );
+  });
+
+  it("imports a canonical document as a complete replacement for generated defaults", async () => {
+    const imported: ModelConfig = {
+      version: 1,
+      claude: {
+        primary: {
+          model: "model-b",
+          name: "Imported primary",
+          context: "1m",
+        },
+        haiku: { inherit_primary: true },
+        sonnet: { inherit_primary: true },
+        opus: { inherit_primary: true },
+      },
+      opencode: { default_model: "model-b", models: { "model-b": {} } },
+      codex: { model: "model-a" },
+    };
+    const api = createMockApi({
+      detectAgents: vi.fn().mockResolvedValue(detection),
+      discoverModels: vi.fn().mockResolvedValue({
+        ...discovery,
+        existing: {
+          model_config: configured,
+          unavailable_models: {},
+          drifted_agents: [],
+        },
+        preset: {
+          model_config: {
+            version: 1,
+            codex: { model: "preset-must-be-replaced" },
+          },
+          unavailable_agents: {},
+        },
+      }),
+      importAgentModelConfig: vi.fn().mockResolvedValue(imported),
+    });
+    await reachCredential(api);
+    fireEvent.change(screen.getByLabelText(/API (?:key|密钥)/), {
+      target: { value: "import-secret" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: /发现模型|Discover models/ }),
+    );
+    expect(
+      await screen.findByLabelText(/^主模型$|^Primary model$/),
+    ).toHaveValue("model-a");
+
+    const file = new File([JSON.stringify(imported)], "canonical.json", {
+      type: "application/json",
+    });
+    fireEvent.change(
+      document.querySelector<HTMLInputElement>('input[type="file"]')!,
+      { target: { files: [file] } },
+    );
+    expect(await screen.findByDisplayValue("Imported primary")).toBeVisible();
+    expect(screen.getByLabelText(/^主模型$|^Primary model$/)).toHaveValue(
+      "model-b",
+    );
+    expect(screen.getByLabelText(/活动模型|Active model/)).toHaveValue(
+      "model-a",
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /生成写入预览|Generate write preview/,
+      }),
+    );
+    await waitFor(() => expect(api.previewAgents).toHaveBeenCalledTimes(1));
+    expect(api.importAgentModelConfig).toHaveBeenCalledWith(
+      JSON.stringify(imported),
+      ["claude", "opencode", "codex"],
+      discovery.flow_id,
+    );
+    expect(api.previewAgents).toHaveBeenCalledWith(
+      ["claude", "opencode", "codex"],
+      discovery.flow_id,
+      discovery.catalog_token,
+      imported,
+    );
   });
 
   it("keeps labels, stage status, alerts, and controls accessible at a narrow viewport", async () => {

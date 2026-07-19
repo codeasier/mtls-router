@@ -66,6 +66,15 @@ An unexpected router exit is not restarted in an unlimited loop. If the manager 
 
 Open Logs, preserve the diagnostic summary, then restart the desktop once. Reinstall if the error identifies a sidecar validation problem. Do not start another router on a different port as a workaround.
 
+If a freshly built or installed manager exits before accepting protocol requests
+with `invalid embedded Agent model preset`, its nonempty build-time
+`AGENT_MODEL_PRESET_BASE64` is invalid. The manager deliberately reports no raw
+encoded or decoded preset content and fails before Agent transaction recovery.
+Users should reinstall a corrected complete release; maintainers should correct
+or clear the repository variable and rebuild both standalone and desktop
+manager artifacts. Do not patch the packaged sidecar or inject the preset into
+the router.
+
 ## Agent configuration is unavailable or not writable
 
 - Claude Code, opencode, and Codex are always available as supported configuration targets; the desktop does not install or launch their CLIs.
@@ -97,6 +106,15 @@ All model errors fail closed: no Agent or last-applied sidecar file is changed,
 and there is no static-model, cached-catalog, existing-model, or substitute-model
 fallback.
 
+An unavailable build preset is reported differently: `agent.models` remains
+successful, omits the complete affected Agent preset section, and lists its
+missing base IDs under `preset.unavailable_agents` with
+`MODEL_NOT_AVAILABLE`. Existing sections and valid preset sections for other
+Agents remain usable. Select the model explicitly or ask the distributor for an
+updated release; the manager will not partially use, repair, or substitute the
+unavailable section. A preset notice is an editable recommendation, not proof
+that a model supports Claude 1M context.
+
 | Code | Action |
 |---|---|
 | `MODEL_AUTH_FAILED` | Re-enter the API key; the catalog endpoint returned 401 or 403. |
@@ -115,6 +133,13 @@ fallback.
 that local managed structure is complete. Use model discovery to check current
 key visibility. Catalog refresh is manual; re-enter Agent configuration and
 supply the key. See [Agent Model Configuration](AGENT_MODELS.md).
+
+For Claude, canonical `context` accepts only exact `"1m"`; put the authenticated
+base ID in `model`, never an ID ending in `[1m]`. The manager appends that suffix
+only when rendering Claude settings and does not infer capability. If Claude or
+the upstream rejects 1M at runtime, choose Standard or another explicitly
+validated selection and write a new preview; there is no automatic fallback or
+configuration rewrite.
 
 ## Write or rollback failed
 

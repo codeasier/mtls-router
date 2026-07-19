@@ -66,6 +66,8 @@ Router 意外退出后不会进入无限重启循环。manager 退出时，桌�
 
 打开日志、保留诊断摘要，然后只重启一次桌面应用。如果错误指向 sidecar 校验问题，请重新安装。不要通过在其他端口启动另一个 router 来绕过。
 
+如果新构建或新安装的 manager 在接受 protocol request 前以 `invalid embedded Agent model preset` 退出，则其非空构建期 `AGENT_MODEL_PRESET_BASE64` 无效。Manager 会有意隐藏原始编码和解码 preset 内容，并在 Agent transaction recovery 前失败。用户应重新安装修正后的完整 release；维护者应修正或清空 repository variable，再重新构建 standalone 和 desktop manager 产物。不要 patch 打包 sidecar，也不要把 preset 注入 router。
+
 ## Agent 配置不可用或不可写
 
 - Claude Code、opencode 和 Codex 始终作为受支持的配置目标可用；桌面应用不会安装或启动它们的 CLI。
@@ -95,6 +97,8 @@ manager 会保留受支持的无关设置，但不会猜测如何修复无效语
 
 所有模型错误都会安全失败：不会修改 Agent 或 last-applied sidecar 文件，也不会使用静态模型、缓存目录、现有模型或替代模型 fallback。
 
+构建 preset 不可用时会采用不同报告方式：`agent.models` 仍成功，省略受影响 Agent 的完整 preset section，并在 `preset.unavailable_agents` 下以 `MODEL_NOT_AVAILABLE` 列出缺失 base ID。Existing section 和其他 Agent 的有效 preset section 仍可使用。请明确选择模型或要求分发方更新 release；manager 不会部分使用、修复或替换不可用 section。Preset notice 只是可编辑推荐，不证明模型支持 Claude 1M context。
+
 | Code | 处理方式 |
 |---|---|
 | `MODEL_AUTH_FAILED` | 重新输入 API key；目录 endpoint 返回了 401 或 403。 |
@@ -110,6 +114,8 @@ manager 会保留受支持的无关设置，但不会猜测如何修复无效语
 | `CODEX_AUTH_UNSUPPORTED` | 重试前解决 forced ChatGPT login、managed policy 或不兼容 credential-store policy。Manager 不会降低 policy，也不会删除 OS keyring 凭据。 |
 
 检测中的 `configured=true` 不是授权结果，只表示本地托管结构完整。使用模型发现检查当前 key visibility。目录只能手工刷新：重新进入 Agent 配置并提供 key。详见 [Agent 模型配置](AGENT_MODELS.md)。
+
+对于 Claude，规范 `context` 只接受精确 `"1m"`；`model` 中必须填写已认证 base ID，绝不能使用以 `[1m]` 结尾的 ID。Manager 只在渲染 Claude settings 时追加该 suffix，不会推断能力。如果 Claude 或上游在运行时拒绝 1M，请选择 Standard 或其他经过显式验证的选择并写入新预览；系统不会自动 fallback 或重写配置。
 
 ## 写入或回滚失败
 

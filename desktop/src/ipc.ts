@@ -108,6 +108,7 @@ export type JsonObject = Record<string, unknown>;
 export interface ModelSelection {
   model: string;
   name?: string;
+  context?: "1m";
 }
 export type ClaudeRole = { inherit_primary: true } | ModelSelection;
 export interface ClaudeModelConfig {
@@ -161,6 +162,48 @@ export interface ModelConfig {
   codex?: CodexConfig;
 }
 
+export type InitializationSource = "existing" | "preset" | "empty";
+
+export function initializeAgentConfig(
+  agents: AgentId[],
+  existing: Partial<ModelConfig>,
+  preset: Partial<ModelConfig>,
+): { config: ModelConfig; sources: Record<AgentId, InitializationSource> } {
+  const config: ModelConfig = { version: 1 };
+  const sources: Record<AgentId, InitializationSource> = {
+    claude: "empty",
+    opencode: "empty",
+    codex: "empty",
+  };
+  for (const agent of agents) {
+    sources[agent] = existing[agent]
+      ? "existing"
+      : preset[agent]
+        ? "preset"
+        : "empty";
+    if (agent === "claude")
+      config.claude = structuredClone(
+        existing.claude ??
+          preset.claude ?? {
+            primary: { model: "" },
+            haiku: { inherit_primary: true },
+            sonnet: { inherit_primary: true },
+            opus: { inherit_primary: true },
+          },
+      );
+    if (agent === "opencode")
+      config.opencode = structuredClone(
+        existing.opencode ??
+          preset.opencode ?? { default_model: "", models: {} },
+      );
+    if (agent === "codex")
+      config.codex = structuredClone(
+        existing.codex ?? preset.codex ?? { model: "" },
+      );
+  }
+  return { config, sources };
+}
+
 export interface AgentState {
   agent: AgentId;
   name: string;
@@ -188,6 +231,12 @@ export interface AgentModelsResult {
     model_config: Partial<ModelConfig>;
     unavailable_models: Partial<Record<AgentId, string[]>>;
     drifted_agents: AgentId[];
+  };
+  preset: {
+    model_config: Partial<ModelConfig>;
+    unavailable_agents: Partial<
+      Record<AgentId, { code: "MODEL_NOT_AVAILABLE"; models: string[] }>
+    >;
   };
 }
 export interface AgentFragment {

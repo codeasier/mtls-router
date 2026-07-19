@@ -7,7 +7,26 @@
     "source": "https://registry.npmjs.org/@anthropic-ai/claude-code/-/claude-code-2.1.214.tgz",
     "revision": "npm:@anthropic-ai/claude-code@2.1.214",
     "sha256": "5cc1ebbf200a9290b4560ad9f73d400c4d8e8d331644ec45eb45c4711b4f63e8",
-    "integrity": "sha512-Gf8XbPHBacVqBlxx8sMnKWPEU6AvRNUcjD0FS6zhD44fCgCHcpbpxwSoTbHlLTqKsr/0S7wdfhjjOIq8WlYbng=="
+    "integrity": "sha512-Gf8XbPHBacVqBlxx8sMnKWPEU6AvRNUcjD0FS6zhD44fCgCHcpbpxwSoTbHlLTqKsr/0S7wdfhjjOIq8WlYbng==",
+    "implementation_evidence": {
+      "platform": "darwin-arm64",
+      "source": "https://registry.npmjs.org/@anthropic-ai/claude-code-darwin-arm64/-/claude-code-darwin-arm64-2.1.214.tgz",
+      "revision": "npm:@anthropic-ai/claude-code-darwin-arm64@2.1.214",
+      "sha256": "063331d0cf00f73f21a2f94d779788c1a1ce783d2f11286a2b5fc77cfaaba6bb",
+      "integrity": "sha512-z99kjSImARBWdE6lGoCXSi83tbiabtIv7vtFyuwrHD56WZTFSguedBb9F8wlUncEEfUVtqHKa9nCZ55j6spiIA==",
+      "binary_path": "package/claude",
+      "binary_sha256": "59796dd18e9d77f1256f367db6d28ce4bd9cd5968e402ad3a327aac36abc6dec",
+      "extraction": "tar -xzf ARTIFACT && strings -a package/claude",
+      "custom_model_name_variables": [
+        "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME"
+      ],
+      "selection_syntax": "[1m]",
+      "terminal_suffix_marker": "\\[1m\\]$",
+      "repeated_suffix_normalization_marker": "(\\[1m\\])+$"
+    }
   },
   "opencode": {
     "tested_version": "1.18.3",

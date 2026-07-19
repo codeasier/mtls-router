@@ -18,10 +18,17 @@ type ModelsExisting struct {
 	DriftedAgents     []string
 }
 
+// ModelsPreset is the validated, selected-only build preset metadata.
+type ModelsPreset struct {
+	ModelConfig       json.RawMessage
+	UnavailableAgents map[string][]string
+}
+
 // ModelsResult contains a signed catalog and safe existing model selections.
 type ModelsResult struct {
 	CatalogToken string
 	Existing     ModelsExisting
+	Preset       ModelsPreset
 }
 
 // DiscoverModels signs one normalized catalog and inspects only supported
@@ -43,6 +50,10 @@ func (s *Service) DiscoverModels(ctx context.Context, selected []Kind, catalog [
 		return ModelsResult{}, operationError(CodeModelStateInvalid, "Agent model trust state is invalid")
 	}
 
+	preset, err := s.discoverPreset(selected, catalog)
+	if err != nil {
+		return ModelsResult{}, operationError(CodeModelStateInvalid, "Agent model preset state is invalid")
+	}
 	existing := ModelsExisting{ModelConfig: json.RawMessage(`{}`), UnavailableModels: map[string][]string{}, DriftedAgents: []string{}}
 	states, err := s.detector.Detect()
 	if err != nil {
@@ -97,7 +108,89 @@ func (s *Service) DiscoverModels(ctx context.Context, selected []Kind, catalog [
 		}
 		existing.ModelConfig = canonical
 	}
-	return ModelsResult{CatalogToken: token, Existing: existing}, nil
+	return ModelsResult{CatalogToken: token, Existing: existing, Preset: preset}, nil
+}
+
+func (s *Service) discoverPreset(selected []Kind, catalog []string) (ModelsPreset, error) {
+	result := ModelsPreset{ModelConfig: json.RawMessage(`{}`), UnavailableAgents: map[string][]string{}}
+	if s.preset == nil {
+		return result, nil
+	}
+	available := make(map[string]bool, len(catalog))
+	for _, id := range catalog {
+		available[id] = true
+	}
+	validated := &modelconfig.Config{Version: modelconfig.Version}
+	for _, kind := range selected {
+		section := presetSection(s.preset, kind)
+		if section == nil {
+			continue
+		}
+		ids := presetModelIDs(kind, section)
+		if missing := unavailable(ids, available); len(missing) != 0 {
+			result.UnavailableAgents[string(kind)] = missing
+			continue
+		}
+		setConfigSection(validated, kind, section)
+	}
+	if validated.Claude != nil || validated.OpenCode != nil || validated.Codex != nil {
+		canonical, err := modelconfig.Canonical(validated)
+		if err != nil {
+			return ModelsPreset{}, err
+		}
+		result.ModelConfig = canonical
+	}
+	return result, nil
+}
+
+func presetSection(config *modelconfig.Config, kind Kind) any {
+	switch kind {
+	case ClaudeCode:
+		if config.Claude == nil {
+			return nil
+		}
+		return config.Claude
+	case OpenCode:
+		if config.OpenCode == nil {
+			return nil
+		}
+		return config.OpenCode
+	case Codex:
+		if config.Codex == nil {
+			return nil
+		}
+		return config.Codex
+	default:
+		return nil
+	}
+}
+
+func presetModelIDs(kind Kind, section any) []string {
+	var ids []string
+	switch kind {
+	case ClaudeCode:
+		config := section.(*modelconfig.ClaudeConfig)
+		ids = append(ids, config.Primary.Model)
+		for _, role := range []modelconfig.ClaudeRole{config.Haiku, config.Sonnet, config.Opus} {
+			if role.Selection != nil {
+				ids = append(ids, role.Selection.Model)
+			}
+		}
+	case OpenCode:
+		for id := range section.(*modelconfig.OpenCodeConfig).Models {
+			ids = append(ids, id)
+		}
+	case Codex:
+		ids = append(ids, section.(*modelconfig.CodexConfig).Model)
+	}
+	sort.Strings(ids)
+	unique := ids[:0]
+	for _, id := range ids {
+		if len(unique) == 0 || unique[len(unique)-1] != id {
+			unique = append(unique, id)
+		}
+	}
+	return unique
 }
 
 func (s *Service) appliedRevisionsMatch(section lastAppliedAgent) bool {
@@ -212,11 +305,15 @@ func currentClaude(path string) (any, []string, bool) {
 	if !ok {
 		return nil, nil, false
 	}
-	config := &modelconfig.ClaudeConfig{Primary: modelconfig.Model{Model: primary}}
+	primarySelection, ok := projectClaudeSelection(primary)
+	if !ok {
+		return nil, nil, false
+	}
+	config := &modelconfig.ClaudeConfig{Primary: primarySelection}
 	if name, present := rawString(env["ANTHROPIC_CUSTOM_MODEL_OPTION_NAME"]); present {
 		config.Primary.Name = &name
 	}
-	ids := []string{primary}
+	ids := []string{config.Primary.Model}
 	for key, target := range map[string]*modelconfig.ClaudeRole{
 		"HAIKU": &config.Haiku, "SONNET": &config.Sonnet, "OPUS": &config.Opus,
 	} {
@@ -224,18 +321,46 @@ func currentClaude(path string) (any, []string, bool) {
 		if !present {
 			return nil, nil, false
 		}
-		ids = append(ids, id)
-		if id == primary {
+		selection, valid := projectClaudeSelection(id)
+		if !valid {
+			return nil, nil, false
+		}
+		if name, namePresent := rawString(env["ANTHROPIC_DEFAULT_"+key+"_MODEL_NAME"]); namePresent {
+			selection.Name = &name
+		}
+		ids = append(ids, selection.Model)
+		if sameClaudeSelection(selection, config.Primary) {
 			*target = modelconfig.ClaudeRole{InheritPrimary: true}
 		} else {
-			selection := &modelconfig.Model{Model: id}
-			if name, namePresent := rawString(env["ANTHROPIC_DEFAULT_"+key+"_MODEL_NAME"]); namePresent {
-				selection.Name = &name
-			}
-			*target = modelconfig.ClaudeRole{Selection: selection}
+			*target = modelconfig.ClaudeRole{Selection: &selection}
 		}
 	}
 	return config, ids, true
+}
+
+func projectClaudeSelection(value string) (modelconfig.Model, bool) {
+	selection := modelconfig.Model{Model: value}
+	if strings.HasSuffix(value, "[1m]") {
+		selection.Model = strings.TrimSuffix(value, "[1m]")
+		if selection.Model == "" || strings.Contains(selection.Model, "[1m]") {
+			return modelconfig.Model{}, false
+		}
+		context := modelconfig.ClaudeContext1M
+		selection.Context = &context
+	}
+	return selection, selection.Model != ""
+}
+
+func sameClaudeSelection(a, b modelconfig.Model) bool {
+	return a.Model == b.Model && equalString(a.Name, b.Name) && equalClaudeContext(a.Context, b.Context)
+}
+
+func equalString(a, b *string) bool {
+	return a == nil && b == nil || a != nil && b != nil && *a == *b
+}
+
+func equalClaudeContext(a, b *modelconfig.ClaudeContext) bool {
+	return a == nil && b == nil || a != nil && b != nil && *a == *b
 }
 
 func currentOpenCode(path string, format Format) (any, []string, bool) {
