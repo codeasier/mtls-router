@@ -217,6 +217,15 @@ describe("Agent model workbench", () => {
     fireEvent.change(editor, { target: { value: '{"api-key":"forbidden"}' } });
     expect(await screen.findByText(/protected_path/)).toBeInTheDocument();
     expect(editor).toHaveAttribute("aria-invalid", "true");
+    fireEvent.change(editor, {
+      target: { value: '{"safe":{"connection":"forbidden"}}' },
+    });
+    expect(editor).toHaveAttribute("aria-invalid", "true");
+    const variants = screen.getByLabelText(/Variants JSON/);
+    fireEvent.change(variants, {
+      target: { value: '{"fast":{"safe":{"connection":"forbidden"}}}' },
+    });
+    expect(variants).toHaveAttribute("aria-invalid", "true");
     fireEvent.change(editor, { target: { value: '{"status":"active"}' } });
     fireEvent.click(
       editor.closest("details")!.querySelector<HTMLButtonElement>("button")!,
@@ -278,6 +287,148 @@ describe("Agent model workbench", () => {
         name: /生成写入预览|Generate write preview/,
       }),
     ).toBeDisabled();
+  });
+
+  it("round-trips initialized Claude budgets and typed opencode variants through preview", async () => {
+    const claude = {
+      primary: { model: "model-a" },
+      haiku: { inherit_primary: true } as const,
+      sonnet: { inherit_primary: true } as const,
+      opus: { inherit_primary: true } as const,
+      context_window: 353400,
+      max_output_tokens: 100000,
+      extra: { preserved: "claude" },
+    };
+    const opencode = {
+      default_model: "model-a",
+      models: {
+        "model-a": {
+          name: "Preserved model name",
+          variants: { medium: { reasoningEffort: "medium" } },
+          extra: { preserved: true },
+        },
+      },
+    };
+    const api = createMockApi({
+      detectAgents: vi.fn().mockResolvedValue(detection),
+      discoverModels: vi.fn().mockResolvedValue({
+        ...discovery,
+        existing: {
+          model_config: { version: 1, claude },
+          unavailable_models: {},
+          drifted_agents: [],
+        },
+        preset: {
+          model_config: {
+            version: 1,
+            opencode,
+            codex: { model: "model-b" },
+          },
+          unavailable_agents: {},
+        },
+      }),
+    });
+    await reachCredential(api);
+    fireEvent.change(screen.getByLabelText(/API (?:key|密钥)/), {
+      target: { value: "variant-test-secret" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: /发现模型|Discover models/ }),
+    );
+
+    expect(
+      await screen.findByLabelText(/Claude 上下文窗口|Claude context window/),
+    ).toHaveValue(353400);
+    expect(
+      screen.getByLabelText(/Claude 最大输出 Token|Claude max output tokens/),
+    ).toHaveValue(100000);
+    const variants = screen.getByLabelText(/Variants JSON/);
+    expect(variants).toHaveValue(
+      '{\n  "medium": {\n    "reasoningEffort": "medium"\n  }\n}',
+    );
+
+    fireEvent.change(
+      screen.getByLabelText(/Claude 上下文窗口|Claude context window/),
+      { target: { value: "400000" } },
+    );
+    fireEvent.change(
+      screen.getByLabelText(/Claude 最大输出 Token|Claude max output tokens/),
+      { target: { value: "120000" } },
+    );
+    fireEvent.change(variants, {
+      target: {
+        value:
+          '{"medium":{"reasoningEffort":"high"},"fast":{"reasoningSummary":"auto"}}',
+      },
+    });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /生成写入预览|Generate write preview/,
+      }),
+    );
+
+    await waitFor(() => expect(api.previewAgents).toHaveBeenCalledTimes(1));
+    expect(api.previewAgents).toHaveBeenCalledWith(
+      ["claude", "opencode", "codex"],
+      discovery.flow_id,
+      discovery.catalog_token,
+      {
+        version: 1,
+        claude: {
+          ...claude,
+          context_window: 400000,
+          max_output_tokens: 120000,
+        },
+        opencode: {
+          default_model: "model-a",
+          models: {
+            "model-a": {
+              name: "Preserved model name",
+              variants: {
+                medium: { reasoningEffort: "high" },
+                fast: { reasoningSummary: "auto" },
+              },
+              extra: { preserved: true },
+            },
+          },
+        },
+        codex: { model: "model-b" },
+      },
+    );
+  });
+
+  it("blocks preview while a model object field contains invalid JSON and recovers", async () => {
+    const { api } = await reachConfigure();
+    completeRequiredConfig();
+    const variants = screen.getByLabelText(/Variants JSON/);
+
+    fireEvent.change(variants, {
+      target: { value: '{"fast":{"reasoningEffort":"high"}}' },
+    });
+    fireEvent.change(variants, { target: { value: '{"fast":' } });
+
+    expect(variants).toHaveAttribute("aria-invalid", "true");
+    const previewButton = screen.getByRole("button", {
+      name: /生成写入预览|Generate write preview/,
+    });
+    expect(previewButton).toBeDisabled();
+    fireEvent.click(previewButton);
+    expect(api.previewAgents).not.toHaveBeenCalled();
+    expect(screen.getAllByRole("alert").length).toBeGreaterThan(0);
+
+    fireEvent.change(variants, {
+      target: { value: '{"fast":{"reasoningEffort":"low"}}' },
+    });
+    expect(variants).toHaveAttribute("aria-invalid", "false");
+    expect(previewButton).toBeEnabled();
+
+    fireEvent.change(variants, { target: { value: "{" } });
+    expect(previewButton).toBeDisabled();
+    fireEvent.change(variants, { target: { value: "" } });
+    expect(variants).toHaveAttribute("aria-invalid", "false");
+    expect(previewButton).toBeEnabled();
+    fireEvent.click(previewButton);
+    await waitFor(() => expect(api.previewAgents).toHaveBeenCalledTimes(1));
   });
 
   it("previews edited explicit Claude roles with independent names and contexts", async () => {
@@ -418,6 +569,84 @@ describe("Agent model workbench", () => {
       ["claude", "opencode", "codex"],
       discovery.flow_id,
     );
+    expect(api.previewAgents).toHaveBeenCalledWith(
+      ["claude", "opencode", "codex"],
+      discovery.flow_id,
+      discovery.catalog_token,
+      imported,
+    );
+  });
+
+  it("replaces displayed and submitted variants when importing the same model ID", async () => {
+    const imported: ModelConfig = {
+      version: 1,
+      opencode: {
+        default_model: "model-a",
+        models: {
+          "model-a": {
+            variants: { imported: { reasoningEffort: "high" } },
+          },
+        },
+      },
+    };
+    const api = createMockApi({
+      detectAgents: vi.fn().mockResolvedValue(detection),
+      discoverModels: vi.fn().mockResolvedValue({
+        ...discovery,
+        existing: {
+          model_config: {
+            version: 1,
+            opencode: {
+              default_model: "model-a",
+              models: {
+                "model-a": {
+                  variants: { stale: { reasoningEffort: "low" } },
+                },
+              },
+            },
+          },
+          unavailable_models: {},
+          drifted_agents: [],
+        },
+      }),
+      importAgentModelConfig: vi.fn().mockResolvedValue(imported),
+    });
+    await reachCredential(api);
+    fireEvent.change(screen.getByLabelText(/API (?:key|密钥)/), {
+      target: { value: "variant-import-secret" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: /发现模型|Discover models/ }),
+    );
+
+    const variants = await screen.findByLabelText(/Variants JSON/);
+    expect(variants).toHaveValue(
+      '{\n  "stale": {\n    "reasoningEffort": "low"\n  }\n}',
+    );
+    fireEvent.change(variants, {
+      target: { value: '{"stale":{"reasoningEffort":"medium"}}' },
+    });
+    expect(variants).toHaveValue('{"stale":{"reasoningEffort":"medium"}}');
+
+    const file = new File([JSON.stringify(imported)], "variants.json", {
+      type: "application/json",
+    });
+    fireEvent.change(
+      document.querySelector<HTMLInputElement>('input[type="file"]')!,
+      { target: { files: [file] } },
+    );
+    await waitFor(() =>
+      expect(variants).toHaveValue(
+        '{\n  "imported": {\n    "reasoningEffort": "high"\n  }\n}',
+      ),
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /生成写入预览|Generate write preview/,
+      }),
+    );
+    await waitFor(() => expect(api.previewAgents).toHaveBeenCalledTimes(1));
     expect(api.previewAgents).toHaveBeenCalledWith(
       ["claude", "opencode", "codex"],
       discovery.flow_id,

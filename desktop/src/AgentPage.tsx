@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useEffectEvent,
   useRef,
   useState,
   type ComponentPropsWithoutRef,
@@ -140,7 +141,7 @@ function parseExtra(text: string): { value?: JsonObject; error?: string } {
     if (!value || Array.isArray(value) || typeof value !== "object")
       return { error: "/: object_required" };
     const protectedKey =
-      /(credential|apikey|auth|token|secret|password|bearer|header|url|endpoint|provider|transport|proxy|fetch)/i;
+      /(credential|apikey|auth|token|secret|password|bearer|header|url|endpoint|provider|connection|transport|proxy|fetch)/i;
     const visit = (
       current: unknown,
       path: string,
@@ -324,13 +325,26 @@ function ObjectField({
   label,
   value,
   onChange,
+  onErrorChange,
 }: {
   label: string;
   value?: JsonObject;
   onChange: (value?: JsonObject) => void;
+  onErrorChange: (error?: string) => void;
 }) {
   const { t } = useI18n();
-  const [text, setText] = useState(value ? JSON.stringify(value, null, 2) : "");
+  const serialized = value ? JSON.stringify(value, null, 2) : "";
+  const [text, setText] = useState(serialized);
+  const locallyEmitted = useRef<JsonObject | undefined>(undefined);
+  const reportError = useEffectEvent(onErrorChange);
+  useEffect(() => {
+    if (value !== locallyEmitted.current) {
+      setText(serialized);
+      reportError(undefined);
+    }
+    locallyEmitted.current = undefined;
+  }, [serialized, value]);
+  useEffect(() => () => reportError(undefined), []);
   const parsed = parseExtra(text);
   return (
     <div className="object-field">
@@ -344,8 +358,14 @@ function ObjectField({
             const next = event.target.value;
             setText(next);
             const result = parseExtra(next);
-            if (!next.trim()) onChange(undefined);
-            else if (result.value) onChange(result.value);
+            onErrorChange(result.error);
+            if (!next.trim()) {
+              locallyEmitted.current = undefined;
+              onChange(undefined);
+            } else if (result.value) {
+              locallyEmitted.current = result.value;
+              onChange(result.value);
+            }
           }}
           spellCheck={false}
         />
@@ -397,6 +417,9 @@ export function AgentPage({ api }: { api: DesktopApi }) {
     opencode: "",
     codex: "",
   });
+  const [objectFieldErrors, setObjectFieldErrors] = useState<
+    Record<string, string>
+  >({});
   const [approveDrift, setApproveDrift] = useState(false);
   const [approveAuth, setApproveAuth] = useState(false);
   const [busy, setBusy] = useState(true);
@@ -502,7 +525,19 @@ export function AgentPage({ api }: { api: DesktopApi }) {
       const parsed = parseExtra(extras[agent]);
       if (parsed.error) return `/${agent}/extra${parsed.error}`;
     }
+    const objectError = Object.entries(objectFieldErrors)[0];
+    if (objectError)
+      return `/opencode/models/${objectError[0]}: ${objectError[1]}`;
     return "";
+  }
+  function setObjectFieldError(path: string, error?: string) {
+    setObjectFieldErrors((current) => {
+      if (error) return { ...current, [path]: error };
+      if (!(path in current)) return current;
+      const next = { ...current };
+      delete next[path];
+      return next;
+    });
   }
   function finalConfig(): ModelConfig {
     const value = structuredClone(config);
@@ -613,6 +648,7 @@ export function AgentPage({ api }: { api: DesktopApi }) {
         ),
       );
       setExtras({ claude: "", opencode: "", codex: "" });
+      setObjectFieldErrors({});
       setSources({ claude: "empty", opencode: "empty", codex: "empty" });
       setMessage(t("agents.imported"));
     } catch {
@@ -848,6 +884,28 @@ export function AgentPage({ api }: { api: DesktopApi }) {
                     })
                   }
                 />
+                <div className="typed-grid">
+                  <OptionalNumber
+                    label={t("agents.claudeContextWindow")}
+                    value={config.claude.context_window}
+                    onChange={(context_window) =>
+                      setConfig({
+                        ...config,
+                        claude: { ...config.claude!, context_window },
+                      })
+                    }
+                  />
+                  <OptionalNumber
+                    label={t("agents.claudeMaxOutputTokens")}
+                    value={config.claude.max_output_tokens}
+                    onChange={(max_output_tokens) =>
+                      setConfig({
+                        ...config,
+                        claude: { ...config.claude!, max_output_tokens },
+                      })
+                    }
+                  />
+                </div>
                 {roleNames.map((role) => (
                   <div className="role-row" key={role}>
                     <label>
@@ -962,6 +1020,9 @@ export function AgentPage({ api }: { api: DesktopApi }) {
                       key={model}
                       model={model}
                       settings={settings}
+                      onFieldError={(field, error) =>
+                        setObjectFieldError(`${model}/${field}`, error)
+                      }
                       update={(next) =>
                         setConfig({
                           ...config,
@@ -1276,10 +1337,12 @@ function OpenCodeSettings({
   model,
   settings,
   update,
+  onFieldError,
 }: {
   model: string;
   settings: OpenCodeModelConfig;
   update: (value: OpenCodeModelConfig) => void;
+  onFieldError: (field: string, error?: string) => void;
 }) {
   const { t } = useI18n();
   const flags = [
@@ -1433,11 +1496,24 @@ function OpenCodeSettings({
           label={t("agents.optionsJson")}
           value={settings.options}
           onChange={(value) => update({ ...settings, options: value })}
+          onErrorChange={(error) => onFieldError("options", error)}
+        />
+        <ObjectField
+          label={t("agents.variantsJson")}
+          value={settings.variants}
+          onChange={(value) =>
+            update({
+              ...settings,
+              variants: value as Record<string, JsonObject> | undefined,
+            })
+          }
+          onErrorChange={(error) => onFieldError("variants", error)}
         />
         <ObjectField
           label={t("agents.modelExtraJson")}
           value={settings.extra}
           onChange={(value) => update({ ...settings, extra: value })}
+          onErrorChange={(error) => onFieldError("extra", error)}
         />
       </div>
     </details>

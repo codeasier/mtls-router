@@ -3,11 +3,12 @@ package agent
 import (
 	"bytes"
 	"encoding/json"
+	"strconv"
 
 	"github.com/codeasier/mtls-router/internal/manager/agent/modelconfig"
 )
 
-var claudeFixedEnvKeys = []string{
+var claudeUnconditionalEnvKeys = []string{
 	"ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL",
 	"ANTHROPIC_CUSTOM_MODEL_OPTION", "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME",
 	"ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
@@ -16,12 +17,26 @@ var claudeFixedEnvKeys = []string{
 	"ENABLE_TOOL_SEARCH", "DISABLE_AUTOUPDATER",
 }
 
+func claudeOwnedEnvKeys(config *modelconfig.ClaudeConfig) []string {
+	owned := append([]string(nil), claudeUnconditionalEnvKeys...)
+	if config.ContextWindow != nil {
+		owned = append(owned, "CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+	}
+	if config.MaxOutputTokens != nil {
+		owned = append(owned, "CLAUDE_CODE_MAX_OUTPUT_TOKENS")
+	}
+	for key := range config.Extra {
+		owned = append(owned, key)
+	}
+	return owned
+}
+
 func renderClaudeFragment(config *modelconfig.ClaudeConfig, routerBaseURL, key string) ([]byte, error) {
 	env := claudeManagedEnv(config, routerBaseURL, key)
 	return marshalIndentedJSON(map[string]any{"env": env})
 }
 
-func mergeClaude(root map[string]json.RawMessage, config *modelconfig.ClaudeConfig, routerBaseURL, key string, obsoleteOwnedExtras []string) ([]byte, error) {
+func mergeClaude(root map[string]json.RawMessage, config *modelconfig.ClaudeConfig, routerBaseURL, key string, obsoleteOwnedKeys []string) ([]byte, error) {
 	result := cloneRawObject(root)
 	env := make(map[string]json.RawMessage)
 	if raw, exists := result["env"]; exists && !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
@@ -31,10 +46,10 @@ func mergeClaude(root map[string]json.RawMessage, config *modelconfig.ClaudeConf
 			return nil, operationError(CodeConfigInvalid, "Claude Code env setting is not an object")
 		}
 	}
-	for _, key := range claudeFixedEnvKeys {
+	for _, key := range claudeUnconditionalEnvKeys {
 		delete(env, key)
 	}
-	for _, key := range obsoleteOwnedExtras {
+	for _, key := range obsoleteOwnedKeys {
 		delete(env, key)
 	}
 	for name, value := range claudeManagedEnv(config, routerBaseURL, key) {
@@ -75,6 +90,12 @@ func claudeManagedEnv(config *modelconfig.ClaudeConfig, routerBaseURL, key strin
 		if name != nil {
 			result["ANTHROPIC_DEFAULT_"+role+"_MODEL_NAME"] = *name
 		}
+	}
+	if config.ContextWindow != nil {
+		result["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = strconv.FormatInt(*config.ContextWindow, 10)
+	}
+	if config.MaxOutputTokens != nil {
+		result["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = strconv.FormatInt(*config.MaxOutputTokens, 10)
 	}
 	for name, value := range config.Extra {
 		result[name] = value

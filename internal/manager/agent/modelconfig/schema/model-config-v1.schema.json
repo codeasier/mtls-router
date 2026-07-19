@@ -2,54 +2,181 @@
   "$defs": {
     "interleaved": {
       "oneOf": [
-        {"const": true},
-        {"additionalProperties": false, "properties": {"field": {"enum": ["reasoning", "reasoning_content", "reasoning_details"]}}, "required": ["field"], "type": "object"}
+        {
+          "const": true
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "field": {
+              "enum": [
+                "reasoning",
+                "reasoning_content",
+                "reasoning_details"
+              ]
+            }
+          },
+          "required": [
+            "field"
+          ],
+          "type": "object"
+        }
       ]
     },
     "limit": {
       "additionalProperties": false,
       "properties": {
-        "context": {"maximum": 9007199254740991, "minimum": 1, "type": "integer"},
-        "input": {"maximum": 9007199254740991, "minimum": 1, "type": "integer"},
-        "output": {"maximum": 9007199254740991, "minimum": 1, "type": "integer"}
+        "context": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "input": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "output": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        }
       },
-      "required": ["context", "output"],
+      "required": [
+        "context",
+        "output"
+      ],
       "type": "object"
     },
     "modalities": {
       "additionalProperties": false,
       "properties": {
-        "input": {"items": {"enum": ["text", "audio", "image", "video", "pdf"]}, "maxItems": 1024, "type": "array", "uniqueItems": true},
-        "output": {"items": {"enum": ["text", "audio", "image", "video", "pdf"]}, "maxItems": 1024, "type": "array", "uniqueItems": true}
+        "input": {
+          "items": {
+            "enum": [
+              "text",
+              "audio",
+              "image",
+              "video",
+              "pdf"
+            ]
+          },
+          "maxItems": 1024,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "output": {
+          "items": {
+            "enum": [
+              "text",
+              "audio",
+              "image",
+              "video",
+              "pdf"
+            ]
+          },
+          "maxItems": 1024,
+          "type": "array",
+          "uniqueItems": true
+        }
       },
       "type": "object"
     },
     "model": {
       "additionalProperties": false,
-      "properties": {"context": {"enum": ["1m"]}, "model": {"maxLength": 256, "minLength": 1, "not": {"pattern": "\\[1m\\]$"}, "type": "string"}, "name": {"minLength": 1, "type": "string"}},
-      "required": ["model"],
+      "properties": {
+        "context": {
+          "enum": [
+            "1m"
+          ]
+        },
+        "model": {
+          "maxLength": 256,
+          "minLength": 1,
+          "not": {
+            "pattern": "\\[1m\\]$"
+          },
+          "type": "string"
+        },
+        "name": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "model"
+      ],
       "type": "object"
     },
     "openCodeModel": {
       "additionalProperties": false,
       "properties": {
-        "attachment": {"type": "boolean"},
-        "extra": {"description": "Recursively bounded and protected-key validated by the manager", "type": "object"},
-        "interleaved": {"$ref": "#/$defs/interleaved"},
-        "limit": {"$ref": "#/$defs/limit"},
-        "modalities": {"$ref": "#/$defs/modalities"},
-        "name": {"minLength": 1, "type": "string"},
-        "options": {"description": "Recursively bounded and protected-key validated by the manager", "type": "object"},
-        "reasoning": {"type": "boolean"},
-        "temperature": {"type": "boolean"},
-        "tool_call": {"type": "boolean"}
+        "attachment": {
+          "type": "boolean"
+        },
+        "extra": {
+          "description": "Recursively bounded and protected-key validated by the manager",
+          "type": "object"
+        },
+        "interleaved": {
+          "$ref": "#/$defs/interleaved"
+        },
+        "limit": {
+          "$ref": "#/$defs/limit"
+        },
+        "modalities": {
+          "$ref": "#/$defs/modalities"
+        },
+        "name": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "options": {
+          "description": "Recursively bounded and protected-key validated by the manager",
+          "type": "object"
+        },
+        "reasoning": {
+          "type": "boolean"
+        },
+        "temperature": {
+          "type": "boolean"
+        },
+        "tool_call": {
+          "type": "boolean"
+        },
+        "variants": {
+          "additionalProperties": {
+            "description": "Recursively bounded and protected-key validated by the manager",
+            "type": "object"
+          },
+          "propertyNames": {
+            "description": "Variant names exclude control characters. maxLength counts Unicode code points; authoritative manager validation enforces the 128 UTF-8-byte limit.",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"
+          },
+          "type": "object"
+        }
       },
       "type": "object"
     },
     "role": {
       "oneOf": [
-        {"additionalProperties": false, "properties": {"inherit_primary": {"const": true}}, "required": ["inherit_primary"], "type": "object"},
-        {"$ref": "#/$defs/model"}
+        {
+          "additionalProperties": false,
+          "properties": {
+            "inherit_primary": {
+              "const": true
+            }
+          },
+          "required": [
+            "inherit_primary"
+          ],
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/model"
+        }
       ]
     }
   },
@@ -60,47 +187,142 @@
     "claude": {
       "additionalProperties": false,
       "properties": {
+        "context_window": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        },
         "extra": {
           "additionalProperties": false,
           "properties": {
-            "ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION": {"maxLength": 16384, "type": "string"},
-            "ANTHROPIC_DEFAULT_HAIKU_MODEL_DESCRIPTION": {"maxLength": 16384, "type": "string"},
-            "ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION": {"maxLength": 16384, "type": "string"},
-            "ANTHROPIC_DEFAULT_SONNET_MODEL_DESCRIPTION": {"maxLength": 16384, "type": "string"}
+            "ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION": {
+              "maxLength": 16384,
+              "type": "string"
+            },
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL_DESCRIPTION": {
+              "maxLength": 16384,
+              "type": "string"
+            },
+            "ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION": {
+              "maxLength": 16384,
+              "type": "string"
+            },
+            "ANTHROPIC_DEFAULT_SONNET_MODEL_DESCRIPTION": {
+              "maxLength": 16384,
+              "type": "string"
+            }
           },
           "type": "object"
         },
-        "haiku": {"$ref": "#/$defs/role"},
-        "opus": {"$ref": "#/$defs/role"},
-        "primary": {"$ref": "#/$defs/model"},
-        "sonnet": {"$ref": "#/$defs/role"}
+        "haiku": {
+          "$ref": "#/$defs/role"
+        },
+        "max_output_tokens": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "opus": {
+          "$ref": "#/$defs/role"
+        },
+        "primary": {
+          "$ref": "#/$defs/model"
+        },
+        "sonnet": {
+          "$ref": "#/$defs/role"
+        }
       },
-      "required": ["primary", "haiku", "sonnet", "opus"],
+      "required": [
+        "primary",
+        "haiku",
+        "sonnet",
+        "opus"
+      ],
       "type": "object"
     },
     "codex": {
       "additionalProperties": false,
       "properties": {
-        "auto_compact_token_limit": {"maximum": 9007199254740991, "minimum": 1, "type": "integer"},
-        "context_window": {"maximum": 9007199254740991, "minimum": 1, "type": "integer"},
-        "extra": {"additionalProperties": false, "properties": {"model_auto_compact_token_limit_scope": {"enum": ["total", "body_after_prefix"]}}, "type": "object"},
-        "model": {"type": "string"},
-        "reasoning_effort": {"maxLength": 64, "minLength": 1, "pattern": "^[a-z0-9_-]+$", "type": "string"},
-        "reasoning_summary": {"enum": ["auto", "concise", "detailed", "none"]},
-        "verbosity": {"enum": ["low", "medium", "high"]}
+        "auto_compact_token_limit": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "context_window": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "extra": {
+          "additionalProperties": false,
+          "properties": {
+            "model_auto_compact_token_limit_scope": {
+              "enum": [
+                "total",
+                "body_after_prefix"
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "model": {
+          "type": "string"
+        },
+        "reasoning_effort": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z0-9_-]+$",
+          "type": "string"
+        },
+        "reasoning_summary": {
+          "enum": [
+            "auto",
+            "concise",
+            "detailed",
+            "none"
+          ]
+        },
+        "verbosity": {
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ]
+        }
       },
-      "required": ["model"],
+      "required": [
+        "model"
+      ],
       "type": "object"
     },
     "opencode": {
       "additionalProperties": false,
-      "properties": {"default_model": {"type": "string"}, "models": {"additionalProperties": {"$ref": "#/$defs/openCodeModel"}, "maxProperties": 1000, "minProperties": 1, "type": "object"}},
-      "required": ["default_model", "models"],
+      "properties": {
+        "default_model": {
+          "type": "string"
+        },
+        "models": {
+          "additionalProperties": {
+            "$ref": "#/$defs/openCodeModel"
+          },
+          "maxProperties": 1000,
+          "minProperties": 1,
+          "type": "object"
+        }
+      },
+      "required": [
+        "default_model",
+        "models"
+      ],
       "type": "object"
     },
-    "version": {"const": 1}
+    "version": {
+      "const": 1
+    }
   },
-  "required": ["version"],
+  "required": [
+    "version"
+  ],
   "title": "mtls-router canonical Agent model config v1",
   "type": "object"
 }

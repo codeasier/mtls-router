@@ -72,6 +72,19 @@ func TestDecodeRejectsInvalidDocuments(t *testing.T) {
 		{"reasoning token", `{"version":1,"codex":{"model":"m","reasoning_effort":"HIGH"}}`, "lowercase_token", []Agent{Codex}, []string{"m"}},
 		{"codex extra enum", `{"version":1,"codex":{"model":"m","extra":{"model_auto_compact_token_limit_scope":"bad"}}}`, "enum", []Agent{Codex}, []string{"m"}},
 		{"Claude role shape", `{"version":1,"claude":{"primary":{"model":"m"},"haiku":{"inherit_primary":false},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true}}}`, "unknown_field", []Agent{Claude}, []string{"m"}},
+		{"Claude zero context", `{"version":1,"claude":{"primary":{"model":"m"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true},"context_window":0}}`, "positive_integer", []Agent{Claude}, []string{"m"}},
+		{"Claude unsafe output", `{"version":1,"claude":{"primary":{"model":"m"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true},"max_output_tokens":9007199254740992}}`, "positive_integer", []Agent{Claude}, []string{"m"}},
+		{"Claude output equals context", `{"version":1,"claude":{"primary":{"model":"m"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true},"context_window":100,"max_output_tokens":100}}`, "integer_relationship", []Agent{Claude}, []string{"m"}},
+		{"Claude output exceeds context", `{"version":1,"claude":{"primary":{"model":"m"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true},"context_window":100,"max_output_tokens":101}}`, "integer_relationship", []Agent{Claude}, []string{"m"}},
+		{"Claude numeric and primary 1m", `{"version":1,"claude":{"primary":{"model":"m","context":"1m"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true},"context_window":100}}`, "context_conflict", []Agent{Claude}, []string{"m"}},
+		{"Claude numeric and role 1m", `{"version":1,"claude":{"primary":{"model":"m"},"haiku":{"inherit_primary":true},"sonnet":{"model":"m","context":"1m"},"opus":{"inherit_primary":true},"context_window":100}}`, "context_conflict", []Agent{Claude}, []string{"m"}},
+		{"variant is not object", `{"version":1,"opencode":{"default_model":"m","models":{"m":{"variants":{"high":true}}}}}`, "object", []Agent{OpenCode}, []string{"m"}},
+		{"empty variant name", `{"version":1,"opencode":{"default_model":"m","models":{"m":{"variants":{"":{}}}}}}`, "key", []Agent{OpenCode}, []string{"m"}},
+		{"long variant name", `{"version":1,"opencode":{"default_model":"m","models":{"m":{"variants":{"` + strings.Repeat("v", 129) + `":{}}}}}}`, "key", []Agent{OpenCode}, []string{"m"}},
+		{"control variant name", `{"version":1,"opencode":{"default_model":"m","models":{"m":{"variants":{"bad\nname":{}}}}}}`, "key", []Agent{OpenCode}, []string{"m"}},
+		{"protected variant key", `{"version":1,"opencode":{"default_model":"m","models":{"m":{"variants":{"high":{"api_key":"secret"}}}}}}`, "protected_path", []Agent{OpenCode}, []string{"m"}},
+		{"null variant option", `{"version":1,"opencode":{"default_model":"m","models":{"m":{"variants":{"high":{"safe":null}}}}}}`, "null", []Agent{OpenCode}, []string{"m"}},
+		{"dual variants", `{"version":1,"opencode":{"default_model":"m","models":{"m":{"variants":{"high":{"reasoningEffort":"high"}},"extra":{"variants":{"low":{"reasoningEffort":"low"}}}}}}}`, "field_conflict", []Agent{OpenCode}, []string{"m"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -84,6 +97,60 @@ func TestDecodeRejectsInvalidDocuments(t *testing.T) {
 				t.Fatalf("got rule %q at %q, want %q", validation.Rule, validation.Path, tt.rule)
 			}
 		})
+	}
+}
+
+func TestClaudeBudgetsAndOpenCodeVariants(t *testing.T) {
+	input := []byte(`{"version":1,"claude":{"primary":{"model":"m"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true},"context_window":353400,"max_output_tokens":100000},"opencode":{"default_model":"m","models":{"m":{"variants":{"medium":{"reasoningEffort":"medium"},"custom":{"reasoningSummary":"auto"}}}}}}`)
+	config, err := Decode(input, []Agent{Claude, OpenCode}, []string{"m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Claude.ContextWindow == nil || *config.Claude.ContextWindow != 353400 || config.Claude.MaxOutputTokens == nil || *config.Claude.MaxOutputTokens != 100000 {
+		t.Fatalf("Claude budgets = %#v", config.Claude)
+	}
+	variants := config.OpenCode.Models["m"].Variants
+	if len(variants) != 2 || variants["medium"]["reasoningEffort"] != "medium" || variants["custom"]["reasoningSummary"] != "auto" {
+		t.Fatalf("variants = %#v", variants)
+	}
+	canonical, err := Canonical(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(canonical, []byte(`"context_window":353400`)) || !bytes.Contains(canonical, []byte(`"max_output_tokens":100000`)) || !bytes.Contains(canonical, []byte(`"variants":{"custom":{"reasoningSummary":"auto"},"medium":{"reasoningEffort":"medium"}}`)) {
+		t.Fatalf("canonical fields missing: %s", canonical)
+	}
+}
+
+func TestClaudeBudgetsMayAppearIndependently(t *testing.T) {
+	base := `{"version":1,"claude":{"primary":{"model":"m"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true},%s}}`
+	for _, field := range []string{`"context_window":353400`, `"max_output_tokens":100000`} {
+		t.Run(field, func(t *testing.T) {
+			if _, err := Decode([]byte(fmt.Sprintf(base, field)), []Agent{Claude}, []string{"m"}); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestOpenCodeVariantNameBoundaryAndLegacyExtra(t *testing.T) {
+	name := strings.Repeat("v", 128)
+	input := `{"version":1,"opencode":{"default_model":"m","models":{"m":{"variants":{"` + name + `":{"nested":{"safe":true}}}}}}}`
+	config, err := Decode([]byte(input), []Agent{OpenCode}, []string{"m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(config.OpenCode.Models["m"].Variants) != 1 {
+		t.Fatalf("variants = %#v", config.OpenCode.Models["m"].Variants)
+	}
+
+	legacy := `{"version":1,"opencode":{"default_model":"m","models":{"m":{"extra":{"variants":{"high":{"reasoningEffort":"high"}}}}}}}`
+	legacyConfig, err := Decode([]byte(legacy), []Agent{OpenCode}, []string{"m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacyConfig.OpenCode.Models["m"].Variants != nil || legacyConfig.OpenCode.Models["m"].Extra["variants"] == nil {
+		t.Fatalf("legacy variants not preserved: %#v", legacyConfig.OpenCode.Models["m"])
 	}
 }
 
@@ -338,15 +405,21 @@ func TestSchemaIsCheckedIn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var generatedValue, checkedValue any
+	if !bytes.Equal(generated, checked) {
+		t.Fatal("schema is stale; regenerate model-config-v1.schema.json")
+	}
+	var generatedValue any
 	if err := json.Unmarshal(generated, &generatedValue); err != nil {
 		t.Fatal(err)
 	}
-	if err := json.Unmarshal(checked, &checkedValue); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(generatedValue, checkedValue) {
-		t.Fatal("schema is stale; regenerate model-config-v1.schema.json")
+	root := generatedValue.(map[string]any)
+	defs := root["$defs"].(map[string]any)
+	openCodeModel := defs["openCodeModel"].(map[string]any)
+	properties := openCodeModel["properties"].(map[string]any)
+	variants := properties["variants"].(map[string]any)
+	propertyNames := variants["propertyNames"].(map[string]any)
+	if propertyNames["pattern"] != `^[^\u0000-\u001f\u007f-\u009f]+$` || !strings.Contains(propertyNames["description"].(string), "128 UTF-8-byte limit") {
+		t.Fatalf("variant propertyNames constraints = %#v", propertyNames)
 	}
 }
 

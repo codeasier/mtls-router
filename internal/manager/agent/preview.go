@@ -140,8 +140,9 @@ func (s *Service) planClaude(state State) ([]plannedFile, error) {
 		sourceMode: mode, targetMode: mode, backupRequired: revision.Exists,
 		backupSource: state.Path, restoreFrom: state.Path,
 	}
+	obsoleteOwnedEnv := s.obsoleteClaudeEnv()
 	file.render = func(key []byte) ([]byte, error) {
-		return mergeClaude(root, s.currentInput.config.Claude, s.currentInput.routerBaseURL, string(key), s.obsoleteClaudeExtras())
+		return mergeClaude(root, s.currentInput.config.Claude, s.currentInput.routerBaseURL, string(key), obsoleteOwnedEnv)
 	}
 	return []plannedFile{file}, nil
 }
@@ -278,8 +279,9 @@ func (s *Service) planCodex(state State) ([]plannedFile, error) {
 	}
 	config.role = "config"
 	migrateHistorical := assessment.HistoricalMigration
+	obsoleteOptional := s.obsoleteCodexOptional()
 	config.render = func([]byte) ([]byte, error) {
-		return mergeCodex(configContent, s.currentInput.config.Codex, s.currentInput.apiBaseURL, s.obsoleteCodexOptional(), migrateHistorical)
+		return mergeCodex(configContent, s.currentInput.config.Codex, s.currentInput.apiBaseURL, obsoleteOptional, migrateHistorical)
 	}
 	auth := plannedFile{
 		agent: Codex, format: FormatJSON, sourcePath: state.AuthPath, targetPath: state.AuthPath,
@@ -294,22 +296,18 @@ func (s *Service) planCodex(state State) ([]plannedFile, error) {
 	return []plannedFile{config, auth}, nil
 }
 
-func (s *Service) obsoleteClaudeExtras() []string {
+func (s *Service) obsoleteClaudeEnv() []string {
 	previous, ok := s.currentSidecar.Agents[ClaudeCode]
 	if !ok {
 		return nil
 	}
 	current := map[string]bool{}
-	for key := range s.currentInput.config.Claude.Extra {
+	for _, key := range claudeOwnedEnvKeys(s.currentInput.config.Claude) {
 		current["env."+key] = true
-	}
-	fixed := map[string]bool{}
-	for _, key := range claudeFixedEnvKeys {
-		fixed["env."+key] = true
 	}
 	var result []string
 	for _, path := range previous.OwnedPaths {
-		if strings.HasPrefix(path, "env.") && !fixed[path] && !current[path] {
+		if strings.HasPrefix(path, "env.") && !current[path] {
 			result = append(result, strings.TrimPrefix(path, "env."))
 		}
 	}
@@ -344,7 +342,9 @@ func (s *Service) inspectOwnership(plan *writePlan) {
 					break
 				}
 			}
-			continue
+			if kind != ClaudeCode {
+				continue
+			}
 		}
 		for _, file := range plan.files {
 			if file.agent != kind || !file.sourceRevision.Exists {
@@ -355,8 +355,12 @@ func (s *Service) inspectOwnership(plan *writePlan) {
 			case ClaudeCode:
 				root, _ := decodeObject(file.sourceContent)
 				env, _ := decodeObject(root["env"])
-				for _, key := range claudeFixedEnvKeys {
-					if _, ok := env[key]; ok {
+				previouslyOwned := map[string]bool{}
+				for _, path := range previous.OwnedPaths {
+					previouslyOwned[path] = true
+				}
+				for _, key := range claudeOwnedEnvKeys(plan.input.config.Claude) {
+					if _, ok := env[key]; ok && !previouslyOwned["env."+key] {
 						collision = true
 						break
 					}

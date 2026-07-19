@@ -69,10 +69,10 @@ with it.
 
 All clients use one key-free JSON document. `version` is `1`; the `agents`
 request array and present top-level sections must match exactly. Unknown fields
-are rejected except in the constrained `extra` and `options` objects. Input is
-strict JSON: duplicate keys, invalid UTF-8, non-finite numbers, unsafe integer
-ranges, and protected credential/connection paths are rejected. Canonical bytes
-use RFC 8785 JCS without Unicode normalization.
+are rejected except in the constrained `extra`, `options`, and variant option
+objects. Input is strict JSON: duplicate keys, invalid UTF-8, non-finite
+numbers, unsafe integer ranges, and protected credential/connection paths are
+rejected. Canonical bytes use RFC 8785 JCS without Unicode normalization.
 
 Minimal three-Agent shape:
 
@@ -115,8 +115,21 @@ must not end in `[1m]`. An inherited role contains only
 - `ANTHROPIC_DEFAULT_SONNET_MODEL_DESCRIPTION`
 - `ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION`
 
+The Claude section may also contain independently optional `context_window` and
+`max_output_tokens` fields. Each is a positive safe integer. When both are
+present, `max_output_tokens` must be less than `context_window`.
+`context_window` conflicts with `context: "1m"` on any explicit primary or role
+selection; use either the numeric global budget or the selection-level `[1m]`
+mechanism, not both. The manager renders configured values as exact base-10
+decimal strings in `CLAUDE_CODE_MAX_CONTEXT_TOKENS` and
+`CLAUDE_CODE_MAX_OUTPUT_TOKENS`, respectively.
+
 The manager owns only its documented `env` keys, merges them into the existing
-`env`, and preserves unrelated top-level and environment values.
+`env`, and preserves unrelated top-level and environment values. This ownership
+includes both numeric-budget environment keys: omitting a previously managed
+field removes its stale value. Existing files are projected back only when
+these values are canonical positive decimal strings and the resulting Claude
+section satisfies the same budget and context rules.
 
 For standard context, the manager renders the base ID unchanged. For
 `context: "1m"`, it appends exactly one terminal `[1m]` only at the Claude file
@@ -129,20 +142,36 @@ write-time availability checks always use the base ID. Configuration does not
 infer whether a model supports 1M context; a runtime rejection causes no model
 fallback or configuration rewrite.
 
+The numeric `context_window` override works directly for unknown custom model
+names on Claude Code 2.1.193 and later. Older versions remain supported and may
+ignore that override; there is no hard minimum Claude Code version. These
+numeric values control Claude Code's local token budgeting and compaction
+behavior. They do not enlarge, prove, or otherwise change the upstream model's
+actual context or output capability.
+
 ### opencode
 
 `models` contains one or more explicitly selected catalog IDs and
 `default_model` names one of them. Per-model typed options include display name,
 reasoning, attachments, tool calls, temperature, context/input/output limits,
 input/output modalities, interleaved reasoning, and a constrained provider
-`options` object. `extra` accepts only fields valid under the pinned opencode
-schema and cannot collide with typed or manager-owned paths.
+`options` object. A model may also contain typed top-level `variants`. Variant
+names are extensible but must be nonempty, contain no control characters, and
+fit within 128 UTF-8 bytes; each name maps to a recursively bounded provider
+option object that is subject to the same protected credential and connection
+path checks. Legacy `extra.variants` input remains accepted, but defining
+`variants` in both locations is a field conflict and is rejected. `extra`
+otherwise accepts only fields valid under the pinned opencode schema and cannot
+collide with typed or manager-owned paths.
 
 Only display `name` defaults to the model ID. Every other optional field that is
 unset is omitted, not guessed. The manager owns `provider.mtls-router` and an
 owned root `model`, while preserving other providers, `small_model`, and
-unrelated root settings. JSONC normalization can remove comments and formatting
-and is shown in preview.
+unrelated root settings. Typed variants render exactly at
+`provider.mtls-router.models.<id>.variants` and are projected from that managed
+top-level model field during discovery; arbitrary provider extras are not
+extracted into canonical configuration. JSONC normalization can remove comments
+and formatting and is shown in preview.
 
 ### Codex
 

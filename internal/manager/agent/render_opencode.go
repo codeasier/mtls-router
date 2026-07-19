@@ -72,6 +72,9 @@ func openCodeProvider(config *modelconfig.OpenCodeConfig, apiBaseURL, key string
 		if config.Options != nil {
 			entry["options"] = config.Options
 		}
+		if config.Variants != nil {
+			entry["variants"] = config.Variants
+		}
 		models[id] = modelconfig.DeepMerge(config.Extra, entry)
 	}
 	return map[string]any{

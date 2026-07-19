@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -47,6 +48,94 @@ func TestSidecarIsCanonicalPrivateAndPreservesUnselectedAgents(t *testing.T) {
 	var decoded any
 	if json.Unmarshal(second, &decoded) != nil {
 		t.Fatal("sidecar is not JSON")
+	}
+}
+
+func TestClaudeBudgetOwnershipFollowsTypedConfiguration(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".claude", "settings.json")
+	writeFile(t, path, `{"env":{"CLAUDE_CODE_MAX_CONTEXT_TOKENS":"manual-context","CLAUDE_CODE_MAX_OUTPUT_TOKENS":"manual-output"}}`)
+	contextWindow, maxOutput := int64(353400), int64(100000)
+	input := legacyTestRenderInput()
+	service, err := NewService(Options{
+		StateDir: filepath.Join(home, "state"), Detector: testServiceDetector(home, map[string]bool{"claude": true}, nil), LegacyRenderInput: input,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, err := service.Preview(context.Background(), []Kind{ClaudeCode})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.ManagedConfigDrift {
+		t.Fatalf("unconfigured manual budgets reported as collision: %#v", preview.ManagedCollisions)
+	}
+	writeV2Legacy(t, service, []Kind{ClaudeCode})
+	state, _, _, _, err := service.readSidecar()
+	if err != nil {
+		t.Fatal(err)
+	}
+	owned := state.Agents[ClaudeCode].OwnedPaths
+	want := []string{"env.CLAUDE_CODE_MAX_CONTEXT_TOKENS", "env.CLAUDE_CODE_MAX_OUTPUT_TOKENS"}
+	for _, path := range want {
+		index := sort.SearchStrings(owned, path)
+		if index < len(owned) && owned[index] == path {
+			t.Fatalf("unconfigured budget path is owned %q: %#v", path, owned)
+		}
+	}
+	content := readString(t, path)
+	if !strings.Contains(content, "manual-context") || !strings.Contains(content, "manual-output") {
+		t.Fatalf("manual budgets were not preserved: %s", content)
+	}
+
+	input.Config.Claude.ContextWindow = &contextWindow
+	input.Config.Claude.MaxOutputTokens = &maxOutput
+	preview, err = service.Preview(context.Background(), []Kind{ClaudeCode})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.Write(context.Background(), WriteRequest{
+		Agents:                  []Kind{ClaudeCode},
+		RevisionToken:           preview.RevisionToken,
+		APIKey:                  testAPIKey,
+		ApproveManagedOverwrite: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, _, _, _, err = service.readSidecar()
+	if err != nil {
+		t.Fatal(err)
+	}
+	owned = state.Agents[ClaudeCode].OwnedPaths
+	for _, ownedPath := range want {
+		index := sort.SearchStrings(owned, ownedPath)
+		if index == len(owned) || owned[index] != ownedPath {
+			t.Fatalf("configured budget path is not owned %q: %#v", ownedPath, owned)
+		}
+	}
+	content = readString(t, path)
+	if !strings.Contains(content, `"353400"`) || !strings.Contains(content, `"100000"`) {
+		t.Fatalf("configured budgets were not rendered: %s", content)
+	}
+
+	input.Config.Claude.ContextWindow = nil
+	input.Config.Claude.MaxOutputTokens = nil
+	writeV2Legacy(t, service, []Kind{ClaudeCode})
+	state, _, _, _, err = service.readSidecar()
+	if err != nil {
+		t.Fatal(err)
+	}
+	owned = state.Agents[ClaudeCode].OwnedPaths
+	for _, ownedPath := range want {
+		index := sort.SearchStrings(owned, ownedPath)
+		if index < len(owned) && owned[index] == ownedPath {
+			t.Fatalf("omitted budget path remains owned %q: %#v", ownedPath, owned)
+		}
+	}
+	content = readString(t, path)
+	if strings.Contains(content, "CLAUDE_CODE_MAX_CONTEXT_TOKENS") || strings.Contains(content, "CLAUDE_CODE_MAX_OUTPUT_TOKENS") {
+		t.Fatalf("previously owned omitted budgets survived: %s", content)
 	}
 }
 

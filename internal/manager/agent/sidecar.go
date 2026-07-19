@@ -154,11 +154,8 @@ func sidecarSection(config *modelconfig.Config, kind Kind) (json.RawMessage, []s
 	switch kind {
 	case ClaudeCode:
 		section = config.Claude
-		owned = make([]string, 0, len(claudeFixedEnvKeys)+len(config.Claude.Extra))
-		for _, key := range claudeFixedEnvKeys {
-			owned = append(owned, "env."+key)
-		}
-		for key := range config.Claude.Extra {
+		owned = make([]string, 0, len(claudeOwnedEnvKeys(config.Claude)))
+		for _, key := range claudeOwnedEnvKeys(config.Claude) {
 			owned = append(owned, "env."+key)
 		}
 	case OpenCode:

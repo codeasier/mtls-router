@@ -42,7 +42,7 @@ Release 可以向 manager 注入一份不可变、无 key 的规范 preset。Man
 
 ## 规范模型配置
 
-所有客户端使用同一份无 key JSON 文档。`version` 为 `1`；请求中的 `agents` 数组必须与实际存在的顶层 section 精确一致。除受限 `extra` 和 `options` 外，未知字段都会被拒绝。输入必须是严格 JSON：重复 key、无效 UTF-8、非有限数字、不安全整数范围和受保护的凭据/连接路径都会被拒绝。规范字节使用 RFC 8785 JCS，不执行 Unicode normalization。
+所有客户端使用同一份无 key JSON 文档。`version` 为 `1`；请求中的 `agents` 数组必须与实际存在的顶层 section 精确一致。除受限 `extra`、`options` 和 variant option object 外，未知字段都会被拒绝。输入必须是严格 JSON：重复 key、无效 UTF-8、非有限数字、不安全整数范围和受保护的凭据/连接路径都会被拒绝。规范字节使用 RFC 8785 JCS，不执行 Unicode normalization。
 
 包含三个 Agent 的最小结构：
 
@@ -74,15 +74,19 @@ Release 可以向 manager 注入一份不可变、无 key 的规范 preset。Man
 - `ANTHROPIC_DEFAULT_SONNET_MODEL_DESCRIPTION`
 - `ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION`
 
-Manager 只拥有文档声明的 `env` key，将它们合并到现有 `env`，并保留无关顶层和环境值。
+Claude section 还可包含彼此独立可选的 `context_window` 和 `max_output_tokens` 字段，两者都必须是正的安全整数。两者同时存在时，`max_output_tokens` 必须小于 `context_window`。`context_window` 与 primary 或任一 role 的显式 selection 上的 `context: "1m"` 冲突；数值全局预算与 selection-level `[1m]` 机制只能二选一。Manager 分别将配置值以精确十进制字符串渲染到 `CLAUDE_CODE_MAX_CONTEXT_TOKENS` 和 `CLAUDE_CODE_MAX_OUTPUT_TOKENS`。
+
+Manager 只拥有文档声明的 `env` key，将它们合并到现有 `env`，并保留无关顶层和环境值。所有权包括两个数值预算环境 key：省略之前由 manager 管理的字段时，会移除其旧值。只有当已有文件中的这些值是规范的正十进制字符串，且生成的 Claude section 满足相同预算与 context 规则时，才会将其投影回规范配置。
 
 Standard context 下，manager 原样渲染 base ID。使用 `context: "1m"` 时，仅在 Claude 文件渲染边界为 `ANTHROPIC_MODEL`、`ANTHROPIC_CUSTOM_MODEL_OPTION` 以及有效 Haiku、Sonnet、Opus 模型值追加一个精确的末尾 `[1m]`。显示名称保持不变，manager 不写入 `CLAUDE_CODE_DISABLE_1M_CONTEXT`。已有值带一个精确末尾 `[1m]` 时，会投影回 base ID 加规范 context；错误、重复或位于中间的 marker 不会被修复。目录与写入时可用性校验始终使用 base ID。配置阶段不会推断模型是否支持 1M context；运行时拒绝不会触发模型 fallback 或配置重写。
 
+从 Claude Code 2.1.193 开始，数值 `context_window` override 可直接作用于未知 custom model 名称。更早版本仍受支持，但可能忽略该 override；系统不设置 Claude Code 硬性最低版本。这些数值只控制 Claude Code 本地 token budgeting 与 compaction 行为，不会扩大、证明或以其他方式改变上游模型的实际 context 或 output capability。
+
 ### opencode
 
-`models` 包含一个或多个明确选择的目录 ID，`default_model` 必须是其中之一。每个模型的 typed option 包括显示名称、reasoning、attachment、tool call、temperature、context/input/output limit、输入/输出 modality、interleaved reasoning 和受限 provider `options` object。`extra` 只接受 pinned opencode schema 允许的字段，且不能与 typed 或 manager-owned 路径冲突。
+`models` 包含一个或多个明确选择的目录 ID，`default_model` 必须是其中之一。每个模型的 typed option 包括显示名称、reasoning、attachment、tool call、temperature、context/input/output limit、输入/输出 modality、interleaved reasoning 和受限 provider `options` object。模型还可包含 typed top-level `variants`。Variant 名称可扩展，但必须非空、不含控制字符且不超过 128 个 UTF-8 byte；每个名称映射到一个递归有界的 provider option object，并接受相同的受保护凭据与连接路径检查。系统继续接受 legacy `extra.variants` 输入，但同时在两个位置定义 `variants` 属于 field conflict，会被拒绝。除此之外，`extra` 只接受 pinned opencode schema 允许的字段，且不能与 typed 或 manager-owned 路径冲突。
 
-只有显示 `name` 默认等于模型 ID。其他未设置可选字段会省略，而不是猜测。Manager 拥有 `provider.mtls-router` 和已取得所有权的根 `model`，同时保留其他 provider、`small_model` 和无关根设置。JSONC normalization 可能移除注释和格式，预览会明确显示。
+只有显示 `name` 默认等于模型 ID。其他未设置可选字段会省略，而不是猜测。Manager 拥有 `provider.mtls-router` 和已取得所有权的根 `model`，同时保留其他 provider、`small_model` 和无关根设置。Typed variants 精确渲染到 `provider.mtls-router.models.<id>.variants`，并在 discovery 时从该 managed top-level model field 投影；任意 provider extra 不会被提取到规范配置。JSONC normalization 可能移除注释和格式，预览会明确显示。
 
 ### Codex
 

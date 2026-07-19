@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -20,7 +21,7 @@ func TestDiscoverModelsReturnsTypedPrefillUnavailableDriftAndNoSecrets(t *testin
 	openCodePath := filepath.Join(home, ".config", "opencode", "opencode.json")
 	codexPath := filepath.Join(home, ".codex", "config.toml")
 	writeModelFixture(t, claudePath, `{"unrelated":"`+modelsSecretCanary+`","env":{"ANTHROPIC_AUTH_TOKEN":"`+modelsSecretCanary+`","ANTHROPIC_MODEL":"model-a","ANTHROPIC_DEFAULT_HAIKU_MODEL":"model-a","ANTHROPIC_DEFAULT_SONNET_MODEL":"gone","ANTHROPIC_DEFAULT_OPUS_MODEL":"model-a","HEADERS":"`+modelsSecretCanary+`"}}`)
-	writeModelFixture(t, openCodePath, `{"model":"mtls-router/model-b","headers":{"Authorization":"`+modelsSecretCanary+`"},"provider":{"mtls-router":{"options":{"apiKey":"`+modelsSecretCanary+`"},"models":{"model-b":{"name":"Safe name","reasoning":true,"limit":{"context":100,"output":20},"options":{"apiKey":"`+modelsSecretCanary+`"},"extra":{"secret":"`+modelsSecretCanary+`"}}}}}}`)
+	writeModelFixture(t, openCodePath, `{"model":"mtls-router/model-b","headers":{"Authorization":"`+modelsSecretCanary+`"},"provider":{"mtls-router":{"options":{"apiKey":"`+modelsSecretCanary+`"},"models":{"model-b":{"name":"Safe name","reasoning":true,"limit":{"context":100,"output":20},"options":{"reasoningEffort":"high"},"extra":{"secret":"`+modelsSecretCanary+`"}}}}}}`)
 	writeModelFixture(t, codexPath, "model_provider = \"mtls-router\"\nmodel = \"model-a\"\nmodel_reasoning_effort = \"high\"\nmodel_context_window = 200\nsecret_canary = \""+modelsSecretCanary+"\"\n")
 	writeModelFixture(t, filepath.Join(home, ".codex", "auth.json"), `{"OPENAI_API_KEY":"`+modelsSecretCanary+`"}`)
 
@@ -54,7 +55,7 @@ func TestDiscoverModelsReturnsTypedPrefillUnavailableDriftAndNoSecrets(t *testin
 	if strings.Contains(string(result.Existing.ModelConfig), `"claude"`) || !strings.Contains(string(result.Existing.ModelConfig), `"opencode"`) || !strings.Contains(string(result.Existing.ModelConfig), `"codex"`) {
 		t.Fatalf("typed prefill = %s", result.Existing.ModelConfig)
 	}
-	if !strings.Contains(string(result.Existing.ModelConfig), `"reasoning":true`) || !strings.Contains(string(result.Existing.ModelConfig), `"context":100`) ||
+	if !strings.Contains(string(result.Existing.ModelConfig), `"reasoning":true`) || !strings.Contains(string(result.Existing.ModelConfig), `"context":100`) || !strings.Contains(string(result.Existing.ModelConfig), `"reasoningEffort":"high"`) ||
 		!strings.Contains(string(result.Existing.ModelConfig), `"reasoning_effort":"high"`) || !strings.Contains(string(result.Existing.ModelConfig), `"context_window":200`) {
 		t.Fatalf("supported typed fields missing from prefill: %s", result.Existing.ModelConfig)
 	}
@@ -220,6 +221,171 @@ func TestDiscoverModelsProjectsClaudeContextNameAndInheritance(t *testing.T) {
 	}
 	if config.Claude.Opus.Selection == nil || config.Claude.Opus.Selection.Name == nil || *config.Claude.Opus.Selection.Name != "Different" {
 		t.Fatalf("different name was inherited: %#v", config.Claude.Opus)
+	}
+}
+
+func TestDiscoverModelsProjectsClaudeBudgets(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".claude", "settings.json")
+	writeModelFixture(t, path, `{"env":{"ANTHROPIC_MODEL":"primary","ANTHROPIC_DEFAULT_HAIKU_MODEL":"primary","ANTHROPIC_DEFAULT_SONNET_MODEL":"primary","ANTHROPIC_DEFAULT_OPUS_MODEL":"primary","CLAUDE_CODE_MAX_CONTEXT_TOKENS":"353400","CLAUDE_CODE_MAX_OUTPUT_TOKENS":"100000"}}`)
+	service, err := NewService(Options{StateDir: filepath.Join(home, "transactions"), Detector: Detector{
+		HomeDir: home, Getenv: func(string) string { return "" }, LookPath: func(string) (string, error) { return "", os.ErrNotExist },
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.DiscoverModels(context.Background(), []Kind{ClaudeCode}, []string{"primary"}, modelconfig.CatalogClaims{
+		Models: []string{"primary"}, Agents: []modelconfig.Agent{modelconfig.Claude}, Owner: "cli", RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := modelconfig.Decode(result.Existing.ModelConfig, []modelconfig.Agent{modelconfig.Claude}, []string{"primary"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Claude.ContextWindow == nil || *config.Claude.ContextWindow != 353400 || config.Claude.MaxOutputTokens == nil || *config.Claude.MaxOutputTokens != 100000 {
+		t.Fatalf("Claude budgets = %#v", config.Claude)
+	}
+}
+
+func TestDiscoverModelsRejectsInvalidClaudeBudgets(t *testing.T) {
+	for _, test := range []struct {
+		name, contextWindow, maxOutput, model string
+	}{
+		{name: "exponent", contextWindow: "35e4", maxOutput: "100000", model: "primary"},
+		{name: "zero", contextWindow: "0", maxOutput: "", model: "primary"},
+		{name: "negative", contextWindow: "-1", maxOutput: "", model: "primary"},
+		{name: "leading zero", contextWindow: "0353400", maxOutput: "", model: "primary"},
+		{name: "leading plus", contextWindow: "+353400", maxOutput: "", model: "primary"},
+		{name: "unsafe", contextWindow: "9007199254740992", maxOutput: "", model: "primary"},
+		{name: "non-string", contextWindow: "353400", maxOutput: `100000`, model: "primary"},
+		{name: "output equals context", contextWindow: "100", maxOutput: "100", model: "primary"},
+		{name: "output exceeds context", contextWindow: "100", maxOutput: "101", model: "primary"},
+		{name: "numeric context and 1m", contextWindow: "353400", maxOutput: "", model: "primary[1m]"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			home := t.TempDir()
+			env := map[string]any{
+				"ANTHROPIC_MODEL": test.model, "ANTHROPIC_DEFAULT_HAIKU_MODEL": test.model,
+				"ANTHROPIC_DEFAULT_SONNET_MODEL": test.model, "ANTHROPIC_DEFAULT_OPUS_MODEL": test.model,
+			}
+			if test.contextWindow != "" {
+				env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = test.contextWindow
+			}
+			if test.maxOutput != "" {
+				if test.name == "non-string" {
+					env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = 100000
+				} else {
+					env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = test.maxOutput
+				}
+			}
+			content, _ := json.Marshal(map[string]any{"env": env})
+			path := filepath.Join(home, ".claude", "settings.json")
+			writeModelFixture(t, path, string(content))
+			service, err := NewService(Options{StateDir: filepath.Join(home, "transactions"), Detector: Detector{
+				HomeDir: home, Getenv: func(string) string { return "" }, LookPath: func(string) (string, error) { return "", os.ErrNotExist },
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := service.DiscoverModels(context.Background(), []Kind{ClaudeCode}, []string{"primary"}, modelconfig.CatalogClaims{
+				Models: []string{"primary"}, Agents: []modelconfig.Agent{modelconfig.Claude}, Owner: "cli", RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "2",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(result.Existing.ModelConfig), `"claude"`) {
+				t.Fatalf("invalid budget projected: %s", result.Existing.ModelConfig)
+			}
+		})
+	}
+}
+
+func TestDiscoverModelsProjectsOnlyTypedOpenCodeOptionsAndVariants(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".config", "opencode", "opencode.json")
+	writeModelFixture(t, path, `{"model":"mtls-router/model-a","headers":{"Authorization":"secret"},"provider":{"mtls-router":{"npm":"unsafe","name":"unsafe","options":{"baseURL":"https://secret","apiKey":"secret"},"models":{"model-a":{"name":"Safe","options":{"reasoningEffort":"high"},"variants":{"medium":{"reasoningEffort":"medium"}},"extra":{"secret":"drop"},"provider":"drop","auth":"drop","url":"drop","headers":{"Authorization":"drop"}}}}}}`)
+	service, err := NewService(Options{StateDir: filepath.Join(home, "transactions"), Detector: Detector{
+		HomeDir: home, Getenv: func(string) string { return "" }, LookPath: func(string) (string, error) { return "", os.ErrNotExist },
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.DiscoverModels(context.Background(), []Kind{OpenCode}, []string{"model-a"}, modelconfig.CatalogClaims{
+		Models: []string{"model-a"}, Agents: []modelconfig.Agent{modelconfig.OpenCode}, Owner: "cli", RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(result.Existing.ModelConfig)
+	if !strings.Contains(text, `"options":{"reasoningEffort":"high"}`) || !strings.Contains(text, `"variants":{"medium":{"reasoningEffort":"medium"}}`) {
+		t.Fatalf("typed fields missing: %s", text)
+	}
+	for _, prohibited := range []string{"secret", `"extra"`, `"provider"`, `"auth"`, `"url"`, `"headers"`, "baseURL", "apiKey"} {
+		if strings.Contains(text, prohibited) {
+			t.Fatalf("projected prohibited %q: %s", prohibited, text)
+		}
+	}
+}
+
+func TestDiscoverModelsRoundTripsRenderedOpenCodeVariantShapes(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		variants   string
+		wantConfig string
+	}{
+		{name: "legacy extension array", variants: `["fast"]`, wantConfig: `"extra":{"variants":["fast"]}`},
+		{name: "typed object map", variants: `{"medium":{"reasoningEffort":"medium"}}`, wantConfig: `"variants":{"medium":{"reasoningEffort":"medium"}}`},
+		{name: "invalid legacy extension", variants: `[{"safe":{"connection":"drop"}}]`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			home := t.TempDir()
+			path := filepath.Join(home, ".config", "opencode", "opencode.json")
+			writeModelFixture(t, path, `{"model":"mtls-router/model-a","provider":{"mtls-router":{"models":{"model-a":{"name":"Safe","variants":`+test.variants+`,"extra":{"secret":"drop"},"connection":{"token":"drop"}}}}}}`)
+			service, err := NewService(Options{StateDir: filepath.Join(home, "transactions"), Detector: Detector{
+				HomeDir: home, Getenv: func(string) string { return "" }, LookPath: func(string) (string, error) { return "", os.ErrNotExist },
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := service.DiscoverModels(context.Background(), []Kind{OpenCode}, []string{"model-a"}, modelconfig.CatalogClaims{
+				Models: []string{"model-a"}, Agents: []modelconfig.Agent{modelconfig.OpenCode}, Owner: "cli", RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "2",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			text := string(result.Existing.ModelConfig)
+			if test.wantConfig == "" {
+				if strings.Contains(text, `"opencode"`) {
+					t.Fatalf("invalid legacy extension projected: %s", text)
+				}
+				return
+			}
+			if !strings.Contains(text, test.wantConfig) {
+				t.Fatalf("projected config = %s", text)
+			}
+			for _, prohibited := range []string{"secret", "connection", "token"} {
+				if strings.Contains(text, prohibited) {
+					t.Fatalf("projected prohibited %q: %s", prohibited, text)
+				}
+			}
+			config, err := modelconfig.Decode(result.Existing.ModelConfig, []modelconfig.Agent{modelconfig.OpenCode}, []string{"model-a"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rendered, err := renderOpenCodeFragment(config.OpenCode, "http://127.0.0.1:19099/v1", "redacted")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var compact bytes.Buffer
+			if err := json.Compact(&compact, rendered); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(compact.String(), `"variants":`+test.variants) {
+				t.Fatalf("rendered config = %s", rendered)
+			}
+		})
 	}
 }
 

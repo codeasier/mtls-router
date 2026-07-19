@@ -52,11 +52,13 @@ func (r ClaudeRole) MarshalJSON() ([]byte, error) {
 }
 
 type ClaudeConfig struct {
-	Primary Model             `json:"primary"`
-	Haiku   ClaudeRole        `json:"haiku"`
-	Sonnet  ClaudeRole        `json:"sonnet"`
-	Opus    ClaudeRole        `json:"opus"`
-	Extra   map[string]string `json:"extra,omitempty"`
+	Primary         Model             `json:"primary"`
+	Haiku           ClaudeRole        `json:"haiku"`
+	Sonnet          ClaudeRole        `json:"sonnet"`
+	Opus            ClaudeRole        `json:"opus"`
+	ContextWindow   *int64            `json:"context_window,omitempty"`
+	MaxOutputTokens *int64            `json:"max_output_tokens,omitempty"`
+	Extra           map[string]string `json:"extra,omitempty"`
 }
 
 type OpenCodeConfig struct {
@@ -65,16 +67,17 @@ type OpenCodeConfig struct {
 }
 
 type OpenCodeModelConfig struct {
-	Name        *string        `json:"name,omitempty"`
-	Reasoning   *bool          `json:"reasoning,omitempty"`
-	Attachment  *bool          `json:"attachment,omitempty"`
-	ToolCall    *bool          `json:"tool_call,omitempty"`
-	Temperature *bool          `json:"temperature,omitempty"`
-	Limit       *Limit         `json:"limit,omitempty"`
-	Modalities  *Modalities    `json:"modalities,omitempty"`
-	Interleaved any            `json:"interleaved,omitempty"`
-	Options     map[string]any `json:"options,omitempty"`
-	Extra       map[string]any `json:"extra,omitempty"`
+	Name        *string                   `json:"name,omitempty"`
+	Reasoning   *bool                     `json:"reasoning,omitempty"`
+	Attachment  *bool                     `json:"attachment,omitempty"`
+	ToolCall    *bool                     `json:"tool_call,omitempty"`
+	Temperature *bool                     `json:"temperature,omitempty"`
+	Limit       *Limit                    `json:"limit,omitempty"`
+	Modalities  *Modalities               `json:"modalities,omitempty"`
+	Interleaved any                       `json:"interleaved,omitempty"`
+	Options     map[string]any            `json:"options,omitempty"`
+	Variants    map[string]map[string]any `json:"variants,omitempty"`
+	Extra       map[string]any            `json:"extra,omitempty"`
 }
 
 type Limit struct {
