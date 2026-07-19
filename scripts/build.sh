@@ -33,6 +33,7 @@ else
   COMMIT="unknown"
 fi
 BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+agent_model_preset_base64="${AGENT_MODEL_PRESET_BASE64:-}"
 
 go build -trimpath \
   -ldflags "-s -w \
@@ -51,7 +52,8 @@ go build -trimpath \
     -X 'github.com/codeasier/mtls-router/internal/version.Version=${VERSION}' \
     -X 'github.com/codeasier/mtls-router/internal/version.Commit=${COMMIT}' \
     -X 'github.com/codeasier/mtls-router/internal/version.BuildDate=${BUILD_DATE}' \
-    -X 'github.com/codeasier/mtls-router/internal/version.DeploymentID=${DEPLOYMENT_ID}'" \
+    -X 'github.com/codeasier/mtls-router/internal/version.DeploymentID=${DEPLOYMENT_ID}' \
+    -X 'github.com/codeasier/mtls-router/internal/manager/preset.Encoded=${agent_model_preset_base64}'" \
   -o mtls-router-manager ./cmd/mtls-router-manager
 
 echo ">> built: ./mtls-router"

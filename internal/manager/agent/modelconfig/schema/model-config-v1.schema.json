@@ -26,7 +26,7 @@
     },
     "model": {
       "additionalProperties": false,
-      "properties": {"model": {"maxLength": 256, "minLength": 1, "type": "string"}, "name": {"minLength": 1, "type": "string"}},
+      "properties": {"context": {"enum": ["1m"]}, "model": {"maxLength": 256, "minLength": 1, "not": {"pattern": "\\[1m\\]$"}, "type": "string"}, "name": {"minLength": 1, "type": "string"}},
       "required": ["model"],
       "type": "object"
     },
@@ -94,7 +94,7 @@
     },
     "opencode": {
       "additionalProperties": false,
-      "properties": {"default_model": {"type": "string"}, "models": {"additionalProperties": {"$ref": "#/$defs/openCodeModel"}, "minProperties": 1, "type": "object"}},
+      "properties": {"default_model": {"type": "string"}, "models": {"additionalProperties": {"$ref": "#/$defs/openCodeModel"}, "maxProperties": 1000, "minProperties": 1, "type": "object"}},
       "required": ["default_model", "models"],
       "type": "object"
     },

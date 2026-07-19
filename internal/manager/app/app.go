@@ -24,6 +24,7 @@ import (
 	"github.com/codeasier/mtls-router/internal/manager/metadata"
 	"github.com/codeasier/mtls-router/internal/manager/occupant"
 	managerpaths "github.com/codeasier/mtls-router/internal/manager/paths"
+	"github.com/codeasier/mtls-router/internal/manager/preset"
 	"github.com/codeasier/mtls-router/internal/manager/process"
 	"github.com/codeasier/mtls-router/internal/manager/protocol"
 	"github.com/codeasier/mtls-router/internal/manager/state"
@@ -133,6 +134,10 @@ type monitorResult struct {
 // constructs discovery and lifecycle services. No request can be accepted
 // before this function returns.
 func New(config Config) (*App, error) {
+	loadedPreset, err := preset.Load()
+	if err != nil {
+		return nil, err
+	}
 	if config.ListenAddr == "" {
 		config.ListenAddr = defaultListenAddr
 	}
@@ -172,7 +177,7 @@ func New(config Config) (*App, error) {
 	}
 
 	agentStateDir := filepath.Join(config.Paths.DesktopDataDir, "agent-transactions")
-	agentManager, recoveryErr := agent.NewService(agent.Options{StateDir: agentStateDir, Detector: config.AgentDetector})
+	agentManager, recoveryErr := agent.NewService(agent.Options{StateDir: agentStateDir, Detector: config.AgentDetector, Preset: loadedPreset})
 	if agentManager == nil {
 		return nil, errors.New("initialize Agent service")
 	}
@@ -642,6 +647,16 @@ func (a *App) agentModels(ctx context.Context, params json.RawMessage) (any, *pr
 	if modelsErr != nil {
 		return nil, mapAgentError(modelsErr)
 	}
+	if len(modelsResult.Preset.ModelConfig) == 0 {
+		modelsResult.Preset.ModelConfig = json.RawMessage(`{}`)
+	}
+	if modelsResult.Preset.UnavailableAgents == nil {
+		modelsResult.Preset.UnavailableAgents = map[string][]string{}
+	}
+	unavailablePreset := make(map[string]protocol.AgentPresetUnavailable, len(modelsResult.Preset.UnavailableAgents))
+	for kind, models := range modelsResult.Preset.UnavailableAgents {
+		unavailablePreset[kind] = protocol.AgentPresetUnavailable{Code: protocol.CodeModelNotAvailable, Models: models}
+	}
 	return protocol.AgentModelsResult{
 		Models: trusted.Models, CatalogToken: modelsResult.CatalogToken,
 		RouterBaseURL: trusted.Binding.RouterBaseURL, APIBaseURL: trusted.Binding.APIBaseURL,
@@ -649,6 +664,7 @@ func (a *App) agentModels(ctx context.Context, params json.RawMessage) (any, *pr
 			ModelConfig: modelsResult.Existing.ModelConfig, UnavailableModels: modelsResult.Existing.UnavailableModels,
 			DriftedAgents: modelsResult.Existing.DriftedAgents,
 		},
+		Preset: protocol.AgentModelsPreset{ModelConfig: modelsResult.Preset.ModelConfig, UnavailableAgents: unavailablePreset},
 	}, nil
 }
 

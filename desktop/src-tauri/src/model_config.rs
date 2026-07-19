@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 const MAX_CONFIG_SIZE: usize = 2 * 1024 * 1024;
+pub const MAX_REFERENCED_MODELS_PER_AGENT: usize = 1000;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -24,6 +25,14 @@ pub struct ModelSelection {
     pub model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<ClaudeContext>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub enum ClaudeContext {
+    #[serde(rename = "1m")]
+    OneMillion,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -139,8 +148,15 @@ fn valid_text(value: &str, max: usize) -> bool {
     !value.is_empty() && value.len() <= max && !value.chars().any(char::is_control)
 }
 
+pub fn valid_model_id(value: &str) -> bool {
+    valid_text(value, 256) && value.trim_matches(char::is_whitespace) == value
+}
+
 fn selected_model(value: &ModelSelection, catalog: &HashSet<&str>, path: &str) -> Result<()> {
-    if !valid_text(&value.model, 256) || !catalog.contains(value.model.as_str()) {
+    if !valid_model_id(&value.model) || value.model.ends_with("[1m]") {
+        return Err(invalid(path, "base_model"));
+    }
+    if !catalog.contains(value.model.as_str()) {
         return Err(invalid(path, "catalog_model"));
     }
     if value
@@ -196,11 +212,14 @@ pub fn validate(config: &ModelConfig, agents: &[String], catalog: &[String]) -> 
         }
     }
     if let Some(opencode) = &config.opencode {
-        if opencode.models.is_empty() || !opencode.models.contains_key(&opencode.default_model) {
+        if opencode.models.is_empty()
+            || opencode.models.len() > MAX_REFERENCED_MODELS_PER_AGENT
+            || !opencode.models.contains_key(&opencode.default_model)
+        {
             return Err(invalid("/opencode/default_model", "selected_default"));
         }
         for (id, model) in &opencode.models {
-            if !catalog.contains(id.as_str()) {
+            if !valid_model_id(id) || !catalog.contains(id.as_str()) {
                 return Err(invalid("/opencode/models", "catalog_model"));
             }
             if model
@@ -253,7 +272,7 @@ pub fn validate(config: &ModelConfig, agents: &[String], catalog: &[String]) -> 
         }
     }
     if let Some(codex) = &config.codex {
-        if !catalog.contains(codex.model.as_str()) {
+        if !valid_model_id(&codex.model) || !catalog.contains(codex.model.as_str()) {
             return Err(invalid("/codex/model", "catalog_model"));
         }
         if codex.reasoning_effort.as_ref().is_some_and(|value| {
@@ -442,6 +461,7 @@ mod tests {
                 primary: ModelSelection {
                     model: "m1".into(),
                     name: None,
+                    context: None,
                 },
                 haiku: ClaudeRole::Inherit(InheritPrimary {
                     inherit_primary: true,
@@ -479,6 +499,55 @@ mod tests {
         assert!(!exported.contains("api_key"));
         assert!(import_json(&exported, &agents, &catalog).is_ok());
         assert!(import_json(r#"{"version":1,"api_key":"secret"}"#, &agents, &catalog).is_err());
+    }
+
+    #[test]
+    fn claude_context_is_strict_and_suffix_is_never_a_canonical_model() {
+        let agents = vec!["claude".into()];
+        let catalog = vec!["m1".into(), "m1[1m]".into()];
+        let one_million = r#"{"version":1,"claude":{"primary":{"model":"m1","name":"Primary","context":"1m"},"haiku":{"inherit_primary":true},"sonnet":{"model":"m1","context":"1m"},"opus":{"inherit_primary":true}}}"#;
+        assert!(import_json(one_million, &agents, &catalog).is_ok());
+        for invalid_context in [r#""standard""#, r#""1M""#, r#""""#, "1", "true"] {
+            let content = one_million.replace(r#""1m""#, invalid_context);
+            assert!(import_json(&content, &agents, &catalog).is_err());
+        }
+        let suffixed = one_million.replace(r#""m1""#, r#""m1[1m]""#);
+        assert!(import_json(&suffixed, &agents, &catalog).is_err());
+    }
+
+    #[test]
+    fn model_id_whitespace_and_referenced_model_bound_match_go() {
+        for invalid in [" model", "model ", "\u{00a0}model", "model\u{3000}"] {
+            let mut config = minimal();
+            config.claude.as_mut().unwrap().primary.model = invalid.into();
+            assert!(validate(&config, &["claude".into()], &[invalid.into()]).is_err());
+        }
+        let mut config = minimal();
+        config.claude.as_mut().unwrap().primary.model = "model id".into();
+        assert!(validate(&config, &["claude".into()], &["model id".into()]).is_ok());
+
+        let models = (0..MAX_REFERENCED_MODELS_PER_AGENT)
+            .map(|index| (format!("model-{index:04}"), OpenCodeModel::default()))
+            .collect::<HashMap<_, _>>();
+        let catalog = models.keys().cloned().collect::<Vec<_>>();
+        let config = ModelConfig {
+            version: 1,
+            claude: None,
+            opencode: Some(OpenCodeConfig {
+                default_model: "model-0000".into(),
+                models,
+            }),
+            codex: None,
+        };
+        assert!(validate(&config, &["opencode".into()], &catalog).is_ok());
+        let mut overlarge = config;
+        overlarge
+            .opencode
+            .as_mut()
+            .unwrap()
+            .models
+            .insert("model-overflow".into(), OpenCodeModel::default());
+        assert!(validate(&overlarge, &["opencode".into()], &catalog).is_err());
     }
 
     #[test]
@@ -529,6 +598,10 @@ mod tests {
                 "temperature",
                 "tool_call",
             ]
+        );
+        assert_eq!(
+            sorted_keys(&schema["$defs"]["model"]["properties"]),
+            ["context", "model", "name"]
         );
         assert_eq!(
             sorted_keys(&schema["properties"]["codex"]["properties"]),

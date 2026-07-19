@@ -12,6 +12,7 @@ test-shell:
 
 test-workflows:
 	bash ./tests/desktop_workflow_test.sh
+	bash ./tests/agent_model_preset_workflow_test.sh
 	bash ./tests/setup_release_packaging_test.sh
 
 desktop-verify:

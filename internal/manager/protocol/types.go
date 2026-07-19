@@ -242,12 +242,23 @@ type AgentModelsExisting struct {
 	DriftedAgents     []string            `json:"drifted_agents"`
 }
 
+type AgentPresetUnavailable struct {
+	Code   ErrorCode `json:"code"`
+	Models []string  `json:"models"`
+}
+
+type AgentModelsPreset struct {
+	ModelConfig       json.RawMessage                   `json:"model_config"`
+	UnavailableAgents map[string]AgentPresetUnavailable `json:"unavailable_agents"`
+}
+
 type AgentModelsResult struct {
 	Models        []string            `json:"models"`
 	CatalogToken  string              `json:"catalog_token"`
 	RouterBaseURL string              `json:"router_base_url"`
 	APIBaseURL    string              `json:"api_base_url"`
 	Existing      AgentModelsExisting `json:"existing"`
+	Preset        AgentModelsPreset   `json:"preset"`
 }
 
 type AgentFragment struct {

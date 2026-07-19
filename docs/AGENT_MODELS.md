@@ -22,8 +22,10 @@ or inference probing, on all required routes:
 | Codex | `POST /v1/responses` | OpenAI Responses and SSE streaming |
 
 Claude deferred tool fields and future open-list Anthropic request fields pass
-through unchanged. Configuration never calls an inference endpoint. The router
-preserves authorization but does not select models or store keys.
+through unchanged. Configuration never calls an inference endpoint and never
+infers 1M context support from an ID, name, catalog position, or other
+capability signal. The router preserves authorization but does not select
+models or store keys.
 
 ## Interactive Flow
 
@@ -32,7 +34,7 @@ The Shell, PowerShell, and desktop flows all use this order:
 1. Detect and select Claude Code, opencode, and/or Codex.
 2. Read the API key without echo and establish a trusted protocol-v2 loopback router.
 3. Call `agent.models`; only then show the common sorted catalog.
-4. Require explicit Agent-native model choices. No first model or name-based preference is selected automatically.
+4. Initialize each selected Agent from a valid existing section, otherwise a visible authenticated preset section, otherwise an empty section; require the user to review or complete the editable Agent-native choices. Never select the first model, apply a model-name or capability heuristic, repair an unavailable preset, or substitute another model.
 5. Render a redacted fragment for print, or preview exact file, backup, migration, ownership, and drift effects for write.
 6. Re-fetch the catalog with the transient key immediately before writing, then perform one atomic multi-file transaction.
 
@@ -43,6 +45,25 @@ private token-signing key.
 
 The catalog is a configuration-time snapshot. There is no background refresh or
 Agent-file rewrite. Re-enter configuration and supply a key to refresh it.
+
+### Build preset
+
+A release may inject one immutable, key-free canonical preset into its manager.
+At startup the manager strictly decodes and structurally validates that preset;
+during `agent.models`, it crops the preset to requested Agents and validates
+each Agent section independently against the current authenticated catalog. A
+section is returned complete only when every referenced base model ID is
+available. If any ID is missing, the complete section is omitted and its sorted
+missing base IDs are reported as nonfatal `MODEL_NOT_AVAILABLE` metadata. Other
+valid Agent sections remain usable. The manager never partially repairs,
+deep-merges, or substitutes a preset section.
+
+Clients initialize each selected Agent independently with `existing > preset >
+empty`. Preset values are visible editable defaults, not preview approval,
+write confirmation, or proof of capability. Interactive edits override those
+defaults. `--model-config=<path>` and desktop import are complete form
+replacements and override existing/preset initialization rather than merging
+with it.
 
 ## Canonical Model Config
 
@@ -81,9 +102,13 @@ configuration.
 ### Claude Code
 
 `primary` is required. `haiku`, `sonnet`, and `opus` each either inherit the
-primary model or select another catalog model. Every explicit model may have an
-optional display `name`. `extra` is a string map limited to these description
-keys:
+primary selection or select another catalog model. Every explicit selection may
+have an optional display `name` and optional `context`. Omission of `context`
+means Claude's standard/default behavior; the only accepted value is the exact
+string `"1m"`. The canonical `model` is always the authenticated base ID and
+must not end in `[1m]`. An inherited role contains only
+`{"inherit_primary":true}` and inherits model, name, and context together.
+`extra` is a string map limited to these description keys:
 
 - `ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION`
 - `ANTHROPIC_DEFAULT_HAIKU_MODEL_DESCRIPTION`
@@ -92,6 +117,17 @@ keys:
 
 The manager owns only its documented `env` keys, merges them into the existing
 `env`, and preserves unrelated top-level and environment values.
+
+For standard context, the manager renders the base ID unchanged. For
+`context: "1m"`, it appends exactly one terminal `[1m]` only at the Claude file
+rendering boundary for `ANTHROPIC_MODEL`, `ANTHROPIC_CUSTOM_MODEL_OPTION`, and
+the effective Haiku, Sonnet, and Opus model values. Display names are unchanged,
+and the manager does not write `CLAUDE_CODE_DISABLE_1M_CONTEXT`. Existing values
+with one exact terminal `[1m]` are projected back to base ID plus canonical
+context; malformed, repeated, or middle markers are not repaired. Catalog and
+write-time availability checks always use the base ID. Configuration does not
+infer whether a model supports 1M context; a runtime rejection causes no model
+fallback or configuration rewrite.
 
 ### opencode
 
@@ -136,6 +172,10 @@ Discovery and write fail closed. `MODEL_AUTH_FAILED`,
 `CODEX_AUTH_UNSUPPORTED` never trigger static models, cached catalogs, implicit
 existing-model reuse, model substitution, or partial file changes. See
 [Troubleshooting](TROUBLESHOOTING.md#model-configuration-errors) for actions.
+Preset model unavailability is the exception only to discovery failure: it is
+reported in `preset.unavailable_agents`, the unavailable complete preset section
+is omitted, and discovery continues with existing configuration and other valid
+preset sections. It still never causes substitution or partial preset use.
 
 ## Ownership, Migration, and Backups
 
@@ -144,6 +184,11 @@ paths, and keyed revision MACs in the private
 `agent-transactions/last-applied-model-config.json` sidecar. It stores no key,
 catalog, rendered file, raw response, or unrelated Agent setting. An OS-backed
 per-user lock serializes desktop and CLI operations.
+
+The injected preset is build metadata and discovery alone never writes it to an
+Agent file, last-applied sidecar, journal, revision claim, backup, log, or
+diagnostic. Only the exact canonical configuration the user approves through
+the normal preview/write flow can enter Agent files and transactional state.
 
 Known manager-owned paths can be updated or removed. Unrelated settings are
 preserved. Unknown extension collisions are rejected; drift in a managed
@@ -171,6 +216,24 @@ Automation must use a receipt-verified `mtls-router-manager serve`. First call
 1. `agent.models` with `owner`, `agents`, and transient `api_key`.
 2. `agent.render` for key-redacted managed fragments, or `agent.preview` with `agents`, `catalog_token`, and `model_config`.
 3. `agent.write` with those fields, the preview `revision_token`, both explicit approval booleans, and transient `api_key`.
+
+`agent.models` always includes stable preset objects, including when no preset
+or no valid requested section exists:
+
+```json
+{
+  "preset": {
+    "model_config": {},
+    "unavailable_agents": {}
+  }
+}
+```
+
+`model_config` is a versioned canonical document containing only complete valid
+requested sections. An unavailable entry is
+`{"code":"MODEL_NOT_AVAILABLE","models":["missing-base-id"]}`. Both fields
+are objects, never `null` or omitted; this metadata contains no key and does not
+turn otherwise successful discovery into a failure.
 
 The key belongs only in the two secret-bearing stdin/IPC request bodies. Never
 put it in arguments, environment variables, model config, logs, shell history,

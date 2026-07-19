@@ -87,6 +87,35 @@ func TestDecodeRejectsInvalidDocuments(t *testing.T) {
 	}
 }
 
+func TestDecodeStructuralBoundsReferencedModelsPerAgent(t *testing.T) {
+	build := func(count int) []byte {
+		models := make(map[string]any, count)
+		for i := 0; i < count; i++ {
+			models[fmt.Sprintf("model-%04d", i)] = map[string]any{}
+		}
+		data, err := json.Marshal(map[string]any{
+			"version": Version,
+			"opencode": map[string]any{
+				"default_model": "model-0000",
+				"models":        models,
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
+
+	if _, err := DecodeStructural(build(MaxReferencedModelsPerAgent)); err != nil {
+		t.Fatalf("boundary preset rejected: %v", err)
+	}
+	_, err := DecodeStructural(build(MaxReferencedModelsPerAgent + 1))
+	var validation *ValidationError
+	if !errors.As(err, &validation) || validation.Rule != "max_properties" || validation.Path != "/opencode/models" {
+		t.Fatalf("overlarge preset error = %#v, want /opencode/models max_properties", err)
+	}
+}
+
 func TestExtensionConstraints(t *testing.T) {
 	wrap := func(value string) string {
 		return `{"version":1,"opencode":{"default_model":"m","models":{"m":{"options":` + value + `}}}}`
@@ -121,6 +150,85 @@ func TestExtraAllowlistAndClaudeValidation(t *testing.T) {
 	valid := `{"version":1,"claude":{"primary":{"model":"m","name":"M"},"haiku":{"inherit_primary":true},"sonnet":{"model":"m"},"opus":{"inherit_primary":true},"extra":{"ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION":"long"}}}`
 	if _, err := Decode([]byte(valid), []Agent{Claude}, []string{"m"}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestClaudeContextValidationAndOldV1Compatibility(t *testing.T) {
+	valid := `{"version":1,"claude":{"primary":{"model":"m","context":"1m"},"haiku":{"inherit_primary":true},"sonnet":{"model":"m","name":"Standard"},"opus":{"model":"m","context":"1m"}}}`
+	config, err := Decode([]byte(valid), []Agent{Claude}, []string{"m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Claude.Primary.Context == nil || *config.Claude.Primary.Context != ClaudeContext1M || config.Claude.Sonnet.Selection.Context != nil || config.Claude.Opus.Selection.Context == nil {
+		t.Fatalf("contexts = %#v", config.Claude)
+	}
+
+	oldV1 := `{"version":1,"claude":{"primary":{"model":"m"},"haiku":{"inherit_primary":true},"sonnet":{"model":"m"},"opus":{"inherit_primary":true}}}`
+	oldConfig, err := Decode([]byte(oldV1), []Agent{Claude}, []string{"m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if oldConfig.Claude.Primary.Context != nil || oldConfig.Claude.Sonnet.Selection.Context != nil {
+		t.Fatalf("old v1 gained context: %#v", oldConfig.Claude)
+	}
+
+	for _, test := range []struct {
+		name, value string
+	}{
+		{name: "empty", value: `""`},
+		{name: "unsupported", value: `"standard"`},
+		{name: "case sensitive", value: `"1M"`},
+		{name: "number", value: `1`},
+		{name: "boolean", value: `true`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			input := strings.Replace(oldV1, `"model":"m"`, `"model":"m","context":`+test.value, 1)
+			_, err := Decode([]byte(input), []Agent{Claude}, []string{"m"})
+			var validation *ValidationError
+			if !errors.As(err, &validation) || validation.Path != "/claude/primary/context" || validation.Rule != "enum" {
+				t.Fatalf("got %v, want context enum error", err)
+			}
+		})
+	}
+}
+
+func TestClaudeCanonicalModelRejectsRenderedSuffix(t *testing.T) {
+	input := `{"version":1,"claude":{"primary":{"model":"m[1m]"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true}}}`
+	_, err := Decode([]byte(input), []Agent{Claude}, []string{"m[1m]"})
+	var validation *ValidationError
+	if !errors.As(err, &validation) || validation.Path != "/claude/primary/model" || validation.Rule != "model_id" {
+		t.Fatalf("got %v, want model_id error", err)
+	}
+}
+
+func TestDecodeStructuralUsesCanonicalRulesWithoutCatalog(t *testing.T) {
+	input := `{"version":1,"claude":{"primary":{"model":"not-live","context":"1m"},"haiku":{"inherit_primary":true},"sonnet":{"model":"also-not-live"},"opus":{"inherit_primary":true}},"codex":{"model":"codex-not-live"}}`
+	config, err := DecodeStructural([]byte(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Claude == nil || config.Codex == nil || config.OpenCode != nil {
+		t.Fatalf("sections = %#v", config)
+	}
+	if _, err := Decode([]byte(input), []Agent{Claude, Codex}, nil); err == nil {
+		t.Fatal("ordinary decode skipped catalog validation")
+	}
+
+	for _, test := range []struct {
+		name, input, rule string
+	}{
+		{name: "no Agent section", input: `{"version":1}`, rule: "agents"},
+		{name: "unknown field", input: `{"version":1,"codex":{"model":"m","unknown":true}}`, rule: "unknown_field"},
+		{name: "protected extension", input: `{"version":1,"opencode":{"default_model":"m","models":{"m":{"options":{"api_key":"secret"}}}}}`, rule: "protected_path"},
+		{name: "Claude suffix", input: `{"version":1,"claude":{"primary":{"model":"m[1m]"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true}}}`, rule: "model_id"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := DecodeStructural([]byte(test.input))
+			var validation *ValidationError
+			if !errors.As(err, &validation) || validation.Rule != test.rule {
+				t.Fatalf("got %v, want %s", err, test.rule)
+			}
+		})
 	}
 }
 

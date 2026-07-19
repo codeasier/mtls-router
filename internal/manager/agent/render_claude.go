@@ -56,8 +56,8 @@ func claudeManagedEnv(config *modelconfig.ClaudeConfig, routerBaseURL, key strin
 	result := map[string]string{
 		"ANTHROPIC_BASE_URL":            routerBaseURL,
 		"ANTHROPIC_AUTH_TOKEN":          key,
-		"ANTHROPIC_MODEL":               config.Primary.Model,
-		"ANTHROPIC_CUSTOM_MODEL_OPTION": config.Primary.Model,
+		"ANTHROPIC_MODEL":               claudeModelValue(config.Primary),
+		"ANTHROPIC_CUSTOM_MODEL_OPTION": claudeModelValue(config.Primary),
 		"ENABLE_TOOL_SEARCH":            "true",
 		"DISABLE_AUTOUPDATER":           "1",
 	}
@@ -65,10 +65,10 @@ func claudeManagedEnv(config *modelconfig.ClaudeConfig, routerBaseURL, key strin
 		result["ANTHROPIC_CUSTOM_MODEL_OPTION_NAME"] = *config.Primary.Name
 	}
 	for role, selection := range map[string]modelconfig.ClaudeRole{"HAIKU": config.Haiku, "SONNET": config.Sonnet, "OPUS": config.Opus} {
-		model := config.Primary.Model
+		model := claudeModelValue(config.Primary)
 		name := config.Primary.Name
 		if selection.Selection != nil {
-			model = selection.Selection.Model
+			model = claudeModelValue(*selection.Selection)
 			name = selection.Selection.Name
 		}
 		result["ANTHROPIC_DEFAULT_"+role+"_MODEL"] = model
@@ -80,4 +80,11 @@ func claudeManagedEnv(config *modelconfig.ClaudeConfig, routerBaseURL, key strin
 		result[name] = value
 	}
 	return result
+}
+
+func claudeModelValue(selection modelconfig.Model) string {
+	if selection.Context != nil && *selection.Context == modelconfig.ClaudeContext1M {
+		return selection.Model + "[1m]"
+	}
+	return selection.Model
 }
