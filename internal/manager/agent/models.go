@@ -457,6 +457,7 @@ func currentOpenCode(path string, format Format) (any, []string, bool) {
 				if err != nil {
 					return nil, nil, false
 				}
+				// Source extra is intentionally not projected; reintroduce only legacy variants.
 				projected["extra"] = extra
 			}
 		}
