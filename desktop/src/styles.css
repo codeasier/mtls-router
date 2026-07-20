@@ -1915,6 +1915,7 @@ main {
 }
 
 .model-agent-panel {
+  container-type: inline-size;
   margin-bottom: 14px;
   padding: 20px;
   border: 1px solid var(--line);
@@ -1958,8 +1959,24 @@ main {
   width: 100%;
 }
 
+.claude-selection-fields > *,
+.optional-role-editor,
+.context-selector {
+  min-width: 0;
+}
+
 .role-row {
   align-items: start;
+}
+
+.optional-role-editor {
+  display: grid;
+  flex: 1;
+  gap: 10px;
+}
+
+.optional-role-editor > label {
+  font-size: 11px;
 }
 
 .context-selector {
@@ -1984,6 +2001,52 @@ main {
   gap: 5px;
   align-items: center;
   font-size: 10px;
+}
+
+@container (max-width: 760px) {
+  .role-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .role-row > label {
+    flex-basis: auto;
+  }
+
+  .claude-selection-fields,
+  .optional-role-editor {
+    width: 100%;
+  }
+}
+
+@container (max-width: 560px) {
+  .claude-selection-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@supports not (container-type: inline-size) {
+  @media (max-width: 1400px) {
+    .role-row {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .role-row > label {
+      flex-basis: auto;
+    }
+
+    .claude-selection-fields,
+    .optional-role-editor {
+      width: 100%;
+    }
+  }
+
+  @media (max-width: 1200px) {
+    .claude-selection-fields {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
 }
 
 .source-note {

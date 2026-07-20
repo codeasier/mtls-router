@@ -197,6 +197,22 @@ export const zhCN = {
   "agents.previewRefreshed": "文件已变化，预览已刷新。请重新确认后继续。",
   "agents.error.invalid": "目标配置无效，未修改任何文件。请修复后刷新检测。",
   "agents.error.preview": "无法生成预览，未修改任何文件。请刷新检测后重试。",
+  "agents.error.preview.configInvalid":
+    "现有 Agent 配置无法读取或格式无效，请修复配置文件后刷新检测（{code}）。",
+  "agents.error.preview.notWritable":
+    "Agent 配置路径不可写，请检查文件和目录权限后重试（{code}）。",
+  "agents.error.preview.agentNotFound":
+    "所选 Agent 已不可用，请刷新检测后重新选择（{code}）。",
+  "agents.error.preview.modelState":
+    "Agent 模型管理状态已损坏，请重新启动应用后重试（{code}）。",
+  "agents.error.preview.busy":
+    "另一个 Agent 配置操作正在进行，请稍后重试（{code}）。",
+  "agents.error.preview.timeout":
+    "生成预览超时，请确认没有其他配置操作后重试（{code}）。",
+  "agents.error.preview.manager":
+    "本地 manager 无法完成预览，请重新启动应用后重试（{code}）。",
+  "agents.error.preview.unknown":
+    "无法生成预览，未修改任何文件。请刷新检测后重试（{code}）。",
   "agents.error.write":
     "写入失败，密钥输入已清除。配置事务未完成，请检查结果后重试。",
   "agents.overline": "选择 / 发现 / 模型编排 / 写入",
@@ -220,7 +236,22 @@ export const zhCN = {
     "模型发现失败。未保留密钥，请检查路由与上游后重试。",
   "agents.error.catalogStale":
     "模型目录已失效或所选模型不可用，请重新输入密钥并发现。",
+  "agents.error.flowExpired": "模型发现会话已失效，请重新输入密钥并发现。",
   "agents.error.config": "模型配置无效：{detail}",
+  "agents.error.config.catalogModel":
+    "所选模型不在当前可用模型目录中，请刷新目录后重新选择。",
+  "agents.error.config.baseModel": "所选模型格式无效，请重新选择。",
+  "agents.error.config.name": "模型显示名称不能为空。",
+  "agents.error.config.contextConflict":
+    "Claude 的数字上下文窗口不能与角色的 1M 上下文模式同时使用。",
+  "agents.error.config.outputLimit":
+    "Claude 最大输出 Token 必须小于上下文窗口。",
+  "agents.error.config.integerRelationship": "模型的 Token 限制设置不正确。",
+  "agents.error.config.contextWindow": "上下文窗口必须为正整数。",
+  "agents.error.config.positiveInteger": "Token 限制必须为正整数。",
+  "agents.error.config.extra": "高级配置包含不允许管理的字段。",
+  "agents.error.config.fallback":
+    "模型配置不符合要求，请刷新模型目录后重新选择。",
   "agents.error.import": "无法导入此规范 JSON 模型配置。",
   "agents.error.export": "无法导出此规范模型配置。",
   "agents.imported": "已导入并验证规范模型配置。",
@@ -244,6 +275,7 @@ export const zhCN = {
   "agents.defaultModel": "默认模型",
   "agents.chooseModel": "明确选择模型",
   "agents.inheritPrimary": "{role} 继承主模型",
+  "agents.enableFable": "启用 Fable",
   "agents.advancedExtra": "高级受限 extra",
   "agents.extraJson": "{agent} extra JSON 对象",
   "agents.formatJson": "格式化 JSON",

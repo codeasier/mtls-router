@@ -53,6 +53,7 @@ func (r ClaudeRole) MarshalJSON() ([]byte, error) {
 
 type ClaudeConfig struct {
 	Primary         Model             `json:"primary"`
+	Fable           *ClaudeRole       `json:"fable,omitempty"`
 	Haiku           ClaudeRole        `json:"haiku"`
 	Sonnet          ClaudeRole        `json:"sonnet"`
 	Opus            ClaudeRole        `json:"opus"`

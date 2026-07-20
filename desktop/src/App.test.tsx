@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 import { createMockApi } from "./test/api";
@@ -30,5 +30,19 @@ describe("App navigation", () => {
       screen.getByRole("heading", { name: "系统设置" }),
     ).toBeInTheDocument();
     expect(screen.getByText("桌面控制面板")).toBeInTheDocument();
+  });
+
+  it("uses document visibility only to coordinate native polling", () => {
+    const api = createMockApi();
+    render(<App api={api} />);
+
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "hidden",
+    });
+    fireEvent(document, new Event("visibilitychange"));
+
+    expect(vi.mocked(api.setWindowVisibility)).toHaveBeenLastCalledWith(false);
+    expect(api.destroyAgentModelFlow).not.toHaveBeenCalled();
   });
 });

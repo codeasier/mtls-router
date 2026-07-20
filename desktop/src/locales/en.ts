@@ -220,6 +220,22 @@ export const en: Record<TranslationKey, string> = {
     "The target configuration is invalid. No files were changed. Fix it and refresh detection.",
   "agents.error.preview":
     "Unable to generate a preview. No files were changed. Refresh detection and retry.",
+  "agents.error.preview.configInvalid":
+    "The existing Agent configuration cannot be read or is malformed. Fix the file and refresh detection ({code}).",
+  "agents.error.preview.notWritable":
+    "The Agent configuration path is not writable. Check file and directory permissions, then retry ({code}).",
+  "agents.error.preview.agentNotFound":
+    "The selected Agent is no longer available. Refresh detection and select it again ({code}).",
+  "agents.error.preview.modelState":
+    "The Agent model-management state is damaged. Restart the application and retry ({code}).",
+  "agents.error.preview.busy":
+    "Another Agent configuration operation is in progress. Retry shortly ({code}).",
+  "agents.error.preview.timeout":
+    "Generating the preview timed out. Confirm no other configuration operation is running, then retry ({code}).",
+  "agents.error.preview.manager":
+    "The local manager could not generate the preview. Restart the application and retry ({code}).",
+  "agents.error.preview.unknown":
+    "Unable to generate a preview. No files were changed. Refresh detection and retry ({code}).",
   "agents.error.write":
     "Write failed and the key input was cleared. The transaction did not complete; review the result and retry.",
   "agents.overline": "SELECT / DISCOVER / MODEL ORCHESTRATION / WRITE",
@@ -244,7 +260,28 @@ export const en: Record<TranslationKey, string> = {
     "Model discovery failed. The key was not retained; check the router and upstream, then retry.",
   "agents.error.catalogStale":
     "The catalog expired or a selected model disappeared. Enter the key and discover again.",
+  "agents.error.flowExpired":
+    "The model-discovery session expired. Enter the key and discover again.",
   "agents.error.config": "Model configuration is invalid: {detail}",
+  "agents.error.config.catalogModel":
+    "A selected model is not in the current catalog. Refresh discovery and select it again.",
+  "agents.error.config.baseModel":
+    "A selected model has an invalid format. Select it again.",
+  "agents.error.config.name": "Model display names cannot be empty.",
+  "agents.error.config.contextConflict":
+    "Claude's numeric context window cannot be combined with a role's 1M context mode.",
+  "agents.error.config.outputLimit":
+    "Claude's maximum output tokens must be less than its context window.",
+  "agents.error.config.integerRelationship":
+    "The model token limits are inconsistent.",
+  "agents.error.config.contextWindow":
+    "The context window must be a positive integer.",
+  "agents.error.config.positiveInteger":
+    "The token limit must be a positive integer.",
+  "agents.error.config.extra":
+    "Advanced configuration contains a field that cannot be managed.",
+  "agents.error.config.fallback":
+    "The model configuration does not meet the requirements. Refresh discovery and select the models again.",
   "agents.error.import":
     "This canonical JSON model configuration could not be imported.",
   "agents.error.export":
@@ -271,6 +308,7 @@ export const en: Record<TranslationKey, string> = {
   "agents.defaultModel": "Default model",
   "agents.chooseModel": "Choose a model explicitly",
   "agents.inheritPrimary": "{role} inherits primary",
+  "agents.enableFable": "Enable Fable",
   "agents.advancedExtra": "Advanced constrained extra",
   "agents.extraJson": "{agent} extra JSON object",
   "agents.formatJson": "Format JSON",

@@ -6,7 +6,7 @@ import {
   type ComponentPropsWithoutRef,
 } from "react";
 
-import { useI18n } from "./i18n";
+import { useI18n, type Translator } from "./i18n";
 import {
   sanitizeSensitiveText,
   initializeAgentConfig,
@@ -51,6 +51,69 @@ function errorCode(error: unknown) {
     typeof (error as { code?: unknown }).code === "string"
     ? (error as { code: string }).code
     : "";
+}
+function modelConfigErrorMessage(error: unknown, t: Translator) {
+  const details =
+    typeof error === "object" && error !== null && "details" in error
+      ? (error as { details?: unknown }).details
+      : undefined;
+  const path =
+    typeof details === "object" &&
+    details !== null &&
+    "path" in details &&
+    typeof (details as { path?: unknown }).path === "string"
+      ? (details as { path: string }).path
+      : "";
+  const rule =
+    typeof details === "object" &&
+    details !== null &&
+    "rule" in details &&
+    typeof (details as { rule?: unknown }).rule === "string"
+      ? (details as { rule: string }).rule
+      : "";
+
+  if (rule === "catalog_model" || rule === "catalog")
+    return t("agents.error.config.catalogModel");
+  if (rule === "base_model" || rule === "model_id")
+    return t("agents.error.config.baseModel");
+  if (rule === "non_empty_name" || rule === "name")
+    return t("agents.error.config.name");
+  if (rule === "context_conflict")
+    return t("agents.error.config.contextConflict");
+  if (rule === "integer_relationship") {
+    if (path === "/claude/max_output_tokens")
+      return t("agents.error.config.outputLimit");
+    return t("agents.error.config.integerRelationship");
+  }
+  if (rule === "positive_integer")
+    return path.endsWith("/context_window")
+      ? t("agents.error.config.contextWindow")
+      : t("agents.error.config.positiveInteger");
+  if (rule === "allowlist" || rule === "protected_path")
+    return t("agents.error.config.extra");
+  return t("agents.error.config.fallback");
+}
+function previewErrorMessage(code: string, t: Translator) {
+  const key =
+    code === "CONFIG_INVALID"
+      ? "agents.error.preview.configInvalid"
+      : code === "CONFIG_NOT_WRITABLE"
+        ? "agents.error.preview.notWritable"
+        : code === "AGENT_NOT_FOUND"
+          ? "agents.error.preview.agentNotFound"
+          : code === "MODEL_STATE_INVALID"
+            ? "agents.error.preview.modelState"
+            : code === "AGENT_OPERATION_BUSY"
+              ? "agents.error.preview.busy"
+              : code === "OPERATION_TIMEOUT"
+                ? "agents.error.preview.timeout"
+                : code === "MANAGER_FAILED" ||
+                    code === "SIDECAR_MISSING" ||
+                    code === "SIDECAR_INVALID" ||
+                    code === "INVALID_RESPONSE"
+                  ? "agents.error.preview.manager"
+                  : "agents.error.preview.unknown";
+  return t(key, { code: code || "UNKNOWN" });
 }
 function selectable(agent: AgentState) {
   return agent.detected && agent.writable && !agent.invalid;
@@ -425,6 +488,9 @@ export function AgentPage({ api }: { api: DesktopApi }) {
   const [busy, setBusy] = useState(true);
   const [message, setMessage] = useState("");
   const flowRef = useRef("");
+  const reportDetectionFailure = useEffectEvent(() =>
+    setMessage(t("agents.error.detect")),
+  );
 
   async function destroyFlow() {
     const flow = flowRef.current;
@@ -441,7 +507,7 @@ export function AgentPage({ api }: { api: DesktopApi }) {
           setSelected(initialSelection(value));
         }
       })
-      .catch(() => active && setMessage(t("agents.error.detect")))
+      .catch(() => active && reportDetectionFailure())
       .finally(() => active && setBusy(false));
     return () => {
       active = false;
@@ -449,7 +515,7 @@ export function AgentPage({ api }: { api: DesktopApi }) {
       flowRef.current = "";
       if (flow) void api.destroyAgentModelFlow(flow);
     };
-  }, [api, t]);
+  }, [api]);
 
   function toggleAgent(agent: AgentId) {
     setSelected((current) =>
@@ -507,12 +573,14 @@ export function AgentPage({ api }: { api: DesktopApi }) {
     if (config.claude && !config.claude.primary.model)
       return "/claude/primary/model: required";
     if (config.claude) {
-      for (const role of roleNames)
-        if (
-          !("inherit_primary" in config.claude[role]) &&
-          !config.claude[role].model
-        )
+      for (const role of [
+        ...roleNames,
+        ...(config.claude.fable ? ["fable" as const] : []),
+      ]) {
+        const selection = config.claude[role];
+        if (selection && !("inherit_primary" in selection) && !selection.model)
           return `/claude/${role}/model: required`;
+      }
     }
     if (
       config.opencode &&
@@ -574,18 +642,24 @@ export function AgentPage({ api }: { api: DesktopApi }) {
       setStage("preview");
     } catch (error) {
       const code = errorCode(error);
-      if (code === "MODEL_CATALOG_STALE") {
+      if (code === "MODEL_CATALOG_STALE" || code === "MODEL_FLOW_EXPIRED") {
         await startOver("credential");
-        setMessage(t("agents.error.catalogStale"));
-      } else
+        setMessage(
+          t(
+            code === "MODEL_FLOW_EXPIRED"
+              ? "agents.error.flowExpired"
+              : "agents.error.catalogStale",
+          ),
+        );
+      } else if (code === "MODEL_CONFIG_INVALID") {
         setMessage(
           t("agents.error.config", {
-            detail: safe(
-              (error as { details?: { path?: string; rule?: string } })?.details
-                ?.path,
-            ),
+            detail: modelConfigErrorMessage(error, t),
           }),
         );
+      } else {
+        setMessage(previewErrorMessage(code, t));
+      }
     } finally {
       setBusy(false);
     }
@@ -942,6 +1016,58 @@ export function AgentPage({ api }: { api: DesktopApi }) {
                     )}
                   </div>
                 ))}
+                <div className="role-row">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(config.claude.fable)}
+                      onChange={(event) => {
+                        const claude = { ...config.claude! };
+                        if (event.target.checked)
+                          claude.fable = { inherit_primary: true };
+                        else delete claude.fable;
+                        setConfig({ ...config, claude });
+                      }}
+                    />
+                    {t("agents.enableFable")}
+                  </label>
+                  {config.claude.fable && (
+                    <div className="optional-role-editor">
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={"inherit_primary" in config.claude.fable}
+                          onChange={(event) =>
+                            setConfig({
+                              ...config,
+                              claude: {
+                                ...config.claude!,
+                                fable: event.target.checked
+                                  ? { inherit_primary: true }
+                                  : { model: "" },
+                              },
+                            })
+                          }
+                        />
+                        {t("agents.inheritPrimary", { role: "fable" })}
+                      </label>
+                      {!("inherit_primary" in config.claude.fable) && (
+                        <ClaudeSelectionFields
+                          id="claude-fable"
+                          selection={config.claude.fable}
+                          models={discovery.models}
+                          modelLabel={t("agents.roleModel", { role: "fable" })}
+                          onChange={(fable) =>
+                            setConfig({
+                              ...config,
+                              claude: { ...config.claude!, fable },
+                            })
+                          }
+                        />
+                      )}
+                    </div>
+                  )}
+                </div>
                 <ExtraEditor
                   agent="claude"
                   value={extras.claude}

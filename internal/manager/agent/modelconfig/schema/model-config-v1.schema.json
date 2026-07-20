@@ -214,6 +214,9 @@
           },
           "type": "object"
         },
+        "fable": {
+          "$ref": "#/$defs/role"
+        },
         "haiku": {
           "$ref": "#/$defs/role"
         },

@@ -97,6 +97,7 @@ describe("canonical model config interchange", () => {
     ).toEqual([
       "context_window",
       "extra",
+      "fable",
       "haiku",
       "max_output_tokens",
       "opus",

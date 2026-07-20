@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -37,7 +38,7 @@ func TestPreviewIsStructuredKeyFreeAndDoesNotWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if preview.RevisionToken == "" || len(preview.Agents) != 3 {
+	if preview.RevisionToken == "" || len(preview.Agents) != 3 || len(preview.ModelConfig) == 0 || len(preview.Fragments) != 4 || preview.StateChange == nil {
 		t.Fatalf("preview = %#v", preview)
 	}
 	if preview.Agents[0].Agent != ClaudeCode || preview.Agents[1].Agent != OpenCode || preview.Agents[2].Agent != Codex {
@@ -72,6 +73,39 @@ func TestPreviewIsStructuredKeyFreeAndDoesNotWrite(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(filepath.Dir(openCodeJSONC), "opencode.json")); !os.IsNotExist(err) {
 		t.Fatalf("preview created migration target: %v", err)
+	}
+}
+
+func TestV2PreviewAcceptsReportedClaudeConfigurationWithoutFable(t *testing.T) {
+	home := t.TempDir()
+	stateDir := filepath.Join(home, "manager-state")
+	claudePath := filepath.Join(home, ".claude", "settings.json")
+	writeFile(t, claudePath, `{"theme":"dark","env":{"ANTHROPIC_MODEL":"old-model"}}`)
+	service := newTestService(t, stateDir, home, map[string]bool{"claude": true}, nil)
+	models := []string{"gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"}
+	discovery, err := service.DiscoverModels(context.Background(), []Kind{ClaudeCode}, models, modelconfig.CatalogClaims{
+		Models: models, Agents: []modelconfig.Agent{modelconfig.Claude}, Owner: "desktop",
+		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "test", ProtocolVersion: "2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := json.RawMessage(`{"version":1,"claude":{"primary":{"model":"gpt-5.6-luna","name":"luna"},"haiku":{"model":"gpt-5.6-luna","name":"luna"},"sonnet":{"model":"gpt-5.6-terra","name":"terra"},"opus":{"model":"gpt-5.6-sol","name":"sol"},"context_window":372000,"max_output_tokens":10000}}`)
+	preview, err := service.Preview(context.Background(), []Kind{ClaudeCode}, discovery.CatalogToken, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(preview.Fragments) != 1 || !bytes.Contains(preview.ModelConfig, []byte(`"context_window":372000`)) || bytes.Contains(preview.ModelConfig, []byte(`"fable"`)) {
+		t.Fatalf("preview = %#v", preview)
+	}
+	content := preview.Fragments[0].Content
+	for _, expected := range []string{"gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", `"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "372000"`, `"CLAUDE_CODE_MAX_OUTPUT_TOKENS": "10000"`} {
+		if !strings.Contains(content, expected) {
+			t.Fatalf("preview fragment missing %q: %s", expected, content)
+		}
+	}
+	if strings.Contains(content, "FABLE") {
+		t.Fatalf("disabled Fable was rendered: %s", content)
 	}
 }
 

@@ -546,7 +546,7 @@ func TestAgentWritePreflightOrderPrecedesWriteArtifacts(t *testing.T) {
 }
 
 func TestAgentWriteEveryPreflightFailureCreatesZeroArtifacts(t *testing.T) {
-	config := json.RawMessage(`{"version":1,"claude":{"primary":{"model":"model-a"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true}}}`)
+	config := json.RawMessage(`{"version":1,"claude":{"primary":{"model":"model-a"},"fable":{"model":"fable-model"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true}}}`)
 	for _, test := range []struct {
 		name            string
 		params          json.RawMessage
@@ -563,7 +563,7 @@ func TestAgentWriteEveryPreflightFailureCreatesZeroArtifacts(t *testing.T) {
 		{name: "authentication", params: writeParams(config, true, true), refreshErr: &protocol.Error{Code: protocol.CodeModelAuthFailed, Message: "authentication failed"}, want: protocol.CodeModelAuthFailed},
 		{name: "transport", params: writeParams(config, true, true), refreshErr: &protocol.Error{Code: protocol.CodeModelDiscoveryFailed, Message: "discovery failed"}, want: protocol.CodeModelDiscoveryFailed},
 		{name: "invalid catalog", params: writeParams(config, true, true), refreshErr: &protocol.Error{Code: protocol.CodeModelResponseInvalid, Message: "invalid catalog"}, want: protocol.CodeModelResponseInvalid},
-		{name: "removed selected model", params: writeParams(config, true, true), refreshedModels: []string{"other-model"}, want: protocol.CodeModelNotAvailable},
+		{name: "removed selected Fable model", params: writeParams(config, true, true), refreshedModels: []string{"model-a"}, want: protocol.CodeModelNotAvailable},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			home := t.TempDir()
@@ -594,7 +594,7 @@ func TestAgentWriteEveryPreflightFailureCreatesZeroArtifacts(t *testing.T) {
 					if test.refreshedModels != nil {
 						return test.refreshedModels, nil
 					}
-					return []string{"model-a"}, nil
+					return []string{"model-a", "fable-model"}, nil
 				}},
 			})
 			_, gotErr := manager.agentWrite(context.Background(), test.params)

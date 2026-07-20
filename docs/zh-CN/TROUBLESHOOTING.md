@@ -117,6 +117,8 @@ manager 会保留受支持的无关设置，但不会猜测如何修复无效语
 
 对于 Claude，规范 `context` 只接受精确 `"1m"`；`model` 中必须填写已认证 base ID，绝不能使用以 `[1m]` 结尾的 ID。Manager 只在渲染 Claude settings 时追加该 suffix，不会推断能力。如果 Claude 或上游在运行时拒绝 1M，请选择 Standard 或其他经过显式验证的选择并写入新预览；系统不会自动 fallback 或重写配置。
 
+Fable 是可选的。启用时，其显式模型必须仍在认证目录中；Fable 模型不可用会使整个 Claude section 不可用，而不是只删除 Fable。如果已有手工 `ANTHROPIC_DEFAULT_FABLE_MODEL` 或 `ANTHROPIC_DEFAULT_FABLE_MODEL_NAME` 引发 collision，请检查预览，并且只在 manager 应替换该精确值时批准认领所有权。禁用 Fable 会保留从未取得所有权的手工 key，只删除先前 sidecar 能证明由 manager 所有的 stale 路径。Fable alias 需要 Claude Code 2.1.170 或更高版本。该要求与数值 context override 兼容性相互独立：未知 custom model 名称的直接数值 override 需要 Claude Code 2.1.193 或更高版本，更早版本可能忽略它。
+
 ## 写入或回滚失败
 
 多 Agent 写入是事务性的。后续操作失败时，已经替换的目标会恢复，并保留诊断备份。`ROLLBACK_FAILED` 表示无法证明恢复完成，因此会禁用后续 Agent 写入。

@@ -3,8 +3,15 @@
     "name": "all sections and unicode",
     "agents": ["claude", "opencode", "codex"],
     "catalog": ["model-a", "模型-β"],
-    "input": "{\"codex\":{\"verbosity\":\"medium\",\"model\":\"model-a\"},\"version\":1,\"opencode\":{\"models\":{\"模型-β\":{\"options\":{\"z\":1e-7,\"😀\":\"astral\",\"\":\"bmp\"},\"variants\":{\"medium\":{\"reasoningEffort\":\"medium\"}}},\"model-a\":{}},\"default_model\":\"模型-β\"},\"claude\":{\"opus\":{\"inherit_primary\":true},\"primary\":{\"name\":\"Módèle\",\"model\":\"model-a\"},\"sonnet\":{\"model\":\"模型-β\"},\"haiku\":{\"inherit_primary\":true},\"context_window\":353400,\"max_output_tokens\":100000}}",
-    "canonical": "{\"claude\":{\"context_window\":353400,\"haiku\":{\"inherit_primary\":true},\"max_output_tokens\":100000,\"opus\":{\"inherit_primary\":true},\"primary\":{\"model\":\"model-a\",\"name\":\"Módèle\"},\"sonnet\":{\"model\":\"模型-β\"}},\"codex\":{\"model\":\"model-a\",\"verbosity\":\"medium\"},\"opencode\":{\"default_model\":\"模型-β\",\"models\":{\"model-a\":{},\"模型-β\":{\"options\":{\"z\":1e-7,\"😀\":\"astral\",\"\":\"bmp\"},\"variants\":{\"medium\":{\"reasoningEffort\":\"medium\"}}}}},\"version\":1}"
+    "input": "{\"codex\":{\"verbosity\":\"medium\",\"model\":\"model-a\"},\"version\":1,\"opencode\":{\"models\":{\"模型-β\":{\"options\":{\"z\":1e-7,\"😀\":\"astral\",\"\":\"bmp\"},\"variants\":{\"medium\":{\"reasoningEffort\":\"medium\"}}},\"model-a\":{}},\"default_model\":\"模型-β\"},\"claude\":{\"opus\":{\"inherit_primary\":true},\"primary\":{\"name\":\"Módèle\",\"model\":\"model-a\"},\"fable\":{\"inherit_primary\":true},\"sonnet\":{\"model\":\"模型-β\"},\"haiku\":{\"inherit_primary\":true},\"context_window\":353400,\"max_output_tokens\":100000}}",
+    "canonical": "{\"claude\":{\"context_window\":353400,\"fable\":{\"inherit_primary\":true},\"haiku\":{\"inherit_primary\":true},\"max_output_tokens\":100000,\"opus\":{\"inherit_primary\":true},\"primary\":{\"model\":\"model-a\",\"name\":\"Módèle\"},\"sonnet\":{\"model\":\"模型-β\"}},\"codex\":{\"model\":\"model-a\",\"verbosity\":\"medium\"},\"opencode\":{\"default_model\":\"模型-β\",\"models\":{\"model-a\":{},\"模型-β\":{\"options\":{\"z\":1e-7,\"😀\":\"astral\",\"\":\"bmp\"},\"variants\":{\"medium\":{\"reasoningEffort\":\"medium\"}}}}},\"version\":1}"
+  },
+  {
+    "name": "legacy Claude omits optional Fable",
+    "agents": ["claude"],
+    "catalog": ["legacy"],
+    "input": "{\"version\":1,\"claude\":{\"primary\":{\"model\":\"legacy\"},\"haiku\":{\"inherit_primary\":true},\"sonnet\":{\"inherit_primary\":true},\"opus\":{\"inherit_primary\":true}}}",
+    "canonical": "{\"claude\":{\"haiku\":{\"inherit_primary\":true},\"opus\":{\"inherit_primary\":true},\"primary\":{\"model\":\"legacy\"},\"sonnet\":{\"inherit_primary\":true}},\"version\":1}"
   },
   {
     "name": "safe integer",

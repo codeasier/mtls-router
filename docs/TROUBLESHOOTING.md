@@ -141,6 +141,17 @@ the upstream rejects 1M at runtime, choose Standard or another explicitly
 validated selection and write a new preview; there is no automatic fallback or
 configuration rewrite.
 
+Fable is optional. If it is enabled, its explicit model must remain in the
+authenticated catalog; an unavailable Fable model makes the complete Claude
+section unavailable rather than dropping only Fable. If an existing manual
+`ANTHROPIC_DEFAULT_FABLE_MODEL` or `ANTHROPIC_DEFAULT_FABLE_MODEL_NAME` causes a
+collision, review the preview and approve ownership only if the manager should
+replace that exact value. Disabling Fable preserves never-owned manual keys and
+removes only stale paths proven manager-owned by the prior sidecar. Use Claude
+Code 2.1.170 or newer for the Fable alias. This is separate from numeric context
+override compatibility: direct numeric overrides for unknown custom model names
+require Claude Code 2.1.193 or newer and may be ignored by older versions.
+
 ## Write or rollback failed
 
 A multi-Agent write is transactional. On a later failure, already replaced targets are restored and diagnostic backups are retained. `ROLLBACK_FAILED` disables further Agent writes because restoration could not be proven.

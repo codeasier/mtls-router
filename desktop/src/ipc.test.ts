@@ -88,6 +88,7 @@ describe("typed desktop API", () => {
         haiku: { inherit_primary: true as const },
         sonnet: { inherit_primary: true as const },
         opus: { inherit_primary: true as const },
+        fable: { model: "m", name: "Fable", context: "1m" as const },
       },
     };
     await api.previewAgents(["claude"], "flow", "catalog", modelConfig);

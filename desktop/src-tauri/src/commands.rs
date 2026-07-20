@@ -25,6 +25,12 @@ pub struct AppState {
     pub model_flows: Arc<Mutex<HashMap<String, ModelFlow>>>,
 }
 
+impl AppState {
+    fn set_window_visibility(&self, visible: bool) {
+        self.scheduler.set_visible(visible);
+    }
+}
+
 pub(crate) struct ModelFlow {
     api_key: Zeroizing<String>,
     agents: Vec<String>,
@@ -443,10 +449,7 @@ pub fn desktop_paths(state: tauri::State<'_, AppState>) -> DesktopPaths {
 
 #[tauri::command]
 pub async fn window_visibility(visible: bool, state: tauri::State<'_, AppState>) -> Result<()> {
-    state.scheduler.set_visible(visible);
-    if !visible {
-        state.model_flows.lock().await.clear();
-    }
+    state.set_window_visibility(visible);
     Ok(())
 }
 
@@ -726,6 +729,42 @@ mod tests {
             },
         };
         assert!(validate_models_result(&result, &["claude".into()]).is_ok());
+    }
+
+    #[test]
+    fn window_visibility_is_not_a_model_flow_lifecycle_boundary() {
+        tauri::async_runtime::block_on(async {
+            let (manager, _) = fake_client(vec![]);
+            let scheduler = PollScheduler::new(manager.clone());
+            let flow_id = Uuid::new_v4().to_string();
+            let flows = Arc::new(Mutex::new(HashMap::from([(
+                flow_id.clone(),
+                ModelFlow {
+                    api_key: Zeroizing::new("visibility-secret".into()),
+                    agents: vec!["claude".into()],
+                    models: vec!["m1".into()],
+                    catalog_token: "catalog".into(),
+                },
+            )])));
+            let state = AppState {
+                manager,
+                scheduler,
+                paths: DesktopPaths {
+                    data_dir: String::new(),
+                    log_file: String::new(),
+                    can_prepare_for_uninstall: false,
+                },
+                model_flows: flows.clone(),
+            };
+
+            state.set_window_visibility(false);
+
+            let flows = flows.lock().await;
+            assert_eq!(
+                flows.get(&flow_id).unwrap().api_key.as_str(),
+                "visibility-secret"
+            );
+        });
     }
 
     #[test]

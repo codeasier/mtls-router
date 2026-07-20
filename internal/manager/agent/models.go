@@ -177,6 +177,9 @@ func presetModelIDs(kind Kind, section any) []string {
 				ids = append(ids, role.Selection.Model)
 			}
 		}
+		if config.Fable != nil && config.Fable.Selection != nil {
+			ids = append(ids, config.Fable.Selection.Model)
+		}
 	case OpenCode:
 		for id := range section.(*modelconfig.OpenCodeConfig).Models {
 			ids = append(ids, id)
@@ -204,7 +207,7 @@ func (s *Service) appliedRevisionsMatch(section lastAppliedAgent) bool {
 	return true
 }
 
-func decodeAppliedSection(kind Kind, section json.RawMessage, catalog []string) (any, []string, bool) {
+func decodeAppliedSection(kind Kind, section json.RawMessage, _ []string) (any, []string, bool) {
 	document := map[string]any{"version": modelconfig.Version}
 	var value any
 	if json.Unmarshal(section, &value) != nil {
@@ -215,54 +218,21 @@ func decodeAppliedSection(kind Kind, section json.RawMessage, catalog []string) 
 	if err != nil {
 		return nil, nil, false
 	}
-	decoded, err := modelconfig.Decode(raw, []modelconfig.Agent{modelAgent(kind)}, catalog)
+	structural, err := modelconfig.DecodeStructural(raw)
 	if err != nil {
-		// Decode once against the IDs recorded in the section so unavailable
-		// values can still be reported without accepting malformed state.
-		ids := sectionModelIDs(kind, section)
-		decoded, err = modelconfig.Decode(raw, []modelconfig.Agent{modelAgent(kind)}, ids)
-		if err != nil {
-			return nil, nil, false
-		}
+		return nil, nil, false
 	}
+	var typed any
 	switch kind {
 	case ClaudeCode:
-		return decoded.Claude, sectionModelIDs(kind, section), true
+		typed = structural.Claude
 	case OpenCode:
-		return decoded.OpenCode, sectionModelIDs(kind, section), true
+		typed = structural.OpenCode
 	default:
-		return decoded.Codex, sectionModelIDs(kind, section), true
+		typed = structural.Codex
 	}
-}
-
-func sectionModelIDs(kind Kind, raw json.RawMessage) []string {
-	var ids []string
-	switch kind {
-	case ClaudeCode:
-		var section modelconfig.ClaudeConfig
-		if json.Unmarshal(raw, &section) == nil {
-			ids = append(ids, section.Primary.Model)
-			for _, role := range []modelconfig.ClaudeRole{section.Haiku, section.Sonnet, section.Opus} {
-				if role.Selection != nil {
-					ids = append(ids, role.Selection.Model)
-				}
-			}
-		}
-	case OpenCode:
-		var section modelconfig.OpenCodeConfig
-		if json.Unmarshal(raw, &section) == nil {
-			for id := range section.Models {
-				ids = append(ids, id)
-			}
-		}
-	case Codex:
-		var section modelconfig.CodexConfig
-		if json.Unmarshal(raw, &section) == nil {
-			ids = append(ids, section.Model)
-		}
-	}
-	sort.Strings(ids)
-	return ids
+	ids := presetModelIDs(kind, typed)
+	return typed, ids, true
 }
 
 func setConfigSection(config *modelconfig.Config, kind Kind, section any) {
@@ -336,6 +306,29 @@ func currentClaude(path string) (any, []string, bool) {
 			*target = modelconfig.ClaudeRole{Selection: &selection}
 		}
 	}
+	if raw, exists := env["ANTHROPIC_DEFAULT_FABLE_MODEL"]; exists {
+		id, valid := rawString(raw)
+		if !valid {
+			return nil, nil, false
+		}
+		selection, valid := projectClaudeSelection(id)
+		if !valid {
+			return nil, nil, false
+		}
+		if rawName, nameExists := env["ANTHROPIC_DEFAULT_FABLE_MODEL_NAME"]; nameExists {
+			name, nameValid := rawString(rawName)
+			if !nameValid {
+				return nil, nil, false
+			}
+			selection.Name = &name
+		}
+		ids = append(ids, selection.Model)
+		role := modelconfig.ClaudeRole{Selection: &selection}
+		if sameClaudeSelection(selection, config.Primary) {
+			role = modelconfig.ClaudeRole{InheritPrimary: true}
+		}
+		config.Fable = &role
+	}
 	config.ContextWindow, ok = rawPositiveIntString(env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"])
 	if !ok {
 		return nil, nil, false
@@ -370,11 +363,24 @@ func rawPositiveIntString(raw json.RawMessage) (*int64, bool) {
 	return &parsed, true
 }
 
+func trimClaudeContextSuffix(value string) (string, bool) {
+	for _, suffix := range []string{"[1m]", "[1M]"} {
+		if strings.HasSuffix(value, suffix) {
+			return strings.TrimSuffix(value, suffix), true
+		}
+	}
+	return value, false
+}
+
+func hasClaudeContextSuffix(value string) bool {
+	return strings.Contains(value, "[1m]") || strings.Contains(value, "[1M]")
+}
+
 func projectClaudeSelection(value string) (modelconfig.Model, bool) {
-	selection := modelconfig.Model{Model: value}
-	if strings.HasSuffix(value, "[1m]") {
-		selection.Model = strings.TrimSuffix(value, "[1m]")
-		if selection.Model == "" || strings.Contains(selection.Model, "[1m]") {
+	base, hasContext := trimClaudeContextSuffix(value)
+	selection := modelconfig.Model{Model: base}
+	if hasContext {
+		if base == "" || hasClaudeContextSuffix(base) {
 			return modelconfig.Model{}, false
 		}
 		context := modelconfig.ClaudeContext1M
