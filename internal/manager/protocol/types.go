@@ -112,7 +112,7 @@ func Deadlines() map[Method]time.Duration {
 		MethodRouterStatus:                 time.Second,
 		MethodRouterStart:                  20 * time.Second,
 		MethodRouterStop:                   7 * time.Second,
-		MethodRouterHealth:                 5 * time.Second,
+		MethodRouterHealth:                 12 * time.Second,
 		MethodRouterVersion:                time.Second,
 		MethodRouterLogs:                   2 * time.Second,
 		MethodRouterInspectOccupant:        2 * time.Second,

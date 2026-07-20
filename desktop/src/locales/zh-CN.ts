@@ -63,6 +63,9 @@ export const zhCN = {
   "router.state.failed.signal": "需要处理",
   "router.state.failed.detail":
     "路由未能进入可用状态。请查看日志并在排除问题后重试。",
+  "router.state.unavailable.title": "路由状态暂时不可用",
+  "router.state.unavailable.signal": "状态不可用",
+  "router.state.unavailable.detail": "桌面端暂时无法读取路由状态，将自动重试。",
   "router.state.reinstall.title": "桌面组件无效",
   "router.state.reinstall.signal": "需要重新安装",
   "router.state.reinstall.detail":
