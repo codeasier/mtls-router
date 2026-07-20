@@ -76,6 +76,48 @@ func TestPreviewIsStructuredKeyFreeAndDoesNotWrite(t *testing.T) {
 	}
 }
 
+func TestPreviewAcceptsAndPreservesCompatibleWindowsConfigs(t *testing.T) {
+	home := t.TempDir()
+	claudePath := filepath.Join(home, ".claude", "settings.json")
+	codexPath := filepath.Join(home, ".codex", "config.toml")
+	writeFile(t, claudePath, "\xef\xbb\xbf"+`{"theme":"dark","env":{"UNRELATED":"keep"}}`)
+	writeFile(t, codexPath, `[projects.'e:\minecraft\example\.minecraft\versions\demo']
+trust_level = "trusted"
+
+[projects."e:\\minecraft\\example\\version.2\\demo"]
+trust_level = "trusted"
+`)
+
+	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true, "codex": true}, nil)
+	preview, err := service.Preview(context.Background(), []Kind{ClaudeCode, Codex})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(preview.Fragments) != 3 {
+		t.Fatalf("preview fragments = %#v", preview.Fragments)
+	}
+	if _, err := service.Write(context.Background(), WriteRequest{
+		Agents: []Kind{ClaudeCode, Codex}, RevisionToken: preview.RevisionToken, APIKey: testAPIKey, ApproveCodexAuthChange: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	claude, valid := decodeObject([]byte(readString(t, claudePath)))
+	if !valid || !jsonStringEquals(claude["theme"], "dark") {
+		t.Fatalf("Claude write did not preserve unrelated settings: %s", readString(t, claudePath))
+	}
+	codex, valid := decodeTOML([]byte(readString(t, codexPath)))
+	if !valid {
+		t.Fatalf("Codex write is invalid TOML: %s", readString(t, codexPath))
+	}
+	for _, projectPath := range []string{`e:\minecraft\example\.minecraft\versions\demo`, `e:\minecraft\example\version.2\demo`} {
+		project, exists := tomlTable(codex, "projects", projectPath)
+		if !exists || project["trust_level"] != "trusted" {
+			t.Fatalf("Codex write did not preserve quoted dotted key %q: %#v", projectPath, codex)
+		}
+	}
+}
+
 func TestV2PreviewAcceptsReportedClaudeConfigurationWithoutFable(t *testing.T) {
 	home := t.TempDir()
 	stateDir := filepath.Join(home, "manager-state")

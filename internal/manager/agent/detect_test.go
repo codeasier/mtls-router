@@ -106,6 +106,17 @@ func TestDetectClaudeConfiguredInvalidAndMissing(t *testing.T) {
 	}
 }
 
+func TestDetectClaudeAcceptsUTF8BOM(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".claude", "settings.json")
+	writeFile(t, path, "\xef\xbb\xbf"+`{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:19443","ANTHROPIC_AUTH_TOKEN":"claude-secret-canary","ANTHROPIC_MODEL":"dynamic-main","ANTHROPIC_DEFAULT_HAIKU_MODEL":"dynamic-main","ANTHROPIC_DEFAULT_SONNET_MODEL":"dynamic-sonnet","ANTHROPIC_DEFAULT_OPUS_MODEL":"dynamic-main"}}`)
+
+	state := mustDetect(t, testDetector(home, map[string]bool{"claude": true}))[0]
+	if !state.Exists || !state.Writable || !state.Configured || state.Invalid {
+		t.Fatalf("BOM-prefixed Claude state = %#v", state)
+	}
+}
+
 func TestDetectOpenCodeJSONCConfiguredAndProviderInvalid(t *testing.T) {
 	home := t.TempDir()
 	path := filepath.Join(home, ".config", "opencode", "opencode.jsonc")
@@ -195,6 +206,43 @@ base_url = "http://127.0.0.1:19443/v1"
 	states = mustDetect(t, testDetector(home, nil))
 	if states[2].Exists || !states[2].Invalid || states[2].Configured {
 		t.Fatalf("invalid auth-only Codex state = %#v", states[2])
+	}
+}
+
+func TestDetectCodexAcceptsDotsInsideQuotedKeys(t *testing.T) {
+	home := t.TempDir()
+	codexHome := filepath.Join(home, ".codex")
+	writeFile(t, filepath.Join(codexHome, "config.toml"), `model_provider = "mtls-router"
+model = "dynamic-main"
+cli_auth_credentials_store = "file"
+
+[model_providers.mtls-router]
+name = "mtls-router"
+wire_api = "responses"
+requires_openai_auth = true
+base_url = "http://127.0.0.1:19443/v1"
+
+[projects.'e:\minecraft\example\.minecraft\versions\demo']
+trust_level = "trusted"
+
+[projects."e:\\minecraft\\example\\version.2\\demo"]
+trust_level = "trusted"
+`)
+	writeFile(t, filepath.Join(codexHome, "auth.json"), `{"auth_mode":"apikey","OPENAI_API_KEY":"codex-secret-canary"}`)
+
+	state := mustDetect(t, testDetector(home, map[string]bool{"codex": true}))[2]
+	if !state.Exists || !state.Writable || !state.Configured || state.Invalid {
+		t.Fatalf("Codex state with quoted dotted key = %#v", state)
+	}
+}
+
+func TestDetectCodexRejectsDuplicateTOMLKeys(t *testing.T) {
+	home := t.TempDir()
+	writeFile(t, filepath.Join(home, ".codex", "config.toml"), "model = \"first\"\nmodel = \"second\"\n")
+
+	state := mustDetect(t, testDetector(home, map[string]bool{"codex": true}))[2]
+	if !state.Invalid || state.Configured {
+		t.Fatalf("Codex state with duplicate TOML key = %#v", state)
 	}
 }
 
