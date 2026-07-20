@@ -197,6 +197,22 @@ export const zhCN = {
   "agents.previewRefreshed": "文件已变化，预览已刷新。请重新确认后继续。",
   "agents.error.invalid": "目标配置无效，未修改任何文件。请修复后刷新检测。",
   "agents.error.preview": "无法生成预览，未修改任何文件。请刷新检测后重试。",
+  "agents.error.preview.configInvalid":
+    "现有 Agent 配置无法读取或格式无效，请修复配置文件后刷新检测（{code}）。",
+  "agents.error.preview.notWritable":
+    "Agent 配置路径不可写，请检查文件和目录权限后重试（{code}）。",
+  "agents.error.preview.agentNotFound":
+    "所选 Agent 已不可用，请刷新检测后重新选择（{code}）。",
+  "agents.error.preview.modelState":
+    "Agent 模型管理状态已损坏，请重新启动应用后重试（{code}）。",
+  "agents.error.preview.busy":
+    "另一个 Agent 配置操作正在进行，请稍后重试（{code}）。",
+  "agents.error.preview.timeout":
+    "生成预览超时，请确认没有其他配置操作后重试（{code}）。",
+  "agents.error.preview.manager":
+    "本地 manager 无法完成预览，请重新启动应用后重试（{code}）。",
+  "agents.error.preview.unknown":
+    "无法生成预览，未修改任何文件。请刷新检测后重试（{code}）。",
   "agents.error.write":
     "写入失败，密钥输入已清除。配置事务未完成，请检查结果后重试。",
   "agents.overline": "选择 / 发现 / 模型编排 / 写入",
@@ -220,6 +236,7 @@ export const zhCN = {
     "模型发现失败。未保留密钥，请检查路由与上游后重试。",
   "agents.error.catalogStale":
     "模型目录已失效或所选模型不可用，请重新输入密钥并发现。",
+  "agents.error.flowExpired": "模型发现会话已失效，请重新输入密钥并发现。",
   "agents.error.config": "模型配置无效：{detail}",
   "agents.error.config.catalogModel":
     "所选模型不在当前可用模型目录中，请刷新目录后重新选择。",

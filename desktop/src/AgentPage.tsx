@@ -72,9 +72,12 @@ function modelConfigErrorMessage(error: unknown, t: Translator) {
       ? (details as { rule: string }).rule
       : "";
 
-  if (rule === "catalog_model") return t("agents.error.config.catalogModel");
-  if (rule === "base_model") return t("agents.error.config.baseModel");
-  if (rule === "non_empty_name") return t("agents.error.config.name");
+  if (rule === "catalog_model" || rule === "catalog")
+    return t("agents.error.config.catalogModel");
+  if (rule === "base_model" || rule === "model_id")
+    return t("agents.error.config.baseModel");
+  if (rule === "non_empty_name" || rule === "name")
+    return t("agents.error.config.name");
   if (rule === "context_conflict")
     return t("agents.error.config.contextConflict");
   if (rule === "integer_relationship") {
@@ -89,6 +92,28 @@ function modelConfigErrorMessage(error: unknown, t: Translator) {
   if (rule === "allowlist" || rule === "protected_path")
     return t("agents.error.config.extra");
   return t("agents.error.config.fallback");
+}
+function previewErrorMessage(code: string, t: Translator) {
+  const key =
+    code === "CONFIG_INVALID"
+      ? "agents.error.preview.configInvalid"
+      : code === "CONFIG_NOT_WRITABLE"
+        ? "agents.error.preview.notWritable"
+        : code === "AGENT_NOT_FOUND"
+          ? "agents.error.preview.agentNotFound"
+          : code === "MODEL_STATE_INVALID"
+            ? "agents.error.preview.modelState"
+            : code === "AGENT_OPERATION_BUSY"
+              ? "agents.error.preview.busy"
+              : code === "OPERATION_TIMEOUT"
+                ? "agents.error.preview.timeout"
+                : code === "MANAGER_FAILED" ||
+                    code === "SIDECAR_MISSING" ||
+                    code === "SIDECAR_INVALID" ||
+                    code === "INVALID_RESPONSE"
+                  ? "agents.error.preview.manager"
+                  : "agents.error.preview.unknown";
+  return t(key, { code: code || "UNKNOWN" });
 }
 function selectable(agent: AgentState) {
   return agent.detected && agent.writable && !agent.invalid;
@@ -614,15 +639,24 @@ export function AgentPage({ api }: { api: DesktopApi }) {
       setStage("preview");
     } catch (error) {
       const code = errorCode(error);
-      if (code === "MODEL_CATALOG_STALE") {
+      if (code === "MODEL_CATALOG_STALE" || code === "MODEL_FLOW_EXPIRED") {
         await startOver("credential");
-        setMessage(t("agents.error.catalogStale"));
-      } else
+        setMessage(
+          t(
+            code === "MODEL_FLOW_EXPIRED"
+              ? "agents.error.flowExpired"
+              : "agents.error.catalogStale",
+          ),
+        );
+      } else if (code === "MODEL_CONFIG_INVALID") {
         setMessage(
           t("agents.error.config", {
             detail: modelConfigErrorMessage(error, t),
           }),
         );
+      } else {
+        setMessage(previewErrorMessage(code, t));
+      }
     } finally {
       setBusy(false);
     }

@@ -1091,6 +1091,48 @@ describe("Agent model workbench", () => {
   });
 
   it.each([
+    ["CONFIG_INVALID", /现有 Agent 配置无法读取或格式无效/],
+    ["CONFIG_NOT_WRITABLE", /Agent 配置路径不可写/],
+    ["AGENT_OPERATION_BUSY", /另一个 Agent 配置操作正在进行/],
+    ["MANAGER_FAILED", /本地 manager 无法完成预览/],
+  ])(
+    "does not misclassify %s as a model validation error",
+    async (code, reason) => {
+      const { api } = await reachConfigure();
+      completeRequiredConfig();
+      vi.mocked(api.previewAgents).mockRejectedValueOnce({
+        code,
+        message: "unsafe-backend-preview-message",
+      });
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: /生成写入预览|Generate write preview/,
+        }),
+      );
+      expect(await screen.findByText(reason)).toBeInTheDocument();
+      expect(document.body.textContent).not.toContain("模型配置无效");
+      expect(document.body.textContent).not.toContain(
+        "unsafe-backend-preview-message",
+      );
+    },
+  );
+
+  it("returns expired model flows to credential discovery", async () => {
+    const { api } = await reachConfigure();
+    completeRequiredConfig();
+    vi.mocked(api.previewAgents).mockRejectedValueOnce({
+      code: "MODEL_FLOW_EXPIRED",
+    });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /生成写入预览|Generate write preview/,
+      }),
+    );
+    expect(await screen.findByLabelText(/API (?:key|密钥)/)).toHaveValue("");
+    expect(screen.getByText(/模型发现会话已失效/)).toBeInTheDocument();
+  });
+
+  it.each([
     "MODEL_AUTH_FAILED",
     "MODEL_DISCOVERY_FAILED",
     "MODEL_CATALOG_EMPTY",
