@@ -291,6 +291,7 @@ func validCodexModelSettings(values map[string]any) bool {
 
 func decodeObject(content []byte) (map[string]json.RawMessage, bool) {
 	var object map[string]json.RawMessage
+	content = bytes.TrimPrefix(content, []byte{0xef, 0xbb, 0xbf})
 	decoder := json.NewDecoder(bytes.NewReader(content))
 	if err := decoder.Decode(&object); err != nil || object == nil {
 		return nil, false
