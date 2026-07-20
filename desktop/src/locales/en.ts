@@ -271,6 +271,7 @@ export const en: Record<TranslationKey, string> = {
   "agents.defaultModel": "Default model",
   "agents.chooseModel": "Choose a model explicitly",
   "agents.inheritPrimary": "{role} inherits primary",
+  "agents.enableFable": "Enable Fable",
   "agents.advancedExtra": "Advanced constrained extra",
   "agents.extraJson": "{agent} extra JSON object",
   "agents.formatJson": "Format JSON",

@@ -56,6 +56,8 @@ pub struct ClaudeConfig {
     pub sonnet: ClaudeRole,
     pub opus: ClaudeRole,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub fable: Option<ClaudeRole>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub context_window: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<u64>,
@@ -193,7 +195,10 @@ pub fn validate(config: &ModelConfig, agents: &[String], catalog: &[String]) -> 
             ("haiku", &claude.haiku),
             ("sonnet", &claude.sonnet),
             ("opus", &claude.opus),
-        ] {
+        ]
+        .into_iter()
+        .chain(claude.fable.as_ref().map(|role| ("fable", role)))
+        {
             match role {
                 ClaudeRole::Inherit(value) if value.inherit_primary => {}
                 ClaudeRole::Selection(value) => {
@@ -225,7 +230,10 @@ pub fn validate(config: &ModelConfig, agents: &[String], catalog: &[String]) -> 
                 ("haiku", &claude.haiku),
                 ("sonnet", &claude.sonnet),
                 ("opus", &claude.opus),
-            ] {
+            ]
+            .into_iter()
+            .chain(claude.fable.as_ref().map(|role| ("fable", role)))
+            {
                 if matches!(
                     role,
                     ClaudeRole::Selection(ModelSelection {
@@ -552,6 +560,7 @@ mod tests {
                 opus: ClaudeRole::Inherit(InheritPrimary {
                     inherit_primary: true,
                 }),
+                fable: None,
                 context_window: None,
                 max_output_tokens: None,
                 extra: None,
@@ -595,6 +604,42 @@ mod tests {
         }
         let suffixed = one_million.replace(r#""m1""#, r#""m1[1m]""#);
         assert!(import_json(&suffixed, &agents, &catalog).is_err());
+    }
+
+    #[test]
+    fn optional_fable_round_trips_and_validates_catalog_and_context() {
+        let agents = vec!["claude".into()];
+        let catalog = vec!["m1".into(), "m2".into()];
+        let absent = export_json(&minimal(), &agents, &catalog).unwrap();
+        assert!(!absent.contains("fable"));
+
+        let inherited = absent.replace(
+            r#""haiku":{"inherit_primary":true}"#,
+            r#""fable":{"inherit_primary":true},"haiku":{"inherit_primary":true}"#,
+        );
+        let inherited = import_json(&inherited, &agents, &catalog).unwrap();
+        assert!(matches!(
+            inherited.claude.as_ref().unwrap().fable,
+            Some(ClaudeRole::Inherit(InheritPrimary {
+                inherit_primary: true
+            }))
+        ));
+        assert!(export_json(&inherited, &agents, &catalog)
+            .unwrap()
+            .contains(r#""fable":{"inherit_primary":true}"#));
+
+        let explicit = r#"{"version":1,"claude":{"primary":{"model":"m1"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true},"fable":{"model":"m2","name":"Fable","context":"1m"}}}"#;
+        assert!(import_json(explicit, &agents, &catalog).is_ok());
+        let unavailable = import_json(explicit, &agents, &["m1".into()]).unwrap_err();
+        assert!(unavailable.message.contains("/claude/fable/model"));
+
+        let conflict = explicit.replace(
+            r#""fable":{"model":"m2""#,
+            r#""context_window":200000,"fable":{"model":"m2""#,
+        );
+        let error = import_json(&conflict, &agents, &catalog).unwrap_err();
+        assert!(error.message.contains("context_conflict"));
+        assert!(error.message.contains("/claude/fable/context"));
     }
 
     #[test]
@@ -815,6 +860,7 @@ mod tests {
             [
                 "context_window",
                 "extra",
+                "fable",
                 "haiku",
                 "max_output_tokens",
                 "opus",

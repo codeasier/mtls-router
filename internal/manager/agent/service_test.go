@@ -37,7 +37,7 @@ func TestPreviewIsStructuredKeyFreeAndDoesNotWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if preview.RevisionToken == "" || len(preview.Agents) != 3 {
+	if preview.RevisionToken == "" || len(preview.Agents) != 3 || len(preview.ModelConfig) == 0 || len(preview.Fragments) != 4 || preview.StateChange == nil {
 		t.Fatalf("preview = %#v", preview)
 	}
 	if preview.Agents[0].Agent != ClaudeCode || preview.Agents[1].Agent != OpenCode || preview.Agents[2].Agent != Codex {

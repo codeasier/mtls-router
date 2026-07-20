@@ -102,12 +102,29 @@ configuration.
 ### Claude Code
 
 `primary` is required. `haiku`, `sonnet`, and `opus` each either inherit the
-primary selection or select another catalog model. Every explicit selection may
-have an optional display `name` and optional `context`. Omission of `context`
-means Claude's standard/default behavior; the only accepted value is the exact
-string `"1m"`. The canonical `model` is always the authenticated base ID and
-must not end in `[1m]`. An inherited role contains only
-`{"inherit_primary":true}` and inherits model, name, and context together.
+primary selection or select another catalog model. Optional `fable`, when
+present, uses the same inherited or explicit-selection union. Its absence means
+Fable is disabled and unmanaged; decoders and clients do not synthesize it.
+Every explicit selection may have an optional display `name` and optional
+`context`. Omission of `context` means Claude's standard/default behavior; the
+only accepted value is the exact string `"1m"`. The canonical `model` is always
+the authenticated base ID and must not end in `[1m]`. An inherited role contains
+only `{"inherit_primary":true}` and inherits model, name, and context together.
+For example, enabled Fable is either:
+
+```json
+{"inherit_primary": true}
+```
+
+or an explicit selection:
+
+```json
+{"model": "model-a", "name": "Optional display name", "context": "1m"}
+```
+
+Fable has no description key. Its explicit model must be in the authenticated
+catalog, and explicit Fable `context: "1m"` conflicts with numeric
+`context_window` just like the other explicit Claude selections.
 `extra` is a string map limited to these description keys:
 
 - `ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION`
@@ -134,17 +151,51 @@ section satisfies the same budget and context rules.
 For standard context, the manager renders the base ID unchanged. For
 `context: "1m"`, it appends exactly one terminal `[1m]` only at the Claude file
 rendering boundary for `ANTHROPIC_MODEL`, `ANTHROPIC_CUSTOM_MODEL_OPTION`, and
-the effective Haiku, Sonnet, and Opus model values. Display names are unchanged,
-and the manager does not write `CLAUDE_CODE_DISABLE_1M_CONTEXT`. Existing values
+the effective Haiku, Sonnet, Opus, and enabled Fable model values. Display names
+are unchanged, and the manager does not write
+`CLAUDE_CODE_DISABLE_1M_CONTEXT`. Existing values
 with one exact terminal `[1m]` are projected back to base ID plus canonical
 context; malformed, repeated, or middle markers are not repaired. Catalog and
 write-time availability checks always use the base ID. Configuration does not
 infer whether a model supports 1M context; a runtime rejection causes no model
 fallback or configuration rewrite.
 
-The numeric `context_window` override works directly for unknown custom model
-names on Claude Code 2.1.193 and later. Older versions remain supported and may
-ignore that override; there is no hard minimum Claude Code version. These
+For enabled Fable, the manager always renders
+`ANTHROPIC_DEFAULT_FABLE_MODEL` and renders
+`ANTHROPIC_DEFAULT_FABLE_MODEL_NAME` only when the effective inherited or
+explicit selection has a name. The Fable model key is also the projection
+enablement signal: a name key by itself does not enable or project Fable. An
+existing enabled Fable selection projects to inheritance only when its model,
+name, and context exactly match primary; otherwise it remains explicit.
+Malformed or numeric-context-conflicting enabled Fable makes the complete
+existing Claude section unavailable. Fable remains optional for
+`configured=true`, so legacy Claude files do not become incomplete.
+
+Claude is the atomic availability and initialization unit. If an enabled Fable
+model in a preset or projected existing configuration is unavailable or
+invalid, the complete Claude section is unavailable; Fable is never dropped,
+repaired, substituted, or merged independently. OpenCode and Codex sections
+remain independently usable. Likewise, `existing > preset > empty` chooses one
+complete Claude section: preset Fable is not deep-merged into an existing Claude
+section that omits it.
+
+Fable ownership is conditional and path-exact. While enabled, the manager owns
+the rendered Fable model path and the name path when rendered. While absent, it
+claims neither path and preserves never-owned manual Fable values. If the prior
+sidecar proves a Fable path was manager-owned, disabling Fable removes that
+stale path in the same recoverable transaction while preserving unrelated
+environment values. Enabling Fable over an existing unowned value is a
+collision/drift condition that requires preview-bound approval; it is never
+silently overwritten. The sidecar stores the complete canonical Claude section
+and records current Fable paths only while they are owned.
+
+The enabled Fable alias requires Claude Code 2.1.170 or later. Older Claude Code
+versions may ignore `ANTHROPIC_DEFAULT_FABLE_MODEL`; disable Fable or update
+Claude Code rather than expecting manager fallback. This alias requirement is
+separate from numeric context compatibility: the numeric `context_window`
+override works directly for unknown custom model names on Claude Code 2.1.193
+and later. Older versions remain supported and may ignore that numeric override;
+there is no hard minimum Claude Code version when Fable is disabled. These
 numeric values control Claude Code's local token budgeting and compaction
 behavior. They do not enlarge, prove, or otherwise change the upstream model's
 actual context or output capability.

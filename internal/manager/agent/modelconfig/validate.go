@@ -73,7 +73,7 @@ func parseClaude(o object, cat map[string]bool, requireCatalog bool) (*ClaudeCon
 	if o == nil {
 		return nil, invalid("/claude", "object")
 	}
-	if err := exactKeys(o, "/claude", "primary", "haiku", "sonnet", "opus", "context_window", "max_output_tokens", "extra"); err != nil {
+	if err := exactKeys(o, "/claude", "primary", "fable", "haiku", "sonnet", "opus", "context_window", "max_output_tokens", "extra"); err != nil {
 		return nil, err
 	}
 	p, err := parseModel(asObject(o["primary"]), "/claude/primary", cat, requireCatalog)
@@ -81,6 +81,13 @@ func parseClaude(o object, cat map[string]bool, requireCatalog bool) (*ClaudeCon
 		return nil, err
 	}
 	c := &ClaudeConfig{Primary: *p}
+	if raw, ok := o["fable"]; ok {
+		role, err := parseRole(asObject(raw), "/claude/fable", cat, requireCatalog)
+		if err != nil {
+			return nil, err
+		}
+		c.Fable = &role
+	}
 	for key, dst := range map[string]*ClaudeRole{"haiku": &c.Haiku, "sonnet": &c.Sonnet, "opus": &c.Opus} {
 		*dst, err = parseRole(asObject(o[key]), "/claude/"+key, cat, requireCatalog)
 		if err != nil {
@@ -115,6 +122,9 @@ func parseClaude(o object, cat map[string]bool, requireCatalog bool) (*ClaudeCon
 			if role.value.Selection != nil && role.value.Selection.Context != nil {
 				return nil, invalid("/claude/"+role.key+"/context", "context_conflict")
 			}
+		}
+		if c.Fable != nil && c.Fable.Selection != nil && c.Fable.Selection.Context != nil {
+			return nil, invalid("/claude/fable/context", "context_conflict")
 		}
 	}
 	if raw, ok := o["extra"]; ok {

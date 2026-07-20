@@ -157,6 +157,32 @@ func TestDiscoverModelsPresetSelectedScopeAndMixedValidity(t *testing.T) {
 	}
 }
 
+func TestDiscoverModelsFablePresetAvailabilityIsClaudeAtomic(t *testing.T) {
+	home := t.TempDir()
+	presetConfig, err := modelconfig.DecodeStructural([]byte(`{"version":1,"claude":{"primary":{"model":"shared"},"fable":{"model":"fable-missing"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true}},"opencode":{"default_model":"shared","models":{"shared":{}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewService(Options{StateDir: filepath.Join(home, "transactions"), Preset: presetConfig, Detector: Detector{
+		HomeDir: home, Getenv: func(string) string { return "" }, LookPath: func(string) (string, error) { return "", os.ErrNotExist },
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.DiscoverModels(context.Background(), []Kind{ClaudeCode, OpenCode}, []string{"shared"}, modelconfig.CatalogClaims{
+		Models: []string{"shared"}, Agents: []modelconfig.Agent{modelconfig.Claude, modelconfig.OpenCode}, Owner: "cli", RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(result.Preset.UnavailableAgents["claude"], ","); got != "fable-missing" {
+		t.Fatalf("Claude unavailable = %q", got)
+	}
+	if strings.Contains(string(result.Preset.ModelConfig), `"claude"`) || !strings.Contains(string(result.Preset.ModelConfig), `"opencode"`) {
+		t.Fatalf("preset section atomicity = %s", result.Preset.ModelConfig)
+	}
+}
+
 func TestDiscoverModelsPresetReportsCompleteBoundedUnavailableModels(t *testing.T) {
 	home := t.TempDir()
 	models := make(map[string]modelconfig.OpenCodeModelConfig, modelconfig.MaxReferencedModelsPerAgent)
@@ -192,7 +218,7 @@ func TestDiscoverModelsPresetReportsCompleteBoundedUnavailableModels(t *testing.
 func TestDiscoverModelsProjectsClaudeContextNameAndInheritance(t *testing.T) {
 	home := t.TempDir()
 	path := filepath.Join(home, ".claude", "settings.json")
-	writeModelFixture(t, path, `{"env":{"ANTHROPIC_MODEL":"primary[1m]","ANTHROPIC_CUSTOM_MODEL_OPTION_NAME":"Primary","ANTHROPIC_DEFAULT_HAIKU_MODEL":"primary[1m]","ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME":"Primary","ANTHROPIC_DEFAULT_SONNET_MODEL":"primary","ANTHROPIC_DEFAULT_SONNET_MODEL_NAME":"Primary","ANTHROPIC_DEFAULT_OPUS_MODEL":"primary[1m]","ANTHROPIC_DEFAULT_OPUS_MODEL_NAME":"Different"}}`)
+	writeModelFixture(t, path, `{"env":{"ANTHROPIC_MODEL":"primary[1m]","ANTHROPIC_CUSTOM_MODEL_OPTION_NAME":"Primary","ANTHROPIC_DEFAULT_FABLE_MODEL":"primary[1m]","ANTHROPIC_DEFAULT_FABLE_MODEL_NAME":"Primary","ANTHROPIC_DEFAULT_HAIKU_MODEL":"primary[1m]","ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME":"Primary","ANTHROPIC_DEFAULT_SONNET_MODEL":"primary","ANTHROPIC_DEFAULT_SONNET_MODEL_NAME":"Primary","ANTHROPIC_DEFAULT_OPUS_MODEL":"primary[1m]","ANTHROPIC_DEFAULT_OPUS_MODEL_NAME":"Different"}}`)
 	service, err := NewService(Options{StateDir: filepath.Join(home, "transactions"), Detector: Detector{
 		HomeDir: home, Getenv: func(string) string { return "" }, LookPath: func(string) (string, error) { return "", os.ErrNotExist },
 	}})
@@ -216,11 +242,85 @@ func TestDiscoverModelsProjectsClaudeContextNameAndInheritance(t *testing.T) {
 	if !config.Claude.Haiku.InheritPrimary {
 		t.Fatalf("equal selection did not inherit: %#v", config.Claude.Haiku)
 	}
+	if config.Claude.Fable == nil || !config.Claude.Fable.InheritPrimary {
+		t.Fatalf("equal Fable selection did not inherit: %#v", config.Claude.Fable)
+	}
 	if config.Claude.Sonnet.Selection == nil || config.Claude.Sonnet.Selection.Context != nil {
 		t.Fatalf("different context was inherited: %#v", config.Claude.Sonnet)
 	}
 	if config.Claude.Opus.Selection == nil || config.Claude.Opus.Selection.Name == nil || *config.Claude.Opus.Selection.Name != "Different" {
 		t.Fatalf("different name was inherited: %#v", config.Claude.Opus)
+	}
+}
+
+func TestDiscoverModelsProjectsUppercaseClaudeContextSuffix(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".claude", "settings.json")
+	writeModelFixture(t, path, `{"env":{"ANTHROPIC_MODEL":"gpt-5.6-sol[1M]","ANTHROPIC_CUSTOM_MODEL_OPTION_NAME":"Sol","ANTHROPIC_DEFAULT_HAIKU_MODEL":"gpt-5.6-sol[1M]","ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME":"Sol","ANTHROPIC_DEFAULT_SONNET_MODEL":"gpt-5.4[1M]","ANTHROPIC_DEFAULT_OPUS_MODEL":"opus-4-8[1M]","ANTHROPIC_DEFAULT_FABLE_MODEL":"gpt-5.6-sol[1M]","ANTHROPIC_DEFAULT_FABLE_MODEL_NAME":"Sol"}}`)
+	service, err := NewService(Options{StateDir: filepath.Join(home, "transactions"), Detector: Detector{
+		HomeDir: home,
+		Getenv:  func(string) string { return "" },
+		LookPath: func(string) (string, error) {
+			return "", os.ErrNotExist
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	models := []string{"gpt-5.4", "gpt-5.6-sol", "opus-4-8"}
+	result, err := service.DiscoverModels(context.Background(), []Kind{ClaudeCode}, models, modelconfig.CatalogClaims{
+		Models: models, Agents: []modelconfig.Agent{modelconfig.Claude}, Owner: "cli",
+		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := result.Existing.UnavailableModels["claude"]; len(got) != 0 {
+		t.Fatalf("uppercase suffixes reported unavailable: %#v", got)
+	}
+	config, err := modelconfig.Decode(result.Existing.ModelConfig, []modelconfig.Agent{modelconfig.Claude}, models)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oneMillion := modelconfig.ClaudeContext1M
+	if config.Claude.Primary.Model != "gpt-5.6-sol" || !equalClaudeContext(config.Claude.Primary.Context, &oneMillion) {
+		t.Fatalf("primary = %#v", config.Claude.Primary)
+	}
+	if !config.Claude.Haiku.InheritPrimary || config.Claude.Fable == nil || !config.Claude.Fable.InheritPrimary {
+		t.Fatalf("normalized inheritance = haiku %#v, fable %#v", config.Claude.Haiku, config.Claude.Fable)
+	}
+	if config.Claude.Sonnet.Selection == nil || config.Claude.Sonnet.Selection.Model != "gpt-5.4" || !equalClaudeContext(config.Claude.Sonnet.Selection.Context, &oneMillion) {
+		t.Fatalf("sonnet = %#v", config.Claude.Sonnet)
+	}
+	if config.Claude.Opus.Selection == nil || config.Claude.Opus.Selection.Model != "opus-4-8" || !equalClaudeContext(config.Claude.Opus.Selection.Context, &oneMillion) {
+		t.Fatalf("opus = %#v", config.Claude.Opus)
+	}
+}
+
+func TestDiscoverModelsFableNameAloneDoesNotEnable(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".claude", "settings.json")
+	writeModelFixture(t, path, `{"env":{"ANTHROPIC_MODEL":"primary","ANTHROPIC_DEFAULT_FABLE_MODEL_NAME":"Manual","ANTHROPIC_DEFAULT_HAIKU_MODEL":"primary","ANTHROPIC_DEFAULT_SONNET_MODEL":"primary","ANTHROPIC_DEFAULT_OPUS_MODEL":"primary"}}`)
+	section, ids, ok := currentClaude(path)
+	if !ok {
+		t.Fatal("legacy Claude projection failed")
+	}
+	claude := section.(*modelconfig.ClaudeConfig)
+	if claude.Fable != nil || strings.Join(ids, ",") != "primary,primary,primary,primary" {
+		t.Fatalf("name-only Fable enabled: %#v ids=%#v", claude.Fable, ids)
+	}
+}
+
+func TestDiscoverModelsRejectsMalformedEnabledFable(t *testing.T) {
+	for _, value := range []string{`""`, `1`, `"[1m]"`, `"model[1m][1m]"`} {
+		t.Run(value, func(t *testing.T) {
+			home := t.TempDir()
+			path := filepath.Join(home, ".claude", "settings.json")
+			writeModelFixture(t, path, `{"env":{"ANTHROPIC_MODEL":"primary","ANTHROPIC_DEFAULT_FABLE_MODEL":`+value+`,"ANTHROPIC_DEFAULT_HAIKU_MODEL":"primary","ANTHROPIC_DEFAULT_SONNET_MODEL":"primary","ANTHROPIC_DEFAULT_OPUS_MODEL":"primary"}}`)
+			if _, _, ok := currentClaude(path); ok {
+				t.Fatalf("malformed Fable projected: %s", value)
+			}
+		})
 	}
 }
 
@@ -252,6 +352,7 @@ func TestDiscoverModelsProjectsClaudeBudgets(t *testing.T) {
 func TestDiscoverModelsRejectsInvalidClaudeBudgets(t *testing.T) {
 	for _, test := range []struct {
 		name, contextWindow, maxOutput, model string
+		wantNoUnavailable                     bool
 	}{
 		{name: "exponent", contextWindow: "35e4", maxOutput: "100000", model: "primary"},
 		{name: "zero", contextWindow: "0", maxOutput: "", model: "primary"},
@@ -263,6 +364,7 @@ func TestDiscoverModelsRejectsInvalidClaudeBudgets(t *testing.T) {
 		{name: "output equals context", contextWindow: "100", maxOutput: "100", model: "primary"},
 		{name: "output exceeds context", contextWindow: "100", maxOutput: "101", model: "primary"},
 		{name: "numeric context and 1m", contextWindow: "353400", maxOutput: "", model: "primary[1m]"},
+		{name: "numeric context and uppercase 1M", contextWindow: "353400", maxOutput: "", model: "primary[1M]", wantNoUnavailable: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			home := t.TempDir()
@@ -294,6 +396,11 @@ func TestDiscoverModelsRejectsInvalidClaudeBudgets(t *testing.T) {
 			})
 			if err != nil {
 				t.Fatal(err)
+			}
+			if test.wantNoUnavailable {
+				if got := result.Existing.UnavailableModels["claude"]; len(got) != 0 {
+					t.Fatalf("invalid budget reported unavailable models: %#v", got)
+				}
 			}
 			if strings.Contains(string(result.Existing.ModelConfig), `"claude"`) {
 				t.Fatalf("invalid budget projected: %s", result.Existing.ModelConfig)
@@ -395,10 +502,20 @@ func TestDiscoverModelsClaudeSuffixProjectionIsExact(t *testing.T) {
 		wantSection              bool
 	}{
 		{name: "middle marker stays base ID", value: "model[1m]-variant", unavailable: "model[1m]-variant"},
-		{name: "alternate case stays base ID", value: "model[1M]", unavailable: "model[1M]"},
+		{name: "uppercase middle marker stays base ID", value: "model[1M]-variant", unavailable: "model[1M]-variant"},
+		{name: "unsupported mixed spelling stays base ID", value: "model[1Mm]", unavailable: "model[1Mm]"},
 		{name: "repeated suffix rejected", value: "model[1m][1m]"},
+		{name: "uppercase repeated suffix rejected", value: "model[1M][1M]"},
+		{name: "lower then upper repeated suffix rejected", value: "model[1m][1M]"},
+		{name: "upper then lower repeated suffix rejected", value: "model[1M][1m]"},
+		{name: "lower compound marker and suffix rejected", value: "model[1m]-variant[1m]"},
+		{name: "upper compound marker and lower suffix rejected", value: "model[1M]-variant[1m]"},
+		{name: "lower compound marker and upper suffix rejected", value: "model[1m]-variant[1M]"},
+		{name: "upper compound marker and suffix rejected", value: "model[1M]-variant[1M]"},
 		{name: "empty base rejected", value: "[1m]"},
+		{name: "uppercase empty base rejected", value: "[1M]"},
 		{name: "exact suffix uses available base", value: "model[1m]", wantSection: true},
+		{name: "exact uppercase suffix uses available base", value: "model[1M]", wantSection: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			home := t.TempDir()

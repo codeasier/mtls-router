@@ -361,8 +361,8 @@ func (s *Service) inspectOwnership(plan *writePlan) {
 				}
 				for _, key := range claudeOwnedEnvKeys(plan.input.config.Claude) {
 					if _, ok := env[key]; ok && !previouslyOwned["env."+key] {
+						plan.collisions = append(plan.collisions, ManagedCollision{Agent: kind, Path: "/env/" + key, Type: "fixed_managed_path", Action: "replace"})
 						collision = true
-						break
 					}
 				}
 			case OpenCode:
@@ -383,7 +383,9 @@ func (s *Service) inspectOwnership(plan *writePlan) {
 				}
 			}
 			if collision {
-				plan.collisions = append(plan.collisions, ManagedCollision{Agent: kind, Path: managedNamespace(kind, file.role), Type: "fixed_managed_path", Action: "replace"})
+				if kind != ClaudeCode {
+					plan.collisions = append(plan.collisions, ManagedCollision{Agent: kind, Path: managedNamespace(kind, file.role), Type: "fixed_managed_path", Action: "replace"})
+				}
 				plan.drifted = append(plan.drifted, kind)
 				break
 			}

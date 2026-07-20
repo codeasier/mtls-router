@@ -25,6 +25,9 @@ func claudeOwnedEnvKeys(config *modelconfig.ClaudeConfig) []string {
 	if config.MaxOutputTokens != nil {
 		owned = append(owned, "CLAUDE_CODE_MAX_OUTPUT_TOKENS")
 	}
+	if config.Fable != nil {
+		owned = append(owned, "ANTHROPIC_DEFAULT_FABLE_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME")
+	}
 	for key := range config.Extra {
 		owned = append(owned, key)
 	}
@@ -47,6 +50,9 @@ func mergeClaude(root map[string]json.RawMessage, config *modelconfig.ClaudeConf
 		}
 	}
 	for _, key := range claudeUnconditionalEnvKeys {
+		delete(env, key)
+	}
+	for _, key := range claudeOwnedEnvKeys(config) {
 		delete(env, key)
 	}
 	for _, key := range obsoleteOwnedKeys {
@@ -89,6 +95,16 @@ func claudeManagedEnv(config *modelconfig.ClaudeConfig, routerBaseURL, key strin
 		result["ANTHROPIC_DEFAULT_"+role+"_MODEL"] = model
 		if name != nil {
 			result["ANTHROPIC_DEFAULT_"+role+"_MODEL_NAME"] = *name
+		}
+	}
+	if config.Fable != nil {
+		selection := config.Primary
+		if config.Fable.Selection != nil {
+			selection = *config.Fable.Selection
+		}
+		result["ANTHROPIC_DEFAULT_FABLE_MODEL"] = claudeModelValue(selection)
+		if selection.Name != nil {
+			result["ANTHROPIC_DEFAULT_FABLE_MODEL_NAME"] = *selection.Name
 		}
 	}
 	if config.ContextWindow != nil {

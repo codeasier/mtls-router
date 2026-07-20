@@ -131,6 +131,7 @@ describe("Agent model workbench", () => {
       claude: {
         ...existingClaude,
         primary: { model: "preset-must-not-merge" },
+        fable: { inherit_primary: true as const },
       },
       opencode: configured.opencode,
     };
@@ -140,6 +141,7 @@ describe("Agent model workbench", () => {
       preset,
     );
     expect(initialized.config.claude).toEqual(existingClaude);
+    expect(initialized.config.claude?.fable).toBeUndefined();
     expect(initialized.config.opencode).toEqual(configured.opencode);
     expect(initialized.config.codex).toEqual({ model: "" });
     expect(initialized.sources).toEqual({
@@ -147,6 +149,124 @@ describe("Agent model workbench", () => {
       opencode: "preset",
       codex: "empty",
     });
+
+    const empty = initializeAgentConfig(["claude"], {}, {});
+    expect(empty.config.claude?.fable).toBeUndefined();
+  });
+
+  it("enables, edits, and completely disables optional Fable", async () => {
+    const { api } = await reachConfigure();
+    completeRequiredConfig();
+    const enable = screen.getByLabelText(/启用 Fable|Enable Fable/);
+    expect(enable).not.toBeChecked();
+    expect(
+      screen.queryByLabelText(/fable 继承主模型|fable inherits primary/),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(enable);
+    const inherit = screen.getByLabelText(
+      /fable 继承主模型|fable inherits primary/,
+    );
+    expect(inherit).toBeChecked();
+    fireEvent.click(inherit);
+    expect(
+      screen.getByRole("button", {
+        name: /生成写入预览|Generate write preview/,
+      }),
+    ).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText(/fable 模型|fable model/), {
+      target: { value: "model-b" },
+    });
+    fireEvent.change(
+      screen.getByLabelText(/claude-fable (?:显示名称|Display name)/),
+      { target: { value: "Fable display" } },
+    );
+    const fields = screen
+      .getByLabelText(/claude-fable (?:显示名称|Display name)/)
+      .closest(".claude-selection-fields")!;
+    fireEvent.click(
+      fields.querySelectorAll<HTMLInputElement>('input[type="radio"]')[1],
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /生成写入预览|Generate write preview/,
+      }),
+    );
+    await waitFor(() => expect(api.previewAgents).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(api.previewAgents).mock.calls[0][3].claude?.fable).toEqual(
+      {
+        model: "model-b",
+        name: "Fable display",
+        context: "1m",
+      },
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /返回配置|Back to configuration/ }),
+    );
+    fireEvent.click(enable);
+    expect(
+      screen.queryByLabelText(/fable 模型|fable model/),
+    ).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /生成写入预览|Generate write preview/,
+      }),
+    );
+    await waitFor(() => expect(api.previewAgents).toHaveBeenCalledTimes(2));
+    expect(
+      vi.mocked(api.previewAgents).mock.calls[1][3].claude?.fable,
+    ).toBeUndefined();
+  });
+
+  it("keeps Claude role labels and selection fields independently stackable", async () => {
+    const claude = {
+      version: 1 as const,
+      claude: {
+        primary: { model: "model-a" },
+        haiku: { model: "model-b" },
+        sonnet: { inherit_primary: true as const },
+        opus: { inherit_primary: true as const },
+        fable: { model: "model-a" },
+      },
+    };
+    const api = createMockApi({
+      detectAgents: vi.fn().mockResolvedValue(detection),
+      discoverModels: vi.fn().mockResolvedValue({
+        ...discovery,
+        existing: {
+          ...discovery.existing,
+          model_config: claude,
+          unavailable_models: {},
+        },
+        preset: { model_config: {}, unavailable_agents: {} },
+      }),
+    });
+    await reachCredential(api);
+    fireEvent.change(screen.getByLabelText(/API (?:key|密钥)/), {
+      target: { value: "layout-secret" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: /发现模型|Discover models/ }),
+    );
+
+    const haikuSelect = await screen.findByLabelText(/haiku 模型|haiku model/);
+    const haikuFields = haikuSelect.closest(".claude-selection-fields")!;
+    const haikuRow = haikuFields.closest(".role-row")!;
+    expect(haikuRow.children[0].tagName).toBe("LABEL");
+    expect(haikuRow.children[1]).toBe(haikuFields);
+
+    const fableSelect = screen.getByLabelText(/fable 模型|fable model/);
+    const fableFields = fableSelect.closest(".claude-selection-fields")!;
+    const optionalEditor = fableFields.closest(".optional-role-editor")!;
+    const fableRow = optionalEditor.closest(".role-row")!;
+    expect(fableRow.children[0].tagName).toBe("LABEL");
+    expect(fableRow.children[1]).toBe(optionalEditor);
+    expect(optionalEditor.children[1]).toBe(fableFields);
+    const modelPanel = haikuRow.closest(".model-agent-panel");
+    expect(modelPanel).not.toBeNull();
+    expect(fableRow.closest(".model-agent-panel")).toBe(modelPanel);
   });
 
   it("contains detected configuration paths and exposes their complete values", async () => {
@@ -655,6 +775,165 @@ describe("Agent model workbench", () => {
     );
   });
 
+  it("replaces same-model Fable metadata and inheritance on import", async () => {
+    const explicit: ModelConfig = {
+      version: 1,
+      claude: {
+        primary: { model: "model-a" },
+        haiku: { inherit_primary: true },
+        sonnet: { inherit_primary: true },
+        opus: { inherit_primary: true },
+        fable: { model: "model-a", name: "Imported Fable", context: "1m" },
+      },
+    };
+    const inherited: ModelConfig = {
+      ...explicit,
+      claude: { ...explicit.claude!, fable: { inherit_primary: true } },
+    };
+    const api = createMockApi({
+      detectAgents: vi.fn().mockResolvedValue(detection),
+      discoverModels: vi.fn().mockResolvedValue({
+        ...discovery,
+        existing: {
+          model_config: {
+            version: 1,
+            claude: {
+              ...explicit.claude!,
+              fable: { model: "model-a", name: "Stale Fable" },
+            },
+          },
+          unavailable_models: {},
+          drifted_agents: [],
+        },
+      }),
+      importAgentModelConfig: vi
+        .fn()
+        .mockResolvedValueOnce(explicit)
+        .mockResolvedValueOnce(inherited),
+    });
+    await reachCredential(api);
+    fireEvent.change(screen.getByLabelText(/API (?:key|密钥)/), {
+      target: { value: "fable-import-secret" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: /发现模型|Discover models/ }),
+    );
+    expect(await screen.findByDisplayValue("Stale Fable")).toBeVisible();
+
+    const input =
+      document.querySelector<HTMLInputElement>('input[type="file"]')!;
+    fireEvent.change(input, {
+      target: {
+        files: [
+          new File([JSON.stringify(explicit)], "explicit.json", {
+            type: "application/json",
+          }),
+        ],
+      },
+    });
+    expect(await screen.findByDisplayValue("Imported Fable")).toBeVisible();
+    expect(screen.getByLabelText(/fable 模型|fable model/)).toHaveValue(
+      "model-a",
+    );
+    const fableFields = screen
+      .getByDisplayValue("Imported Fable")
+      .closest(".claude-selection-fields")!;
+    expect(
+      fableFields.querySelectorAll<HTMLInputElement>('input[type="radio"]')[1],
+    ).toBeChecked();
+
+    fireEvent.change(input, {
+      target: {
+        files: [
+          new File([JSON.stringify(inherited)], "inherited.json", {
+            type: "application/json",
+          }),
+        ],
+      },
+    });
+    expect(
+      await screen.findByLabelText(/fable 继承主模型|fable inherits primary/),
+    ).toBeChecked();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /生成写入预览|Generate write preview/,
+      }),
+    );
+    await waitFor(() => expect(api.previewAgents).toHaveBeenCalledTimes(1));
+    expect(api.previewAgents).toHaveBeenCalledWith(
+      ["claude", "opencode", "codex"],
+      discovery.flow_id,
+      discovery.catalog_token,
+      inherited,
+    );
+  });
+
+  it("writes the preview-normalized Fable config", async () => {
+    const configuredFable: ModelConfig = {
+      ...configured,
+      claude: {
+        ...configured.claude!,
+        fable: { model: "model-b", name: "Before normalization" },
+      },
+    };
+    const normalized: ModelConfig = {
+      ...configuredFable,
+      claude: {
+        ...configuredFable.claude!,
+        fable: { model: "model-b", name: "Normalized Fable", context: "1m" },
+      },
+    };
+    const normalizedPreview: AgentPreview = {
+      ...preview,
+      model_config: normalized,
+      managed_config_drift: false,
+      requires_codex_auth_approval: false,
+    };
+    const api = createMockApi({
+      detectAgents: vi.fn().mockResolvedValue(detection),
+      discoverModels: vi.fn().mockResolvedValue({
+        ...discovery,
+        existing: {
+          model_config: configuredFable,
+          unavailable_models: {},
+          drifted_agents: [],
+        },
+      }),
+      previewAgents: vi.fn().mockResolvedValue(normalizedPreview),
+      writeAgents: vi
+        .fn()
+        .mockResolvedValue({ transaction_id: "tx", agents: [] }),
+    });
+    await reachCredential(api);
+    fireEvent.change(screen.getByLabelText(/API (?:key|密钥)/), {
+      target: { value: "normalized-write-secret" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: /发现模型|Discover models/ }),
+    );
+    await screen.findByDisplayValue("Before normalization");
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /生成写入预览|Generate write preview/,
+      }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: /写入所选 Agent|Write selected Agents/,
+      }),
+    );
+    await waitFor(() => expect(api.writeAgents).toHaveBeenCalledTimes(1));
+    expect(api.writeAgents).toHaveBeenCalledWith(
+      ["claude", "opencode", "codex"],
+      discovery.flow_id,
+      discovery.catalog_token,
+      normalized,
+      normalizedPreview.revision_token,
+      false,
+      false,
+    );
+  });
+
   it("keeps labels, stage status, alerts, and controls accessible at a narrow viewport", async () => {
     Object.defineProperty(window, "innerWidth", {
       configurable: true,
@@ -666,6 +945,7 @@ describe("Agent model workbench", () => {
     ).toBeVisible();
     expect(screen.getByLabelText(/当前步骤|Current stage/)).toBeInTheDocument();
     expect(screen.getByLabelText(/^主模型$|^Primary model$/)).toBeVisible();
+    expect(screen.getByLabelText(/启用 Fable|Enable Fable/)).toBeVisible();
     expect(
       screen.getByRole("button", {
         name: /生成写入预览|Generate write preview/,

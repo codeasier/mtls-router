@@ -67,7 +67,23 @@ Release 可以向 manager 注入一份不可变、无 key 的规范 preset。Man
 
 ### Claude Code
 
-`primary` 必填。`haiku`、`sonnet` 和 `opus` 各自继承 primary selection，或明确选择另一个目录模型。每个显式选择都可包含可选显示 `name` 和可选 `context`。省略 `context` 表示 Claude 的 standard/default 行为；唯一允许的值是精确字符串 `"1m"`。规范 `model` 始终是已认证 base ID，不得以 `[1m]` 结尾。继承角色只能包含 `{"inherit_primary":true}`，并同时继承 model、name 和 context。`extra` 是字符串 map，仅允许以下 description key：
+`primary` 必填。`haiku`、`sonnet` 和 `opus` 各自继承 primary selection，或明确选择另一个目录模型。可选 `fable` 存在时使用相同的继承或显式选择 union；省略表示 Fable 已禁用且不受管理，decoder 和客户端不会隐式合成该字段。每个显式选择都可包含可选显示 `name` 和可选 `context`。省略 `context` 表示 Claude 的 standard/default 行为；唯一允许的值是精确字符串 `"1m"`。规范 `model` 始终是已认证 base ID，不得以 `[1m]` 结尾。继承角色只能包含 `{"inherit_primary":true}`，并同时继承 model、name 和 context。
+
+例如，启用的 Fable 可以是：
+
+```json
+{"inherit_primary": true}
+```
+
+也可以是显式选择：
+
+```json
+{"model": "model-a", "name": "可选显示名称", "context": "1m"}
+```
+
+Fable 没有 description key。其显式模型必须存在于认证目录；显式 Fable `context: "1m"` 与数值 `context_window` 冲突，规则与其他 Claude 显式选择相同。
+
+`extra` 是字符串 map，仅允许以下 description key：
 
 - `ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION`
 - `ANTHROPIC_DEFAULT_HAIKU_MODEL_DESCRIPTION`
@@ -78,9 +94,15 @@ Claude section 还可包含彼此独立可选的 `context_window` 和 `max_outpu
 
 Manager 只拥有文档声明的 `env` key，将它们合并到现有 `env`，并保留无关顶层和环境值。所有权包括两个数值预算环境 key：省略之前由 manager 管理的字段时，会移除其旧值。只有当已有文件中的这些值是规范的正十进制字符串，且生成的 Claude section 满足相同预算与 context 规则时，才会将其投影回规范配置。
 
-Standard context 下，manager 原样渲染 base ID。使用 `context: "1m"` 时，仅在 Claude 文件渲染边界为 `ANTHROPIC_MODEL`、`ANTHROPIC_CUSTOM_MODEL_OPTION` 以及有效 Haiku、Sonnet、Opus 模型值追加一个精确的末尾 `[1m]`。显示名称保持不变，manager 不写入 `CLAUDE_CODE_DISABLE_1M_CONTEXT`。已有值带一个精确末尾 `[1m]` 时，会投影回 base ID 加规范 context；错误、重复或位于中间的 marker 不会被修复。目录与写入时可用性校验始终使用 base ID。配置阶段不会推断模型是否支持 1M context；运行时拒绝不会触发模型 fallback 或配置重写。
+Standard context 下，manager 原样渲染 base ID。使用 `context: "1m"` 时，仅在 Claude 文件渲染边界为 `ANTHROPIC_MODEL`、`ANTHROPIC_CUSTOM_MODEL_OPTION` 以及有效 Haiku、Sonnet、Opus 和已启用 Fable 模型值追加一个精确的末尾 `[1m]`。显示名称保持不变，manager 不写入 `CLAUDE_CODE_DISABLE_1M_CONTEXT`。已有值带一个精确末尾 `[1m]` 时，会投影回 base ID 加规范 context；错误、重复或位于中间的 marker 不会被修复。目录与写入时可用性校验始终使用 base ID。配置阶段不会推断模型是否支持 1M context；运行时拒绝不会触发模型 fallback 或配置重写。
 
-从 Claude Code 2.1.193 开始，数值 `context_window` override 可直接作用于未知 custom model 名称。更早版本仍受支持，但可能忽略该 override；系统不设置 Claude Code 硬性最低版本。这些数值只控制 Claude Code 本地 token budgeting 与 compaction 行为，不会扩大、证明或以其他方式改变上游模型的实际 context 或 output capability。
+启用 Fable 时，manager 始终渲染 `ANTHROPIC_DEFAULT_FABLE_MODEL`；只有继承或显式选择的有效结果包含名称时，才渲染 `ANTHROPIC_DEFAULT_FABLE_MODEL_NAME`。Fable model key 同时是投影启用信号：只有 name key 不会启用或投影 Fable。已有的已启用 Fable 只有在 model、name 和 context 都与 primary 精确相同时才投影为继承，否则保持显式选择。已启用 Fable 数据 malformed 或与数值 context 冲突时，整个 existing Claude section 都不可用。`configured=true` 仍不要求 Fable，因此 legacy Claude 文件不会变为不完整。
+
+Claude 是可用性与初始化的原子单位。如果 preset 或已投影 existing 配置中启用的 Fable 模型不可用或无效，整个 Claude section 都不可用；绝不会单独删除、修复、替换或合并 Fable。OpenCode 与 Codex section 仍可独立使用。同样，`existing > preset > empty` 只会选择一个完整 Claude section：如果 existing Claude section 省略 Fable，绝不会把 preset Fable deep-merge 进去。
+
+Fable 所有权是有条件且基于精确路径的。启用时，manager 拥有已渲染的 Fable model 路径，以及实际渲染时的 name 路径。省略时不认领这两个路径，并保留从未由 manager 所有的手工 Fable 值。如果先前 sidecar 能证明某个 Fable 路径由 manager 所有，禁用 Fable 会在同一个可恢复事务中删除该 stale 路径，同时保留无关环境值。在已有未托管值上启用 Fable 会产生 collision/drift，必须经过绑定预览的批准，绝不会静默覆盖。Sidecar 存储完整规范 Claude section，并且只在 Fable 路径实际受管理时记录当前路径。
+
+启用的 Fable alias 要求 Claude Code 2.1.170 或更高版本。更早版本可能忽略 `ANTHROPIC_DEFAULT_FABLE_MODEL`；应禁用 Fable 或升级 Claude Code，而不能期待 manager fallback。该 alias 要求与数值 context 兼容性相互独立：从 Claude Code 2.1.193 开始，数值 `context_window` override 可直接作用于未知 custom model 名称。更早版本仍受支持，但可能忽略该数值 override；Fable 禁用时系统不设置 Claude Code 硬性最低版本。这些数值只控制 Claude Code 本地 token budgeting 与 compaction 行为，不会扩大、证明或以其他方式改变上游模型的实际 context 或 output capability。
 
 ### opencode
 

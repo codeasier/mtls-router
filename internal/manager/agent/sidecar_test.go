@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/codeasier/mtls-router/internal/manager/agent/modelconfig"
 )
 
 func TestSidecarIsCanonicalPrivateAndPreservesUnselectedAgents(t *testing.T) {
@@ -136,6 +138,86 @@ func TestClaudeBudgetOwnershipFollowsTypedConfiguration(t *testing.T) {
 	content = readString(t, path)
 	if strings.Contains(content, "CLAUDE_CODE_MAX_CONTEXT_TOKENS") || strings.Contains(content, "CLAUDE_CODE_MAX_OUTPUT_TOKENS") {
 		t.Fatalf("previously owned omitted budgets survived: %s", content)
+	}
+}
+
+func TestClaudeFableOwnershipFollowsOptionalConfiguration(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".claude", "settings.json")
+	writeFile(t, path, `{"theme":"dark","env":{"ANTHROPIC_DEFAULT_FABLE_MODEL":"manual","ANTHROPIC_DEFAULT_FABLE_MODEL_NAME":"Manual","UNRELATED":"keep"}}`)
+	input := legacyTestRenderInput()
+	service, err := NewService(Options{
+		StateDir: filepath.Join(home, "state"), Detector: testServiceDetector(home, map[string]bool{"claude": true}, nil), LegacyRenderInput: input,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, err := service.Preview(context.Background(), []Kind{ClaudeCode})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.ManagedConfigDrift {
+		t.Fatalf("disabled manual Fable reported as collision: %#v", preview.ManagedCollisions)
+	}
+	writeV2Legacy(t, service, []Kind{ClaudeCode})
+	content := readString(t, path)
+	root, _ := decodeObject([]byte(content))
+	env, _ := decodeObject(root["env"])
+	if jsonString(t, env["ANTHROPIC_DEFAULT_FABLE_MODEL"]) != "manual" || jsonString(t, env["UNRELATED"]) != "keep" {
+		t.Fatalf("disabled Fable changed manual values: %s", content)
+	}
+
+	fableName := "Managed Fable"
+	input.Config.Claude.Fable = &modelconfig.ClaudeRole{Selection: &modelconfig.Model{Model: "model-sonnet", Name: &fableName}}
+	preview, err = service.Preview(context.Background(), []Kind{ClaudeCode})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !preview.ManagedConfigDrift || len(preview.ManagedCollisions) != 2 || preview.ManagedCollisions[0].Path != "/env/ANTHROPIC_DEFAULT_FABLE_MODEL" || preview.ManagedCollisions[1].Path != "/env/ANTHROPIC_DEFAULT_FABLE_MODEL_NAME" {
+		t.Fatalf("enabled Fable collision = %#v", preview)
+	}
+	_, err = service.Write(context.Background(), WriteRequest{
+		Agents: []Kind{ClaudeCode}, RevisionToken: preview.RevisionToken, APIKey: testAPIKey, ApproveManagedOverwrite: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, _, _, _, err := service.readSidecar()
+	if err != nil {
+		t.Fatal(err)
+	}
+	owned := strings.Join(state.Agents[ClaudeCode].OwnedPaths, ",")
+	if !strings.Contains(owned, "env.ANTHROPIC_DEFAULT_FABLE_MODEL") || !strings.Contains(owned, "env.ANTHROPIC_DEFAULT_FABLE_MODEL_NAME") {
+		t.Fatalf("Fable paths not owned: %s", owned)
+	}
+	content = readString(t, path)
+	root, _ = decodeObject([]byte(content))
+	env, _ = decodeObject(root["env"])
+	if jsonString(t, env["ANTHROPIC_DEFAULT_FABLE_MODEL"]) != "model-sonnet" || jsonString(t, env["ANTHROPIC_DEFAULT_FABLE_MODEL_NAME"]) != fableName || jsonString(t, env["UNRELATED"]) != "keep" {
+		t.Fatalf("enabled Fable write = %s", content)
+	}
+
+	input.Config.Claude.Fable = &modelconfig.ClaudeRole{Selection: &modelconfig.Model{Model: "model-sonnet"}}
+	writeV2Legacy(t, service, []Kind{ClaudeCode})
+	content = readString(t, path)
+	root, _ = decodeObject([]byte(content))
+	env, _ = decodeObject(root["env"])
+	if env["ANTHROPIC_DEFAULT_FABLE_MODEL_NAME"] != nil || jsonString(t, env["ANTHROPIC_DEFAULT_FABLE_MODEL"]) != "model-sonnet" {
+		t.Fatalf("named-to-nameless Fable left stale name: %s", content)
+	}
+
+	input.Config.Claude.Fable = nil
+	writeV2Legacy(t, service, []Kind{ClaudeCode})
+	state, _, _, _, err = service.readSidecar()
+	if err != nil {
+		t.Fatal(err)
+	}
+	owned = strings.Join(state.Agents[ClaudeCode].OwnedPaths, ",")
+	content = readString(t, path)
+	root, _ = decodeObject([]byte(content))
+	env, _ = decodeObject(root["env"])
+	if strings.Contains(owned, "FABLE") || env["ANTHROPIC_DEFAULT_FABLE_MODEL"] != nil || env["ANTHROPIC_DEFAULT_FABLE_MODEL_NAME"] != nil || jsonString(t, env["UNRELATED"]) != "keep" || jsonString(t, root["theme"]) != "dark" {
+		t.Fatalf("disabled stale cleanup split ownership or data: owned=%s content=%s", owned, content)
 	}
 }
 

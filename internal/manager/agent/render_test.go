@@ -125,6 +125,7 @@ func TestClaudeContextRenderingUsesEffectiveSelections(t *testing.T) {
 	haikuName := "Haiku standard"
 	config := &modelconfig.ClaudeConfig{
 		Primary: modelconfig.Model{Model: "primary", Name: &primaryName, Context: &oneMillion},
+		Fable:   &modelconfig.ClaudeRole{InheritPrimary: true},
 		Haiku:   modelconfig.ClaudeRole{Selection: &modelconfig.Model{Model: "haiku", Name: &haikuName}},
 		Sonnet:  modelconfig.ClaudeRole{InheritPrimary: true},
 		Opus:    modelconfig.ClaudeRole{Selection: &modelconfig.Model{Model: "opus", Context: &oneMillion}},
@@ -139,6 +140,8 @@ func TestClaudeContextRenderingUsesEffectiveSelections(t *testing.T) {
 		"ANTHROPIC_DEFAULT_SONNET_MODEL":      "primary[1m]",
 		"ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": primaryName,
 		"ANTHROPIC_DEFAULT_OPUS_MODEL":        "opus[1m]",
+		"ANTHROPIC_DEFAULT_FABLE_MODEL":       "primary[1m]",
+		"ANTHROPIC_DEFAULT_FABLE_MODEL_NAME":  primaryName,
 	} {
 		if env[key] != want {
 			t.Errorf("%s = %q, want %q", key, env[key], want)
@@ -146,6 +149,39 @@ func TestClaudeContextRenderingUsesEffectiveSelections(t *testing.T) {
 	}
 	if _, present := env["CLAUDE_CODE_DISABLE_1M_CONTEXT"]; present {
 		t.Fatal("managed CLAUDE_CODE_DISABLE_1M_CONTEXT")
+	}
+}
+
+func TestClaudeFableOwnershipAndDisabledManualPreservation(t *testing.T) {
+	config := legacyTestRenderInput().Config.Claude
+	root, _ := decodeObject([]byte(`{"env":{"ANTHROPIC_DEFAULT_FABLE_MODEL":"manual","ANTHROPIC_DEFAULT_FABLE_MODEL_NAME":"Manual","UNRELATED":"keep"}}`))
+	content, err := mergeClaude(root, config, "http://127.0.0.1:19099", "key", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	merged, _ := decodeObject(content)
+	env, _ := decodeObject(merged["env"])
+	if jsonString(t, env["ANTHROPIC_DEFAULT_FABLE_MODEL"]) != "manual" || jsonString(t, env["UNRELATED"]) != "keep" {
+		t.Fatalf("disabled Fable changed manual values: %s", content)
+	}
+
+	config.Fable = &modelconfig.ClaudeRole{Selection: &modelconfig.Model{Model: "managed"}}
+	owned := claudeOwnedEnvKeys(config)
+	ownedSet := make(map[string]bool, len(owned))
+	for _, key := range owned {
+		ownedSet[key] = true
+	}
+	if !ownedSet["ANTHROPIC_DEFAULT_FABLE_MODEL"] || !ownedSet["ANTHROPIC_DEFAULT_FABLE_MODEL_NAME"] {
+		t.Fatalf("enabled Fable ownership = %#v", owned)
+	}
+	content, err = mergeClaude(root, config, "http://127.0.0.1:19099", "key", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	merged, _ = decodeObject(content)
+	env, _ = decodeObject(merged["env"])
+	if jsonString(t, env["ANTHROPIC_DEFAULT_FABLE_MODEL"]) != "managed" {
+		t.Fatalf("enabled Fable not rendered: %s", content)
 	}
 }
 

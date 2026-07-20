@@ -23,3 +23,7 @@
 /desktop/src-tauri/gen/
 /desktop/src-tauri/target/
 /desktop/release-artifacts/
+
+# Local implementation planning
+/docs/superpowers/
+/specs/

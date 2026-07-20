@@ -507,12 +507,14 @@ export function AgentPage({ api }: { api: DesktopApi }) {
     if (config.claude && !config.claude.primary.model)
       return "/claude/primary/model: required";
     if (config.claude) {
-      for (const role of roleNames)
-        if (
-          !("inherit_primary" in config.claude[role]) &&
-          !config.claude[role].model
-        )
+      for (const role of [
+        ...roleNames,
+        ...(config.claude.fable ? ["fable" as const] : []),
+      ]) {
+        const selection = config.claude[role];
+        if (selection && !("inherit_primary" in selection) && !selection.model)
           return `/claude/${role}/model: required`;
+      }
     }
     if (
       config.opencode &&
@@ -942,6 +944,58 @@ export function AgentPage({ api }: { api: DesktopApi }) {
                     )}
                   </div>
                 ))}
+                <div className="role-row">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(config.claude.fable)}
+                      onChange={(event) => {
+                        const claude = { ...config.claude! };
+                        if (event.target.checked)
+                          claude.fable = { inherit_primary: true };
+                        else delete claude.fable;
+                        setConfig({ ...config, claude });
+                      }}
+                    />
+                    {t("agents.enableFable")}
+                  </label>
+                  {config.claude.fable && (
+                    <div className="optional-role-editor">
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={"inherit_primary" in config.claude.fable}
+                          onChange={(event) =>
+                            setConfig({
+                              ...config,
+                              claude: {
+                                ...config.claude!,
+                                fable: event.target.checked
+                                  ? { inherit_primary: true }
+                                  : { model: "" },
+                              },
+                            })
+                          }
+                        />
+                        {t("agents.inheritPrimary", { role: "fable" })}
+                      </label>
+                      {!("inherit_primary" in config.claude.fable) && (
+                        <ClaudeSelectionFields
+                          id="claude-fable"
+                          selection={config.claude.fable}
+                          models={discovery.models}
+                          modelLabel={t("agents.roleModel", { role: "fable" })}
+                          onChange={(fable) =>
+                            setConfig({
+                              ...config,
+                              claude: { ...config.claude!, fable },
+                            })
+                          }
+                        />
+                      )}
+                    </div>
+                  )}
+                </div>
                 <ExtraEditor
                   agent="claude"
                   value={extras.claude}

@@ -203,7 +203,7 @@ Windows PowerShell：
 
 `mtls-router` 二进制本身只管理 router，不提供 `print-config` 这类 agent 配置命令。
 
-- Claude Code 只把受管理的 `env` key 合并到 `~/.claude/settings.json` 或 `$CLAUDE_CONFIG_DIR/settings.json`，并支持主模型及可继承的 Haiku、Sonnet、Opus 选择。每个显式选择都可设置显示名称和可选规范字段 `context: "1m"`；manager 始终以认证目录中的 base model ID 作为规范身份，只在渲染 Claude 模型环境变量时追加 `[1m]`。它不会推断 1M 能力；如果 Claude 或上游在运行时拒绝，也不会 fallback。
+- Claude Code 只把受管理的 `env` key 合并到 `~/.claude/settings.json` 或 `$CLAUDE_CONFIG_DIR/settings.json`，并支持主模型及可继承的 Haiku、Sonnet、Opus 选择。Fable 是可选的：启用后可继承 primary，或显式选择模型、显示名称及 Standard/1M context；省略时不会隐式添加或管理。启用 Fable 会渲染 `ANTHROPIC_DEFAULT_FABLE_MODEL`，设置名称时还会渲染 `ANTHROPIC_DEFAULT_FABLE_MODEL_NAME`。Claude preset 与 existing 初始化始终以完整 section 为原子单位，因此绝不会把 preset Fable 合并进已有 Claude section。Fable 禁用时，manager 会保留从未取得所有权的手工 Fable key，只删除 sidecar 能证明之前由 manager 所有的 stale Fable 路径；认领已有未托管值前必须经过 collision/drift 批准。Fable alias 要求 Claude Code 2.1.170 或更高版本。与此独立，数值 custom-model context override 从 Claude Code 2.1.193 起可直接作用于未知模型名称；更早版本可能忽略这些数值 override。每个显式选择都可设置显示名称和可选规范字段 `context: "1m"`；manager 始终以认证目录中的 base model ID 作为规范身份，只在渲染 Claude 模型环境变量时追加 `[1m]`。它不会推断 1M 能力；如果 Claude 或上游在运行时拒绝，也不会 fallback。
 - opencode 会把精确选择的目录子集写入 `provider.mtls-router`，并写入由 manager 拥有的根默认模型。不设置显式 `OPENCODE_CONFIG` 时，已有的标准 `~/.config/opencode/opencode.jsonc` 会迁移到同目录的 `opencode.json`；显式指定 `.jsonc` 覆盖路径时，则会在该精确路径原地规范化。两种操作都会丢失注释和格式。
 - Codex 会把专用 `[model_providers.mtls-router]` Responses provider 和选中的 typed model setting 写入 `~/.codex/config.toml`，遵循 `CODEX_HOME`。把 CLI/IDE 共享认证切换为官方 file-backed API-key 模式需要单独预览批准。
 

@@ -861,7 +861,44 @@ func (s *Service) previewForPlan(plan writePlan) (Preview, error) {
 	if err != nil {
 		return Preview{}, err
 	}
-	preview := Preview{RevisionToken: token, Agents: make([]AgentPreview, 0, len(plan.selected))}
+	states, err := s.detector.targetStates()
+	if err != nil {
+		return Preview{}, operationError(CodeConfigInvalid, "Agent target paths are unavailable")
+	}
+	fragmentInput := plan.input
+	fragmentInput.key = RedactedAPIKey
+	fragments, err := renderFragments(plan.selected, states, fragmentInput)
+	if err != nil {
+		return Preview{}, err
+	}
+	stateOperation := OperationCreate
+	if plan.sidecarRevision.Exists {
+		stateOperation = OperationReplace
+	}
+	preview := Preview{
+		RevisionToken:             token,
+		Agents:                    make([]AgentPreview, 0, len(plan.selected)),
+		ModelConfig:               append(json.RawMessage(nil), plan.canonical...),
+		Fragments:                 fragments,
+		ManagedConfigDrift:        len(plan.drifted) != 0,
+		DriftedAgents:             append([]Kind(nil), plan.drifted...),
+		ManagedCollisions:         append([]ManagedCollision(nil), plan.collisions...),
+		RequiresCodexAuthApproval: plan.requiresCodexAuthApproval,
+		StateChange: &FilePreview{
+			Path:       s.sidecarPath(),
+			Format:     FormatJSON,
+			Operation:  stateOperation,
+			Operations: []Operation{stateOperation},
+			Backup: BackupPlan{
+				Required:  plan.sidecarRevision.Exists,
+				Sensitive: plan.sidecarRevision.Exists,
+			},
+		},
+	}
+	if preview.StateChange.Backup.Required {
+		preview.StateChange.Backup.Pattern = s.sidecarPath() + ".bak-<timestamp>-<random>"
+		preview.StateChange.Backup.Warning = backupWarning
+	}
 	for _, kind := range plan.selected {
 		agentPreview := AgentPreview{Agent: kind, Name: agentName(kind)}
 		for _, file := range plan.files {

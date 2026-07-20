@@ -244,6 +244,7 @@ export const zhCN = {
   "agents.defaultModel": "默认模型",
   "agents.chooseModel": "明确选择模型",
   "agents.inheritPrimary": "{role} 继承主模型",
+  "agents.enableFable": "启用 Fable",
   "agents.advancedExtra": "高级受限 extra",
   "agents.extraJson": "{agent} extra JSON 对象",
   "agents.formatJson": "格式化 JSON",

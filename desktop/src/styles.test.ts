@@ -1,0 +1,131 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+import { describe, expect, it } from "vitest";
+
+const css = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
+
+function compact(value: string) {
+  return value.replace(/\s+/g, " ");
+}
+
+function extractBlock(value: string, header: RegExp, description: string) {
+  const match = header.exec(value);
+  if (!match) throw new Error(`Missing ${description} block`);
+
+  const openingBrace = match.index + match[0].lastIndexOf("{");
+  let depth = 1;
+  for (let index = openingBrace + 1; index < value.length; index += 1) {
+    if (value[index] === "{") depth += 1;
+    if (value[index] === "}") depth -= 1;
+    if (depth === 0) return value.slice(openingBrace + 1, index);
+  }
+
+  throw new Error(`Unclosed ${description} block`);
+}
+
+function extractContainerBlock(
+  value: string,
+  threshold: number,
+  name?: string,
+) {
+  const escapedName = name?.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return extractBlock(
+    value,
+    new RegExp(
+      `@container\\s+${escapedName ? `${escapedName}\\s+` : ""}\\(\\s*max-width\\s*:\\s*${threshold}px\\s*\\)\\s*\\{`,
+    ),
+    `@container max-width: ${threshold}px`,
+  );
+}
+
+function extractUnsupportedContainerFallback(value: string) {
+  return extractBlock(
+    value,
+    /@supports\s+not\s*\(\s*container-type\s*:\s*inline-size\s*\)\s*\{/,
+    "unsupported container fallback",
+  );
+}
+
+function extractMediaBlock(value: string, threshold: number) {
+  return extractBlock(
+    value,
+    new RegExp(
+      `@media\\s*\\(\\s*max-width\\s*:\\s*${threshold}px\\s*\\)\\s*\\{`,
+    ),
+    `@media max-width: ${threshold}px`,
+  );
+}
+
+function findRuleDeclarations(value: string, selector: string) {
+  const normalizeSelector = (item: string) =>
+    compact(item)
+      .trim()
+      .replace(/\s*([>+~])\s*/g, "$1");
+  const normalizedSelector = normalizeSelector(selector);
+  const rules = value.matchAll(/([^{}]+)\{([^{}]*)\}/g);
+
+  for (const rule of rules) {
+    const selectors = rule[1].split(",").map(normalizeSelector);
+    if (selectors.includes(normalizedSelector)) return rule[2];
+  }
+
+  throw new Error(`Missing CSS rule for selector: ${selector}`);
+}
+
+describe("responsive Claude role layout", () => {
+  it("uses the model panel as an inline-size query container", () => {
+    expect(compact(css)).toMatch(
+      /\.model-agent-panel \{[^}]*container-type: inline-size;/,
+    );
+  });
+
+  it("stacks role controls at medium card widths", () => {
+    const medium = compact(extractContainerBlock(css, 760));
+    expect(medium).toMatch(/\.role-row\s*\{[^}]*align-items:\s*stretch;/);
+    expect(medium).toMatch(/\.role-row\s*\{[^}]*flex-direction:\s*column;/);
+    expect(medium).toMatch(
+      /\.role-row\s*>\s*label\s*\{[^}]*flex-basis:\s*auto;/,
+    );
+  });
+
+  it("stacks selection fields only at narrow card widths", () => {
+    const narrow = compact(extractContainerBlock(css, 560));
+    expect(narrow).toMatch(
+      /\.claude-selection-fields\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);/,
+    );
+  });
+
+  it("allows selection children to shrink inside the card", () => {
+    for (const selector of [
+      ".claude-selection-fields > *",
+      ".optional-role-editor",
+      ".context-selector",
+    ]) {
+      expect(compact(findRuleDeclarations(css, selector))).toMatch(
+        /(?:^|;)\s*min-width:\s*0\s*;/,
+      );
+    }
+  });
+
+  it("falls back to medium role stacking without container queries", () => {
+    const fallback = extractUnsupportedContainerFallback(css);
+    const medium = compact(extractMediaBlock(fallback, 1400));
+    expect(medium).toMatch(/\.role-row\s*\{[^}]*align-items:\s*stretch;/);
+    expect(medium).toMatch(/\.role-row\s*\{[^}]*flex-direction:\s*column;/);
+    expect(medium).toMatch(
+      /\.role-row\s*>\s*label\s*\{[^}]*flex-basis:\s*auto;/,
+    );
+    expect(medium).toMatch(
+      /\.claude-selection-fields\s*,\s*\.optional-role-editor\s*\{[^}]*width:\s*100%;/,
+    );
+  });
+
+  it("falls back to one-column fields at narrow legacy viewport widths", () => {
+    const fallback = extractUnsupportedContainerFallback(css);
+    const narrow = compact(extractMediaBlock(fallback, 1200));
+    expect(narrow).toMatch(
+      /\.claude-selection-fields\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);/,
+    );
+  });
+});

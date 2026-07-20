@@ -116,6 +116,7 @@ export interface ClaudeModelConfig {
   haiku: ClaudeRole;
   sonnet: ClaudeRole;
   opus: ClaudeRole;
+  fable?: ClaudeRole;
   context_window?: number;
   max_output_tokens?: number;
   extra?: Record<string, string>;

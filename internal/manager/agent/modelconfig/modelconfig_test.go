@@ -78,6 +78,8 @@ func TestDecodeRejectsInvalidDocuments(t *testing.T) {
 		{"Claude output exceeds context", `{"version":1,"claude":{"primary":{"model":"m"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true},"context_window":100,"max_output_tokens":101}}`, "integer_relationship", []Agent{Claude}, []string{"m"}},
 		{"Claude numeric and primary 1m", `{"version":1,"claude":{"primary":{"model":"m","context":"1m"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true},"context_window":100}}`, "context_conflict", []Agent{Claude}, []string{"m"}},
 		{"Claude numeric and role 1m", `{"version":1,"claude":{"primary":{"model":"m"},"haiku":{"inherit_primary":true},"sonnet":{"model":"m","context":"1m"},"opus":{"inherit_primary":true},"context_window":100}}`, "context_conflict", []Agent{Claude}, []string{"m"}},
+		{"Claude Fable unavailable", `{"version":1,"claude":{"primary":{"model":"m"},"fable":{"model":"missing"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true}}}`, "catalog", []Agent{Claude}, []string{"m"}},
+		{"Claude numeric and Fable 1m", `{"version":1,"claude":{"primary":{"model":"m"},"fable":{"model":"m","context":"1m"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true},"context_window":100}}`, "context_conflict", []Agent{Claude}, []string{"m"}},
 		{"variant is not object", `{"version":1,"opencode":{"default_model":"m","models":{"m":{"variants":{"high":true}}}}}`, "object", []Agent{OpenCode}, []string{"m"}},
 		{"empty variant name", `{"version":1,"opencode":{"default_model":"m","models":{"m":{"variants":{"":{}}}}}}`, "key", []Agent{OpenCode}, []string{"m"}},
 		{"long variant name", `{"version":1,"opencode":{"default_model":"m","models":{"m":{"variants":{"` + strings.Repeat("v", 129) + `":{}}}}}}`, "key", []Agent{OpenCode}, []string{"m"}},
@@ -221,12 +223,12 @@ func TestExtraAllowlistAndClaudeValidation(t *testing.T) {
 }
 
 func TestClaudeContextValidationAndOldV1Compatibility(t *testing.T) {
-	valid := `{"version":1,"claude":{"primary":{"model":"m","context":"1m"},"haiku":{"inherit_primary":true},"sonnet":{"model":"m","name":"Standard"},"opus":{"model":"m","context":"1m"}}}`
+	valid := `{"version":1,"claude":{"primary":{"model":"m","context":"1m"},"fable":{"model":"m","name":"Fable","context":"1m"},"haiku":{"inherit_primary":true},"sonnet":{"model":"m","name":"Standard"},"opus":{"model":"m","context":"1m"}}}`
 	config, err := Decode([]byte(valid), []Agent{Claude}, []string{"m"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.Claude.Primary.Context == nil || *config.Claude.Primary.Context != ClaudeContext1M || config.Claude.Sonnet.Selection.Context != nil || config.Claude.Opus.Selection.Context == nil {
+	if config.Claude.Primary.Context == nil || *config.Claude.Primary.Context != ClaudeContext1M || config.Claude.Fable == nil || config.Claude.Fable.Selection == nil || config.Claude.Fable.Selection.Context == nil || config.Claude.Sonnet.Selection.Context != nil || config.Claude.Opus.Selection.Context == nil {
 		t.Fatalf("contexts = %#v", config.Claude)
 	}
 
@@ -235,8 +237,12 @@ func TestClaudeContextValidationAndOldV1Compatibility(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if oldConfig.Claude.Primary.Context != nil || oldConfig.Claude.Sonnet.Selection.Context != nil {
+	if oldConfig.Claude.Fable != nil || oldConfig.Claude.Primary.Context != nil || oldConfig.Claude.Sonnet.Selection.Context != nil {
 		t.Fatalf("old v1 gained context: %#v", oldConfig.Claude)
+	}
+	oldCanonical, err := Canonical(oldConfig)
+	if err != nil || bytes.Contains(oldCanonical, []byte(`"fable"`)) {
+		t.Fatalf("old v1 gained Fable: %s, %v", oldCanonical, err)
 	}
 
 	for _, test := range []struct {
@@ -413,6 +419,15 @@ func TestSchemaIsCheckedIn(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := generatedValue.(map[string]any)
+	claude := root["properties"].(map[string]any)["claude"].(map[string]any)
+	if _, ok := claude["properties"].(map[string]any)["fable"]; !ok {
+		t.Fatal("schema omits optional Claude Fable")
+	}
+	for _, required := range claude["required"].([]any) {
+		if required == "fable" {
+			t.Fatal("schema requires optional Claude Fable")
+		}
+	}
 	defs := root["$defs"].(map[string]any)
 	openCodeModel := defs["openCodeModel"].(map[string]any)
 	properties := openCodeModel["properties"].(map[string]any)
