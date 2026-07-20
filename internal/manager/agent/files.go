@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -9,6 +10,18 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+)
+
+type backupStage string
+
+const (
+	backupStagePermission backupStage = "permission"
+	backupStageWrite      backupStage = "write"
+	backupStageSync       backupStage = "sync"
+	backupStageReopen     backupStage = "reopen"
+	backupStageRead       backupStage = "read"
+	backupStageIdentity   backupStage = "identity"
+	backupStageContent    backupStage = "content"
 )
 
 type postReplaceError struct{ err error }
@@ -22,6 +35,10 @@ func replacementOccurred(err error) bool {
 }
 
 func createPrivateBackup(sourcePath string, content []byte, sourceMode os.FileMode, label string) (string, error) {
+	return createPrivateBackupWithHook(sourcePath, content, sourceMode, label, nil)
+}
+
+func createPrivateBackupWithHook(sourcePath string, content []byte, sourceMode os.FileMode, label string, hook func(backupStage, string) error) (string, error) {
 	dir := filepath.Dir(sourcePath)
 	base := filepath.Base(sourcePath)
 	for attempts := 0; attempts < 16; attempts++ {
@@ -39,34 +56,101 @@ func createPrivateBackup(sourcePath string, content []byte, sourceMode os.FileMo
 			return "", err
 		}
 		ok := false
-		defer func() {
+		cleanup := func() error {
+			file.Close()
 			if !ok {
-				file.Close()
-				os.Remove(path)
+				return removeAndSync(path)
 			}
-		}()
+			return nil
+		}
+		fail := func(cause error) (string, error) {
+			if cleanupErr := cleanup(); cleanupErr != nil {
+				return path, errors.Join(cause, cleanupErr)
+			}
+			return "", cause
+		}
+		if err := runBackupHook(hook, backupStagePermission, path); err != nil {
+			return fail(err)
+		}
 		if err := restrictPrivate(path, false); err != nil {
-			return "", err
+			return fail(err)
+		}
+		if err := runBackupHook(hook, backupStageWrite, path); err != nil {
+			return fail(err)
 		}
 		if _, err := file.Write(content); err != nil {
-			return "", err
+			return fail(err)
+		}
+		if err := runBackupHook(hook, backupStageSync, path); err != nil {
+			return fail(err)
 		}
 		if err := file.Sync(); err != nil {
-			return "", err
+			return fail(err)
 		}
 		if err := file.Close(); err != nil {
-			return "", err
+			return fail(err)
 		}
 		if err := applyPrivateMode(path, sourceMode); err != nil {
-			return "", err
+			return fail(err)
+		}
+		if err := verifyPrivateBackup(path, content, hook); err != nil {
+			return fail(err)
 		}
 		if err := syncDirectory(dir); err != nil {
-			return "", err
+			return fail(err)
 		}
 		ok = true
+		_ = cleanup()
 		return path, nil
 	}
 	return "", errors.New("could not allocate unique backup path")
+}
+
+func verifyPrivateBackup(path string, expected []byte, hook func(backupStage, string) error) error {
+	before, err := os.Lstat(path)
+	if err != nil || isFinalComponentLink(path, before) || !before.Mode().IsRegular() {
+		return errors.New("backup identity is unsafe")
+	}
+	if err := runBackupHook(hook, backupStageReopen, path); err != nil {
+		return err
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	after, err := file.Stat()
+	if err != nil || !after.Mode().IsRegular() || !os.SameFile(before, after) {
+		return errors.New("backup identity changed")
+	}
+	if err := runBackupHook(hook, backupStageIdentity, path); err != nil {
+		return err
+	}
+	pathAfter, err := os.Lstat(path)
+	if err != nil || isFinalComponentLink(path, pathAfter) || !pathAfter.Mode().IsRegular() || !os.SameFile(after, pathAfter) {
+		return errors.New("backup path identity changed")
+	}
+	if err := runBackupHook(hook, backupStageRead, path); err != nil {
+		return err
+	}
+	content, err := io.ReadAll(io.LimitReader(file, maxConfigSize+1))
+	if err != nil || len(content) > maxConfigSize {
+		return errors.New("backup read-back failed")
+	}
+	if err := runBackupHook(hook, backupStageContent, path); err != nil {
+		return err
+	}
+	if !bytes.Equal(content, expected) {
+		return errors.New("backup content mismatch")
+	}
+	return nil
+}
+
+func runBackupHook(hook func(backupStage, string) error, stage backupStage, path string) error {
+	if hook == nil {
+		return nil
+	}
+	return hook(stage, path)
 }
 
 func writeAtomic(path string, content []byte, mode os.FileMode, private bool) (err error) {

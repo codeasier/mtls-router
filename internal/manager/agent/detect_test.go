@@ -115,6 +115,70 @@ func TestDetectClaudeAcceptsUTF8BOM(t *testing.T) {
 	if !state.Exists || !state.Writable || !state.Configured || state.Invalid {
 		t.Fatalf("BOM-prefixed Claude state = %#v", state)
 	}
+	if state.Recovery.Eligible || len(state.Recovery.Reasons) != 0 {
+		t.Fatalf("valid BOM-prefixed config recovery = %#v", state.Recovery)
+	}
+}
+
+func TestDetectClassifiesRecoveryEligibility(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".claude", "settings.json")
+	writeFile(t, path, `{"env":`)
+	state := mustDetect(t, testDetector(home, nil))[0]
+	if !state.Invalid || !state.Recovery.Eligible || !hasRecoveryReason(state.Recovery.Files[0].Reasons, RecoverySyntaxInvalid) {
+		t.Fatalf("syntax-invalid recovery = %#v", state)
+	}
+
+	writeFile(t, path, `[]`)
+	state = mustDetect(t, testDetector(home, nil))[0]
+	if !state.Invalid || state.Recovery.Eligible || !hasRecoveryReason(state.Recovery.Reasons, RecoveryUnsupportedStructure) {
+		t.Fatalf("unsupported recovery = %#v", state)
+	}
+
+	writeFile(t, path, `{"env":[]}`)
+	state = mustDetect(t, testDetector(home, nil))[0]
+	if !state.Invalid || state.Recovery.Eligible || !hasRecoveryReason(state.Recovery.Reasons, RecoveryUnsupportedStructure) {
+		t.Fatalf("unsupported nested recovery = %#v", state)
+	}
+}
+
+func TestDetectRecoveryRejectsOversizedNonRegularAndLinkedTargets(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, make([]byte, maxConfigSize+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state := mustDetect(t, testDetector(home, nil))[0]
+	if state.Recovery.Eligible || !hasRecoveryReason(state.Recovery.Reasons, RecoveryOversized) {
+		t.Fatalf("oversized recovery = %#v", state.Recovery)
+	}
+
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	state = mustDetect(t, testDetector(home, nil))[0]
+	if state.Recovery.Eligible || !hasRecoveryReason(state.Recovery.Reasons, RecoveryNonRegular) {
+		t.Fatalf("non-regular recovery = %#v", state.Recovery)
+	}
+
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(home, "target.json")
+	writeFile(t, target, `{"env":`)
+	if err := os.Symlink(target, path); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	state = mustDetect(t, testDetector(home, nil))[0]
+	if state.Recovery.Eligible || !hasRecoveryReason(state.Recovery.Reasons, RecoveryLinked) {
+		t.Fatalf("linked recovery = %#v", state.Recovery)
+	}
 }
 
 func TestDetectOpenCodeJSONCConfiguredAndProviderInvalid(t *testing.T) {
@@ -234,6 +298,33 @@ trust_level = "trusted"
 	if !state.Exists || !state.Writable || !state.Configured || state.Invalid {
 		t.Fatalf("Codex state with quoted dotted key = %#v", state)
 	}
+	if state.Recovery.Eligible || len(state.Recovery.Files) != 2 || state.Recovery.Files[0].Role != "config" || state.Recovery.Files[1].Role != "auth" {
+		t.Fatalf("valid Codex recovery = %#v", state.Recovery)
+	}
+}
+
+func TestDetectCodexRecoveryRequiresCompleteSafeFileSet(t *testing.T) {
+	home := t.TempDir()
+	codexHome := filepath.Join(home, ".codex")
+	configPath := filepath.Join(codexHome, "config.toml")
+	authPath := filepath.Join(codexHome, "auth.json")
+	writeFile(t, configPath, "model =\n")
+	writeFile(t, authPath, `{"OPENAI_API_KEY":"secret"}`)
+	state := mustDetect(t, testDetector(home, nil))[2]
+	if !state.Recovery.Eligible || len(state.Recovery.Files) != 2 || !hasRecoveryReason(state.Recovery.Files[0].Reasons, RecoverySyntaxInvalid) {
+		t.Fatalf("Codex complete recovery = %#v", state.Recovery)
+	}
+
+	if err := os.Remove(authPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(authPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	state = mustDetect(t, testDetector(home, nil))[2]
+	if state.Recovery.Eligible || !hasRecoveryReason(state.Recovery.Files[1].Reasons, RecoveryNonRegular) {
+		t.Fatalf("unsafe Codex companion recovery = %#v", state.Recovery)
+	}
 }
 
 func TestDetectCodexRejectsDuplicateTOMLKeys(t *testing.T) {
@@ -293,6 +384,15 @@ func mustDetect(t *testing.T, detector Detector) []State {
 		t.Fatal(err)
 	}
 	return states
+}
+
+func hasRecoveryReason(reasons []RecoveryReason, want RecoveryReason) bool {
+	for _, reason := range reasons {
+		if reason == want {
+			return true
+		}
+	}
+	return false
 }
 
 func writeFile(t *testing.T, path, content string) {

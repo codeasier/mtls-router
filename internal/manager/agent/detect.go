@@ -27,20 +27,55 @@ const (
 // State is the complete read-only detection result for one agent. It contains
 // metadata only; configuration values are deliberately not represented.
 type State struct {
-	Agent      Kind   `json:"agent"`
-	Name       string `json:"name"`
-	Detected   bool   `json:"detected"`
-	Command    string `json:"command,omitempty"`
-	Path       string `json:"path"`
-	AuthPath   string `json:"auth_path,omitempty"`
-	Format     Format `json:"format"`
-	Exists     bool   `json:"exists"`
-	Writable   bool   `json:"writable"`
-	Configured bool   `json:"configured"`
-	Invalid    bool   `json:"invalid"`
-	Migratable bool   `json:"migratable,omitempty"`
+	Agent      Kind          `json:"agent"`
+	Name       string        `json:"name"`
+	Detected   bool          `json:"detected"`
+	Command    string        `json:"command,omitempty"`
+	Path       string        `json:"path"`
+	AuthPath   string        `json:"auth_path,omitempty"`
+	Format     Format        `json:"format"`
+	Exists     bool          `json:"exists"`
+	Writable   bool          `json:"writable"`
+	Configured bool          `json:"configured"`
+	Invalid    bool          `json:"invalid"`
+	Migratable bool          `json:"migratable,omitempty"`
+	Recovery   RecoveryState `json:"recovery"`
 
 	pathOverridden bool
+}
+
+// RecoveryReason is a stable, content-free explanation of recovery state.
+type RecoveryReason string
+
+const (
+	RecoverySyntaxInvalid        RecoveryReason = "syntax_invalid"
+	RecoveryUnsupportedStructure RecoveryReason = "unsupported_structure"
+	RecoveryUnreadable           RecoveryReason = "unreadable"
+	RecoveryOversized            RecoveryReason = "oversized"
+	RecoveryNonRegular           RecoveryReason = "non_regular"
+	RecoveryLinked               RecoveryReason = "linked"
+	RecoveryNotWritable          RecoveryReason = "not_writable"
+	RecoveryParentUnavailable    RecoveryReason = "parent_unavailable"
+	RecoveryTransactionPending   RecoveryReason = "transaction_recovery_pending"
+	RecoveryWritesDisabled       RecoveryReason = "writes_disabled"
+)
+
+// RecoveryFileState describes one complete managed target without exposing its
+// contents, parser diagnostics, or credential-derived values.
+type RecoveryFileState struct {
+	Role    string           `json:"role"`
+	Path    string           `json:"path"`
+	Format  Format           `json:"format"`
+	Exists  bool             `json:"exists"`
+	Reasons []RecoveryReason `json:"reasons,omitempty"`
+}
+
+// RecoveryState is advisory. Preview and write must repeat all checks while
+// holding the Agent transaction lock.
+type RecoveryState struct {
+	Eligible bool                `json:"eligible"`
+	Reasons  []RecoveryReason    `json:"reasons,omitempty"`
+	Files    []RecoveryFileState `json:"files"`
 }
 
 // Detector permits deterministic environment and executable lookup in tests.
@@ -106,42 +141,61 @@ type jsonInspector func(map[string]json.RawMessage) (configured, invalid bool)
 
 func inspectJSONState(kind Kind, name string, detected bool, command string, paths Paths, format Format, inspect jsonInspector) State {
 	state := baseState(kind, name, detected, command, paths, format)
-	if !state.Exists {
+	file := &state.Recovery.Files[0]
+	if hasInvalidFileReason(file.Reasons) {
+		state.Invalid = true
+		finalizeRecovery(&state)
 		return state
 	}
-	content, err := readConfig(paths.ConfigPath)
+	if !state.Exists {
+		finalizeRecovery(&state)
+		return state
+	}
+	content, err := readRecoveryConfig(paths.ConfigPath)
 	if err != nil {
 		state.Invalid = true
+		file.Reasons = appendReason(file.Reasons, recoveryReadReason(err))
+		finalizeRecovery(&state)
 		return state
 	}
 	if format == FormatJSONC {
 		content, err = stripJSONC(content)
 		if err != nil {
 			state.Invalid = true
+			file.Reasons = appendReason(file.Reasons, RecoverySyntaxInvalid)
+			finalizeRecovery(&state)
 			return state
 		}
 	}
-	root, valid := decodeObject(content)
-	if !valid {
+	root, reason := decodeRecoveryObject(content)
+	if reason != "" {
 		state.Invalid = true
+		file.Reasons = appendReason(file.Reasons, reason)
+		finalizeRecovery(&state)
 		return state
 	}
 	state.Configured, state.Invalid = inspect(root)
+	if state.Invalid {
+		file.Reasons = appendReason(file.Reasons, RecoveryUnsupportedStructure)
+	}
+	finalizeRecovery(&state)
 	return state
 }
 
 func baseState(kind Kind, name string, detected bool, command string, paths Paths, format Format) State {
-	info, err := os.Stat(paths.ConfigPath)
-	exists := err == nil
-	invalid := exists && !info.Mode().IsRegular()
+	configFile := inspectRecoveryTarget("config", paths.ConfigPath, format)
+	exists := configFile.Exists
 	writable := pathWritable(paths.ConfigPath)
+	files := []RecoveryFileState{configFile}
 	if paths.AuthPath != "" {
 		writable = writable && pathWritable(paths.AuthPath)
+		files = append(files, inspectRecoveryTarget("auth", paths.AuthPath, FormatJSON))
 	}
 	return State{
 		Agent: kind, Name: name, Detected: detected, Command: command,
 		Path: paths.ConfigPath, AuthPath: paths.AuthPath, Format: format,
-		Exists: exists, Writable: writable, Invalid: invalid,
+		Exists: exists, Writable: writable,
+		Recovery: RecoveryState{Files: files},
 	}
 }
 
@@ -152,7 +206,7 @@ func inspectClaude(root map[string]json.RawMessage) (bool, bool) {
 	}
 	env, valid := decodeObject(envRaw)
 	if !valid {
-		return false, false
+		return false, true
 	}
 	base, ok := rawString(env["ANTHROPIC_BASE_URL"])
 	if !ok || !validRouterBaseURL(base) || !hasNonemptyJSONString(env["ANTHROPIC_AUTH_TOKEN"]) {
@@ -208,46 +262,55 @@ func inspectOpenCode(root map[string]json.RawMessage) (bool, bool) {
 
 func inspectCodex(detected bool, command string, paths Paths) State {
 	state := baseState(Codex, "Codex", detected, command, paths, FormatTOML)
-	if state.Invalid {
-		return state
-	}
+	configFile := &state.Recovery.Files[0]
+	authFile := &state.Recovery.Files[1]
 
 	authConfigured := false
-	if info, err := os.Stat(paths.AuthPath); err == nil {
-		if !info.Mode().IsRegular() {
-			state.Invalid = true
-			return state
-		}
-		authContent, err := readConfig(paths.AuthPath)
+	var authRoot map[string]json.RawMessage
+	if authFile.Exists && !hasBlockingFileReason(authFile.Reasons) {
+		authContent, err := readRecoveryConfig(paths.AuthPath)
 		if err != nil {
 			state.Invalid = true
-			return state
+			authFile.Reasons = appendReason(authFile.Reasons, recoveryReadReason(err))
+		} else {
+			var reason RecoveryReason
+			authRoot, reason = decodeRecoveryObject(authContent)
+			if reason != "" {
+				state.Invalid = true
+				authFile.Reasons = appendReason(authFile.Reasons, reason)
+			} else {
+				authConfigured = jsonStringEquals(authRoot["auth_mode"], "apikey") && hasNonemptyJSONString(authRoot["OPENAI_API_KEY"])
+			}
 		}
-		auth, valid := decodeObject(authContent)
-		if !valid {
-			state.Invalid = true
-			return state
-		}
-		authConfigured = jsonStringEquals(auth["auth_mode"], "apikey") && hasNonemptyJSONString(auth["OPENAI_API_KEY"])
 	}
 	if !state.Exists {
+		state.Invalid = state.Invalid || hasInvalidFileReason(configFile.Reasons) || hasInvalidFileReason(authFile.Reasons)
+		finalizeRecovery(&state)
+		return state
+	}
+	if hasBlockingFileReason(configFile.Reasons) {
+		state.Invalid = true
+		finalizeRecovery(&state)
 		return state
 	}
 
-	content, err := readConfig(paths.ConfigPath)
+	content, err := readRecoveryConfig(paths.ConfigPath)
 	if err != nil {
 		state.Invalid = true
+		configFile.Reasons = appendReason(configFile.Reasons, recoveryReadReason(err))
+		finalizeRecovery(&state)
 		return state
 	}
 	values, valid := decodeTOML(content)
 	if !valid {
 		state.Invalid = true
+		configFile.Reasons = appendReason(configFile.Reasons, RecoverySyntaxInvalid)
+		finalizeRecovery(&state)
 		return state
 	}
 
-	authRoot := map[string]json.RawMessage{}
-	if authContent, err := readConfig(paths.AuthPath); err == nil {
-		authRoot, _ = decodeObject(authContent)
+	if authRoot == nil {
+		authRoot = map[string]json.RawMessage{}
 	}
 	state.Migratable = exactHistoricalCodex(values, authRoot)
 	provider, providerOK := tomlTable(values, "model_providers", "mtls-router")
@@ -256,7 +319,30 @@ func inspectCodex(detected bool, command string, paths Paths) State {
 	state.Configured = values["model_provider"] == "mtls-router" && modelOK && model != "" && storeOK && store == "file" &&
 		providerOK && provider["name"] == "mtls-router" && provider["wire_api"] == "responses" && provider["requires_openai_auth"] == true &&
 		validAPIValue(provider["base_url"]) && authConfigured && validCodexModelSettings(values)
+	state.Invalid = state.Invalid || hasInvalidFileReason(configFile.Reasons) || hasInvalidFileReason(authFile.Reasons)
+	finalizeRecovery(&state)
 	return state
+}
+
+func decodeRecoveryObject(content []byte) (map[string]json.RawMessage, RecoveryReason) {
+	content = bytes.TrimPrefix(content, []byte{0xef, 0xbb, 0xbf})
+	var value any
+	decoder := json.NewDecoder(bytes.NewReader(content))
+	if err := decoder.Decode(&value); err != nil {
+		return nil, RecoverySyntaxInvalid
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return nil, RecoverySyntaxInvalid
+	}
+	if _, ok := value.(map[string]any); !ok {
+		return nil, RecoveryUnsupportedStructure
+	}
+	root, valid := decodeObject(content)
+	if !valid {
+		return nil, RecoveryUnsupportedStructure
+	}
+	return root, ""
 }
 
 func validRouterBaseURL(value string) bool { _, err := apiURL(value); return err == nil }
@@ -324,9 +410,22 @@ func readConfig(path string) ([]byte, error) {
 		return nil, err
 	}
 	if len(content) > maxConfigSize {
-		return nil, errors.New("configuration file is too large")
+		return nil, errConfigOversized
 	}
 	return content, nil
+}
+
+var errConfigOversized = errors.New("configuration file is too large")
+
+func readRecoveryConfig(path string) ([]byte, error) {
+	return readConfig(path)
+}
+
+func recoveryReadReason(err error) RecoveryReason {
+	if errors.Is(err, errConfigOversized) {
+		return RecoveryOversized
+	}
+	return RecoveryUnreadable
 }
 
 func isRegularFile(path string) bool {

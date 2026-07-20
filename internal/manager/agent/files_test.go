@@ -2,6 +2,8 @@ package agent
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -13,5 +15,94 @@ func TestPostReplaceErrorReportsReplacement(t *testing.T) {
 	}
 	if replacementOccurred(inner) {
 		t.Fatal("ordinary error was classified as a completed replacement")
+	}
+}
+
+func TestCreatePrivateBackupVerifiesReadBack(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "settings.json")
+	content := []byte(`{"secret":"canary"}`)
+	if err := os.WriteFile(source, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	backup, err := createPrivateBackup(source, content, 0o600, "bak")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(backup)
+	if err != nil || string(got) != string(content) {
+		t.Fatalf("verified backup = %q, %v", got, err)
+	}
+}
+
+func TestCreatePrivateBackupStageFailuresRemoveArtifact(t *testing.T) {
+	for _, stage := range []backupStage{backupStagePermission, backupStageWrite, backupStageSync, backupStageReopen, backupStageRead, backupStageIdentity, backupStageContent} {
+		t.Run(string(stage), func(t *testing.T) {
+			dir := t.TempDir()
+			source := filepath.Join(dir, "settings.json")
+			content := []byte(`{"secret":"canary"}`)
+			if err := os.WriteFile(source, content, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := createPrivateBackupWithHook(source, content, 0o600, "bak", func(current backupStage, _ string) error {
+				if current == stage {
+					return errors.New("injected failure")
+				}
+				return nil
+			})
+			if err == nil {
+				t.Fatal("backup stage failure succeeded")
+			}
+			matches, globErr := filepath.Glob(source + ".bak-*")
+			if globErr != nil || len(matches) != 0 {
+				t.Fatalf("backup artifacts = %v, %v", matches, globErr)
+			}
+		})
+	}
+}
+
+func TestCreatePrivateBackupRejectsIdentityAndContentChanges(t *testing.T) {
+	tests := []struct {
+		name string
+		hook func(backupStage, string) error
+	}{
+		{
+			name: "identity",
+			hook: func(stage backupStage, path string) error {
+				if stage != backupStageIdentity {
+					return nil
+				}
+				if err := os.Remove(path); err != nil {
+					return err
+				}
+				return os.WriteFile(path, []byte("replacement"), 0o600)
+			},
+		},
+		{
+			name: "content mismatch",
+			hook: func(stage backupStage, path string) error {
+				if stage != backupStageRead {
+					return nil
+				}
+				return os.WriteFile(path, []byte("mismatch"), 0o600)
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			source := filepath.Join(dir, "settings.json")
+			content := []byte(`{"secret":"canary"}`)
+			if err := os.WriteFile(source, content, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := createPrivateBackupWithHook(source, content, 0o600, "bak", test.hook); err == nil {
+				t.Fatal("changed backup was accepted")
+			}
+			matches, err := filepath.Glob(source + ".bak-*")
+			if err != nil || len(matches) != 0 {
+				t.Fatalf("backup artifacts = %v, %v", matches, err)
+			}
+		})
 	}
 }
