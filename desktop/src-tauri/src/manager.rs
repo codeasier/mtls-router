@@ -405,7 +405,22 @@ async fn transact(
             .get("message")
             .and_then(Value::as_str)
             .unwrap_or("manager operation failed");
-        return Err(CommandError::new(code, message));
+        let mut command_error = CommandError::new(code, message);
+        if code == "MODEL_CONFIG_INVALID" {
+            if let (Some(path), Some(rule)) = (
+                error
+                    .get("details")
+                    .and_then(|details| details.get("path"))
+                    .and_then(Value::as_str),
+                error
+                    .get("details")
+                    .and_then(|details| details.get("rule"))
+                    .and_then(Value::as_str),
+            ) {
+                command_error = command_error.with_validation_details(path, rule);
+            }
+        }
+        return Err(command_error);
     }
     response
         .get("result")
@@ -511,6 +526,7 @@ mod tests {
         Terminated,
         Delayed,
         InvalidHandshake,
+        ValidationError,
         RecoverableRouter,
         ReclaimRejected,
     }
@@ -558,6 +574,22 @@ mod tests {
     }
 
     fn response(id: Value, method: String, behavior: Behavior, reclaimed: bool) -> TransportEvent {
+        if matches!(behavior, Behavior::ValidationError) && method == "agent.preview" {
+            return TransportEvent::Stdout(
+                serde_json::to_vec(&json!({
+                    "id": id,
+                    "error": {
+                        "code": "MODEL_CONFIG_INVALID",
+                        "message": "Agent model configuration is invalid",
+                        "details": {
+                            "path": "/claude/max_output_tokens",
+                            "rule": "integer_relationship"
+                        }
+                    }
+                }))
+                .unwrap(),
+            );
+        }
         if matches!(behavior, Behavior::ReclaimRejected) && method == ROUTER_START {
             return TransportEvent::Stdout(
                 serde_json::to_vec(&json!({
@@ -648,6 +680,25 @@ mod tests {
             let writes = writes.lock().unwrap();
             assert_eq!(writes[1]["id"], "desktop-1");
             assert_eq!(writes[2]["id"], "desktop-2");
+        });
+    }
+
+    #[test]
+    fn preserves_safe_model_validation_details() {
+        runtime().block_on(async {
+            let (client, _) = client(vec![Behavior::ValidationError]);
+            let error = client
+                .call::<Value>("agent.preview", json!({}))
+                .await
+                .unwrap_err();
+            assert_eq!(error.code, "MODEL_CONFIG_INVALID");
+            assert_eq!(
+                error.details.unwrap(),
+                crate::error::ErrorDetails {
+                    path: "/claude/max_output_tokens".into(),
+                    rule: "integer_relationship".into(),
+                }
+            );
         });
     }
 

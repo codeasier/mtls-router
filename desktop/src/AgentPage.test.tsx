@@ -1046,6 +1046,50 @@ describe("Agent model workbench", () => {
     expect(await screen.findByLabelText(/API (?:key|密钥)/)).toHaveValue("");
   });
 
+  it("shows a readable validation reason without exposing backend messages", async () => {
+    const { api } = await reachConfigure();
+    completeRequiredConfig();
+    vi.mocked(api.previewAgents).mockRejectedValueOnce({
+      code: "MODEL_CONFIG_INVALID",
+      message: "unsafe-backend-validation-message",
+      details: {
+        path: "/claude/max_output_tokens",
+        rule: "integer_relationship",
+      },
+    });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /生成写入预览|Generate write preview/,
+      }),
+    );
+    expect(
+      await screen.findByText(/Claude 最大输出 Token 必须小于上下文窗口/),
+    ).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain(
+      "unsafe-backend-validation-message",
+    );
+  });
+
+  it("shows a safe non-empty fallback when validation details are unavailable", async () => {
+    const { api } = await reachConfigure();
+    completeRequiredConfig();
+    vi.mocked(api.previewAgents).mockRejectedValueOnce({
+      code: "MODEL_CONFIG_INVALID",
+      message: "unsafe-backend-validation-message",
+    });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /生成写入预览|Generate write preview/,
+      }),
+    );
+    expect(
+      await screen.findByText(/模型配置不符合要求，请刷新模型目录后重新选择/),
+    ).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain(
+      "unsafe-backend-validation-message",
+    );
+  });
+
   it.each([
     "MODEL_AUTH_FAILED",
     "MODEL_DISCOVERY_FAILED",

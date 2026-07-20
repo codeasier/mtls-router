@@ -245,6 +245,25 @@ export const en: Record<TranslationKey, string> = {
   "agents.error.catalogStale":
     "The catalog expired or a selected model disappeared. Enter the key and discover again.",
   "agents.error.config": "Model configuration is invalid: {detail}",
+  "agents.error.config.catalogModel":
+    "A selected model is not in the current catalog. Refresh discovery and select it again.",
+  "agents.error.config.baseModel":
+    "A selected model has an invalid format. Select it again.",
+  "agents.error.config.name": "Model display names cannot be empty.",
+  "agents.error.config.contextConflict":
+    "Claude's numeric context window cannot be combined with a role's 1M context mode.",
+  "agents.error.config.outputLimit":
+    "Claude's maximum output tokens must be less than its context window.",
+  "agents.error.config.integerRelationship":
+    "The model token limits are inconsistent.",
+  "agents.error.config.contextWindow":
+    "The context window must be a positive integer.",
+  "agents.error.config.positiveInteger":
+    "The token limit must be a positive integer.",
+  "agents.error.config.extra":
+    "Advanced configuration contains a field that cannot be managed.",
+  "agents.error.config.fallback":
+    "The model configuration does not meet the requirements. Refresh discovery and select the models again.",
   "agents.error.import":
     "This canonical JSON model configuration could not be imported.",
   "agents.error.export":

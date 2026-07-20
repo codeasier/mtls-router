@@ -6,7 +6,7 @@ import {
   type ComponentPropsWithoutRef,
 } from "react";
 
-import { useI18n } from "./i18n";
+import { useI18n, type Translator } from "./i18n";
 import {
   sanitizeSensitiveText,
   initializeAgentConfig,
@@ -51,6 +51,44 @@ function errorCode(error: unknown) {
     typeof (error as { code?: unknown }).code === "string"
     ? (error as { code: string }).code
     : "";
+}
+function modelConfigErrorMessage(error: unknown, t: Translator) {
+  const details =
+    typeof error === "object" && error !== null && "details" in error
+      ? (error as { details?: unknown }).details
+      : undefined;
+  const path =
+    typeof details === "object" &&
+    details !== null &&
+    "path" in details &&
+    typeof (details as { path?: unknown }).path === "string"
+      ? (details as { path: string }).path
+      : "";
+  const rule =
+    typeof details === "object" &&
+    details !== null &&
+    "rule" in details &&
+    typeof (details as { rule?: unknown }).rule === "string"
+      ? (details as { rule: string }).rule
+      : "";
+
+  if (rule === "catalog_model") return t("agents.error.config.catalogModel");
+  if (rule === "base_model") return t("agents.error.config.baseModel");
+  if (rule === "non_empty_name") return t("agents.error.config.name");
+  if (rule === "context_conflict")
+    return t("agents.error.config.contextConflict");
+  if (rule === "integer_relationship") {
+    if (path === "/claude/max_output_tokens")
+      return t("agents.error.config.outputLimit");
+    return t("agents.error.config.integerRelationship");
+  }
+  if (rule === "positive_integer")
+    return path.endsWith("/context_window")
+      ? t("agents.error.config.contextWindow")
+      : t("agents.error.config.positiveInteger");
+  if (rule === "allowlist" || rule === "protected_path")
+    return t("agents.error.config.extra");
+  return t("agents.error.config.fallback");
 }
 function selectable(agent: AgentState) {
   return agent.detected && agent.writable && !agent.invalid;
@@ -582,10 +620,7 @@ export function AgentPage({ api }: { api: DesktopApi }) {
       } else
         setMessage(
           t("agents.error.config", {
-            detail: safe(
-              (error as { details?: { path?: string; rule?: string } })?.details
-                ?.path,
-            ),
+            detail: modelConfigErrorMessage(error, t),
           }),
         );
     } finally {

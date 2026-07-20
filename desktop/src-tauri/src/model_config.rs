@@ -149,7 +149,7 @@ pub struct CodexConfig {
 }
 
 fn invalid(path: &str, rule: &str) -> CommandError {
-    CommandError::invalid_params(format!("model config {rule} at {path}"))
+    CommandError::model_config_invalid(path, rule)
 }
 
 fn valid_text(value: &str, max: usize) -> bool {
@@ -631,15 +631,22 @@ mod tests {
         let explicit = r#"{"version":1,"claude":{"primary":{"model":"m1"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true},"fable":{"model":"m2","name":"Fable","context":"1m"}}}"#;
         assert!(import_json(explicit, &agents, &catalog).is_ok());
         let unavailable = import_json(explicit, &agents, &["m1".into()]).unwrap_err();
-        assert!(unavailable.message.contains("/claude/fable/model"));
+        assert_eq!(unavailable.code, "MODEL_CONFIG_INVALID");
+        assert_eq!(unavailable.details.unwrap().path, "/claude/fable/model");
 
         let conflict = explicit.replace(
             r#""fable":{"model":"m2""#,
             r#""context_window":200000,"fable":{"model":"m2""#,
         );
         let error = import_json(&conflict, &agents, &catalog).unwrap_err();
-        assert!(error.message.contains("context_conflict"));
-        assert!(error.message.contains("/claude/fable/context"));
+        assert_eq!(error.code, "MODEL_CONFIG_INVALID");
+        assert_eq!(
+            error.details.unwrap(),
+            crate::error::ErrorDetails {
+                path: "/claude/fable/context".into(),
+                rule: "context_conflict".into(),
+            }
+        );
     }
 
     #[test]
@@ -670,11 +677,8 @@ mod tests {
         let catalog = vec!["m1".into()];
         let assert_rule = |content: &str, agents: &[String], rule: &str| {
             let error = import_json(content, agents, &catalog).unwrap_err();
-            assert!(
-                error.message.contains(rule),
-                "expected {rule}, got {}",
-                error.message
-            );
+            assert_eq!(error.code, "MODEL_CONFIG_INVALID");
+            assert_eq!(error.details.unwrap().rule, rule);
         };
 
         let claude = r#"{"version":1,"claude":{"primary":{"model":"m1"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true},"context_window":100,"max_output_tokens":50}}"#;

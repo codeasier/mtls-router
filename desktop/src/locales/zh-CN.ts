@@ -221,6 +221,20 @@ export const zhCN = {
   "agents.error.catalogStale":
     "模型目录已失效或所选模型不可用，请重新输入密钥并发现。",
   "agents.error.config": "模型配置无效：{detail}",
+  "agents.error.config.catalogModel":
+    "所选模型不在当前可用模型目录中，请刷新目录后重新选择。",
+  "agents.error.config.baseModel": "所选模型格式无效，请重新选择。",
+  "agents.error.config.name": "模型显示名称不能为空。",
+  "agents.error.config.contextConflict":
+    "Claude 的数字上下文窗口不能与角色的 1M 上下文模式同时使用。",
+  "agents.error.config.outputLimit":
+    "Claude 最大输出 Token 必须小于上下文窗口。",
+  "agents.error.config.integerRelationship": "模型的 Token 限制设置不正确。",
+  "agents.error.config.contextWindow": "上下文窗口必须为正整数。",
+  "agents.error.config.positiveInteger": "Token 限制必须为正整数。",
+  "agents.error.config.extra": "高级配置包含不允许管理的字段。",
+  "agents.error.config.fallback":
+    "模型配置不符合要求，请刷新模型目录后重新选择。",
   "agents.error.import": "无法导入此规范 JSON 模型配置。",
   "agents.error.export": "无法导出此规范模型配置。",
   "agents.imported": "已导入并验证规范模型配置。",
