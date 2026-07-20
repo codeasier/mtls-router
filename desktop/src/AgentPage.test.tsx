@@ -1019,6 +1019,31 @@ describe("Agent model workbench", () => {
     view.unmount();
   });
 
+  it("does not destroy the active flow when the page rerenders", async () => {
+    const api = createMockApi({
+      detectAgents: vi.fn().mockResolvedValue(detection),
+      discoverModels: vi.fn().mockResolvedValue(discovery),
+    });
+    const view = render(<AgentPage api={api} />);
+    await screen.findByText("/safe/claude");
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /继续输入凭据|Continue to credential/,
+      }),
+    );
+    fireEvent.change(screen.getByLabelText(/API (?:key|密钥)/), {
+      target: { value: "rerender-secret" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: /发现模型|Discover models/ }),
+    );
+    await screen.findByText(/共同模型目录|Common model catalog/);
+
+    view.rerender(<AgentPage api={api} />);
+
+    expect(api.destroyAgentModelFlow).not.toHaveBeenCalled();
+  });
+
   it("returns stale catalog failures to credential entry without exposing secrets", async () => {
     const { api } = await reachConfigure();
     vi.mocked(api.previewAgents).mockRejectedValueOnce({

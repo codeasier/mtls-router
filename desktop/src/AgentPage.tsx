@@ -488,6 +488,9 @@ export function AgentPage({ api }: { api: DesktopApi }) {
   const [busy, setBusy] = useState(true);
   const [message, setMessage] = useState("");
   const flowRef = useRef("");
+  const reportDetectionFailure = useEffectEvent(() =>
+    setMessage(t("agents.error.detect")),
+  );
 
   async function destroyFlow() {
     const flow = flowRef.current;
@@ -504,7 +507,7 @@ export function AgentPage({ api }: { api: DesktopApi }) {
           setSelected(initialSelection(value));
         }
       })
-      .catch(() => active && setMessage(t("agents.error.detect")))
+      .catch(() => active && reportDetectionFailure())
       .finally(() => active && setBusy(false));
     return () => {
       active = false;
@@ -512,7 +515,7 @@ export function AgentPage({ api }: { api: DesktopApi }) {
       flowRef.current = "";
       if (flow) void api.destroyAgentModelFlow(flow);
     };
-  }, [api, t]);
+  }, [api]);
 
   function toggleAgent(agent: AgentId) {
     setSelected((current) =>
