@@ -197,7 +197,7 @@ Windows PowerShell：
 
 `router install` 只下载并安装二进制。`router start` 只启动已安装的二进制；如果不存在，会明确提示先执行 `router install` 或 `router setup`。`router setup` 会安装并启动 router，等价于无参数默认行为。
 
-`agent print-config` 和 `agent write-config --agent=...` 都会先隐藏读取 key，再发现经过认证的完整 `GET /v1/models` 目录。它们绝不会选择目录中的第一个模型、按模型名称或能力推断选择，也不会替换为另一个模型。Release 可以提供可见、可编辑的 preset，但只有在 manager 根据该认证目录验证某个 Agent section 的全部精确模型 ID 后，才会提供该 section；否则整个 section 不可用，且不会选择替代项。每个 Agent 的初始化优先级为 `existing > preset > empty`。Print 返回 manager 动态渲染且 API-key 脱敏的托管片段；write 显示精确预览，并在一次事务写入前立即重新验证目录。可添加 `--model-config=<path>`，使用无 key 的规范 JSON 选择替代模型问答；该显式导入会完整替换全部生成的默认值。旧的顶层 `--print-config` 和 `--write-config --agent=...` 仍作为同一 v2 流程的兼容别名。Agent 命令只会执行经 checksum 验证的同目录 manager，或经安装 receipt 验证的 manager；绝不会隐式下载 manager。
+`agent print-config` 和 `agent write-config --agent=...` 都会先隐藏读取 key，再发现 manager 经过认证和构建过滤的 `GET /v1/models` 目录。Manager 默认排除包含 ASCII `/` 的有效 ID；使用 `SIMPLIFY=False` 构建的 release 会保留它们。这个不可变的 manager 构建策略控制配置选择和刷新校验；它不是运行时偏好，也不限制下文列出的 proxy 路由。命令绝不会选择目录中的第一个模型、按模型名称或能力推断选择，也不会替换为另一个模型。Release 可以提供可见、可编辑的 preset，但只有在 manager 根据该过滤目录验证某个 Agent section 的全部精确模型 ID 后，才会提供该 section；否则整个 section 不可用，且不会选择替代项。每个 Agent 的初始化优先级为 `existing > preset > empty`。Print 返回 manager 动态渲染且 API-key 脱敏的托管片段；write 显示精确预览，并在一次事务写入前立即重新验证目录。可添加 `--model-config=<path>`，使用无 key 的规范 JSON 选择替代模型问答；该显式导入会完整替换全部生成的默认值。旧的顶层 `--print-config` 和 `--write-config --agent=...` 仍作为同一 v2 流程的兼容别名。Agent 命令只会执行经 checksum 验证的同目录 manager，或经安装 receipt 验证的 manager；绝不会隐式下载 manager。
 
 由于环境变量不是安全的 secret 传输方式，`MTLS_ROUTER_OPENAI_API_KEY` 已移除，不再提供 key。非交互自动化必须验证 `manager.info` protocol `2`，调用 `agent.models`，构造规范 model config，再调用 `agent.render` 或 `agent.preview` 与 `agent.write`。Key 只出现在 `agent.models` 和 `agent.write` stdin 请求体中。不要把 key 放入命令行参数、环境变量、model config、日志、shell history 或临时请求文件。完整契约见 [Agent 模型配置](AGENT_MODELS.md#protocol-v2-自动化)。
 
@@ -207,7 +207,7 @@ Windows PowerShell：
 - opencode 会把精确选择的目录子集写入 `provider.mtls-router`，并写入由 manager 拥有的根默认模型。不设置显式 `OPENCODE_CONFIG` 时，已有的标准 `~/.config/opencode/opencode.jsonc` 会迁移到同目录的 `opencode.json`；显式指定 `.jsonc` 覆盖路径时，则会在该精确路径原地规范化。两种操作都会丢失注释和格式。
 - Codex 会把专用 `[model_providers.mtls-router]` Responses provider 和选中的 typed model setting 写入 `~/.codex/config.toml`，遵循 `CODEX_HOME`。把 CLI/IDE 共享认证切换为官方 file-backed API-key 模式需要单独预览批准。
 
-服务返回的每个模型都支持 Claude Messages 与 token counting、opencode Chat Completions、兼容 Completions 和 Codex Responses，包括流式响应。`configured` 检测只表示本地托管结构完整；当前授权由模型发现和写入时刷新证明。未设置的可选模型字段保持省略。发现失败、目录 stale、模型消失、漂移或所有权状态无效都会安全失败，不使用静态/cache fallback，也不产生部分变更。无关设置会保留；托管漂移需要批准，备份可能含 key，必须妥善保护。规范 schema、选项、刷新、失败、迁移、所有权和备份契约见 [Agent 模型配置](AGENT_MODELS.md)。
+Manager 目录中保留的每个模型都视为支持 Claude Messages 与 token counting、opencode Chat Completions、兼容 Completions 和 Codex Responses，包括流式响应。`configured` 检测只表示本地托管结构完整；当前授权由模型发现和写入时刷新证明。未设置的可选模型字段保持省略。发现失败、目录 stale、模型消失、漂移或所有权状态无效都会安全失败，不使用静态/cache fallback，也不产生部分变更。无关设置会保留；托管漂移需要批准，备份可能含 key，必须妥善保护。规范 schema、选项、刷新、失败、迁移、所有权和备份契约见 [Agent 模型配置](AGENT_MODELS.md)。
 
 安装脚本不会安装任何 agent，也不会启动任何 agent。
 

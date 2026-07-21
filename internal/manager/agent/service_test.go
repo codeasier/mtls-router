@@ -151,6 +151,90 @@ func TestV2PreviewAcceptsReportedClaudeConfigurationWithoutFable(t *testing.T) {
 	}
 }
 
+func TestV2PreviewRejectsModelOutsideCatalogWithoutTransactionArtifacts(t *testing.T) {
+	home := t.TempDir()
+	stateDir := filepath.Join(home, "manager-state")
+	service, err := NewService(Options{StateDir: stateDir, Detector: testServiceDetector(home, map[string]bool{"claude": true}, nil)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	discovery, err := service.DiscoverModels(context.Background(), []Kind{ClaudeCode}, []string{"model-a"}, modelconfig.CatalogClaims{
+		Models: []string{"model-a"}, Agents: []modelconfig.Agent{modelconfig.Claude}, Owner: "cli",
+		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "test", ProtocolVersion: "2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := json.RawMessage(`{"version":1,"claude":{"primary":{"model":"provider/slash"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true}}}`)
+	_, err = service.Preview(context.Background(), []Kind{ClaudeCode}, discovery.CatalogToken, config)
+	assertCode(t, err, CodeModelConfigInvalid)
+	for _, path := range []string{
+		filepath.Join(home, ".claude", "settings.json"),
+		filepath.Join(stateDir, journalFileName),
+		filepath.Join(stateDir, sidecarFileName),
+	} {
+		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("invalid preview created %s: %v", path, statErr)
+		}
+	}
+	assertNoBackupFiles(t, home)
+}
+
+func TestCatalogTokensBindSimplifyAcrossServiceProcesses(t *testing.T) {
+	home := t.TempDir()
+	stateDir := filepath.Join(home, "manager-state")
+	detector := testServiceDetector(home, map[string]bool{"claude": true}, nil)
+	full, err := NewService(Options{StateDir: stateDir, Detector: detector})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fullCatalog, err := full.DiscoverModels(context.Background(), []Kind{ClaudeCode}, []string{"provider/slash"}, modelconfig.CatalogClaims{
+		Models: []string{"provider/slash"}, Agents: []modelconfig.Agent{modelconfig.Claude}, Owner: "cli",
+		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "test", ProtocolVersion: "2", Simplify: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fullConfig := json.RawMessage(`{"version":1,"claude":{"primary":{"model":"provider/slash"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true}}}`)
+
+	compatible, err := NewService(Options{StateDir: stateDir, Detector: detector})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := compatible.Render(context.Background(), []Kind{ClaudeCode}, fullCatalog.CatalogToken, fullConfig); err != nil {
+		t.Fatalf("same-policy render in another process: %v", err)
+	}
+	if _, err := compatible.Preview(context.Background(), []Kind{ClaudeCode}, fullCatalog.CatalogToken, fullConfig); err != nil {
+		t.Fatalf("same-policy preview in another process: %v", err)
+	}
+
+	simplified, err := NewService(Options{StateDir: stateDir, Detector: detector, Simplify: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = simplified.Render(context.Background(), []Kind{ClaudeCode}, fullCatalog.CatalogToken, fullConfig)
+	assertCode(t, err, CodeModelCatalogStale)
+	if err.Error() != "Agent model catalog is stale" {
+		t.Fatalf("render stale message = %q", err)
+	}
+	_, err = simplified.Preview(context.Background(), []Kind{ClaudeCode}, fullCatalog.CatalogToken, fullConfig)
+	assertCode(t, err, CodeModelCatalogStale)
+	if err.Error() != "Agent model catalog is stale" {
+		t.Fatalf("preview stale message = %q", err)
+	}
+
+	simplifiedCatalog, err := simplified.DiscoverModels(context.Background(), []Kind{ClaudeCode}, []string{"model-a"}, modelconfig.CatalogClaims{
+		Models: []string{"model-a"}, Agents: []modelconfig.Agent{modelconfig.Claude}, Owner: "cli",
+		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "test", ProtocolVersion: "2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	simplifiedConfig := json.RawMessage(`{"version":1,"claude":{"primary":{"model":"model-a"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true}}}`)
+	_, err = compatible.Render(context.Background(), []Kind{ClaudeCode}, simplifiedCatalog.CatalogToken, simplifiedConfig)
+	assertCode(t, err, CodeModelCatalogStale)
+}
+
 func TestRevisionTokenSurvivesOneRequestManagerProcesses(t *testing.T) {
 	home := t.TempDir()
 	stateDir := filepath.Join(home, "manager-state")

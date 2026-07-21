@@ -583,7 +583,7 @@ func TestNewRejectsMalformedPresetBeforeRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stderr bytes.Buffer
-	_, err := New(Config{ListenAddr: "127.0.0.1:19099", RouterPath: os.Args[0], ManagerIdentity: process.Identity{PID: 1, StartedAt: "test", Executable: os.Args[0]}, Paths: managerpaths.Paths{DesktopDataDir: dir}, Stderr: &stderr})
+	_, err := New(Config{ListenAddr: "127.0.0.1:19099", RouterPath: os.Args[0], ManagerIdentity: process.Identity{PID: 1, StartedAt: "test", Executable: os.Args[0]}, Paths: managerpaths.Paths{DesktopDataDir: dir}, Stderr: &stderr}, true)
 	if err == nil || err.Error() != "invalid embedded Agent model preset" {
 		t.Fatalf("error = %v", err)
 	}

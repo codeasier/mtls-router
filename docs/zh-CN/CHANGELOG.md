@@ -10,6 +10,7 @@
 - 新增 protocol-v2 `agent.models`/`agent.render`、无 key 规范 model config、Agent 原生选项、脱敏 render/preview、写入时目录刷新、托管所有权状态，以及漂移/Codex-auth 批准。
 - 为每个显式 Claude 选择新增可选显示名称和规范 `context: "1m"`。规范与目录身份始终使用 base model ID；仅在 Claude 渲染边界追加 `[1m]`，不推断能力，也不管理 `CLAUDE_CODE_DISABLE_1M_CONTEXT`。
 - 为 manager 二进制新增不可变、无 key 的构建 preset。Protocol v2 现在会在对每个已请求 Agent section 独立执行认证校验后，返回稳定的 `preset.model_config` 和 `preset.unavailable_agents` object。
+- 新增仅供 manager 使用的 `SIMPLIFY` 构建策略。未设置/空值和 ASCII 大小写 boolean 会在编译前规范化；默认 `True` 排除包含 ASCII `/` 的有效 ID，`False` 保留全部有效 ID。
 
 ### 变更
 
@@ -17,12 +18,14 @@
 - 精确调整自动选择行为：只有精确 ID 通过当前认证目录校验的可见构建 preset 才能初始化表单。仍禁止选择第一个模型、使用模型名称或能力 heuristic、部分修复 preset、替换模型和运行时 fallback。
 - Claude 改为 managed `env` merge；opencode 改为精确选择的 provider 目录；Codex 从历史 `custom` provider 迁移到专用 `mtls-router`，并单独批准 file-backed API-key auth。
 - 检测现在只描述本地结构完整性；当前授权只能由模型发现和写入时刷新证明。
+- 将经过校验、去重、数量限制、排序和构建过滤的目录作为 protocol token/result、existing 与 preset 可用性、导入、预览和写入时刷新的权威依据。过滤发生在完整校验之后，因此隐藏位置的 malformed ID 仍返回 `MODEL_RESPONSE_INVALID`，全部被过滤时返回 `MODEL_CATALOG_EMPTY`，刷新时模型消失仍会安全失败。
 
 ### 安全与发布
 
 - 新增私有签名 catalog/revision state、共享操作 lock、事务 sidecar/备份、兼容性 revision pin，以及拒绝混合 protocol generation 的 release preflight。
 - 明确 Agent 文件与批准的备份可能含 key，而 model config、token、sidecar、日志、诊断和 protocol result 不含 key。
 - 新增可选 `AGENT_MODEL_PRESET_BASE64` release input，并提供 preflight 校验和相同的 standalone/desktop manager 注入。无效非空输入会让 manager 启动失败且不泄漏内容；空输入有效，router binary（包括 desktop router sidecar）绝不会收到 preset 数据。
+- Release 构建会在编译前规范化 `SIMPLIFY`，并只向 standalone 和 desktop manager 注入同一个值。它不是 router/运行时偏好，也不会改变 proxy 路由支持。
 
 ---
 

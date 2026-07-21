@@ -39,7 +39,7 @@ func TestFetchSendsExactRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	models, err := New(nil).Fetch(context.Background(), Request{URL: server.URL + "/v1/models", APIKey: key})
+	models, err := New(nil, false).Fetch(context.Background(), Request{URL: server.URL + "/v1/models", APIKey: key})
 	if err != nil {
 		t.Fatalf("Fetch() error = %v", err)
 	}
@@ -70,7 +70,7 @@ func TestFetchStatusMappingAndSanitization(t *testing.T) {
 				_, _ = io.WriteString(w, responseCanary)
 			}))
 			defer server.Close()
-			_, err := New(nil).Fetch(context.Background(), Request{URL: server.URL + "/v1/models", APIKey: key})
+			_, err := New(nil, false).Fetch(context.Background(), Request{URL: server.URL + "/v1/models", APIKey: key})
 			assertCode(t, err, test.code)
 			assertSanitized(t, err, key, responseCanary, headerCanary, server.URL)
 		})
@@ -89,7 +89,7 @@ func TestFetchDoesNotFollowRedirect(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := New(nil).Fetch(context.Background(), Request{URL: server.URL + "/v1/models", APIKey: key})
+	_, err := New(nil, false).Fetch(context.Background(), Request{URL: server.URL + "/v1/models", APIKey: key})
 	assertCode(t, err, protocol.CodeModelDiscoveryFailed)
 	if followed.Load() {
 		t.Fatal("redirect target was requested")
@@ -112,7 +112,7 @@ func TestFetchBypassesEnvironmentProxy(t *testing.T) {
 		_, _ = io.WriteString(w, `{"data":[{"id":"direct"}]}`)
 	}))
 	defer server.Close()
-	models, err := New(nil).Fetch(context.Background(), Request{URL: server.URL + "/v1/models", APIKey: "proxy-key"})
+	models, err := New(nil, false).Fetch(context.Background(), Request{URL: server.URL + "/v1/models", APIKey: "proxy-key"})
 	if err != nil || len(models) != 1 || models[0] != "direct" {
 		t.Fatalf("Fetch() = %q, %v", models, err)
 	}
@@ -139,7 +139,7 @@ func TestFetchBodyLimit(t *testing.T) {
 				_, _ = io.WriteString(w, test.body)
 			}))
 			defer server.Close()
-			models, err := New(nil).Fetch(context.Background(), Request{URL: server.URL + "/v1/models", APIKey: "limit-key"})
+			models, err := New(nil, false).Fetch(context.Background(), Request{URL: server.URL + "/v1/models", APIKey: "limit-key"})
 			if test.code == "" {
 				if err != nil || len(models) != 1 || models[0] != "at-limit" {
 					t.Fatalf("Fetch() = %q, %v", models, err)
@@ -171,7 +171,7 @@ func TestFetchValidatesResponseCatalog(t *testing.T) {
 				_, _ = io.WriteString(w, test.body)
 			}))
 			defer server.Close()
-			_, err := New(nil).Fetch(context.Background(), Request{URL: server.URL + "/v1/models", APIKey: "response-key"})
+			_, err := New(nil, false).Fetch(context.Background(), Request{URL: server.URL + "/v1/models", APIKey: "response-key"})
 			want := test.code
 			if want == "" {
 				want = protocol.CodeModelResponseInvalid
@@ -215,7 +215,7 @@ func TestFetchTimeoutsDuringHeadersAndBody(t *testing.T) {
 			server := httptest.NewServer(test.handler)
 			defer server.Close()
 			started := time.Now()
-			client := New(nil)
+			client := New(nil, false)
 			client.timeout = timeout
 			client.httpClient.Timeout = timeout
 			_, err := client.Fetch(context.Background(), Request{URL: server.URL + "/v1/models", APIKey: "timeout-key"})
@@ -241,7 +241,7 @@ func TestFetchAllowsCatalogResponseBeyondFiveSeconds(t *testing.T) {
 			Request:    request,
 		}, nil
 	})
-	models, err := New(transport).Fetch(context.Background(), Request{
+	models, err := New(transport, false).Fetch(context.Background(), Request{
 		URL: "http://127.0.0.1:19099/v1/models", APIKey: "slow-key",
 	})
 	if err != nil || len(models) != 1 || models[0] != "slow-model" {
@@ -257,7 +257,7 @@ func TestFetchHonorsEarlierContextDeadline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	started := time.Now()
-	_, err := New(nil).Fetch(ctx, Request{URL: server.URL + "/v1/models", APIKey: "context-key"})
+	_, err := New(nil, false).Fetch(ctx, Request{URL: server.URL + "/v1/models", APIKey: "context-key"})
 	assertCode(t, err, protocol.CodeModelDiscoveryFailed)
 	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
 		t.Fatalf("parent deadline elapsed = %v", elapsed)
@@ -277,7 +277,7 @@ func TestFetchRejectsInvalidEndpointWithoutSendingKey(t *testing.T) {
 		server.URL + "/other",
 		"not a URL",
 	} {
-		_, err := New(nil).Fetch(context.Background(), Request{URL: endpoint, APIKey: "unsent-key"})
+		_, err := New(nil, false).Fetch(context.Background(), Request{URL: endpoint, APIKey: "unsent-key"})
 		assertCode(t, err, protocol.CodeModelDiscoveryFailed)
 	}
 	if requests.Load() != 0 {
@@ -297,7 +297,7 @@ func TestFetchSupportsInjectedTransport(t *testing.T) {
 			Request:    request,
 		}, nil
 	})
-	models, err := New(transport).Fetch(context.Background(), Request{
+	models, err := New(transport, false).Fetch(context.Background(), Request{
 		URL: "http://127.0.0.1:19099/v1/models", APIKey: "bound-key",
 	})
 	if err != nil || len(models) != 1 || models[0] != "bound" {
@@ -311,7 +311,7 @@ func TestFetchSanitizesTransportErrors(t *testing.T) {
 	transport := roundTripperFunc(func(*http.Request) (*http.Response, error) {
 		return nil, errors.New(detail)
 	})
-	_, err := New(transport).Fetch(context.Background(), Request{URL: "http://127.0.0.1:19099/v1/models", APIKey: key})
+	_, err := New(transport, false).Fetch(context.Background(), Request{URL: "http://127.0.0.1:19099/v1/models", APIKey: key})
 	assertCode(t, err, protocol.CodeModelDiscoveryFailed)
 	assertSanitized(t, err, key, detail, "127.0.0.1:19099")
 }
@@ -328,7 +328,7 @@ func TestFetchDoesNotWriteLogs(t *testing.T) {
 	transport := roundTripperFunc(func(*http.Request) (*http.Response, error) {
 		return nil, errors.New(key)
 	})
-	_, fetchErr := New(transport).Fetch(context.Background(), Request{URL: "http://127.0.0.1:19099/v1/models", APIKey: key})
+	_, fetchErr := New(transport, false).Fetch(context.Background(), Request{URL: "http://127.0.0.1:19099/v1/models", APIKey: key})
 	_ = write.Close()
 	logged, readErr := io.ReadAll(read)
 	_ = read.Close()
@@ -345,6 +345,35 @@ type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(request *http.Request) (*http.Response, error) {
 	return f(request)
+}
+
+func TestFetchPropagatesSimplifySetting(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"data":[{"id":"provider/model"},{"id":"plain"}]}`)
+	}))
+	defer server.Close()
+
+	tests := []struct {
+		name     string
+		simplify bool
+		want     string
+	}{
+		{name: "disabled", simplify: false, want: "plain,provider/model"},
+		{name: "enabled", simplify: true, want: "plain"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			models, err := New(nil, test.simplify).Fetch(context.Background(), Request{
+				URL: server.URL + "/v1/models", APIKey: "simplify-key",
+			})
+			if err != nil {
+				t.Fatalf("Fetch() error = %v", err)
+			}
+			if got := strings.Join(models, ","); got != test.want {
+				t.Fatalf("Fetch() = %q, want %q", got, test.want)
+			}
+		})
+	}
 }
 
 func assertSanitized(t *testing.T, err error, canaries ...string) {

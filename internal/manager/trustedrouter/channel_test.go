@@ -70,6 +70,46 @@ func TestChannelValidatesAndFetchesOnExactlyOneConnection(t *testing.T) {
 	}
 }
 
+func TestChannelSimplifiesMixedCatalog(t *testing.T) {
+	var modelAuthorizationObserved atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/version":
+			if authorization := r.Header.Get("Authorization"); authorization != "" {
+				t.Errorf("version Authorization = %q, want empty", authorization)
+			}
+			_ = json.NewEncoder(w).Encode(discovery.Version{PID: 91, DeploymentID: "prod-a", ManagementProtocolVersion: "2"})
+		case "/v1/models":
+			if authorization := r.Header.Get("Authorization"); authorization != "Bearer "+channelKeyCanary {
+				t.Errorf("models Authorization = %q", authorization)
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			modelAuthorizationObserved.Store(true)
+			_, _ = io.WriteString(w, `{"data":[{"id":"provider/model"},{"id":"model-a"}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	listener := listenerForServer(t, server.URL)
+	var validationCalls atomic.Int64
+	models, err := (Channel{Simplify: true, ValidateProcess: func(identity process.Identity, binaryPath string) (process.Status, error) {
+		validationCalls.Add(1)
+		return genuineProcess(identity, binaryPath)
+	}}).Fetch(context.Background(), listener, trustedFixture(listener), channelKeyCanary)
+	if err != nil || len(models) != 1 || models[0] != "model-a" {
+		t.Fatalf("Fetch() = %q, %+v", models, err)
+	}
+	if !modelAuthorizationObserved.Load() {
+		t.Fatal("models request did not contain the expected Authorization header")
+	}
+	if validationCalls.Load() != 1 {
+		t.Fatalf("process validation calls = %d, want 1", validationCalls.Load())
+	}
+}
+
 func TestChannelForcedRedialFailsBeforeKeyTransmission(t *testing.T) {
 	var modelRequests atomic.Int64
 	var keyObserved atomic.Bool

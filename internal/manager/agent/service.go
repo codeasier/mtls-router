@@ -266,6 +266,7 @@ type Options struct {
 	StateDir string
 	Detector Detector
 	Preset   *modelconfig.Config
+	Simplify bool
 	// LegacyRenderInput keeps the pre-v2 transaction scaffold testable until
 	// Phase 4 replaces its request types. Production callers leave it nil.
 	LegacyRenderInput *LegacyRenderInput
@@ -293,6 +294,7 @@ type Service struct {
 	currentInput   renderInput
 	currentSidecar lastAppliedState
 	preset         *modelconfig.Config
+	simplify       bool
 }
 
 type serviceHooks struct {
@@ -310,7 +312,7 @@ func NewService(options Options) (*Service, error) {
 	if strings.TrimSpace(options.StateDir) == "" {
 		return nil, operationError(CodeInvalidParams, "Agent transaction state directory is required")
 	}
-	service := &Service{stateDir: filepath.Clean(options.StateDir), detector: options.Detector}
+	service := &Service{stateDir: filepath.Clean(options.StateDir), detector: options.Detector, simplify: options.Simplify}
 	if options.Preset != nil {
 		canonical, err := modelconfig.Canonical(options.Preset)
 		if err != nil {
@@ -477,9 +479,9 @@ func projectConfig(config *modelconfig.Config, selected []Kind) *modelconfig.Con
 }
 
 func (s *Service) validateV2(selected []Kind, catalogToken string, rawConfig json.RawMessage) (modelconfig.CatalogClaims, *modelconfig.Config, json.RawMessage, error) {
-	claims, err := s.signer.VerifyCatalog(catalogToken)
+	claims, err := s.verifyCatalogToken(catalogToken)
 	if err != nil {
-		return modelconfig.CatalogClaims{}, nil, nil, operationError(CodeModelCatalogStale, "model catalog token is invalid")
+		return modelconfig.CatalogClaims{}, nil, nil, err
 	}
 	normalized, err := normalizeSelection(selected)
 	if err != nil {
@@ -497,6 +499,17 @@ func (s *Service) validateV2(selected []Kind, catalogToken string, rawConfig jso
 		return modelconfig.CatalogClaims{}, nil, nil, operationError(CodeModelConfigInvalid, "canonical model configuration is invalid")
 	}
 	return claims, config, canonical, nil
+}
+
+func (s *Service) verifyCatalogToken(catalogToken string) (modelconfig.CatalogClaims, error) {
+	claims, err := s.signer.VerifyCatalog(catalogToken)
+	if err != nil {
+		return modelconfig.CatalogClaims{}, operationError(CodeModelCatalogStale, "model catalog token is invalid")
+	}
+	if claims.Simplify != s.simplify {
+		return modelconfig.CatalogClaims{}, operationError(CodeModelCatalogStale, "Agent model catalog is stale")
+	}
+	return claims, nil
 }
 
 // Write revalidates the approved preview before creating any backup or

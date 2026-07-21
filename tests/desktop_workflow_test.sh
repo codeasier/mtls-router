@@ -505,6 +505,28 @@ done
 [[ "$release_desktop_block" == *'needs: prepare'* ]] || fail 'release desktop build must depend on matrix preparation'
 [[ "$release_desktop_block" == *'matrix: ${{ fromJSON(needs.prepare.outputs.desktop-matrix) }}'* ]] || \
   fail 'release desktop build must consume the prepared matrix'
+[[ "$release_prepare_block" == *'simplify: ${{ steps.simplify.outputs.simplify }}'* ]] || \
+  fail 'release prepare must expose normalized SIMPLIFY'
+[[ "$(grep -Fxc '      simplify: ${{ steps.simplify.outputs.simplify }}' "$RELEASE")" -eq 1 ]] || \
+  fail 'release prepare output key must exactly match the simplify step output key'
+[[ "$(grep -Fxc '        id: simplify' "$RELEASE")" -eq 1 ]] || \
+  fail 'release simplify normalizer step must use the matching simplify id'
+[[ "$(grep -Fxc '          printf '\''simplify=%s\n'\'' "$normalized" >>"$GITHUB_OUTPUT"' "$RELEASE")" -eq 1 ]] || \
+  fail 'release simplify step must write the exact normalized output bridge'
+[[ "$(grep -Fc 'SIMPLIFY: ${{ vars.SIMPLIFY }}' "$RELEASE")" -eq 1 ]] || \
+  fail 'release must read the SIMPLIFY repository variable exactly once'
+[[ "$release_prepare_block" == *'normalized="$(bash ./scripts/normalize-simplify.sh)"'* ]] || \
+  fail 'release prepare must normalize SIMPLIFY through the shared helper'
+normalize_line="$(printf '%s\n' "$release_prepare_block" | awk '/name: Normalize simplify setting/{print NR; exit}')"
+preset_preflight_line="$(printf '%s\n' "$release_prepare_block" | awk '/name: Preflight Agent model preset/{print NR; exit}')"
+[[ -n "$normalize_line" && -n "$preset_preflight_line" && "$normalize_line" -lt "$preset_preflight_line" ]] || \
+  fail 'release must normalize SIMPLIFY before preset preflight'
+[[ "$release_build_block" == *'SIMPLIFY: ${{ needs.prepare.outputs.simplify }}'* ]] || \
+  fail 'release CLI build must consume prepared SIMPLIFY'
+[[ "$release_desktop_block" == *'SIMPLIFY: ${{ needs.prepare.outputs.simplify }}'* ]] || \
+  fail 'release desktop build must pass prepared SIMPLIFY to build-sidecars'
+[[ "$(grep -Fc 'SIMPLIFY: ${{ needs.prepare.outputs.simplify }}' "$RELEASE")" -eq 2 ]] || \
+  fail 'both release manager producers must consume the same prepared SIMPLIFY'
 [[ "$release_prepare_block" == *'SELECTED_TARGET: ${{ github.event_name == '\''workflow_dispatch'\'' && inputs.target || '\''all'\'' }}'* ]] || \
   fail 'tag builds must force the complete target matrix'
 [[ "$(grep -Fc 'UPSTREAM_URL: ${{ github.event_name == '\''workflow_dispatch'\'' && inputs.upstream_url || vars.UPSTREAM_URL }}' "$RELEASE")" -eq 2 ]] || \

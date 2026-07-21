@@ -46,6 +46,7 @@ func (s *Service) DiscoverModels(ctx context.Context, selected []Kind, catalog [
 	if err := s.ensureSigner(); err != nil {
 		return ModelsResult{}, err
 	}
+	claims.Simplify = s.simplify
 	token, err := s.signer.SignCatalog(claims)
 	if err != nil {
 		return ModelsResult{}, operationError(CodeModelStateInvalid, "Agent model trust state is invalid")

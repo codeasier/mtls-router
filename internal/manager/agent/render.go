@@ -87,9 +87,9 @@ func (s *Service) Render(ctx context.Context, selected []Kind, catalogToken stri
 	if err := s.ensureExistingSigner(); err != nil {
 		return RenderResult{}, err
 	}
-	claims, err := s.signer.VerifyCatalog(catalogToken)
+	claims, err := s.verifyCatalogToken(catalogToken)
 	if err != nil {
-		return RenderResult{}, operationError(CodeModelCatalogStale, "model catalog token is invalid")
+		return RenderResult{}, err
 	}
 	normalized, err := normalizeSelection(selected)
 	if err != nil {

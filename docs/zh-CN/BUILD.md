@@ -31,6 +31,29 @@ go build -trimpath -o mtls-router .
 go build -trimpath -o mtls-router-manager ./cmd/mtls-router-manager
 ```
 
+仓库构建脚本接受仅供 manager 使用的构建环境变量 `SIMPLIFY`。
+`scripts/build.sh` 和 `desktop/scripts/build-sidecars.sh` 会在调用任何编译器前
+将其规范化：未设置、空值或 `true` 的任意 ASCII 大小写形式变为 `True`；
+`false` 的任意 ASCII 大小写形式变为 `False`。包含空白、数字、非 ASCII
+相似字符及其他任何值都会在编译前以 `invalid SIMPLIFY value` 失败。规范值只会
+link 到 `github.com/codeasier/mtls-router/internal/manager/modelcatalog.Simplify`；
+router 二进制绝不会收到它。默认值 `True` 会从 manager 目录排除包含 ASCII `/`
+的有效模型 ID；`False` 保留全部有效 ID。这是不可变的 manager 构建策略，
+不是运行时设置、配置偏好或 router 选项，也不参与运行时配置优先级。
+
+直接构建 manager 时，可以显式关闭过滤：
+
+```bash
+go build -trimpath \
+  -ldflags "-X 'github.com/codeasier/mtls-router/internal/manager/modelcatalog.Simplify=False'" \
+  -o mtls-router-manager ./cmd/mtls-router-manager
+```
+
+直接构建时，省略该 `-X` 赋值即可使用代码默认值 `True`。不得直接 link 空值：
+`-X github.com/codeasier/mtls-router/internal/manager/modelcatalog.Simplify=`
+会覆盖代码默认值，并使 manager 在 protocol serving 或 Agent transaction recovery
+前以 `invalid embedded simplify value` 启动失败。
+
 Manager 可从 `AGENT_MODEL_PRESET_BASE64` 接收一份可选构建期 Agent model preset。该值必须是无 key、包含至少一个 Agent section 的规范 version-1 model-config 文档经过 strict standard Base64 编码后的结果。`scripts/build.sh` 和 `desktop/scripts/build-sidecars.sh` 只把它注入 manager 二进制中的 `github.com/codeasier/mtls-router/internal/manager/preset.Encoded`；router 二进制绝不会收到该值。未设置或空值表示无 preset。非空值 malformed 时，manager 会在 protocol serving 或 Agent transaction recovery 前启动失败，且不会打印编码或解码内容。
 
 `mtls-router-manager` 只有一个命令 `serve`。它从 stdin 逐行读取 JSON 请求，串行处理，只把协议响应写到 stdout，并在 stdin EOF 时正常退出。诊断应写 stderr 或日志。绝不能把 API key 加入 manager 参数或环境变量。
@@ -136,7 +159,7 @@ src-tauri/binaries/mtls-router-<target-triple>[.exe]
 
 `secrets/` 中三个真实文件全部存在时，sidecar 脚本会使用它们；全部不存在时则生成临时占位文件。因此生产包必须在没有明确提供全部真实凭据输入时 preflight 失败。Rust 构建脚本会拒绝缺失、非 native、格式错误、架构错误或不可执行的 sidecar，并内嵌每个 sidecar 的 SHA-256。运行时启动会再次按哈希校验文件，并执行 manager target/version/deployment/protocol handshake。
 
-`AGENT_MODEL_PRESET_BASE64` 只会转发给打包的 manager sidecar，不会注入 router sidecar，也不是桌面运行时设置。
+`AGENT_MODEL_PRESET_BASE64` 只会转发给打包的 manager sidecar，不会注入 router sidecar，也不是桌面运行时设置。规范化后的 `SIMPLIFY` 同样只会转发给打包的 manager sidecar；release 构建会让 standalone 和 desktop manager 使用同一个值。
 
 本机开发启动：
 
@@ -191,7 +214,7 @@ Release workflow 实现了有条件的平台签名和状态验证：
 
 当前 `.github/workflows/release.yml` 为六个 Go 目标构建 router 和 manager，并创建六个平台压缩包；每个包包含精确 router/manager 二进制对和安装脚本。同时，六个原生 runner 会构建并检查 Windows x86_64/arm64 NSIS 安装器、macOS Intel/Apple Silicon DMG，以及 Linux x86_64/arm64 AppImage。手工 dispatch 只用于验证，可以选择一组配套 CLI/desktop 目标及可选 HTTPS upstream override。版本 tag 始终忽略验证 override，等待全部 12 个构建 job，验证六个桌面包 checksum，汇总一个 `SHA256SUMS`，然后发布并镜像 CLI、桌面 asset 和六个签名状态文件。
 
-生产 CLI 和桌面 sidecar 需要 repository secrets `CLIENT_CERT_PEM`、`CLIENT_KEY_PEM`、`UPSTREAM_CA_PEM`，以及 variables `UPSTREAM_URL` 和非默认 `DEPLOYMENT_ID`。可选 repository variable `AGENT_MODEL_PRESET_BASE64` 会向每个 standalone manager 和 desktop manager sidecar 提供相同 preset；空值有效并表示无 preset。Release preflight 会在 matrix build 前通过 manager loader 校验已配置的值，且不打印其内容。Router build 绝不会收到该值。可选平台凭据会选择上文所述的签名/notarization release 分支。
+生产 CLI 和桌面 sidecar 需要 repository secrets `CLIENT_CERT_PEM`、`CLIENT_KEY_PEM`、`UPSTREAM_CA_PEM`，以及 variables `UPSTREAM_URL` 和非默认 `DEPLOYMENT_ID`。可选 repository variable `AGENT_MODEL_PRESET_BASE64` 会向每个 standalone manager 和 desktop manager sidecar 提供相同 preset；空值有效并表示无 preset。Release preflight 会在 matrix build 前通过 manager loader 校验已配置的值，且不打印其内容。可选 repository variable `SIMPLIFY` 遵循上述规范化规则，未设置或为空时默认为 `True`。它会在 matrix fan-out 前规范化，并以同一个规范值传给所有 standalone 和 desktop manager；desktop 构建脚本可以再次执行幂等校验和规范化。Router build 绝不会收到这两个仅供 manager 使用的值。可选平台凭据会选择上文所述的签名/notarization release 分支。
 
 每个 CLI 和 desktop matrix producer 都会生成 code-owned protocol metadata。`scripts/package-release.sh` 在组装 archive 前要求每个 producer 恰好一个 metadata 文件，并要求全部文件声明 schema `1` 与 management protocol `2`。正常发布和恢复发布共用此 preflight，因此有效但混合 v1/v2 的 artifact set 无法发布。
 
@@ -203,7 +226,10 @@ gh secret set CLIENT_KEY_PEM --repo codeasier/mtls-router < secrets/client.key
 gh secret set UPSTREAM_CA_PEM --repo codeasier/mtls-router < secrets/upstream-ca.pem
 gh variable set UPSTREAM_URL --repo codeasier/mtls-router --body "https://router.example.com"
 gh variable set DEPLOYMENT_ID --repo codeasier/mtls-router --body "production-service"
+gh variable set SIMPLIFY --repo codeasier/mtls-router --body "False"
 ```
+
+省略或清空 `SIMPLIFY` repository variable 即使用默认 `True` 策略。它不是用户偏好，manager 构建完成后不能更改。
 
 只有在从已审查的无 key 规范文档生成 strict standard Base64 后，才能通过受保护的 repository-variable 流程设置 `AGENT_MODEL_PRESET_BASE64`。Preset 中不得放入 API key、URL、provider identity、header、目录响应或任意 Agent setting。
 

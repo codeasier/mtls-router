@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"sort"
+	"strings"
 	"unicode"
 	"unicode/utf8"
 )
@@ -14,8 +15,9 @@ const (
 	maxModels  = 1000
 )
 
-// Parse validates and normalizes one bounded /v1/models response body.
-func Parse(body []byte) ([]string, error) {
+// Parse validates and normalizes one bounded /v1/models response body. After
+// full validation, simplify excludes IDs containing ASCII '/'.
+func Parse(body []byte, simplify bool) ([]string, error) {
 	if !utf8.Valid(body) {
 		return nil, responseInvalid()
 	}
@@ -53,16 +55,24 @@ func Parse(body []byte) ([]string, error) {
 	if token, err := decoder.Token(); err != io.EOF || token != nil {
 		return nil, responseInvalid()
 	}
-	if len(models) == 0 {
-		return nil, catalogEmpty()
-	}
-
 	result := make([]string, 0, len(models))
 	for model := range models {
 		result = append(result, model)
 	}
 	// Go string comparison is lexicographic over the underlying UTF-8 bytes.
 	sort.Strings(result)
+	if simplify {
+		filtered := make([]string, 0, len(result))
+		for _, model := range result {
+			if !strings.Contains(model, "/") {
+				filtered = append(filtered, model)
+			}
+		}
+		result = filtered[:len(filtered):len(filtered)]
+	}
+	if len(result) == 0 {
+		return nil, catalogEmpty()
+	}
 	return result, nil
 }
 

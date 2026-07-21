@@ -23,6 +23,7 @@ const versionBodyLimit = 64 << 10
 // connection. A server-requested redial is rejected before a second request can
 // transmit its Authorization header.
 type Channel struct {
+	Simplify        bool
 	DialContext     func(context.Context, string, string) (net.Conn, error)
 	ValidateProcess func(process.Identity, string) (process.Status, error)
 }
@@ -95,7 +96,7 @@ func (c Channel) Fetch(ctx context.Context, listener Listener, trusted discovery
 		return nil, staleCatalog()
 	}
 
-	models, fetchErr := modelcatalog.New(transport).Fetch(ctx, modelcatalog.Request{
+	models, fetchErr := modelcatalog.New(transport, c.Simplify).Fetch(ctx, modelcatalog.Request{
 		URL: listener.APIBaseURL + "/models", APIKey: apiKey,
 	})
 	if fetchErr != nil {

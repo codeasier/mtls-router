@@ -42,8 +42,17 @@ jobs:
     outputs:
       cli-matrix: ${{ steps.matrix.outputs.cli-matrix }}
       desktop-matrix: ${{ steps.matrix.outputs.desktop-matrix }}
+      simplify: ${{ steps.simplify.outputs.simplify }}
     steps:
       - uses: actions/checkout@v4
+      - name: Normalize simplify setting
+        id: simplify
+        shell: bash
+        env:
+          SIMPLIFY: ${{ vars.SIMPLIFY }}
+        run: |
+          normalized="$(bash ./scripts/normalize-simplify.sh)"
+          printf 'simplify=%s\n' "$normalized" >>"$GITHUB_OUTPUT"
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -130,6 +139,7 @@ jobs:
           UPSTREAM_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.upstream_url || vars.UPSTREAM_URL }}
           DEPLOYMENT_ID: ${{ vars.DEPLOYMENT_ID }}
           AGENT_MODEL_PRESET_BASE64: ${{ vars.AGENT_MODEL_PRESET_BASE64 }}
+          SIMPLIFY: ${{ needs.prepare.outputs.simplify }}
         run: |
           case "${DEPLOYMENT_ID:-}" in ""|dev|unknown) echo "DEPLOYMENT_ID must be a non-default production identifier" >&2; exit 1;; esac
           test -n "$CLIENT_CERT_PEM" && test -n "$CLIENT_KEY_PEM" && test -n "$UPSTREAM_CA_PEM"
@@ -141,7 +151,7 @@ jobs:
             -ldflags "-s -w -X 'main.clientCertPEM=${CLIENT_CERT_PEM}' -X 'main.clientKeyPEM=${CLIENT_KEY_PEM}' -X 'main.upstreamCAPEM=${UPSTREAM_CA_PEM}' -X 'main.upstreamURL=${UPSTREAM_URL}' -X 'github.com/codeasier/mtls-router/internal/version.Version=${RELEASE_VERSION}' -X 'github.com/codeasier/mtls-router/internal/version.Commit=${GITHUB_SHA::12}' -X 'github.com/codeasier/mtls-router/internal/version.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)' -X 'github.com/codeasier/mtls-router/internal/version.DeploymentID=${DEPLOYMENT_ID}'" \
              -o "dist/mtls-router-${GOOS}-${GOARCH}${ext}" .
           go build -trimpath \
-            -ldflags "-s -w -X 'github.com/codeasier/mtls-router/internal/version.Version=${RELEASE_VERSION}' -X 'github.com/codeasier/mtls-router/internal/version.Commit=${GITHUB_SHA::12}' -X 'github.com/codeasier/mtls-router/internal/version.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)' -X 'github.com/codeasier/mtls-router/internal/version.DeploymentID=${DEPLOYMENT_ID}' -X 'github.com/codeasier/mtls-router/internal/manager/preset.Encoded=${AGENT_MODEL_PRESET_BASE64}'" \
+            -ldflags "-s -w -X 'github.com/codeasier/mtls-router/internal/version.Version=${RELEASE_VERSION}' -X 'github.com/codeasier/mtls-router/internal/version.Commit=${GITHUB_SHA::12}' -X 'github.com/codeasier/mtls-router/internal/version.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)' -X 'github.com/codeasier/mtls-router/internal/version.DeploymentID=${DEPLOYMENT_ID}' -X 'github.com/codeasier/mtls-router/internal/manager/preset.Encoded=${AGENT_MODEL_PRESET_BASE64}' -X 'github.com/codeasier/mtls-router/internal/manager/modelcatalog.Simplify=${SIMPLIFY}'" \
              -o "dist/mtls-router-manager-${GOOS}-${GOARCH}${ext}" ./cmd/mtls-router-manager
           printf '{"schema_version":1,"producer":"cli-%s-%s","management_protocol_version":"2"}\n' "$GOOS" "$GOARCH" >"dist/release-metadata-cli-${GOOS}-${GOARCH}.json"
       - uses: actions/upload-artifact@v4
@@ -164,6 +174,7 @@ jobs:
       UPSTREAM_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.upstream_url || vars.UPSTREAM_URL }}
       DEPLOYMENT_ID: ${{ vars.DEPLOYMENT_ID }}
       AGENT_MODEL_PRESET_BASE64: ${{ vars.AGENT_MODEL_PRESET_BASE64 }}
+      SIMPLIFY: ${{ needs.prepare.outputs.simplify }}
       MANAGEMENT_PROTOCOL_VERSION: '2'
       APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
       APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}

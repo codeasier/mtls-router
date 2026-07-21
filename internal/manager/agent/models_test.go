@@ -85,6 +85,64 @@ func TestDiscoverModelsNoStateReturnsEmptyKeyFreeResult(t *testing.T) {
 	}
 }
 
+func TestDiscoverModelsAuthoritativelySignsServiceSimplifyPolicy(t *testing.T) {
+	for _, simplify := range []bool{false, true} {
+		home := t.TempDir()
+		service, err := NewService(Options{StateDir: filepath.Join(home, "transactions"), Simplify: simplify, Detector: Detector{
+			HomeDir: home, Getenv: func(string) string { return "" }, LookPath: func(string) (string, error) { return "", os.ErrNotExist },
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := service.DiscoverModels(context.Background(), []Kind{ClaudeCode}, []string{"model-a"}, modelconfig.CatalogClaims{
+			Models: []string{"model-a"}, Agents: []modelconfig.Agent{modelconfig.Claude}, Owner: "cli",
+			RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "2", Simplify: !simplify,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		claims, err := service.signer.VerifyCatalog(result.CatalogToken)
+		if err != nil || claims.Simplify != simplify {
+			t.Fatalf("simplify %t claims = %+v, %v", simplify, claims, err)
+		}
+	}
+}
+
+func TestDiscoverModelsReportsFilteredExistingAndPresetModelsUnavailable(t *testing.T) {
+	home := t.TempDir()
+	writeModelFixture(t, filepath.Join(home, ".claude", "settings.json"), `{"env":{"ANTHROPIC_MODEL":"provider/existing","ANTHROPIC_DEFAULT_HAIKU_MODEL":"provider/existing","ANTHROPIC_DEFAULT_SONNET_MODEL":"provider/existing","ANTHROPIC_DEFAULT_OPUS_MODEL":"provider/existing"}}`)
+	preset, err := modelconfig.DecodeStructural([]byte(`{"version":1,"codex":{"model":"provider/preset"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewService(Options{StateDir: filepath.Join(home, "transactions"), Preset: preset, Detector: Detector{
+		HomeDir: home, Getenv: func(string) string { return "" }, LookPath: func(string) (string, error) { return "", os.ErrNotExist },
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.DiscoverModels(context.Background(), []Kind{ClaudeCode, Codex}, []string{"model-a"}, modelconfig.CatalogClaims{
+		Models: []string{"model-a"}, Agents: []modelconfig.Agent{modelconfig.Claude, modelconfig.Codex}, Owner: "cli",
+		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(result.Existing.UnavailableModels["claude"], ","); got != "provider/existing" {
+		t.Fatalf("existing Claude unavailable = %q", got)
+	}
+	if got := strings.Join(result.Preset.UnavailableAgents["codex"], ","); got != "provider/preset" {
+		t.Fatalf("preset Codex unavailable = %q", got)
+	}
+	if string(result.Existing.ModelConfig) != `{}` || string(result.Preset.ModelConfig) != `{}` {
+		t.Fatalf("unavailable sections were returned: existing=%s preset=%s", result.Existing.ModelConfig, result.Preset.ModelConfig)
+	}
+	claims, err := service.signer.VerifyCatalog(result.CatalogToken)
+	if err != nil || strings.Join(claims.Models, ",") != "model-a" {
+		t.Fatalf("catalog claims = %+v, %v", claims, err)
+	}
+}
+
 func TestDiscoverModelsPresetNoPresetReturnsEmptyObjects(t *testing.T) {
 	home := t.TempDir()
 	service, err := NewService(Options{StateDir: filepath.Join(home, "transactions"), Detector: Detector{
