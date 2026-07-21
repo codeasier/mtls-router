@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -102,6 +103,58 @@ func TestDiscoverAcceptsSlowHealthyResponse(t *testing.T) {
 	}
 	if got := healthCalls.Load(); got != 1 {
 		t.Fatalf("health calls = %d, want 1", got)
+	}
+}
+
+func TestGetJSONReusesConnectionAfterTrailingBody(t *testing.T) {
+	var newConnections atomic.Int32
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(Version{Version: "v1"})
+		_, _ = w.Write([]byte(strings.Repeat(" ", 32*1024)))
+	}))
+	server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			newConnections.Add(1)
+		}
+	}
+	server.Start()
+	t.Cleanup(server.Close)
+
+	d := New(Config{BaseURL: server.URL})
+	for range 2 {
+		var version Version
+		if err := d.getJSON(context.Background(), "/version", &version, time.Second); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := newConnections.Load(); got != 1 {
+		t.Fatalf("new connections = %d, want 1", got)
+	}
+}
+
+func TestGetJSONReusesConnectionAfterNonOKBody(t *testing.T) {
+	var newConnections atomic.Int32
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(strings.Repeat("unavailable", 4096)))
+	}))
+	server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			newConnections.Add(1)
+		}
+	}
+	server.Start()
+	t.Cleanup(server.Close)
+
+	d := New(Config{BaseURL: server.URL})
+	for range 2 {
+		var version Version
+		if err := d.getJSON(context.Background(), "/version", &version, time.Second); err == nil {
+			t.Fatal("getJSON unexpectedly succeeded")
+		}
+	}
+	if got := newConnections.Load(); got != 1 {
+		t.Fatalf("new connections = %d, want 1", got)
 	}
 }
 

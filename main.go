@@ -96,7 +96,7 @@ func run() error {
 		return err
 	}
 	defer prober.Close()
-	if err := prober.Probe(probeOptions); err != nil {
+	if err := prober.Probe(); err != nil {
 		return err
 	}
 
@@ -115,7 +115,7 @@ func run() error {
 	mux.Handle("/version", routermeta.VersionHandler(routermeta.InfoProviderFunc(func() map[string]any {
 		return map[string]any{"started_at": startedAt}
 	})))
-	mux.Handle("/health", routermeta.HealthHandler(prober.Probe, probeOptions))
+	mux.Handle("/health", routermeta.HealthHandler(prober.Probe))
 	mux.Handle("/", withAccessLog(reverseProxy, logger))
 
 	server := &http.Server{

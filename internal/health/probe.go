@@ -22,9 +22,8 @@ type ProbeOptions struct {
 	Timeout     time.Duration
 }
 
-// ProbeFunc is the signature used by /health. The production code uses Probe;
-// tests pass a stub.
-type ProbeFunc func(ProbeOptions) error
+// ProbeFunc is the signature used by /health. Tests pass a stub.
+type ProbeFunc func() error
 
 type Prober struct {
 	url       string
@@ -62,7 +61,7 @@ func NewProber(opts ProbeOptions) (*Prober, error) {
 	}, nil
 }
 
-func (p *Prober) Probe(_ ProbeOptions) error {
+func (p *Prober) Probe() error {
 	ctx, cancel := context.WithTimeout(context.Background(), p.timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.url, nil)
@@ -85,12 +84,12 @@ func (p *Prober) Close() {
 	p.transport.CloseIdleConnections()
 }
 
-// Probe is the default ProbeFunc that performs a one-shot mTLS probe.
-var Probe ProbeFunc = func(opts ProbeOptions) error {
+// Probe performs a one-shot mTLS probe.
+func Probe(opts ProbeOptions) error {
 	prober, err := NewProber(opts)
 	if err != nil {
 		return err
 	}
 	defer prober.Close()
-	return prober.Probe(opts)
+	return prober.Probe()
 }

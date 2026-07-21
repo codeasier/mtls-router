@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -274,7 +275,10 @@ func (d *Discoverer) getJSON(ctx context.Context, path string, target any, timeo
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("endpoint returned HTTP %d", resp.StatusCode)
 	}

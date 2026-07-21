@@ -42,10 +42,10 @@ func TestProberReusesUpstreamConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer prober.Close()
-	if err := prober.Probe(ProbeOptions{}); err != nil {
+	if err := prober.Probe(); err != nil {
 		t.Fatal(err)
 	}
-	if err := prober.Probe(ProbeOptions{}); err != nil {
+	if err := prober.Probe(); err != nil {
 		t.Fatal(err)
 	}
 	if got := newConnections.Load(); got != 1 {
@@ -81,11 +81,11 @@ func TestProberReusesConnectionAfter5xxBody(t *testing.T) {
 	}
 	defer prober.Close()
 
-	if err := prober.Probe(ProbeOptions{}); err == nil {
+	if err := prober.Probe(); err == nil {
 		t.Fatal("first probe unexpectedly succeeded")
 	}
 	conn := waitForConnState(t, states, nil, http.StateIdle)
-	if err := prober.Probe(ProbeOptions{}); err == nil {
+	if err := prober.Probe(); err == nil {
 		t.Fatal("second probe unexpectedly succeeded")
 	}
 	waitForConnState(t, states, conn, http.StateIdle)
@@ -115,7 +115,7 @@ func TestProberCloseClosesIdleConnection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := prober.Probe(ProbeOptions{}); err != nil {
+	if err := prober.Probe(); err != nil {
 		t.Fatal(err)
 	}
 	conn := waitForConnState(t, states, nil, http.StateIdle)
