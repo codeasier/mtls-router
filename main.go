@@ -91,7 +91,12 @@ func run() error {
 		TLSMin:      cfg.TLSMin,
 		Timeout:     cfg.Timeout,
 	}
-	if err := health.Probe(probeOptions); err != nil {
+	prober, err := health.NewProber(probeOptions)
+	if err != nil {
+		return err
+	}
+	defer prober.Close()
+	if err := prober.Probe(); err != nil {
 		return err
 	}
 
@@ -110,7 +115,7 @@ func run() error {
 	mux.Handle("/version", routermeta.VersionHandler(routermeta.InfoProviderFunc(func() map[string]any {
 		return map[string]any{"started_at": startedAt}
 	})))
-	mux.Handle("/health", routermeta.HealthHandler(health.Probe, probeOptions))
+	mux.Handle("/health", routermeta.HealthHandler(prober.Probe))
 	mux.Handle("/", withAccessLog(reverseProxy, logger))
 
 	server := &http.Server{

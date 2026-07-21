@@ -99,15 +99,16 @@ type occupantService interface {
 }
 
 type dependencies struct {
-	info      func() protocol.ManagerInfoResult
-	discover  func(context.Context) discovery.Result
-	lifecycle lifecycleService
-	detect    func() ([]agent.State, error)
-	agent     agentService
-	models    agentModelsService
-	trusted   trustedRouterService
-	occupant  occupantService
-	now       func() time.Time
+	info           func() protocol.ManagerInfoResult
+	discoverStatus func(context.Context) discovery.Result
+	discoverHealth func(context.Context) discovery.Result
+	lifecycle      lifecycleService
+	detect         func() ([]agent.State, error)
+	agent          agentService
+	models         agentModelsService
+	trusted        trustedRouterService
+	occupant       occupantService
+	now            func() time.Time
 }
 
 // App is one sequential manager protocol session.
@@ -203,7 +204,7 @@ func New(config Config, simplify bool) (*App, error) {
 		ManagerIdentity:   config.ManagerIdentity,
 		ParentIdentity:    config.ParentIdentity,
 		RecentOutputBytes: maxLogReadBytes,
-	}, lifecycle.Dependencies{Discover: discoverer.Discover})
+	}, lifecycle.Dependencies{Discover: discoverer.DiscoverStatus})
 	occupantManager := occupant.New(occupant.Config{
 		ListenAddr: config.ListenAddr, DesktopPID: config.ParentIdentity.PID, ManagerIdentity: config.ManagerIdentity,
 		IsProtected: func(candidate occupant.Identity) bool {
@@ -220,11 +221,11 @@ func New(config Config, simplify bool) (*App, error) {
 			}
 			return false
 		},
-	}, occupant.Dependencies{Discover: discoverer.Discover})
+	}, occupant.Dependencies{Discover: discoverer.DiscoverStatus})
 
 	trusted := &trustedrouter.Coordinator{
 		Listener: listener, DeploymentID: version.DeploymentID, ProtocolVersion: version.ManagementProtocolVersion,
-		Discover: discoverer.Discover, Lifecycle: lifecycleManager, Channel: trustedrouter.Channel{Simplify: simplify},
+		Discover: discoverer.DiscoverStatus, Lifecycle: lifecycleManager, Channel: trustedrouter.Channel{Simplify: simplify},
 		DesktopEligible: func() bool {
 			if config.DesktopSession == "" || !completeIdentity(config.ParentIdentity) {
 				return false
@@ -234,7 +235,7 @@ func New(config Config, simplify bool) (*App, error) {
 		},
 	}
 	app := newWithDependencies(config, dependencies{
-		info: metadata.Info, discover: discoverer.Discover, lifecycle: lifecycleManager,
+		info: metadata.Info, discoverStatus: discoverer.DiscoverStatus, discoverHealth: discoverer.Discover, lifecycle: lifecycleManager,
 		detect: func() ([]agent.State, error) { return agentManager.Detect(context.Background()) }, agent: agentManager,
 		models: agentManager, trusted: trusted, occupant: occupantManager, now: time.Now,
 	})
@@ -318,7 +319,7 @@ func (a *App) diagnosticsCollect(ctx context.Context, params json.RawMessage) (a
 		return nil, err
 	}
 	info := a.deps.info()
-	found := a.deps.discover(ctx)
+	found := a.deps.discoverStatus(ctx)
 	if ctx.Err() != nil {
 		return nil, timeoutError()
 	}
@@ -346,7 +347,7 @@ func (a *App) routerStatus(ctx context.Context, params json.RawMessage) (any, *p
 	if err := decodeEmpty(params); err != nil {
 		return nil, err
 	}
-	found := a.deps.discover(ctx)
+	found := a.deps.discoverStatus(ctx)
 	a.captureUnexpectedExits()
 	if found.Classification == discovery.Absent || found.Classification == discovery.Stale {
 		if failed, ok := a.failedStatus(); ok {
@@ -399,7 +400,7 @@ func (a *App) routerHealth(ctx context.Context, params json.RawMessage) (any, *p
 	if err := decodeEmpty(params); err != nil {
 		return nil, err
 	}
-	found := a.deps.discover(ctx)
+	found := a.deps.discoverHealth(ctx)
 	if ctx.Err() != nil {
 		return nil, timeoutError()
 	}
@@ -413,7 +414,7 @@ func (a *App) routerVersion(ctx context.Context, params json.RawMessage) (any, *
 	if err := decodeEmpty(params); err != nil {
 		return nil, err
 	}
-	found := a.deps.discover(ctx)
+	found := a.deps.discoverStatus(ctx)
 	if ctx.Err() != nil {
 		return nil, timeoutError()
 	}
@@ -444,7 +445,7 @@ func (a *App) routerLogs(ctx context.Context, params json.RawMessage) (any, *pro
 	if request.Limit == 0 {
 		request.Limit = defaultLogLines
 	}
-	found := a.deps.discover(ctx)
+	found := a.deps.discoverStatus(ctx)
 	path := trustedLogPath(found)
 	if path == "" {
 		path = a.config.Paths.DesktopLogFile
@@ -509,14 +510,28 @@ func (a *App) agentDetect(ctx context.Context, params json.RawMessage) (any, *pr
 	}
 	result := protocol.AgentDetectResult{Agents: make([]protocol.AgentState, 0, len(states))}
 	for _, item := range states {
+		recovery := protocol.AgentRecoveryState{Eligible: item.Recovery.Eligible, Reasons: recoveryReasons(item.Recovery.Reasons)}
+		for _, file := range item.Recovery.Files {
+			recovery.Files = append(recovery.Files, protocol.AgentRecoveryFileState{
+				Role: file.Role, Path: file.Path, Format: string(file.Format), Exists: file.Exists, Reasons: recoveryReasons(file.Reasons),
+			})
+		}
 		result.Agents = append(result.Agents, protocol.AgentState{
 			Agent: string(item.Agent), Name: item.Name, Detected: item.Detected, Command: item.Command,
 			Path: item.Path, AuthPath: item.AuthPath, Format: string(item.Format), Exists: item.Exists,
 			Writable: item.Writable, Configured: item.Configured, Invalid: item.Invalid,
-			Migratable: item.Migratable,
+			Migratable: item.Migratable, Recovery: recovery,
 		})
 	}
 	return result, nil
+}
+
+func recoveryReasons(values []agent.RecoveryReason) []string {
+	result := make([]string, len(values))
+	for i, value := range values {
+		result[i] = string(value)
+	}
+	return result
 }
 
 func (a *App) agentPreview(ctx context.Context, params json.RawMessage) (any, *protocol.Error) {

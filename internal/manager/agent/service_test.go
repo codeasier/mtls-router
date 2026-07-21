@@ -634,6 +634,37 @@ func TestWriteBackupFailureDoesNotMutate(t *testing.T) {
 	assertNoBackupFiles(t, home)
 }
 
+func TestLaterBackupFailureCleansEarlierBackupsWithoutMutation(t *testing.T) {
+	home := t.TempDir()
+	claudePath := filepath.Join(home, ".claude", "settings.json")
+	openCodePath := filepath.Join(home, ".config", "opencode", "opencode.json")
+	claudeOriginal := `{"sentinel":"claude"}`
+	openCodeOriginal := `{"sentinel":"opencode"}`
+	writeFile(t, claudePath, claudeOriginal)
+	writeFile(t, openCodePath, openCodeOriginal)
+	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true, "opencode": true}, nil)
+	selected := []Kind{ClaudeCode, OpenCode}
+	preview, err := service.Preview(context.Background(), selected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.hooks.beforeBackup = func(path string) error {
+		if path == openCodePath {
+			return errors.New("injected second backup failure")
+		}
+		return nil
+	}
+	result, err := service.Write(context.Background(), WriteRequest{Agents: selected, RevisionToken: preview.RevisionToken, APIKey: testAPIKey})
+	assertCode(t, err, CodeBackupFailed)
+	if readString(t, claudePath) != claudeOriginal || readString(t, openCodePath) != openCodeOriginal {
+		t.Fatal("backup failure changed a target")
+	}
+	if len(result.Agents[0].Backups) != 0 || len(result.Agents[1].Backups) != 0 {
+		t.Fatalf("removed backups remained in result: %#v", result)
+	}
+	assertNoBackupFiles(t, home)
+}
+
 func TestWriteFailureRollsBackAllAgentsAndRetainsBackups(t *testing.T) {
 	home := t.TempDir()
 	claudePath := filepath.Join(home, ".claude", "settings.json")
@@ -913,6 +944,15 @@ func TestStartupRecoveryFailureReturnsDisabledService(t *testing.T) {
 	assertCode(t, err, CodeRollbackFailed)
 	if service == nil || !service.WritesDisabled() || CodeOf(service.RecoveryError()) != CodeRollbackFailed {
 		t.Fatalf("recovery state = service=%#v err=%v", service, err)
+	}
+	states, detectErr := service.Detect(context.Background())
+	if detectErr != nil {
+		t.Fatal(detectErr)
+	}
+	for _, state := range states {
+		if state.Recovery.Eligible || !hasRecoveryReason(state.Recovery.Reasons, RecoveryWritesDisabled) {
+			t.Fatalf("disabled service recovery metadata = %#v", state.Recovery)
+		}
 	}
 	_, err = service.Write(context.Background(), WriteRequest{Agents: []Kind{ClaudeCode}, RevisionToken: "stale", APIKey: testAPIKey})
 	assertCode(t, err, CodeRollbackFailed)

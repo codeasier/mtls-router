@@ -81,7 +81,7 @@ func TestManagementRoutesTakePrecedenceOverProxyRoute(t *testing.T) {
 	mux.Handle("/version", routermeta.VersionHandler(routermeta.InfoProviderFunc(func() map[string]any {
 		return map[string]any{"route": "version"}
 	})))
-	mux.Handle("/health", routermeta.HealthHandler(health.ProbeFunc(func(health.ProbeOptions) error { return nil })))
+	mux.Handle("/health", routermeta.HealthHandler(health.ProbeFunc(func() error { return nil })))
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("proxy"))
 	}))

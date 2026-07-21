@@ -282,12 +282,22 @@ pub fn update_status<R: Runtime>(app: &AppHandle<R>, snapshot: &RouterSnapshot) 
 }
 
 pub fn update_poll_snapshot<R: Runtime>(app: &AppHandle<R>, snapshot: &PollSnapshot) {
-    if snapshot.status_error.is_some() {
-        apply_error(app);
-        return;
+    if let Some(value) = poll_presentation(snapshot) {
+        let Some(state) = app.try_state::<TrayState<R>>() else {
+            return;
+        };
+        apply_presentation(&state, value);
     }
+}
+
+fn poll_presentation(snapshot: &PollSnapshot) -> Option<Presentation> {
     let Some(status) = snapshot.status.clone() else {
-        return;
+        return snapshot.status_error.as_ref().map(|_| Presentation {
+            severity: Severity::Error,
+            status: StatusText::ManagerUnavailable,
+            can_start: false,
+            can_stop: false,
+        });
     };
     let mut tray_snapshot: RouterSnapshot = status.into();
     if matches!(
@@ -301,7 +311,7 @@ pub fn update_poll_snapshot<R: Runtime>(app: &AppHandle<R>, snapshot: &PollSnaps
     {
         tray_snapshot.state = "degraded".to_owned();
     }
-    update_status(app, &tray_snapshot);
+    Some(presentation(&tray_snapshot))
 }
 
 pub fn set_language<R: Runtime>(app: &AppHandle<R>, language: NativeLanguage) -> tauri::Result<()> {
@@ -670,6 +680,7 @@ fn tray_icon(severity: Severity) -> tauri::Result<Image<'static>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::{PollError, RouterHealth};
 
     fn snapshot(state: &str, owner: Option<&str>) -> RouterSnapshot {
         RouterSnapshot::new(state, owner)
@@ -704,6 +715,79 @@ mod tests {
         assert_eq!(
             presentation(&snapshot("unknown_occupant", None)).severity,
             Severity::Error
+        );
+    }
+
+    #[test]
+    fn cached_status_takes_precedence_over_status_error() {
+        let cached = PollSnapshot {
+            status: Some(RouterStatus {
+                state: "desktop_owned".to_owned(),
+                owner: Some("desktop".to_owned()),
+                ..RouterStatus::default()
+            }),
+            health: Some(RouterHealth {
+                status: "ok".to_owned(),
+                checked_at: "2026-07-20T00:00:00Z".to_owned(),
+            }),
+            status_error: Some(PollError::new("MANAGER_FAILED")),
+            ..PollSnapshot::default()
+        };
+
+        assert_eq!(
+            poll_presentation(&cached),
+            Some(Presentation {
+                severity: Severity::Normal,
+                status: StatusText::Running,
+                can_start: false,
+                can_stop: true,
+            })
+        );
+    }
+
+    #[test]
+    fn status_error_without_cached_status_is_manager_unavailable() {
+        let snapshot = PollSnapshot {
+            status_error: Some(PollError::new("MANAGER_FAILED")),
+            ..PollSnapshot::default()
+        };
+
+        assert_eq!(
+            poll_presentation(&snapshot),
+            Some(Presentation {
+                severity: Severity::Error,
+                status: StatusText::ManagerUnavailable,
+                can_start: false,
+                can_stop: false,
+            })
+        );
+    }
+
+    #[test]
+    fn stale_cached_health_remains_explicitly_degraded() {
+        let snapshot = PollSnapshot {
+            status: Some(RouterStatus {
+                state: "desktop_owned".to_owned(),
+                owner: Some("desktop".to_owned()),
+                ..RouterStatus::default()
+            }),
+            health: Some(RouterHealth {
+                status: "ok".to_owned(),
+                checked_at: "2026-07-20T00:00:00Z".to_owned(),
+            }),
+            health_stale: true,
+            status_error: Some(PollError::new("MANAGER_FAILED")),
+            ..PollSnapshot::default()
+        };
+
+        assert_eq!(
+            poll_presentation(&snapshot),
+            Some(Presentation {
+                severity: Severity::Warning,
+                status: StatusText::UpstreamUnavailable,
+                can_start: false,
+                can_stop: true,
+            })
         );
     }
 

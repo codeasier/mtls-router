@@ -299,6 +299,7 @@ type Service struct {
 
 type serviceHooks struct {
 	beforeBackup   func(string) error
+	backupStage    func(backupStage, string) error
 	beforeReplace  func(string) error
 	afterReplace   func(string)
 	beforeRollback func(string) error
@@ -386,7 +387,25 @@ func (s *Service) Detect(ctx context.Context) ([]State, error) {
 	if err := contextError(ctx); err != nil {
 		return nil, err
 	}
-	return s.detector.Detect()
+	states, err := s.detector.Detect()
+	if err != nil {
+		return nil, err
+	}
+	var managerReason RecoveryReason
+	if s.writesDisabled {
+		managerReason = RecoveryWritesDisabled
+	} else if _, err := os.Stat(s.journalPath()); err == nil {
+		managerReason = RecoveryTransactionPending
+	} else if !os.IsNotExist(err) {
+		managerReason = RecoveryTransactionPending
+	}
+	if managerReason != "" {
+		for i := range states {
+			states[i].Recovery.Eligible = false
+			states[i].Recovery.Reasons = appendReason(states[i].Recovery.Reasons, managerReason)
+		}
+	}
+	return states, nil
 }
 
 // Preview validates selected targets and returns a structured, key-free change
@@ -588,6 +607,20 @@ func (s *Service) Write(ctx context.Context, request WriteRequest) (WriteResult,
 	}
 	result := resultForPlan(transactionID, plan)
 	journal := transactionJournal{Version: 2, KeyGeneration: s.keyGeneration, TransactionID: transactionID, Entries: make([]journalEntry, len(plan.files))}
+	var createdBackups []string
+	backupFailure := func() (WriteResult, error) {
+		failure := operationError(CodeBackupFailed, "could not create an Agent configuration backup")
+		remaining, err := cleanupCreatedBackups(createdBackups)
+		if err != nil {
+			retainResultBackups(&result, remaining)
+			s.disableWrites(err)
+			markResultFailure(&result, s.recoveryErr)
+			return result, s.recoveryErr
+		}
+		clearResultBackups(&result)
+		markResultFailure(&result, failure)
+		return result, failure
+	}
 
 	for i := range plan.files {
 		file := &plan.files[i]
@@ -598,18 +631,18 @@ func (s *Service) Write(ctx context.Context, request WriteRequest) (WriteResult,
 		if file.backupRequired {
 			if s.hooks.beforeBackup != nil {
 				if err := s.hooks.beforeBackup(file.backupSource); err != nil {
-					failure := operationError(CodeBackupFailed, "could not create an Agent configuration backup")
-					markResultFailure(&result, failure)
-					return result, failure
+					return backupFailure()
 				}
 			}
-			backupPath, err := createPrivateBackup(file.backupSource, file.sourceContent, file.sourceMode, "bak")
+			backupPath, err := createPrivateBackupWithHook(file.backupSource, file.sourceContent, file.sourceMode, "bak", s.hooks.backupStage)
 			if err != nil {
-				failure := operationError(CodeBackupFailed, "could not create an Agent configuration backup")
-				markResultFailure(&result, failure)
-				return result, failure
+				if backupPath != "" {
+					createdBackups = append(createdBackups, backupPath)
+				}
+				return backupFailure()
 			}
 			file.backupPath = backupPath
+			createdBackups = append(createdBackups, backupPath)
 			if file.scope == scopeManagerState {
 				result.StateBackup = &FileWriteStatus{Path: file.targetPath, BackupPath: backupPath}
 			} else {
@@ -737,6 +770,49 @@ func (s *Service) Write(ctx context.Context, request WriteRequest) (WriteResult,
 		result.Agents[i].Success = true
 	}
 	return result, nil
+}
+
+func cleanupCreatedBackups(paths []string) ([]string, error) {
+	for i := len(paths) - 1; i >= 0; i-- {
+		if err := removeAndSync(paths[i]); err != nil {
+			return append([]string(nil), paths[:i+1]...), err
+		}
+	}
+	return nil, nil
+}
+
+func clearResultBackups(result *WriteResult) {
+	result.StateBackup = nil
+	for i := range result.Agents {
+		result.Agents[i].Backups = nil
+		for j := range result.Agents[i].Files {
+			result.Agents[i].Files[j].BackupPath = ""
+		}
+	}
+}
+
+func retainResultBackups(result *WriteResult, remaining []string) {
+	keep := make(map[string]bool, len(remaining))
+	for _, path := range remaining {
+		keep[path] = true
+	}
+	if result.StateBackup != nil && !keep[result.StateBackup.BackupPath] {
+		result.StateBackup = nil
+	}
+	for i := range result.Agents {
+		backups := result.Agents[i].Backups[:0]
+		for _, path := range result.Agents[i].Backups {
+			if keep[path] {
+				backups = append(backups, path)
+			}
+		}
+		result.Agents[i].Backups = backups
+		for j := range result.Agents[i].Files {
+			if !keep[result.Agents[i].Files[j].BackupPath] {
+				result.Agents[i].Files[j].BackupPath = ""
+			}
+		}
+	}
 }
 
 func (s *Service) verifyPlannedRevision(path string, expected fileRevision, scope journalScope) error {

@@ -31,6 +31,7 @@ type ViewState =
   | "external"
   | "occupied"
   | "failed"
+  | "unavailable"
   | "reinstall"
   | "stopping";
 
@@ -93,6 +94,13 @@ function getStateCopy(t: Translator): Record<ViewState, StateCopy> {
       detail: t("router.state.failed.detail"),
       tone: "danger",
     },
+    unavailable: {
+      code: "NA",
+      title: t("router.state.unavailable.title"),
+      signal: t("router.state.unavailable.signal"),
+      detail: t("router.state.unavailable.detail"),
+      tone: "warning",
+    },
     reinstall: {
       code: "SC",
       title: t("router.state.reinstall.title"),
@@ -151,14 +159,20 @@ function viewState(
   status: RouterStatus | null,
   health: HealthState,
   operation: Operation,
-  failed: boolean,
+  actionFailed: boolean,
+  statusReadFailed: boolean,
   reinstallRequired: boolean,
 ): ViewState {
   if (operation) return operation;
   if (reinstallRequired) return "reinstall";
-  if (failed || status?.state === "start_failed" || status?.state === "stale") {
+  if (
+    actionFailed ||
+    status?.state === "start_failed" ||
+    status?.state === "stale"
+  ) {
     return "failed";
   }
+  if (!status && statusReadFailed) return "unavailable";
   switch (status?.state) {
     case "starting":
       return "starting";
@@ -262,13 +276,13 @@ export function RouterPage({
   const [status, setStatus] = useState<RouterStatus | null>(null);
   const [health, setHealth] = useState<RouterHealth | null>(null);
   const [operation, setOperation] = useState<Operation>(null);
-  const [failed, setFailed] = useState(false);
+  const [actionFailed, setActionFailed] = useState(false);
+  const [statusReadFailed, setStatusReadFailed] = useState(false);
   const [message, setMessage] = useState<RouterMessage>("");
   const [checkingHealth, setCheckingHealth] = useState(false);
   const [snapshotRevision, setSnapshotRevision] = useState(-1);
   const [now, setNow] = useState(0);
   const [reinstallRequired, setReinstallRequired] = useState(false);
-  const [healthFailed, setHealthFailed] = useState(false);
   const [occupant, setOccupant] = useState<OccupantInspection | null>(null);
   const [occupantFailure, setOccupantFailure] = useState<OccupantError | null>(
     null,
@@ -289,8 +303,9 @@ export function RouterPage({
     if (snapshot.status) {
       statusState.current = snapshot.status;
       setStatus(snapshot.status);
-      setFailed(false);
       if (!snapshot.status_error) {
+        setActionFailed(false);
+        setStatusReadFailed(false);
         setMessage((current) =>
           clearRecoveredStatusMessage(current, snapshot.status!),
         );
@@ -298,7 +313,6 @@ export function RouterPage({
     }
     if (snapshot.health) {
       setHealth(snapshot.health);
-      setHealthFailed(false);
       if (!snapshot.health_error) {
         setMessage((current) =>
           current === "router.error.health" ? "" : current,
@@ -307,18 +321,16 @@ export function RouterPage({
     }
     if (snapshot.status && !isAvailable(snapshot.status)) {
       setHealth(null);
-      setHealthFailed(false);
     }
     const statusCode = snapshot.status_error?.code ?? "";
     if (sidecarError(statusCode)) {
       setReinstallRequired(true);
       setMessage("router.error.sidecarReinstall");
     } else if (statusCode) {
-      setFailed(true);
+      setStatusReadFailed(true);
       setMessage(actionErrorKey("load"));
     }
-    if (snapshot.health_error) {
-      setHealthFailed(true);
+    if (snapshot.health_error && !statusCode) {
       setMessage(actionErrorKey("health"));
     }
   }, []);
@@ -375,7 +387,7 @@ export function RouterPage({
           setReinstallRequired(true);
           setMessage("router.error.sidecarReinstall");
         } else {
-          setFailed(true);
+          setStatusReadFailed(true);
           setMessage(actionErrorKey("load"));
         }
       }
@@ -425,16 +437,13 @@ export function RouterPage({
   }, [occupantDialogOpen, terminatingOccupant]);
 
   const available = isAvailable(status);
-  const observedHealth = checkingHealth
-    ? "checking"
-    : healthFailed
-      ? "degraded"
-      : healthState(health, now);
+  const observedHealth = checkingHealth ? "checking" : healthState(health, now);
   const currentState = viewState(
     status,
     observedHealth,
     operation,
-    failed,
+    actionFailed,
+    statusReadFailed,
     reinstallRequired,
   );
   const copy = getStateCopy(t)[currentState];
@@ -458,7 +467,7 @@ export function RouterPage({
 
   async function start() {
     setOperation("starting");
-    setFailed(false);
+    setActionFailed(false);
     setMessage("");
     try {
       const next = await api.startRouter();
@@ -471,7 +480,7 @@ export function RouterPage({
         try {
           const refreshed = await refreshSnapshot();
           if (isAvailable(refreshed.status ?? null)) {
-            setFailed(false);
+            setActionFailed(false);
             return;
           }
         } catch {
@@ -482,7 +491,7 @@ export function RouterPage({
         setReinstallRequired(true);
         setMessage("router.error.sidecarReinstall");
       } else {
-        setFailed(true);
+        setActionFailed(true);
         setMessage(actionErrorKey("start"));
       }
     }
@@ -509,10 +518,8 @@ export function RouterPage({
     try {
       const next = await api.retryRouterHealth();
       setHealth(next);
-      setHealthFailed(false);
       await refreshSnapshot();
     } catch {
-      setHealthFailed(true);
       setMessage(actionErrorKey("health"));
     } finally {
       setCheckingHealth(false);

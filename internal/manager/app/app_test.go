@@ -185,8 +185,9 @@ func TestServeWiresEveryMethodSequentiallyAndSanitizesOutput(t *testing.T) {
 		info: func() protocol.ManagerInfoResult {
 			return protocol.ManagerInfoResult{Version: "manager-v1", Commit: "abc123", BuildDate: "2026-07-12T00:00:00Z", Target: "test/test", DeploymentID: "prod-a", ManagementProtocolVersion: "2"}
 		},
-		discover:  func(context.Context) discovery.Result { return found },
-		lifecycle: lifecycleManager,
+		discoverStatus: func(context.Context) discovery.Result { return found },
+		discoverHealth: func(context.Context) discovery.Result { return found },
+		lifecycle:      lifecycleManager,
 		detect: func() ([]agent.State, error) {
 			return []agent.State{{Agent: agent.ClaudeCode, Name: "Claude Code", Detected: true, Path: filepath.Join(dir, "settings.json"), Format: agent.FormatJSON, Writable: true}}, nil
 		},
@@ -229,6 +230,129 @@ func TestServeWiresEveryMethodSequentiallyAndSanitizesOutput(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "[REDACTED") || !strings.Contains(output.String(), `"commit":"abc123"`) {
 		t.Fatalf("output lacks sanitized logs or version metadata: %s", output.String())
+	}
+}
+
+func TestRouterStatusUsesStatusDiscovery(t *testing.T) {
+	statusCalls, healthCalls := 0, 0
+	manager := newWithDependencies(Config{}, dependencies{
+		discoverStatus: func(context.Context) discovery.Result {
+			statusCalls++
+			return discovery.Result{Classification: discovery.DesktopOwned, Owner: "desktop"}
+		},
+		discoverHealth: func(context.Context) discovery.Result {
+			healthCalls++
+			return discovery.Result{Classification: discovery.Degraded}
+		},
+		lifecycle: &fakeLifecycle{},
+	})
+
+	result, responseErr := manager.routerStatus(context.Background(), json.RawMessage(`{}`))
+	if responseErr != nil {
+		t.Fatal(responseErr)
+	}
+	status := result.(protocol.RouterStatusResult)
+	if status.State != string(discovery.DesktopOwned) {
+		t.Fatalf("status state = %q, want %q", status.State, discovery.DesktopOwned)
+	}
+	if statusCalls != 1 || healthCalls != 0 {
+		t.Fatalf("status calls=%d health calls=%d", statusCalls, healthCalls)
+	}
+}
+
+func TestDiagnosticsCollectUsesStatusDiscoveryAndSanitizesOutput(t *testing.T) {
+	statusCalls, healthCalls := 0, 0
+	manager := newWithDependencies(Config{}, dependencies{
+		info: func() protocol.ManagerInfoResult {
+			return protocol.ManagerInfoResult{Version: "manager-v1"}
+		},
+		discoverStatus: func(context.Context) discovery.Result {
+			statusCalls++
+			return discovery.Result{
+				Classification: discovery.DesktopOwned,
+				Owner:          "desktop",
+				ListenAddr:     "http://127.0.0.1:19099?api_key=" + integrationKey,
+			}
+		},
+		discoverHealth: func(context.Context) discovery.Result {
+			healthCalls++
+			return discovery.Result{Health: discovery.Health{Status: integrationKey}}
+		},
+		detect: func() ([]agent.State, error) { return nil, nil },
+	})
+
+	result, responseErr := manager.diagnosticsCollect(context.Background(), json.RawMessage(`{}`))
+	if responseErr != nil {
+		t.Fatal(responseErr)
+	}
+	summary := result.(protocol.DiagnosticsResult).Summary
+	if statusCalls != 1 || healthCalls != 0 {
+		t.Fatalf("status calls=%d health calls=%d", statusCalls, healthCalls)
+	}
+	if strings.Contains(summary, integrationKey) {
+		t.Fatalf("diagnostics contain sensitive input: %s", summary)
+	}
+	if !strings.Contains(summary, "listen=http://127.0.0.1:19099?[REDACTED]") || !strings.Contains(summary, " health=\n") {
+		t.Fatalf("diagnostics lack sanitized status or empty process-only health: %s", summary)
+	}
+}
+
+func TestRouterHealthUsesHealthDiscovery(t *testing.T) {
+	statusCalls, healthCalls := 0, 0
+	checkedAt := time.Date(2026, 7, 20, 1, 2, 3, 0, time.UTC)
+	manager := newWithDependencies(Config{}, dependencies{
+		discoverStatus: func(context.Context) discovery.Result {
+			statusCalls++
+			return discovery.Result{Classification: discovery.DesktopOwned}
+		},
+		discoverHealth: func(context.Context) discovery.Result {
+			healthCalls++
+			return discovery.Result{Classification: discovery.DesktopOwned, Health: discovery.Health{Status: "ok"}}
+		},
+		now: func() time.Time { return checkedAt },
+	})
+
+	result, responseErr := manager.routerHealth(context.Background(), json.RawMessage(`{}`))
+	if responseErr != nil {
+		t.Fatal(responseErr)
+	}
+	health := result.(protocol.RouterHealthResult)
+	if health.Status != "ok" || !health.CheckedAt.Equal(checkedAt) {
+		t.Fatalf("health result = %#v", health)
+	}
+	if statusCalls != 0 || healthCalls != 1 {
+		t.Fatalf("status calls=%d health calls=%d", statusCalls, healthCalls)
+	}
+}
+
+func TestRouterVersionUsesStatusDiscovery(t *testing.T) {
+	statusCalls, healthCalls := 0, 0
+	manager := newWithDependencies(Config{}, dependencies{
+		discoverStatus: func(context.Context) discovery.Result {
+			statusCalls++
+			return discovery.Result{
+				Classification: discovery.DesktopOwned,
+				Version: discovery.Version{
+					Version: "router-v1", DeploymentID: "prod-a", ManagementProtocolVersion: "2",
+				},
+			}
+		},
+		discoverHealth: func(context.Context) discovery.Result {
+			healthCalls++
+			return discovery.Result{Classification: discovery.Degraded}
+		},
+	})
+
+	result, responseErr := manager.routerVersion(context.Background(), json.RawMessage(`{}`))
+	if responseErr != nil {
+		t.Fatal(responseErr)
+	}
+	versionResult := result.(protocol.RouterVersionResult)
+	if versionResult.Version != "router-v1" {
+		t.Fatalf("version = %q, want router-v1", versionResult.Version)
+	}
+	if statusCalls != 1 || healthCalls != 0 {
+		t.Fatalf("status calls=%d health calls=%d", statusCalls, healthCalls)
 	}
 }
 
@@ -290,8 +414,8 @@ func TestMapAgentErrorIncludesSafeValidationDetails(t *testing.T) {
 
 func TestHandlersRejectInvalidTypedParameters(t *testing.T) {
 	manager := newWithDependencies(Config{}, dependencies{
-		info:     func() protocol.ManagerInfoResult { return protocol.ManagerInfoResult{} },
-		discover: func(context.Context) discovery.Result { return discovery.Result{Classification: discovery.Absent} },
+		info:           func() protocol.ManagerInfoResult { return protocol.ManagerInfoResult{} },
+		discoverStatus: func(context.Context) discovery.Result { return discovery.Result{Classification: discovery.Absent} },
 		lifecycle: &fakeLifecycle{start: func(context.Context, protocol.RouterOwner) (state.RouterState, *lifecycle.Error) {
 			return state.RouterState{}, nil
 		}, stop: func(context.Context) *lifecycle.Error { return nil }},
@@ -764,8 +888,8 @@ func TestDesktopRouterStartReclaimsAfterOwnedOrStaleNormalStart(t *testing.T) {
 				stop: func(context.Context) *lifecycle.Error { return nil },
 			}
 			manager := newWithDependencies(Config{RouterPath: os.Args[0]}, dependencies{
-				discover:  func(context.Context) discovery.Result { return found },
-				lifecycle: lifecycleManager,
+				discoverStatus: func(context.Context) discovery.Result { return found },
+				lifecycle:      lifecycleManager,
 			})
 			input := strings.NewReader("{\"id\":\"start\",\"method\":\"router.start\",\"params\":{\"owner\":\"desktop\"}}\n{\"id\":\"status\",\"method\":\"router.status\"}\n")
 			var output bytes.Buffer
@@ -832,7 +956,7 @@ func TestRouterStartReclaimsThroughProtocolAndLifecycleThenStatusSucceeds(t *tes
 		},
 	})
 	manager := newWithDependencies(Config{RouterPath: os.Args[0]}, dependencies{
-		discover: func(context.Context) discovery.Result {
+		discoverStatus: func(context.Context) discovery.Result {
 			classification := discovery.Stale
 			if value.ManagerPID == managerIdentity.PID {
 				classification = discovery.DesktopOwned
@@ -929,7 +1053,7 @@ func TestUnexpectedDesktopExitIsSanitizedLatchedAndClearedBySuccessfulRestart(t 
 		stop: func(context.Context) *lifecycle.Error { return nil },
 	}
 	manager := newWithDependencies(Config{RouterPath: os.Args[0]}, dependencies{
-		discover: func(context.Context) discovery.Result {
+		discoverStatus: func(context.Context) discovery.Result {
 			statusCalls++
 			if statusCalls == 2 {
 				return discovery.Result{Classification: discovery.Stale}

@@ -492,11 +492,8 @@ fn watchdog(method: &str) -> Result<Duration> {
     let manager_seconds = match method {
         "manager.info" | "router.status" | "router.version" => 1,
         "router.logs" => 2,
-        "diagnostics.collect"
-        | "router.health"
-        | "agent.detect"
-        | "agent.render"
-        | "agent.preview" => 5,
+        "diagnostics.collect" | "agent.detect" | "agent.render" | "agent.preview" => 5,
+        "router.health" => 12,
         "router.inspect_occupant" => 2,
         FORCE_TERMINATE_OCCUPANT => 3,
         "router.stop" => 7,
@@ -719,6 +716,7 @@ mod tests {
     #[test]
     fn watchdog_is_one_second_beyond_each_manager_deadline() {
         assert_eq!(watchdog("router.status").unwrap(), Duration::from_secs(2));
+        assert_eq!(watchdog("router.health").unwrap(), Duration::from_secs(13));
         assert_eq!(
             watchdog("router.inspect_occupant").unwrap(),
             Duration::from_secs(3)

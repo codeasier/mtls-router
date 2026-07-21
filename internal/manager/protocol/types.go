@@ -112,7 +112,7 @@ func Deadlines() map[Method]time.Duration {
 		MethodRouterStatus:                 time.Second,
 		MethodRouterStart:                  20 * time.Second,
 		MethodRouterStop:                   7 * time.Second,
-		MethodRouterHealth:                 5 * time.Second,
+		MethodRouterHealth:                 12 * time.Second,
 		MethodRouterVersion:                time.Second,
 		MethodRouterLogs:                   2 * time.Second,
 		MethodRouterInspectOccupant:        2 * time.Second,
@@ -218,18 +218,33 @@ type RouterOccupantTerminationResult struct {
 }
 
 type AgentState struct {
-	Agent      string `json:"agent"`
-	Name       string `json:"name"`
-	Detected   bool   `json:"detected"`
-	Command    string `json:"command,omitempty"`
-	Path       string `json:"path"`
-	AuthPath   string `json:"auth_path,omitempty"`
-	Format     string `json:"format"`
-	Exists     bool   `json:"exists"`
-	Writable   bool   `json:"writable"`
-	Configured bool   `json:"configured"`
-	Invalid    bool   `json:"invalid"`
-	Migratable bool   `json:"migratable,omitempty"`
+	Agent      string             `json:"agent"`
+	Name       string             `json:"name"`
+	Detected   bool               `json:"detected"`
+	Command    string             `json:"command,omitempty"`
+	Path       string             `json:"path"`
+	AuthPath   string             `json:"auth_path,omitempty"`
+	Format     string             `json:"format"`
+	Exists     bool               `json:"exists"`
+	Writable   bool               `json:"writable"`
+	Configured bool               `json:"configured"`
+	Invalid    bool               `json:"invalid"`
+	Migratable bool               `json:"migratable,omitempty"`
+	Recovery   AgentRecoveryState `json:"recovery"`
+}
+
+type AgentRecoveryFileState struct {
+	Role    string   `json:"role"`
+	Path    string   `json:"path"`
+	Format  string   `json:"format"`
+	Exists  bool     `json:"exists"`
+	Reasons []string `json:"reasons,omitempty"`
+}
+
+type AgentRecoveryState struct {
+	Eligible bool                     `json:"eligible"`
+	Reasons  []string                 `json:"reasons,omitempty"`
+	Files    []AgentRecoveryFileState `json:"files"`
 }
 
 type AgentDetectResult struct {

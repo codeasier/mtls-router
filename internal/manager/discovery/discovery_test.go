@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -54,6 +56,108 @@ func TestDiscoverClassifiesCorrelatedRouters(t *testing.T) {
 	}
 }
 
+func TestDiscoverStatusDoesNotProbeHealth(t *testing.T) {
+	var healthCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/version":
+			_ = json.NewEncoder(w).Encode(Version{Version: "v1", PID: 73, DeploymentID: "prod-a", ManagementProtocolVersion: "1"})
+		case "/health":
+			healthCalls.Add(1)
+			time.Sleep(100 * time.Millisecond)
+			_ = json.NewEncoder(w).Encode(Health{Status: "ok"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	d := correlatedDesktopDiscoverer(server.URL, 20*time.Millisecond, 150*time.Millisecond)
+	if got := d.DiscoverStatus(context.Background()); got.Classification != DesktopOwned {
+		t.Fatalf("classification = %q, want %q; result=%+v", got.Classification, DesktopOwned, got)
+	}
+	if got := healthCalls.Load(); got != 0 {
+		t.Fatalf("health calls = %d, want 0", got)
+	}
+}
+
+func TestDiscoverAcceptsSlowHealthyResponse(t *testing.T) {
+	var healthCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/version":
+			_ = json.NewEncoder(w).Encode(Version{Version: "v1", PID: 73, DeploymentID: "prod-a", ManagementProtocolVersion: "1"})
+		case "/health":
+			healthCalls.Add(1)
+			time.Sleep(40 * time.Millisecond)
+			_ = json.NewEncoder(w).Encode(Health{Status: "ok"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	got := correlatedDesktopDiscoverer(server.URL, 20*time.Millisecond, 100*time.Millisecond).Discover(context.Background())
+	if got.Classification != DesktopOwned || got.Health.Status != "ok" {
+		t.Fatalf("result = %+v", got)
+	}
+	if got := healthCalls.Load(); got != 1 {
+		t.Fatalf("health calls = %d, want 1", got)
+	}
+}
+
+func TestGetJSONReusesConnectionAfterTrailingBody(t *testing.T) {
+	var newConnections atomic.Int32
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(Version{Version: "v1"})
+		_, _ = w.Write([]byte(strings.Repeat(" ", 32*1024)))
+	}))
+	server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			newConnections.Add(1)
+		}
+	}
+	server.Start()
+	t.Cleanup(server.Close)
+
+	d := New(Config{BaseURL: server.URL})
+	for range 2 {
+		var version Version
+		if err := d.getJSON(context.Background(), "/version", &version, time.Second); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := newConnections.Load(); got != 1 {
+		t.Fatalf("new connections = %d, want 1", got)
+	}
+}
+
+func TestGetJSONReusesConnectionAfterNonOKBody(t *testing.T) {
+	var newConnections atomic.Int32
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(strings.Repeat("unavailable", 4096)))
+	}))
+	server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			newConnections.Add(1)
+		}
+	}
+	server.Start()
+	t.Cleanup(server.Close)
+
+	d := New(Config{BaseURL: server.URL})
+	for range 2 {
+		var version Version
+		if err := d.getJSON(context.Background(), "/version", &version, time.Second); err == nil {
+			t.Fatal("getJSON unexpectedly succeeded")
+		}
+	}
+	if got := newConnections.Load(); got != 1 {
+		t.Fatalf("new connections = %d, want 1", got)
+	}
+}
+
 func TestEndpointOnlyAndMetadataMismatchAreUnknown(t *testing.T) {
 	for _, tt := range []struct{ name, deployment, protocol string }{
 		{name: "no state", deployment: "prod-a", protocol: "1"},
@@ -61,12 +165,23 @@ func TestEndpointOnlyAndMetadataMismatchAreUnknown(t *testing.T) {
 		{name: "protocol mismatch", deployment: "prod-a", protocol: "2"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			server := routerServer(t, 73, tt.deployment, tt.protocol, "ok")
+			var healthCalls atomic.Int32
+			mux := http.NewServeMux()
+			mux.HandleFunc("/version", func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(Version{Version: "v1", PID: 73, DeploymentID: tt.deployment, ManagementProtocolVersion: tt.protocol})
+			})
+			mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+				healthCalls.Add(1)
+				_ = json.NewEncoder(w).Encode(Health{Status: "ok"})
+			})
+			server := httptest.NewServer(mux)
+			t.Cleanup(server.Close)
 			d := New(Config{BaseURL: server.URL, DeploymentID: "prod-a", ManagementProtocolVersion: "1"})
 			if got := d.Discover(context.Background()); got.Classification != UnknownOccupant {
 				t.Fatalf("classification = %q, want unknown_occupant", got.Classification)
-			} else if got.Health.Status != "ok" {
-				t.Fatalf("unknown occupant health was not probed: %+v", got.Health)
+			}
+			if got := healthCalls.Load(); got != 0 {
+				t.Fatalf("health calls = %d, want 0", got)
 			}
 		})
 	}
@@ -79,7 +194,9 @@ func TestUnknownServiceAndBoundedTimeout(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	started := time.Now()
-	got := New(Config{BaseURL: server.URL, RequestTimeout: 20 * time.Millisecond}).Discover(context.Background())
+	got := New(Config{
+		BaseURL: server.URL, RequestTimeout: 20 * time.Millisecond, HealthRequestTimeout: 20 * time.Millisecond,
+	}).Discover(context.Background())
 	if got.Classification != UnknownOccupant {
 		t.Fatalf("classification = %q", got.Classification)
 	}
@@ -160,6 +277,17 @@ func routerServer(t *testing.T, pid int, deployment, protocol, health string) *h
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	return server
+}
+
+func correlatedDesktopDiscoverer(baseURL string, requestTimeout, healthRequestTimeout time.Duration) *Discoverer {
+	value := completeState("desktop", 73, "prod-a")
+	value.ListenAddr = baseURL
+	return New(Config{
+		BaseURL: baseURL, DesktopStatePath: "desktop", DeploymentID: "prod-a", ManagementProtocolVersion: "1",
+		RequestTimeout: requestTimeout, HealthRequestTimeout: healthRequestTimeout,
+		ReadState:       func(string) (state.RouterState, error) { return value, nil },
+		ValidateProcess: func(process.Identity, string) (process.Status, error) { return process.StatusGenuine, nil },
+	})
 }
 
 func completeState(owner string, pid int, deployment string) state.RouterState {

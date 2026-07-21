@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"time"
@@ -21,41 +22,74 @@ type ProbeOptions struct {
 	Timeout     time.Duration
 }
 
-// ProbeFunc is the signature used by /health. The production code uses Probe;
-// tests pass a stub.
-type ProbeFunc func(ProbeOptions) error
+// ProbeFunc is the signature used by /health. Tests pass a stub.
+type ProbeFunc func() error
 
-// Probe is the default ProbeFunc that does a real mTLS+TCP dial.
-var Probe ProbeFunc = func(opts ProbeOptions) error {
+type Prober struct {
+	url       string
+	timeout   time.Duration
+	client    *http.Client
+	transport *http.Transport
+}
+
+func NewProber(opts ProbeOptions) (*Prober, error) {
 	if _, err := url.ParseRequestURI(opts.UpstreamURL); err != nil {
-		return fmt.Errorf("invalid probe URL")
+		return nil, fmt.Errorf("invalid probe URL")
 	}
 	clientCert, rootCAs, err := certs.LoadFromStrings(opts.ClientCert, opts.ClientKey, opts.UpstreamCA)
 	if err != nil {
-		return fmt.Errorf("load probe mTLS config")
+		return nil, fmt.Errorf("load probe mTLS config")
 	}
 	tlsMin, err := tlspolicy.MinVersion(opts.TLSMin)
 	if err != nil {
-		return fmt.Errorf("configure probe TLS")
+		return nil, fmt.Errorf("configure probe TLS")
 	}
 	timeout := opts.Timeout
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	transport := &http.Transport{TLSClientConfig: &tls.Config{
+		Certificates: []tls.Certificate{*clientCert},
+		RootCAs:      rootCAs,
+		MinVersion:   tlsMin,
+	}}
+	return &Prober{
+		url:       opts.UpstreamURL,
+		timeout:   timeout,
+		client:    &http.Client{Transport: transport},
+		transport: transport,
+	}, nil
+}
+
+func (p *Prober) Probe() error {
+	ctx, cancel := context.WithTimeout(context.Background(), p.timeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, opts.UpstreamURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.url, nil)
 	if err != nil {
 		return fmt.Errorf("create probe request")
 	}
-	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{Certificates: []tls.Certificate{*clientCert}, RootCAs: rootCAs, MinVersion: tlsMin}}}
-	resp, err := client.Do(req)
+	resp, err := p.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("probe upstream failed")
 	}
 	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
 	if resp.StatusCode >= http.StatusInternalServerError {
 		return fmt.Errorf("probe upstream returned status %d", resp.StatusCode)
 	}
 	return nil
+}
+
+func (p *Prober) Close() {
+	p.transport.CloseIdleConnections()
+}
+
+// Probe performs a one-shot mTLS probe.
+func Probe(opts ProbeOptions) error {
+	prober, err := NewProber(opts)
+	if err != nil {
+		return err
+	}
+	defer prober.Close()
+	return prober.Probe()
 }

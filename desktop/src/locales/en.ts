@@ -68,6 +68,10 @@ export const en: Record<TranslationKey, string> = {
   "router.state.failed.signal": "Action required",
   "router.state.failed.detail":
     "The router did not become available. Review the logs and retry after resolving the problem.",
+  "router.state.unavailable.title": "Router status unavailable",
+  "router.state.unavailable.signal": "Status unavailable",
+  "router.state.unavailable.detail":
+    "The desktop could not read the router status. It will retry automatically.",
   "router.state.reinstall.title": "Desktop components are invalid",
   "router.state.reinstall.signal": "Reinstall required",
   "router.state.reinstall.detail":
