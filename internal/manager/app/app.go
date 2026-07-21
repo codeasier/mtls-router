@@ -510,14 +510,28 @@ func (a *App) agentDetect(ctx context.Context, params json.RawMessage) (any, *pr
 	}
 	result := protocol.AgentDetectResult{Agents: make([]protocol.AgentState, 0, len(states))}
 	for _, item := range states {
+		recovery := protocol.AgentRecoveryState{Eligible: item.Recovery.Eligible, Reasons: recoveryReasons(item.Recovery.Reasons)}
+		for _, file := range item.Recovery.Files {
+			recovery.Files = append(recovery.Files, protocol.AgentRecoveryFileState{
+				Role: file.Role, Path: file.Path, Format: string(file.Format), Exists: file.Exists, Reasons: recoveryReasons(file.Reasons),
+			})
+		}
 		result.Agents = append(result.Agents, protocol.AgentState{
 			Agent: string(item.Agent), Name: item.Name, Detected: item.Detected, Command: item.Command,
 			Path: item.Path, AuthPath: item.AuthPath, Format: string(item.Format), Exists: item.Exists,
 			Writable: item.Writable, Configured: item.Configured, Invalid: item.Invalid,
-			Migratable: item.Migratable,
+			Migratable: item.Migratable, Recovery: recovery,
 		})
 	}
 	return result, nil
+}
+
+func recoveryReasons(values []agent.RecoveryReason) []string {
+	result := make([]string, len(values))
+	for i, value := range values {
+		result[i] = string(value)
+	}
+	return result
 }
 
 func (a *App) agentPreview(ctx context.Context, params json.RawMessage) (any, *protocol.Error) {
