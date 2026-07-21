@@ -3,6 +3,7 @@ set -euo pipefail
 
 desktop_dir="$(cd "$(dirname "$0")/.." && pwd)"
 repo_dir="$(cd "$desktop_dir/.." && pwd)"
+simplify="$(bash "$repo_dir/scripts/normalize-simplify.sh")"
 target="${TAURI_ENV_TARGET_TRIPLE:-${TARGET:-$(rustc --print host-tuple)}}"
 
 case "$target" in
@@ -78,7 +79,7 @@ commit="$(git -C "$repo_dir" rev-parse --short HEAD 2>/dev/null || printf unknow
 build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 metadata="-s -w -X 'github.com/codeasier/mtls-router/internal/version.Version=$version' -X 'github.com/codeasier/mtls-router/internal/version.Commit=$commit' -X 'github.com/codeasier/mtls-router/internal/version.BuildDate=$build_date' -X 'github.com/codeasier/mtls-router/internal/version.DeploymentID=$deployment_id'"
 agent_model_preset_base64="${AGENT_MODEL_PRESET_BASE64:-}"
-manager_metadata="$metadata -X 'github.com/codeasier/mtls-router/internal/manager/preset.Encoded=$agent_model_preset_base64'"
+manager_metadata="$metadata -X 'github.com/codeasier/mtls-router/internal/manager/preset.Encoded=$agent_model_preset_base64' -X 'github.com/codeasier/mtls-router/internal/manager/modelcatalog.Simplify=$simplify'"
 
 router="$out_dir/mtls-router-$target$extension"
 manager="$out_dir/mtls-router-manager-$target$extension"

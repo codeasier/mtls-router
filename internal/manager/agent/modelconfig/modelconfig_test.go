@@ -447,7 +447,7 @@ func TestCatalogTokensBindEveryContextAndRejectTampering(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	claims := CatalogClaims{Models: []string{"z", "a", "a"}, Agents: []Agent{Codex, Claude}, Owner: "cli", RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "deployment-a", ProtocolVersion: "2"}
+	claims := CatalogClaims{Models: []string{"z", "a", "a"}, Agents: []Agent{Codex, Claude}, Owner: "cli", RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "deployment-a", ProtocolVersion: "2", Simplify: true}
 	token, err := signer.SignCatalog(claims)
 	if err != nil {
 		t.Fatal(err)
@@ -456,7 +456,7 @@ func TestCatalogTokensBindEveryContextAndRejectTampering(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(verified.Models, []string{"a", "z"}) || !reflect.DeepEqual(verified.Agents, []Agent{Claude, Codex}) || verified.KeyGeneration != "generation-1234567890" {
+	if !reflect.DeepEqual(verified.Models, []string{"a", "z"}) || !reflect.DeepEqual(verified.Agents, []Agent{Claude, Codex}) || !verified.Simplify || verified.KeyGeneration != "generation-1234567890" {
 		t.Fatalf("normalized claims = %#v", verified)
 	}
 	parts := strings.Split(token, ".")
@@ -469,6 +469,31 @@ func TestCatalogTokensBindEveryContextAndRejectTampering(t *testing.T) {
 	other, _ := NewTokenSigner(make([]byte, 32), "generation-1234567890")
 	if _, err := other.VerifyCatalog(token); !errors.Is(err, ErrTokenInvalid) {
 		t.Fatalf("public-data forgery accepted: %v", err)
+	}
+}
+
+func TestCatalogTokenFalseSimplifyIsOmittedAndLegacyCompatible(t *testing.T) {
+	signer, err := NewTokenSigner(bytes.Repeat([]byte{0x31}, 32), "generation-legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := signer.SignCatalog(CatalogClaims{
+		Models: []string{"provider/model"}, Agents: []Agent{Claude}, Owner: "cli",
+		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "deployment", ProtocolVersion: "2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := base64.RawURLEncoding.Strict().DecodeString(strings.SplitN(token, ".", 2)[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(payload, []byte(`"simplify"`)) {
+		t.Fatalf("false simplify was encoded: %s", payload)
+	}
+	verified, err := signer.VerifyCatalog(token)
+	if err != nil || verified.Simplify {
+		t.Fatalf("legacy-compatible claims = %#v, %v", verified, err)
 	}
 }
 
@@ -528,6 +553,7 @@ func TestCatalogTokenRejectsEveryCrossProcessContextMismatch(t *testing.T) {
 		{name: "address", mutate: func(c *CatalogClaims) { c.RouterBaseURL = "http://127.0.0.1:19100" }},
 		{name: "deployment", mutate: func(c *CatalogClaims) { c.DeploymentID = "other" }},
 		{name: "protocol", mutate: func(c *CatalogClaims) { c.ProtocolVersion = "1" }},
+		{name: "simplify", mutate: func(c *CatalogClaims) { c.Simplify = true }},
 		{name: "generation", mutate: func(c *CatalogClaims) { c.KeyGeneration = "generation-b" }},
 	}
 	for _, test := range mutations {

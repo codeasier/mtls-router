@@ -10,6 +10,7 @@
 - Added protocol-v2 `agent.models`/`agent.render`, canonical key-free model config, Agent-native options, redacted render/preview, write-time catalog refresh, managed ownership state, and drift/Codex-auth approvals.
 - Added optional Claude display names and canonical `context: "1m"` for every explicit selection. Canonical and catalog identity remains the base model ID; `[1m]` is appended only at the Claude rendering boundary, without capability inference or management of `CLAUDE_CODE_DISABLE_1M_CONTEXT`.
 - Added immutable key-free build presets to manager binaries. Protocol v2 now returns stable `preset.model_config` and `preset.unavailable_agents` objects after independent authenticated validation of each requested Agent section.
+- Added manager-only `SIMPLIFY` build policy. Unset/empty and ASCII-case booleans normalize before compilation, default `True` excludes valid IDs containing ASCII `/`, and `False` retains every valid ID.
 
 ### Changed
 
@@ -17,12 +18,14 @@
 - Refined automatic-selection behavior: only a visible build preset whose exact IDs pass the current authenticated catalog may initialize a form. First-model selection, model-name or capability heuristics, partial preset repair, substitution, and runtime fallback remain prohibited.
 - Migrated Claude to managed `env` merge, opencode to the exact selected provider catalog, and Codex from the historical `custom` provider to dedicated `mtls-router` plus separately approved file-backed API-key auth.
 - Detection now describes local structural completeness only; current authorization is established only by discovery and write-time refresh.
+- Made the validated, deduplicated, bounded, sorted, and build-filtered catalog authoritative for protocol tokens/results, existing and preset availability, import, preview, and write-time refresh. Filtering happens after complete validation, so malformed hidden IDs remain `MODEL_RESPONSE_INVALID`, all-filtered catalogs return `MODEL_CATALOG_EMPTY`, and refresh disappearance remains fail-closed.
 
 ### Security and release
 
 - Added private signed catalog/revision state, shared operation locking, transactional sidecar/backups, compatibility revision pins, and release preflight rejection for mixed protocol generations.
 - Documented that Agent and approved backup files may contain keys while model config, tokens, sidecar, logs, diagnostics, and protocol results do not.
 - Added optional `AGENT_MODEL_PRESET_BASE64` release input with preflight validation and identical standalone/desktop manager injection. Invalid nonempty input fails manager startup without content leakage; empty input is valid, and router binaries, including desktop router sidecars, never receive preset data.
+- Release builds normalize `SIMPLIFY` before compilation and inject the same value into standalone and desktop managers only. It is not a router/runtime preference and does not change proxy route support.
 
 ---
 

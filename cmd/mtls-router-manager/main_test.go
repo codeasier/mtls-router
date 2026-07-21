@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,6 +33,8 @@ func TestTrustedRouterHelperProcess(t *testing.T) {
 	}
 	ready := os.Getenv("MTLS_TEST_ROUTER_READY")
 	requests := os.Getenv("MTLS_TEST_ROUTER_REQUESTS")
+	catalogMode := os.Getenv("MTLS_TEST_ROUTER_CATALOG_MODE")
+	var modelRequests atomic.Int64
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/version":
@@ -50,7 +53,21 @@ func TestTrustedRouterHelperProcess(t *testing.T) {
 			}
 			_, _ = file.WriteString("models\n")
 			_ = file.Close()
-			_, _ = w.Write([]byte(`{"data":[{"id":"model-a"}]}`))
+			requestNumber := modelRequests.Add(1)
+			switch catalogMode {
+			case "", "mixed":
+				_, _ = w.Write([]byte(`{"data":[{"id":"provider/slash"},{"id":"model-a"}]}`))
+			case "slash-only":
+				_, _ = w.Write([]byte(`{"data":[{"id":"provider/slash"}]}`))
+			case "safe-then-slash":
+				if requestNumber == 1 {
+					_, _ = w.Write([]byte(`{"data":[{"id":"model-a"}]}`))
+				} else {
+					_, _ = w.Write([]byte(`{"data":[{"id":"provider/slash"}]}`))
+				}
+			default:
+				w.WriteHeader(http.StatusInternalServerError)
+			}
 		default:
 			http.NotFound(w, r)
 		}
@@ -139,68 +156,78 @@ func TestServeOnlyCommandAndExplicitFlagValidation(t *testing.T) {
 }
 
 func TestManagerSubprocessModelsPreviewRefreshWriteAcrossRequests(t *testing.T) {
+	for _, test := range []struct {
+		name, catalogMode, model, simplify string
+		wantSimplify                       bool
+	}{
+		{name: "default filters mixed catalog", model: "model-a", wantSimplify: true},
+		{name: "mixed-case false retains slash-only catalog", catalogMode: "slash-only", model: "provider/slash", simplify: "fAlSe"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var binary string
+			if test.simplify != "" {
+				binary = buildManagerWithSimplify(t, test.simplify)
+			} else {
+				binary = buildManager(t)
+			}
+			dataDir := t.TempDir()
+			authority, requestLog := startTrustedRouter(t, dataDir, test.catalogMode)
+			send, finish := startManagerSession(t, binary, dataDir, authority)
+
+			modelsResponse := send(map[string]any{"id": "models", "method": "agent.models", "params": map[string]any{"owner": "cli", "agents": []string{"claude"}, "api_key": subprocessKey}})
+			if modelsResponse.Error != nil {
+				t.Fatalf("models error = %+v", modelsResponse.Error)
+			}
+			var models protocol.AgentModelsResult
+			if err := json.Unmarshal(modelsResponse.Result, &models); err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Join(models.Models, ","); got != test.model {
+				t.Fatalf("models = %q, want %q", got, test.model)
+			}
+			tokenModels, tokenSimplify := catalogTokenClaims(t, models.CatalogToken)
+			if got := strings.Join(tokenModels, ","); got != test.model {
+				t.Fatalf("token models = %q, want %q", got, test.model)
+			}
+			if tokenSimplify != test.wantSimplify {
+				t.Fatalf("token simplify = %t, want %t", tokenSimplify, test.wantSimplify)
+			}
+			config := json.RawMessage(`{"version":1,"claude":{"primary":{"model":"` + test.model + `"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true}}}`)
+			previewResponse := send(map[string]any{"id": "preview", "method": "agent.preview", "params": map[string]any{"agents": []string{"claude"}, "catalog_token": models.CatalogToken, "model_config": config}})
+			if previewResponse.Error != nil {
+				t.Fatalf("preview error = %+v", previewResponse.Error)
+			}
+			var preview protocol.AgentPreviewResult
+			if err := json.Unmarshal(previewResponse.Result, &preview); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(preview.ModelConfig), test.model) {
+				t.Fatalf("preview model config = %s, want %q", preview.ModelConfig, test.model)
+			}
+			writeResponse := send(map[string]any{"id": "write", "method": "agent.write", "params": map[string]any{
+				"agents": []string{"claude"}, "catalog_token": models.CatalogToken, "model_config": config, "revision_token": preview.RevisionToken,
+				"approve_managed_overwrite": preview.ManagedConfigDrift, "approve_codex_auth_change": preview.RequiresCodexAuthApproval, "api_key": subprocessKey,
+			}})
+			if writeResponse.Error != nil {
+				t.Fatalf("write error = %+v", writeResponse.Error)
+			}
+			finish()
+
+			configured, err := os.ReadFile(filepath.Join(dataDir, "claude", "settings.json"))
+			if err != nil || !strings.Contains(string(configured), subprocessKey) || !strings.Contains(string(configured), test.model) {
+				t.Fatalf("Claude output was not written correctly: %q, %v", configured, err)
+			}
+			assertModelRequestCount(t, requestLog, 2)
+			assertTreeExcludesExcept(t, dataDir, subprocessKey, filepath.Join(dataDir, "claude", "settings.json"))
+		})
+	}
+}
+
+func TestManagerSubprocessWriteRefreshRejectsCatalogFilteredToEmpty(t *testing.T) {
 	binary := buildManager(t)
 	dataDir := t.TempDir()
-	ready := filepath.Join(dataDir, "router-ready")
-	requestLog := filepath.Join(dataDir, "router-requests")
-	router := exec.Command(os.Args[0], "-test.run=^TestTrustedRouterHelperProcess$")
-	router.Env = append(os.Environ(), "MTLS_TEST_ROUTER_HELPER=1", "MTLS_TEST_ROUTER_READY="+ready, "MTLS_TEST_ROUTER_REQUESTS="+requestLog)
-	if err := router.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = router.Process.Kill(); _ = router.Wait() })
-	authority := waitForContent(t, ready)
-	identity, err := process.Inspect(router.Process.Pid)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cliDir := filepath.Join(dataDir, "cli")
-	if err := os.MkdirAll(cliDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	value := state.RouterState{
-		PID: router.Process.Pid, Owner: "cli", ListenAddr: "http://" + authority,
-		BinaryPath: identity.Executable, ProcessStartedAt: identity.StartedAt, ProcessExecutable: identity.Executable,
-		RouterVersion: "fixture", DeploymentID: "deployment-test", ManagementProtocolVersion: "2",
-	}
-	if err := state.Write(filepath.Join(cliDir, "setup-state.json"), value); err != nil {
-		t.Fatal(err)
-	}
-
-	command := exec.Command(binary, "serve", "--listen", authority)
-	command.Env = managerEnv(dataDir)
-	stdin, err := command.StdinPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	stdout, err := command.StdoutPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var stderr bytes.Buffer
-	command.Stderr = &stderr
-	if err := command.Start(); err != nil {
-		t.Fatal(err)
-	}
-	reader := bufio.NewReader(stdout)
-	send := func(request any) protocol.Response {
-		t.Helper()
-		if err := json.NewEncoder(stdin).Encode(request); err != nil {
-			t.Fatal(err)
-		}
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			t.Fatalf("read manager response: %v, stderr=%s", err, stderr.String())
-		}
-		var response protocol.Response
-		if err := json.Unmarshal([]byte(line), &response); err != nil {
-			t.Fatalf("response %q: %v", line, err)
-		}
-		if strings.Contains(line, subprocessKey) {
-			t.Fatalf("response leaked key: %s", line)
-		}
-		return response
-	}
+	authority, requestLog := startTrustedRouter(t, dataDir, "safe-then-slash")
+	send, finish := startManagerSession(t, binary, dataDir, authority)
 
 	modelsResponse := send(map[string]any{"id": "models", "method": "agent.models", "params": map[string]any{"owner": "cli", "agents": []string{"claude"}, "api_key": subprocessKey}})
 	if modelsResponse.Error != nil {
@@ -223,28 +250,30 @@ func TestManagerSubprocessModelsPreviewRefreshWriteAcrossRequests(t *testing.T) 
 		"agents": []string{"claude"}, "catalog_token": models.CatalogToken, "model_config": config, "revision_token": preview.RevisionToken,
 		"approve_managed_overwrite": preview.ManagedConfigDrift, "approve_codex_auth_change": preview.RequiresCodexAuthApproval, "api_key": subprocessKey,
 	}})
-	if writeResponse.Error != nil {
-		t.Fatalf("write error = %+v", writeResponse.Error)
+	if writeResponse.Error == nil || writeResponse.Error.Code != protocol.CodeModelCatalogEmpty {
+		t.Fatalf("write response = %#v", writeResponse)
 	}
-	_ = stdin.Close()
-	if err := command.Wait(); err != nil {
-		t.Fatalf("manager exit: %v, stderr=%s", err, stderr.String())
+	finish()
+	assertModelRequestCount(t, requestLog, 2)
+	for _, path := range []string{
+		filepath.Join(dataDir, "claude", "settings.json"),
+		filepath.Join(dataDir, "agent-transactions", "agent-write-journal.json"),
+		filepath.Join(dataDir, "agent-transactions", "last-applied-model-config.json"),
+	} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("failed refresh created %s: %v", path, err)
+		}
 	}
-	if strings.Contains(stderr.String(), subprocessKey) {
-		t.Fatalf("stderr leaked key: %s", stderr.String())
-	}
-	configured, err := os.ReadFile(filepath.Join(dataDir, "claude", "settings.json"))
-	if err != nil || !strings.Contains(string(configured), subprocessKey) || !strings.Contains(string(configured), "model-a") {
-		t.Fatalf("Claude output was not written correctly: %q, %v", configured, err)
-	}
-	requests, err := os.ReadFile(requestLog)
+	entries, err := os.ReadDir(filepath.Join(dataDir, "agent-transactions"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Count(string(requests), "models\n"); got != 2 {
-		t.Fatalf("authenticated catalog requests = %d, want discovery plus write refresh; log=%q", got, requests)
+	for _, entry := range entries {
+		if entry.Name() != "agent-operation.lock" && entry.Name() != "token-signing-key.json" {
+			t.Fatalf("failed refresh left transaction artifact %s", entry.Name())
+		}
 	}
-	assertTreeExcludesExcept(t, dataDir, subprocessKey, filepath.Join(dataDir, "claude", "settings.json"))
+	assertTreeExcludes(t, dataDir, subprocessKey)
 }
 
 func TestManagerSubprocessReturnsPresetWithoutCanaryLeaks(t *testing.T) {
@@ -252,30 +281,7 @@ func TestManagerSubprocessReturnsPresetWithoutCanaryLeaks(t *testing.T) {
 	presetJSON := `{"version":1,"claude":{"primary":{"model":"model-a","name":"` + presetCanary + `"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true}}}`
 	binary := buildManagerWithPreset(t, base64.StdEncoding.EncodeToString([]byte(presetJSON)))
 	dataDir := t.TempDir()
-	ready := filepath.Join(dataDir, "router-ready")
-	requestLog := filepath.Join(dataDir, "router-requests")
-	router := exec.Command(os.Args[0], "-test.run=^TestTrustedRouterHelperProcess$")
-	router.Env = append(os.Environ(), "MTLS_TEST_ROUTER_HELPER=1", "MTLS_TEST_ROUTER_READY="+ready, "MTLS_TEST_ROUTER_REQUESTS="+requestLog)
-	if err := router.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = router.Process.Kill(); _ = router.Wait() })
-	authority := waitForContent(t, ready)
-	identity, err := process.Inspect(router.Process.Pid)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cliDir := filepath.Join(dataDir, "cli")
-	if err := os.MkdirAll(cliDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := state.Write(filepath.Join(cliDir, "setup-state.json"), state.RouterState{
-		PID: router.Process.Pid, Owner: "cli", ListenAddr: "http://" + authority,
-		BinaryPath: identity.Executable, ProcessStartedAt: identity.StartedAt, ProcessExecutable: identity.Executable,
-		RouterVersion: "fixture", DeploymentID: "deployment-test", ManagementProtocolVersion: "2",
-	}); err != nil {
-		t.Fatal(err)
-	}
+	authority, _ := startTrustedRouter(t, dataDir, "")
 	input := `{"id":"models","method":"agent.models","params":{"owner":"cli","agents":["claude"],"api_key":"` + subprocessKey + `"}}` + "\n"
 	command := exec.Command(binary, "serve", "--listen", authority)
 	command.Env = managerEnv(dataDir)
@@ -311,21 +317,54 @@ func TestManagerSubprocessRejectsMalformedPresetBeforeServing(t *testing.T) {
 	}
 }
 
+func TestManagerSubprocessRejectsInvalidLinkedSimplifyBeforeRecoveryOrServing(t *testing.T) {
+	const simplifyCanary = "invalid-linked-simplify-canary-6f2d"
+	binary := buildManagerWithSimplify(t, simplifyCanary)
+	dataDir := t.TempDir()
+	stateDir := filepath.Join(dataDir, "agent-transactions")
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "agent-write-journal.json"), []byte(`invalid-recovery-canary`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, err := runManager(binary, dataDir, `{"id":"info","method":"manager.info"}`+"\n")
+	if err == nil || stdout != "" {
+		t.Fatalf("err=%v stdout=%q stderr=%q", err, stdout, stderr)
+	}
+	if stderr != "mtls-router-manager: invalid embedded simplify value\n" || strings.Contains(stderr, simplifyCanary) || strings.Contains(stderr, "Agent transaction recovery") {
+		t.Fatalf("unsanitized or late startup failure: %s", stderr)
+	}
+}
+
 func buildManager(t *testing.T) string {
 	return buildManagerWithPreset(t, "")
 }
 
 func buildManagerWithPreset(t *testing.T, encodedPreset string) string {
+	return buildManagerWithLinkedValues(t, encodedPreset, nil)
+}
+
+func buildManagerWithSimplify(t *testing.T, simplify string) string {
+	return buildManagerWithLinkedValues(t, "", &simplify)
+}
+
+func buildManagerWithLinkedValues(t *testing.T, encodedPreset string, simplify *string) string {
 	t.Helper()
 	dir := t.TempDir()
 	binary := filepath.Join(dir, "mtls-router-manager")
-	command := exec.Command("go", "build", "-ldflags", strings.Join([]string{
+	linkedValues := []string{
 		"-X github.com/codeasier/mtls-router/internal/version.Version=v9.8.7-test",
 		"-X github.com/codeasier/mtls-router/internal/version.Commit=abc123test",
 		"-X github.com/codeasier/mtls-router/internal/version.BuildDate=2026-07-12T00:00:00Z",
 		"-X github.com/codeasier/mtls-router/internal/version.DeploymentID=deployment-test",
 		"-X github.com/codeasier/mtls-router/internal/manager/preset.Encoded=" + encodedPreset,
-	}, " "), "-o", binary, ".")
+	}
+	if simplify != nil {
+		linkedValues = append(linkedValues, "-X github.com/codeasier/mtls-router/internal/manager/modelcatalog.Simplify="+*simplify)
+	}
+	command := exec.Command("go", "build", "-ldflags", strings.Join(linkedValues, " "), "-o", binary, ".")
 	command.Dir = "."
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("build manager: %v\n%s", err, output)
@@ -353,6 +392,134 @@ func managerEnv(dataDir string) []string {
 		"OPENCODE_CONFIG="+filepath.Join(dataDir, "opencode.json"),
 		"CODEX_HOME="+filepath.Join(dataDir, "codex"),
 	)
+}
+
+func startTrustedRouter(t *testing.T, dataDir, catalogMode string) (string, string) {
+	t.Helper()
+	ready := filepath.Join(dataDir, "router-ready")
+	requestLog := filepath.Join(dataDir, "router-requests")
+	router := exec.Command(os.Args[0], "-test.run=^TestTrustedRouterHelperProcess$")
+	router.Env = append(os.Environ(),
+		"MTLS_TEST_ROUTER_HELPER=1",
+		"MTLS_TEST_ROUTER_READY="+ready,
+		"MTLS_TEST_ROUTER_REQUESTS="+requestLog,
+		"MTLS_TEST_ROUTER_CATALOG_MODE="+catalogMode,
+	)
+	if err := router.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = router.Process.Kill()
+		_ = router.Wait()
+	})
+	authority := waitForContent(t, ready)
+	identity, err := process.Inspect(router.Process.Pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cliDir := filepath.Join(dataDir, "cli")
+	if err := os.MkdirAll(cliDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Write(filepath.Join(cliDir, "setup-state.json"), state.RouterState{
+		PID: router.Process.Pid, Owner: "cli", ListenAddr: "http://" + authority,
+		BinaryPath: identity.Executable, ProcessStartedAt: identity.StartedAt, ProcessExecutable: identity.Executable,
+		RouterVersion: "fixture", DeploymentID: "deployment-test", ManagementProtocolVersion: "2",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return authority, requestLog
+}
+
+func startManagerSession(t *testing.T, binary, dataDir, authority string) (func(any) protocol.Response, func()) {
+	t.Helper()
+	command := exec.Command(binary, "serve", "--listen", authority)
+	command.Env = managerEnv(dataDir)
+	stdin, err := command.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	finished := false
+	t.Cleanup(func() {
+		if !finished {
+			_ = command.Process.Kill()
+			_ = command.Wait()
+		}
+	})
+	reader := bufio.NewReader(stdout)
+	send := func(request any) protocol.Response {
+		t.Helper()
+		if err := json.NewEncoder(stdin).Encode(request); err != nil {
+			t.Fatal(err)
+		}
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatalf("read manager response: %v, stderr=%s", err, stderr.String())
+		}
+		var response protocol.Response
+		if err := json.Unmarshal([]byte(line), &response); err != nil {
+			t.Fatalf("response %q: %v", line, err)
+		}
+		if strings.Contains(line, subprocessKey) {
+			t.Fatalf("response leaked key: %s", line)
+		}
+		return response
+	}
+	finish := func() {
+		t.Helper()
+		if finished {
+			return
+		}
+		_ = stdin.Close()
+		if err := command.Wait(); err != nil {
+			t.Fatalf("manager exit: %v, stderr=%s", err, stderr.String())
+		}
+		finished = true
+		if strings.Contains(stderr.String(), subprocessKey) {
+			t.Fatalf("stderr leaked key: %s", stderr.String())
+		}
+	}
+	return send, finish
+}
+
+func catalogTokenClaims(t *testing.T, token string) ([]string, bool) {
+	t.Helper()
+	parts := strings.SplitN(token, ".", 2)
+	if len(parts) != 2 {
+		t.Fatalf("invalid catalog token shape")
+	}
+	payload, err := base64.RawURLEncoding.Strict().DecodeString(parts[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var claims struct {
+		Models   []string `json:"models"`
+		Simplify bool     `json:"simplify"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		t.Fatal(err)
+	}
+	return claims.Models, claims.Simplify
+}
+
+func assertModelRequestCount(t *testing.T, path string, want int) {
+	t.Helper()
+	requests, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(requests), "models\n"); got != want {
+		t.Fatalf("authenticated catalog requests = %d, want %d; log=%q", got, want, requests)
+	}
 }
 
 func waitForContent(t *testing.T, path string) string {

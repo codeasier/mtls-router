@@ -58,7 +58,7 @@ Agent 配置必须显式执行 key-before-discovery 流程：
 
 1. 刷新检测，只选择有效且可写的 Agent。
 2. 输入 API key。React 会立即清空输入框；Rust 只在一次性且不可 replay 的临时流程中保留它。
-3. 通过可信本地 router 发现完整的认证模型目录。所有已选 Agent 使用同一个目录。桌面端绝不会选择第一个模型、按模型名称或能力推断选择，也不会替换模型。可见的构建 preset 只有在 manager 根据该目录验证某个 section 的全部精确 ID 后，才能提供该 section 作为可编辑初始值。
+3. 通过可信本地 router 发现 manager 经过认证和构建过滤的模型目录。默认会排除包含 ASCII `/` 的有效 ID；使用 `SIMPLIFY=False` 构建的 release 会保留它们。该过滤目录是所有已选 Agent、导入配置、preset、预览和刷新的权威依据。这是不可变的 manager 构建策略，不是运行时偏好，也不是对 proxy 路由支持的限制。桌面端绝不会选择第一个模型、按模型名称或能力推断选择，也不会替换模型。可见的构建 preset 只有在 manager 根据该目录验证某个 section 的全部精确 ID 后，才能提供该 section 作为可编辑初始值。
 4. 每个 Agent 独立采用 `existing > preset > empty` 初始化；界面会标明 section 来自 existing 配置还是推荐 preset，并为不可用的完整 preset section 列出缺失 base ID。配置各 Agent 原生选择：Claude 主模型/角色继承以及可选显示名称和 Standard/1M context、opencode 模型子集/默认/选项，以及一个 Codex 模型/选项。Claude 提供本地化的**启用 Fable**控件。空 Claude 表单默认禁用 Fable；启用时创建 inherit-primary 选择，并显示与现有角色相同的继承/显式模型、显示名称和 Standard/1M 控件；禁用时删除完整 Fable 选择及其 metadata。Existing Claude 作为完整 section 优先于 preset Claude，因此不会把 preset Fable 合并进省略 Fable 的 existing Claude section。Preset 值始终可编辑且不代表任何批准。未设置的可选字段保持省略。可以导入或导出无 key 的规范 model config；导入会完整替换当前表单，而不是与 existing 或 preset 值合并，并在导出、预览与写入中精确保留已启用或省略的 Fable。
 5. 生成结构化预览，审查脱敏片段以及每个创建、替换、保留、迁移、漂移批准、状态和备份操作。不设置显式 `OPENCODE_CONFIG` 时，标准 `~/.config/opencode/opencode.jsonc` 会迁移到同目录的 `opencode.json`；已有同名 sibling 会构成迁移冲突。显式 `OPENCODE_CONFIG` 指定 `.jsonc` 文件时，只会在该精确路径原地替换为 strict JSON；已有文件会备份，并且不会触碰 sibling `opencode.json`。两种 JSONC 操作都会丢失注释和格式。Codex 可能同时修改 `config.toml` 和 `auth.json`，切换 file-backed API-key auth 需要单独批准。
 6. 批准并写入。Manager 会消耗内存中的 key，在创建任何写入产物前刷新目录，随后检查修改和备份路径。

@@ -32,11 +32,12 @@ type Request struct {
 type Client struct {
 	httpClient *http.Client
 	timeout    time.Duration
+	simplify   bool
 }
 
-// New returns a client using transport. A nil transport uses a direct transport
-// that never consults environment proxy settings.
-func New(transport http.RoundTripper) *Client {
+// New returns a client with an immutable simplify policy. A nil transport uses
+// a direct transport that never consults environment proxy settings.
+func New(transport http.RoundTripper, simplify bool) *Client {
 	if transport == nil {
 		transport = &http.Transport{
 			Proxy:       nil,
@@ -49,10 +50,10 @@ func New(transport http.RoundTripper) *Client {
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
-	}, timeout: requestTimeout}
+	}, timeout: requestTimeout, simplify: simplify}
 }
 
-// Fetch requests and normalizes the complete model catalog.
+// Fetch requests and returns the catalog filtered by the client's build policy.
 func (c *Client) Fetch(ctx context.Context, request Request) ([]string, error) {
 	endpoint, err := url.Parse(request.URL)
 	if err != nil || endpoint.Scheme == "" || endpoint.Host == "" || endpoint.User != nil ||
@@ -89,7 +90,7 @@ func (c *Client) Fetch(ctx context.Context, request Request) ([]string, error) {
 	if len(body) > maxBodyBytes {
 		return nil, responseInvalid()
 	}
-	models, err := Parse(body)
+	models, err := Parse(body, c.simplify)
 	if err != nil {
 		return nil, err
 	}

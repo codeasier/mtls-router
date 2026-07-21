@@ -8,13 +8,20 @@ manager is authoritative when this guide and a client-side validation differ.
 ## Service Contract
 
 The authenticated upstream `GET /v1/models` response is the only candidate
-model source. It returns one complete OpenAI-compatible `data[].id` catalog for
-the supplied Bearer key. Every returned ID is supported, without name filtering
-or inference probing, on all required routes:
+model source. The manager validates the complete bounded OpenAI-compatible
+response and every `data[].id`, then deduplicates, enforces the unique-ID count
+limit, and sorts by UTF-8 byte order before applying its immutable build filter.
+With the default build policy `SIMPLIFY=True`, valid IDs containing ASCII `/`
+are excluded; a manager built with `SIMPLIFY=False` retains every valid ID.
+Full-width slash `／`, backslash `\`, and other non-ASCII lookalikes are not
+ASCII `/` and are unaffected. The resulting filtered catalog is authoritative
+for protocol results and tokens, existing and preset availability, imported
+model config, render/preview validation, and write-time refresh. This filtering
+does not change which routes the proxy supports:
 
 | Client | Route | Contract |
 |---|---|---|
-| Catalog | `GET /v1/models` | One bounded standard JSON response |
+| Catalog | `GET /v1/models` | One fully validated, bounded standard JSON response |
 | Claude Code | `POST /v1/messages`, including `?beta=true` | Anthropic request fields and open-list `anthropic-*` headers pass through; SSE is unbuffered |
 | Claude Code | `POST /v1/messages/count_tokens` | Exact token counting |
 | opencode | `POST /v1/chat/completions` | OpenAI Chat Completions and streaming |
@@ -25,7 +32,9 @@ Claude deferred tool fields and future open-list Anthropic request fields pass
 through unchanged. Configuration never calls an inference endpoint and never
 infers 1M context support from an ID, name, catalog position, or other
 capability signal. The router preserves authorization but does not select
-models or store keys.
+models or store keys. Every ID retained in the manager catalog is treated as
+supported on all routes above; the build filter is a manager catalog policy,
+not a proxy capability restriction or runtime model preference.
 
 ## Interactive Flow
 
@@ -37,6 +46,14 @@ The Shell, PowerShell, and desktop flows all use this order:
 4. Initialize each selected Agent from a valid existing section, otherwise a visible authenticated preset section, otherwise an empty section; require the user to review or complete the editable Agent-native choices. Never select the first model, apply a model-name or capability heuristic, repair an unavailable preset, or substitute another model.
 5. Render a redacted fragment for print, or preview exact file, backup, migration, ownership, and drift effects for write.
 6. Re-fetch the catalog with the transient key immediately before writing, then perform one atomic multi-file transaction.
+
+Filtering occurs only after the complete response and all IDs pass validation.
+A malformed ID that contains ASCII `/` is therefore not hidden: the request
+still fails with `MODEL_RESPONSE_INVALID`. If validation succeeds but filtering
+removes every ID, discovery or refresh fails with `MODEL_CATALOG_EMPTY`.
+Catalog tokens bind the manager's immutable build policy; changing that policy
+makes an existing token stale and requires model rediscovery before render,
+preview, or write.
 
 `agent print-config` also requires a key because it validates choices against the
 current catalog. It changes no Agent file, transaction journal, backup, or
@@ -63,7 +80,10 @@ empty`. Preset values are visible editable defaults, not preview approval,
 write confirmation, or proof of capability. Interactive edits override those
 defaults. `--model-config=<path>` and desktop import are complete form
 replacements and override existing/preset initialization rather than merging
-with it.
+with it. Existing and preset selections excluded by the build filter are
+reported unavailable against the filtered catalog. An imported selection
+outside that catalog remains invalid with `MODEL_CONFIG_INVALID` during
+render/preview validation; filtering does not silently drop or substitute it.
 
 ## Canonical Model Config
 
@@ -252,6 +272,9 @@ Discovery and write fail closed. `MODEL_AUTH_FAILED`,
 `CODEX_AUTH_UNSUPPORTED` never trigger static models, cached catalogs, implicit
 existing-model reuse, model substitution, or partial file changes. See
 [Troubleshooting](TROUBLESHOOTING.md#model-configuration-errors) for actions.
+If a selected ID disappears from the filtered catalog during write-time
+refresh, write fails with `MODEL_NOT_AVAILABLE`; if refresh produces no retained
+IDs at all, the earlier catalog fetch fails with `MODEL_CATALOG_EMPTY`.
 Preset model unavailability is the exception only to discovery failure: it is
 reported in `preset.unavailable_agents`, the unavailable complete preset section
 is omitted, and discovery continues with existing configuration and other valid

@@ -31,6 +31,33 @@ go build -trimpath -o mtls-router .
 go build -trimpath -o mtls-router-manager ./cmd/mtls-router-manager
 ```
 
+The repository build scripts accept manager-only build environment variable
+`SIMPLIFY`. `scripts/build.sh` and `desktop/scripts/build-sidecars.sh` normalize
+it before invoking any compiler: unset, empty, or any ASCII-case spelling of
+`true` becomes `True`; any ASCII-case spelling of `false` becomes `False`.
+Whitespace, numbers, non-ASCII lookalikes, and every other value fail with
+`invalid SIMPLIFY value` before compilation. The normalized value is linked
+only into `github.com/codeasier/mtls-router/internal/manager/modelcatalog.Simplify`;
+the router binary never receives it. `True` is the default and excludes valid
+model IDs containing ASCII `/` from the manager catalog; `False` retains every
+valid ID. This is an immutable manager build policy, not a runtime setting,
+configuration preference, router option, or participant in runtime
+configuration precedence.
+
+A direct manager build can explicitly disable the filter:
+
+```bash
+go build -trimpath \
+  -ldflags "-X 'github.com/codeasier/mtls-router/internal/manager/modelcatalog.Simplify=False'" \
+  -o mtls-router-manager ./cmd/mtls-router-manager
+```
+
+When building directly, omit this `-X` assignment to use the code default
+`True`. Do not link an empty value: assigning an empty string to
+`github.com/codeasier/mtls-router/internal/manager/modelcatalog.Simplify` with
+`-X` overwrites the code default, and the manager exits at startup with `invalid
+embedded simplify value` before protocol serving or Agent transaction recovery.
+
 The manager accepts one optional build-time Agent model preset from
 `AGENT_MODEL_PRESET_BASE64`. The value must be strict standard Base64 of a
 key-free canonical version-1 model-config document containing at least one Agent
@@ -146,6 +173,9 @@ The sidecar script uses all three real files in `secrets/` when present; if none
 
 `AGENT_MODEL_PRESET_BASE64` is forwarded only to the packaged manager sidecar.
 It is not injected into the router sidecar and is not a desktop runtime setting.
+The normalized `SIMPLIFY` value is likewise forwarded only to the packaged
+manager sidecar; release builds use the same value for standalone and desktop
+managers.
 
 For a local native development launch:
 
@@ -200,7 +230,7 @@ Do not publish if any target lacks package-inspection, signing-status, and succe
 
 The current `.github/workflows/release.yml` builds router and manager binaries for all six Go targets and creates six platform archives containing the exact router/manager pair and setup script. In parallel, six native runners build and inspect Windows x86_64/arm64 NSIS installers, macOS Intel/Apple Silicon DMGs, and Linux x86_64/arm64 AppImages. A manual dispatch is validation-only and may select one paired CLI/desktop target plus an optional HTTPS upstream override. A version tag always ignores validation overrides, waits for all 12 build jobs, verifies the six desktop package checksums, assembles one `SHA256SUMS`, and publishes and mirrors the CLI and desktop assets plus six signing-status files.
 
-Production CLI and desktop sidecars require repository secrets `CLIENT_CERT_PEM`, `CLIENT_KEY_PEM`, and `UPSTREAM_CA_PEM`, plus variables `UPSTREAM_URL` and a non-default `DEPLOYMENT_ID`. Optional repository variable `AGENT_MODEL_PRESET_BASE64` supplies the same preset to every standalone manager and desktop manager sidecar; empty is valid and means no preset. Release preflight validates a configured value through the manager loader before matrix builds without printing its contents. The router builds never receive it. Optional platform credentials select the signed/notarized release branches described above.
+Production CLI and desktop sidecars require repository secrets `CLIENT_CERT_PEM`, `CLIENT_KEY_PEM`, and `UPSTREAM_CA_PEM`, plus variables `UPSTREAM_URL` and a non-default `DEPLOYMENT_ID`. Optional repository variable `AGENT_MODEL_PRESET_BASE64` supplies the same preset to every standalone manager and desktop manager sidecar; empty is valid and means no preset. Release preflight validates a configured value through the manager loader before matrix builds without printing its contents. Optional repository variable `SIMPLIFY` follows the normalization rules above and defaults to `True` when unset or empty. It is normalized before matrix fan-out and propagated to every standalone and desktop manager as the same canonical value; the desktop build script may idempotently validate and normalize it again. Router builds never receive either manager-only value. Optional platform credentials select the signed/notarized release branches described above.
 
 Each CLI and desktop matrix producer emits code-owned protocol metadata. `scripts/package-release.sh` requires exactly one metadata file per producer and requires every file to declare schema `1` and management protocol `2` before it assembles archives. This preflight is shared by normal and recovery publication, so a valid but mixed v1/v2 artifact set is not publishable.
 
@@ -212,7 +242,11 @@ gh secret set CLIENT_KEY_PEM --repo codeasier/mtls-router < secrets/client.key
 gh secret set UPSTREAM_CA_PEM --repo codeasier/mtls-router < secrets/upstream-ca.pem
 gh variable set UPSTREAM_URL --repo codeasier/mtls-router --body "https://router.example.com"
 gh variable set DEPLOYMENT_ID --repo codeasier/mtls-router --body "production-service"
+gh variable set SIMPLIFY --repo codeasier/mtls-router --body "False"
 ```
+
+Omit or clear the `SIMPLIFY` repository variable for the default `True` policy.
+It is not a user preference and cannot be changed after the managers are built.
 
 Set `AGENT_MODEL_PRESET_BASE64` only through the protected repository-variable
 process after producing strict standard Base64 from the reviewed key-free

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+simplify="$(bash ./scripts/normalize-simplify.sh)"
 
 missing=0
 for file in secrets/client.pem secrets/client.key secrets/upstream-ca.pem; do
@@ -53,7 +54,8 @@ go build -trimpath \
     -X 'github.com/codeasier/mtls-router/internal/version.Commit=${COMMIT}' \
     -X 'github.com/codeasier/mtls-router/internal/version.BuildDate=${BUILD_DATE}' \
     -X 'github.com/codeasier/mtls-router/internal/version.DeploymentID=${DEPLOYMENT_ID}' \
-    -X 'github.com/codeasier/mtls-router/internal/manager/preset.Encoded=${agent_model_preset_base64}'" \
+    -X 'github.com/codeasier/mtls-router/internal/manager/preset.Encoded=${agent_model_preset_base64}' \
+    -X 'github.com/codeasier/mtls-router/internal/manager/modelcatalog.Simplify=${simplify}'" \
   -o mtls-router-manager ./cmd/mtls-router-manager
 
 echo ">> built: ./mtls-router"

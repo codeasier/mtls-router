@@ -75,6 +75,14 @@ or clear the repository variable and rebuild both standalone and desktop
 manager artifacts. Do not patch the packaged sidecar or inject the preset into
 the router.
 
+If it exits with `invalid embedded simplify value`, the manager was directly
+linked with an invalid or empty `modelcatalog.Simplify` value. Users should
+reinstall a corrected complete release. Maintainers should use the repository
+build scripts with unset/empty `SIMPLIFY` or an ASCII-case spelling of `true` or
+`false`, then rebuild both standalone and desktop manager artifacts with the
+same normalized value. The scripts reject all other values before compilation;
+do not patch the sidecar or add `SIMPLIFY` to router runtime configuration.
+
 ## Agent configuration is unavailable or not writable
 
 - Claude Code, opencode, and Codex are always available as supported configuration targets; the desktop does not install or launch their CLIs.
@@ -115,15 +123,24 @@ updated release; the manager will not partially use, repair, or substitute the
 unavailable section. A preset notice is an editable recommendation, not proof
 that a model supports Claude 1M context.
 
+The manager's build-filtered catalog is the availability boundary. With the
+default build policy, valid IDs containing ASCII `/` are intentionally absent;
+existing and preset sections that reference them are reported unavailable, and
+an imported config that selects one fails `MODEL_CONFIG_INVALID`. Use a model
+shown by the current manager, or ask the distributor for a release built with
+`SIMPLIFY=False`; this cannot be changed as a runtime preference. Full-width
+slash and backslash do not trigger the filter, and proxy route support is
+unchanged.
+
 | Code | Action |
 |---|---|
 | `MODEL_AUTH_FAILED` | Re-enter the API key; the catalog endpoint returned 401 or 403. |
 | `MODEL_DISCOVERY_FAILED` | Check the trusted local router, network, and upstream service, then retry. Redirects and non-auth HTTP failures use this code. |
-| `MODEL_RESPONSE_INVALID` | Report an upstream service-contract failure; the successful response was malformed, excessive, or not standard `data[].id` JSON. |
-| `MODEL_CATALOG_EMPTY` | Confirm that the account/key has visible models, then retry discovery. |
+| `MODEL_RESPONSE_INVALID` | Report an upstream service-contract failure; the successful response was malformed, excessive, or not standard `data[].id` JSON. The complete response is validated before filtering, so even a malformed ID that would otherwise be filtered remains this error. |
+| `MODEL_CATALOG_EMPTY` | The response had no valid IDs retained by this manager. Confirm account/key visibility; if all visible IDs contain ASCII `/`, use a release built with `SIMPLIFY=False` or ask the service to expose suitable IDs, then rediscover. The same error during write-time refresh means no write began. |
 | `MODEL_CATALOG_STALE` | Rediscover models. Router address, deployment, protocol, owner, or token trust state changed. |
-| `MODEL_CONFIG_INVALID` | Correct the canonical model config at the reported JSON Pointer. Do not place credentials, URLs, provider/header fields, or arbitrary Agent config in `extra`/`options`. |
-| `MODEL_NOT_AVAILABLE` | A selected model disappeared during the write-time refresh. Rediscover and select explicitly; the manager will not substitute one. |
+| `MODEL_CONFIG_INVALID` | Correct the canonical model config at the reported JSON Pointer. An imported selection outside the filtered catalog remains invalid. Do not place credentials, URLs, provider/header fields, or arbitrary Agent config in `extra`/`options`. |
+| `MODEL_NOT_AVAILABLE` | A selected model disappeared from the filtered catalog during the write-time refresh. Rediscover and select explicitly; the manager will not substitute one. If refresh retained no IDs at all, the result is `MODEL_CATALOG_EMPTY` instead. |
 | `MANAGED_CONFIG_DRIFT` | Generate a new preview, inspect only the listed managed namespaces, and explicitly approve overwrite or cancel. |
 | `MODEL_STATE_INVALID` | Preserve Agent backups and resolve any transaction journal first. Move the entire invalid `agent-transactions` directory aside only after review; do not replace just the signing key or sidecar. |
 | `AGENT_OPERATION_BUSY` | Wait for the other desktop/CLI Agent operation to finish, then retry. Do not delete the lock or transaction state. |

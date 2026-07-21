@@ -13,15 +13,35 @@ request="$(dd bs=4194304 count=1 2>/dev/null)"; method="$(printf '%s' "$request"
 case "$method" in
   manager.info) jq -cn '{id:"setup-secret-info",result:{version:"v2",commit:"test",build_date:"test",target:"windows/amd64",deployment_id:"fake",management_protocol_version:"2"}}' ;;
   agent.detect) jq -cn '{id:"detect",result:{agents:[{agent:"claude",name:"Claude Code",detected:true,path:"C:\\special path\\settings.json",format:"json"}]}}' ;;
-  agent.models) printf '%s' "$request" | jq -e '.params.owner=="cli" and .params.api_key=="ps-v2-key-canary"' >/dev/null; printf 'models-ok\n' >>"$FAKE_LOG"; case "${FAKE_SCENARIO:-preset}" in existing) jq -cn '{id:"models",result:{models:["ps-existing","ps-preset"],catalog_token:"ps-catalog",router_base_url:"http://127.0.0.1:19099",api_base_url:"http://127.0.0.1:19099/v1",existing:{model_config:{version:1,claude:{primary:{model:"ps-existing",name:"现有名称"},haiku:{inherit_primary:true},sonnet:{inherit_primary:true},opus:{inherit_primary:true}}},unavailable_models:{},drifted_agents:[]},preset:{model_config:{version:1,claude:{primary:{model:"ps-preset",context:"1m"},haiku:{inherit_primary:true},sonnet:{inherit_primary:true},opus:{inherit_primary:true}}},unavailable_agents:{}}}}';; unavailable) jq -cn '{id:"models",result:{models:["ps-manual"],catalog_token:"ps-catalog",router_base_url:"http://127.0.0.1:19099",api_base_url:"http://127.0.0.1:19099/v1",existing:{model_config:{},unavailable_models:{},drifted_agents:[]},preset:{model_config:{},unavailable_agents:{claude:{code:"MODEL_NOT_AVAILABLE",models:["missing-ps"]}}}}}';; *) jq -cn '{id:"models",result:{models:["模型/PS [1]","ps-preset","ps-override"],catalog_token:"ps-catalog",router_base_url:"http://127.0.0.1:19099",api_base_url:"http://127.0.0.1:19099/v1",existing:{model_config:{},unavailable_models:{},drifted_agents:[]},preset:{model_config:{version:1,claude:{primary:{model:"ps-preset",name:"预设名称",context:"1m"},haiku:{inherit_primary:true},sonnet:{inherit_primary:true},opus:{inherit_primary:true}}},unavailable_agents:{}}}}';; esac ;;
-  agent.render) printf '%s' "$request" | jq -e '.params.catalog_token=="ps-catalog"' >/dev/null; printf '%s' "$request" | jq -c '.params.model_config' >>"$FAKE_CONFIG_LOG"; printf 'render-ok\n' >>"$FAKE_LOG"; jq -cn '{id:"render",result:{model_config:{version:1},fragments:[{agent:"claude",role:"config",path:"C:\\special path\\settings.json",format:"json",content:"PowerShell dynamic redacted fragment"}]}}' ;;
+  agent.models)
+    printf '%s' "$request" | jq -e '.params.owner=="cli" and .params.api_key=="ps-v2-key-canary"' >/dev/null
+    printf 'models-ok\n' >>"$FAKE_LOG"
+    case "${FAKE_SCENARIO:-preset}" in
+      existing) jq -cn '{id:"models",result:{models:["ps-existing","ps-preset"],catalog_token:"ps-catalog",router_base_url:"http://127.0.0.1:19099",api_base_url:"http://127.0.0.1:19099/v1",existing:{model_config:{version:1,claude:{primary:{model:"ps-existing",name:"现有名称"},haiku:{inherit_primary:true},sonnet:{inherit_primary:true},opus:{inherit_primary:true}}},unavailable_models:{},drifted_agents:[]},preset:{model_config:{version:1,claude:{primary:{model:"ps-preset",context:"1m"},haiku:{inherit_primary:true},sonnet:{inherit_primary:true},opus:{inherit_primary:true}}},unavailable_agents:{}}}}' ;;
+      unavailable) jq -cn '{id:"models",result:{models:["ps-manual"],catalog_token:"ps-catalog",router_base_url:"http://127.0.0.1:19099",api_base_url:"http://127.0.0.1:19099/v1",existing:{model_config:{},unavailable_models:{},drifted_agents:[]},preset:{model_config:{},unavailable_agents:{claude:{code:"MODEL_NOT_AVAILABLE",models:["missing-ps"]}}}}}' ;;
+      simplify-disabled) jq -cn '{id:"models",result:{models:["provider/ps-slash-model"],catalog_token:"ps-catalog",router_base_url:"http://127.0.0.1:19099",api_base_url:"http://127.0.0.1:19099/v1",existing:{model_config:{},unavailable_models:{},drifted_agents:[]},preset:{model_config:{},unavailable_agents:{}}}}' ;;
+      *) jq -cn '{id:"models",result:{models:["模型／PS [1]","ps-preset","ps-override"],catalog_token:"ps-catalog",router_base_url:"http://127.0.0.1:19099",api_base_url:"http://127.0.0.1:19099/v1",existing:{model_config:{},unavailable_models:{},drifted_agents:[]},preset:{model_config:{version:1,claude:{primary:{model:"ps-preset",name:"预设名称",context:"1m"},haiku:{inherit_primary:true},sonnet:{inherit_primary:true},opus:{inherit_primary:true}}},unavailable_agents:{}}}}' ;;
+    esac
+    ;;
+  agent.render)
+    printf '%s' "$request" | jq -e '.params.catalog_token=="ps-catalog"' >/dev/null
+    printf '%s' "$request" | jq -c '.params.model_config' >>"$FAKE_CONFIG_LOG"
+    if [[ "${FAKE_SCENARIO:-}" == simplify-disabled ]]; then
+      printf '%s' "$request" | jq -e '.params.model_config.claude.primary.model=="provider/ps-slash-model"' >/dev/null
+    fi
+    printf 'render-ok\n' >>"$FAKE_LOG"
+    jq -cn '{id:"render",result:{model_config:{version:1},fragments:[{agent:"claude",role:"config",path:"C:\\special path\\settings.json",format:"json",content:"PowerShell dynamic redacted fragment"}]}}'
+    ;;
   *) exit 8 ;;
 esac
 MANAGER
 chmod +x "$package/$router" "$package/$manager"; for command in claude; do printf '#!/usr/bin/env bash\nexit 0\n' >"$bin/$command"; chmod +x "$bin/$command"; done
 if command -v sha256sum >/dev/null 2>&1; then rh="$(sha256sum "$package/$router" | cut -d' ' -f1)"; mh="$(sha256sum "$package/$manager" | cut -d' ' -f1)"; else rh="$(shasum -a 256 "$package/$router" | cut -d' ' -f1)"; mh="$(shasum -a 256 "$package/$manager" | cut -d' ' -f1)"; fi; printf '%s  %s\n%s  %s\n' "$rh" "$router" "$mh" "$manager" >"$package/SHA256SUMS"
-config="$tmp/model config.json"; printf '%s\n' '{"version":1,"claude":{"primary":{"model":"模型/PS [1]"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true}}}' >"$config"
-output="$(env PATH="$bin:$PATH" HOME="$home" USERPROFILE="$home" PROCESSOR_ARCHITECTURE=AMD64 FAKE_LOG="$tmp/manager.log" FAKE_CONFIG_LOG="$tmp/config.log" python3 - "$package/setup.ps1" "$config" <<'PY'
+config="$tmp/model config.json"; printf '%s\n' '{"version":1,"claude":{"primary":{"model":"模型／PS [1]"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true}}}' >"$config"
+slash_config="$tmp/slash model config.json"; printf '%s\n' '{"version":1,"claude":{"primary":{"model":"provider/ps-slash-model"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true}}}' >"$slash_config"
+run_ps_import() {
+  local scenario="$1" config_path="$2"
+  env PATH="$bin:$PATH" HOME="$home" USERPROFILE="$home" PROCESSOR_ARCHITECTURE=AMD64 FAKE_SCENARIO="$scenario" FAKE_LOG="$tmp/manager.log" FAKE_CONFIG_LOG="$tmp/config.log" python3 - "$package/setup.ps1" "$config_path" <<'PY'
 import os, pty, select, sys, termios, time
 script, config = sys.argv[1:]
 pid, fd = pty.fork()
@@ -48,8 +68,13 @@ if os.waitstatus_to_exitcode(status): sys.stderr.buffer.write(out); raise System
 if b"ps-v2-key-canary" in out: raise SystemExit("PowerShell key leaked")
 sys.stdout.buffer.write(out)
 PY
-)"
+}
+output="$(run_ps_import preset "$config")"
 [[ "$output" == *'PowerShell dynamic redacted fragment'* ]] || fail 'PowerShell manager render output missing'; grep -Fq 'models-ok' "$tmp/manager.log" && grep -Fq 'render-ok' "$tmp/manager.log" || fail 'PowerShell v2 requests were not validated'; ! grep -Fq 'ps-v2-key-canary' "$tmp/manager.log" || fail 'PowerShell manager log leaked key'
+simplify_disabled_output="$(run_ps_import simplify-disabled "$slash_config")"
+simplify_disabled_lines=$'\n'"${simplify_disabled_output//$'\r'/}"$'\n'
+[[ "$simplify_disabled_lines" == *$'\nMODEL provider/ps-slash-model\n'* ]] || fail 'PowerShell simplify-disabled catalog output was filtered'
+[[ "$simplify_disabled_output" == *'PowerShell dynamic redacted fragment'* ]] || fail 'PowerShell simplify-disabled slash import did not render'
 run_ps_wizard() {
   local scenario="$1" responses="$2" expected="${3:-success}"
   env PATH="$bin:$PATH" HOME="$home" USERPROFILE="$home" PROCESSOR_ARCHITECTURE=AMD64 FAKE_SCENARIO="$scenario" FAKE_LOG="$tmp/manager.log" FAKE_CONFIG_LOG="$tmp/config.log" python3 - "$package/setup.ps1" "$responses" "$expected" <<'PY'

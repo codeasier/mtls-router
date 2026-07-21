@@ -10,6 +10,7 @@ import (
 	"os"
 
 	"github.com/codeasier/mtls-router/internal/manager/app"
+	"github.com/codeasier/mtls-router/internal/manager/modelcatalog"
 	"github.com/codeasier/mtls-router/internal/manager/process"
 )
 
@@ -40,9 +41,13 @@ func run(ctx context.Context, args []string, input io.Reader, output, stderr io.
 	if err := validateDesktopFlags(config); err != nil {
 		return err
 	}
+	simplify, err := modelcatalog.ParseSimplify()
+	if err != nil {
+		return err
+	}
 	config.Stderr = stderr
 
-	manager, err := app.New(config)
+	manager, err := app.New(config, simplify)
 	if err != nil {
 		return err
 	}

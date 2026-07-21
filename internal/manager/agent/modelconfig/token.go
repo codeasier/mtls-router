@@ -36,6 +36,7 @@ type CatalogClaims struct {
 	RouterBaseURL    string   `json:"router_base_url"`
 	DeploymentID     string   `json:"deployment_id"`
 	ProtocolVersion  string   `json:"protocol_version"`
+	Simplify         bool     `json:"simplify,omitempty"`
 	Canonicalization string   `json:"canonicalization"`
 	KeyGeneration    string   `json:"key_generation"`
 }

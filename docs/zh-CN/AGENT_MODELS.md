@@ -6,18 +6,18 @@
 
 ## 服务契约
 
-经过认证的上游 `GET /v1/models` 响应是候选模型的唯一来源。它针对所提供的 Bearer key，通过一个完整的 OpenAI 兼容 `data[].id` 目录返回全部模型。无需按名称筛选或执行 inference probe，每个返回 ID 都支持全部必需路由：
+经过认证的上游 `GET /v1/models` 响应是候选模型的唯一来源。Manager 会先校验完整且有界的 OpenAI 兼容响应及每个 `data[].id`，再去重、执行唯一 ID 数量限制并按 UTF-8 byte 排序，最后应用不可变构建过滤。默认构建策略 `SIMPLIFY=True` 会排除包含 ASCII `/` 的有效 ID；使用 `SIMPLIFY=False` 构建的 manager 会保留全部有效 ID。全角斜杠 `／`、反斜杠 `\` 和其他非 ASCII 相似字符都不是 ASCII `/`，不受影响。最终过滤后的目录是 protocol result/token、existing 与 preset 可用性、导入 model config、render/preview 校验和写入时刷新的权威依据。该过滤不会改变 proxy 支持的路由：
 
 | 客户端 | 路由 | 契约 |
 |---|---|---|
-| 模型目录 | `GET /v1/models` | 一个有界的标准 JSON 响应 |
+| 模型目录 | `GET /v1/models` | 一个经过完整校验且有界的标准 JSON 响应 |
 | Claude Code | `POST /v1/messages`，包括 `?beta=true` | Anthropic 请求字段和开放列表 `anthropic-*` header 原样透传；SSE 不缓冲 |
 | Claude Code | `POST /v1/messages/count_tokens` | 精确 token 计数 |
 | opencode | `POST /v1/chat/completions` | OpenAI Chat Completions 与流式响应 |
 | 兼容客户端 | `POST /v1/completions` | OpenAI Completions 与可选流式响应 |
 | Codex | `POST /v1/responses` | OpenAI Responses 与 SSE 流式响应 |
 
-Claude deferred tool 字段以及未来开放列表 Anthropic 请求字段会原样透传。配置过程绝不调用 inference endpoint，也绝不会根据 ID、名称、目录位置或其他能力信号推断 1M context 支持。Router 会保留 authorization，但不选择模型，也不存储 key。
+Claude deferred tool 字段以及未来开放列表 Anthropic 请求字段会原样透传。配置过程绝不调用 inference endpoint，也绝不会根据 ID、名称、目录位置或其他能力信号推断 1M context 支持。Router 会保留 authorization，但不选择模型，也不存储 key。Manager 目录中保留的每个 ID 都按支持上述全部路由处理；构建过滤是 manager 目录策略，不是 proxy 能力限制或运行时模型偏好。
 
 ## 交互流程
 
@@ -30,6 +30,10 @@ Shell、PowerShell 和桌面端都使用以下顺序：
 5. Print 时渲染脱敏片段；write 时预览精确文件、备份、迁移、所有权和漂移影响。
 6. 写入前用临时 key 重新获取目录，再执行一次原子多文件事务。
 
+只有在完整响应和全部 ID 通过校验后才会过滤。因此，包含 ASCII `/` 的 malformed ID 不会被隐藏，请求仍以 `MODEL_RESPONSE_INVALID` 失败。如果校验成功但全部 ID 都被过滤，发现或刷新以 `MODEL_CATALOG_EMPTY` 失败。
+
+目录 token 会绑定 manager 的不可变构建策略；策略变化会使已有 token 失效，render、preview 或 write 前必须重新发现模型。
+
 `agent print-config` 同样需要 key，因为它必须根据当前目录验证选择。它不会修改 Agent 文件、事务 journal、备份或 last-applied sidecar。模型发现可能启动 router，首次使用可能创建私有 token signing key。
 
 模型目录只是配置时快照。系统不会后台刷新或重写 Agent 文件。需要刷新时重新进入配置并提供 key。
@@ -38,7 +42,7 @@ Shell、PowerShell 和桌面端都使用以下顺序：
 
 Release 可以向 manager 注入一份不可变、无 key 的规范 preset。Manager 启动时会严格解码并执行结构校验；调用 `agent.models` 时，会把 preset 裁剪到请求的 Agent，并根据当前认证目录逐个独立校验 Agent section。只有全部引用的 base model ID 均可用时，才会完整返回该 section。任一 ID 缺失都会省略整个 section，并以非致命 `MODEL_NOT_AVAILABLE` metadata 报告已排序的缺失 base ID；其他 Agent 的有效 section 仍可使用。Manager 绝不会部分修复、deep-merge 或替换 preset section。
 
-客户端对每个已选 Agent 独立采用 `existing > preset > empty` 初始化。Preset 值是可见、可编辑的默认值，不代表预览批准、写入确认或能力证明。交互编辑覆盖这些默认值。`--model-config=<path>` 和桌面导入会完整替换表单，并覆盖 existing/preset 初始化，而不是与其合并。
+客户端对每个已选 Agent 独立采用 `existing > preset > empty` 初始化。Preset 值是可见、可编辑的默认值，不代表预览批准、写入确认或能力证明。交互编辑覆盖这些默认值。`--model-config=<path>` 和桌面导入会完整替换表单，并覆盖 existing/preset 初始化，而不是与其合并。被构建过滤排除的 existing 与 preset 选择会根据过滤后目录报告为不可用。导入内容如果选择该目录之外的 ID，在 render/preview 校验时仍以 `MODEL_CONFIG_INVALID` 失败；过滤不会静默删除或替换该选择。
 
 ## 规范模型配置
 
@@ -121,6 +125,8 @@ Fable 所有权是有条件且基于精确路径的。启用时，manager 拥有
 `agent.detect` 不需要 key。`configured=true` 仅表示本地托管结构完整且内部一致，不表示模型当前可见或已获授权。只有成功的 `agent.models` 发现与写入时刷新才能证明当前授权；系统不持久化 verified timestamp。
 
 发现和写入始终 fail closed。`MODEL_AUTH_FAILED`、`MODEL_DISCOVERY_FAILED`、`MODEL_RESPONSE_INVALID`、`MODEL_CATALOG_EMPTY`、`MODEL_CATALOG_STALE`、`MODEL_CONFIG_INVALID`、`MODEL_NOT_AVAILABLE`、`MANAGED_CONFIG_DRIFT`、`MODEL_STATE_INVALID`、`AGENT_OPERATION_BUSY` 和 `CODEX_AUTH_UNSUPPORTED` 都不会触发静态模型、旧目录 cache、隐式复用现有模型、替换模型或部分文件变更。处理方式见[故障排查](TROUBLESHOOTING.md#模型配置错误)。
+
+如果所选 ID 在写入时刷新后从过滤目录消失，写入以 `MODEL_NOT_AVAILABLE` 失败；如果刷新后没有任何保留 ID，则更早的目录获取直接以 `MODEL_CATALOG_EMPTY` 失败。
 
 Preset 模型不可用是唯一不导致 discovery 整体失败的情况：它会在 `preset.unavailable_agents` 中报告，省略不可用的完整 preset section，并继续提供 existing 配置和其他有效 preset section。它仍然绝不会触发替换或部分使用 preset。
 

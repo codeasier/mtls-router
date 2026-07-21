@@ -133,7 +133,7 @@ type monitorResult struct {
 // New resolves manager paths, completes Agent transaction recovery, and then
 // constructs discovery and lifecycle services. No request can be accepted
 // before this function returns.
-func New(config Config) (*App, error) {
+func New(config Config, simplify bool) (*App, error) {
 	loadedPreset, err := preset.Load()
 	if err != nil {
 		return nil, err
@@ -177,7 +177,7 @@ func New(config Config) (*App, error) {
 	}
 
 	agentStateDir := filepath.Join(config.Paths.DesktopDataDir, "agent-transactions")
-	agentManager, recoveryErr := agent.NewService(agent.Options{StateDir: agentStateDir, Detector: config.AgentDetector, Preset: loadedPreset})
+	agentManager, recoveryErr := agent.NewService(agent.Options{StateDir: agentStateDir, Detector: config.AgentDetector, Preset: loadedPreset, Simplify: simplify})
 	if agentManager == nil {
 		return nil, errors.New("initialize Agent service")
 	}
@@ -224,7 +224,7 @@ func New(config Config) (*App, error) {
 
 	trusted := &trustedrouter.Coordinator{
 		Listener: listener, DeploymentID: version.DeploymentID, ProtocolVersion: version.ManagementProtocolVersion,
-		Discover: discoverer.Discover, Lifecycle: lifecycleManager,
+		Discover: discoverer.Discover, Lifecycle: lifecycleManager, Channel: trustedrouter.Channel{Simplify: simplify},
 		DesktopEligible: func() bool {
 			if config.DesktopSession == "" || !completeIdentity(config.ParentIdentity) {
 				return false

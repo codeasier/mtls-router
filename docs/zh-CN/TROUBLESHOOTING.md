@@ -68,6 +68,8 @@ Router 意外退出后不会进入无限重启循环。manager 退出时，桌�
 
 如果新构建或新安装的 manager 在接受 protocol request 前以 `invalid embedded Agent model preset` 退出，则其非空构建期 `AGENT_MODEL_PRESET_BASE64` 无效。Manager 会有意隐藏原始编码和解码 preset 内容，并在 Agent transaction recovery 前失败。用户应重新安装修正后的完整 release；维护者应修正或清空 repository variable，再重新构建 standalone 和 desktop manager 产物。不要 patch 打包 sidecar，也不要把 preset 注入 router。
 
+如果它以 `invalid embedded simplify value` 退出，则 manager 被直接 link 了无效或空的 `modelcatalog.Simplify` 值。用户应重新安装修正后的完整 release。维护者应通过仓库构建脚本使用未设置/空的 `SIMPLIFY`，或 `true`/`false` 的任意 ASCII 大小写形式，再以相同规范值重新构建 standalone 和 desktop manager 产物。脚本会在编译前拒绝其他所有值；不要 patch sidecar，也不要把 `SIMPLIFY` 加入 router 运行时配置。
+
 ## Agent 配置不可用或不可写
 
 - Claude Code、opencode 和 Codex 始终作为受支持的配置目标可用；桌面应用不会安装或启动它们的 CLI。
@@ -99,15 +101,17 @@ manager 会保留受支持的无关设置，但不会猜测如何修复无效语
 
 构建 preset 不可用时会采用不同报告方式：`agent.models` 仍成功，省略受影响 Agent 的完整 preset section，并在 `preset.unavailable_agents` 下以 `MODEL_NOT_AVAILABLE` 列出缺失 base ID。Existing section 和其他 Agent 的有效 preset section 仍可使用。请明确选择模型或要求分发方更新 release；manager 不会部分使用、修复或替换不可用 section。Preset notice 只是可编辑推荐，不证明模型支持 Claude 1M context。
 
+Manager 的构建过滤目录是可用性边界。默认构建策略会有意排除包含 ASCII `/` 的有效 ID；引用这些 ID 的 existing 和 preset section 会报告为不可用，选择这些 ID 的导入配置会以 `MODEL_CONFIG_INVALID` 失败。请使用当前 manager 显示的模型，或要求分发方提供使用 `SIMPLIFY=False` 构建的 release；该策略不能作为运行时偏好更改。全角斜杠和反斜杠不会触发过滤，proxy 路由支持保持不变。
+
 | Code | 处理方式 |
 |---|---|
 | `MODEL_AUTH_FAILED` | 重新输入 API key；目录 endpoint 返回了 401 或 403。 |
 | `MODEL_DISCOVERY_FAILED` | 检查可信本地 router、网络和上游服务后重试。Redirect 和非认证 HTTP 失败使用此 code。 |
-| `MODEL_RESPONSE_INVALID` | 报告上游服务契约失败；成功响应 malformed、超限，或不是标准 `data[].id` JSON。 |
-| `MODEL_CATALOG_EMPTY` | 确认账户/key 能看到模型，然后重新发现。 |
+| `MODEL_RESPONSE_INVALID` | 报告上游服务契约失败；成功响应 malformed、超限，或不是标准 `data[].id` JSON。完整响应会在过滤前校验，因此即使 malformed ID 原本会被过滤，仍返回此错误。 |
+| `MODEL_CATALOG_EMPTY` | 响应中没有被当前 manager 保留的有效 ID。确认账户/key 可见性；如果全部可见 ID 都含 ASCII `/`，请使用 `SIMPLIFY=False` 构建的 release，或要求服务提供适合的 ID，然后重新发现。写入时刷新出现同一错误表示写入尚未开始。 |
 | `MODEL_CATALOG_STALE` | 重新发现模型。Router 地址、deployment、protocol、owner 或 token trust state 已变化。 |
-| `MODEL_CONFIG_INVALID` | 按报告的 JSON Pointer 修正规范 model config。不要在 `extra`/`options` 中放入凭据、URL、provider/header 字段或任意 Agent 配置。 |
-| `MODEL_NOT_AVAILABLE` | 写入时刷新发现所选模型已消失。重新发现并明确选择；manager 不会自动替代。 |
+| `MODEL_CONFIG_INVALID` | 按报告的 JSON Pointer 修正规范 model config。导入内容选择过滤目录之外的 ID 时仍无效。不要在 `extra`/`options` 中放入凭据、URL、provider/header 字段或任意 Agent 配置。 |
+| `MODEL_NOT_AVAILABLE` | 写入时刷新发现所选模型已从过滤目录消失。重新发现并明确选择；manager 不会自动替代。如果刷新后没有保留任何 ID，则改为 `MODEL_CATALOG_EMPTY`。 |
 | `MANAGED_CONFIG_DRIFT` | 生成新预览，只检查列出的托管 namespace，然后明确批准覆盖或取消。 |
 | `MODEL_STATE_INVALID` | 保留 Agent 备份，并先解决 transaction journal。仅在审查后整体移走无效 `agent-transactions` 目录；不要只替换 signing key 或 sidecar。 |
 | `AGENT_OPERATION_BUSY` | 等待另一个桌面/CLI Agent 操作结束后重试。不要删除 lock 或 transaction state。 |
