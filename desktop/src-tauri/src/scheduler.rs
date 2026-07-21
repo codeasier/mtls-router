@@ -450,6 +450,39 @@ mod tests {
     }
 
     #[test]
+    fn poll_errors_retain_cached_status_and_health() {
+        let scheduler = PollScheduler::new(ManagerClient::failed(
+            crate::error::CommandError::manager_failed(),
+        ));
+        let status = RouterStatus {
+            state: "desktop_owned".to_owned(),
+            owner: Some("desktop".to_owned()),
+            ..RouterStatus::default()
+        };
+        let health = RouterHealth {
+            status: "ok".to_owned(),
+            checked_at: chrono::Utc::now().to_rfc3339(),
+        };
+
+        runtime().block_on(async {
+            scheduler.apply_status(status.clone()).await;
+            scheduler.apply_health(health.clone()).await;
+            scheduler
+                .set_status_error(&CommandError::manager_failed())
+                .await;
+            scheduler
+                .set_health_error(&CommandError::manager_failed())
+                .await;
+
+            let snapshot = scheduler.snapshot().await;
+            assert_eq!(snapshot.status, Some(status));
+            assert_eq!(snapshot.health, Some(health));
+            assert!(snapshot.status_error.is_some());
+            assert!(snapshot.health_error.is_some());
+        });
+    }
+
+    #[test]
     fn health_older_than_thirty_seconds_is_stale() {
         assert!(health_is_stale(&RouterHealth {
             status: "ok".to_owned(),

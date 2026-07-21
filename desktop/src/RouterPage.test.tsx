@@ -214,6 +214,101 @@ describe("RouterPage states", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps cached healthy state after a transient status error", async () => {
+    let observer: ((snapshot: PollSnapshot) => void) | undefined;
+    const api = createMockApi({
+      getPollSnapshot: vi.fn().mockResolvedValue({
+        revision: 1,
+        status: { state: "desktop_owned", owner: "desktop" },
+        health: freshHealthy,
+      }),
+      subscribePollSnapshots: vi.fn(async (listener) => {
+        observer = listener;
+        return () => undefined;
+      }),
+    });
+    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    expect(
+      await screen.findByRole("heading", { name: "路由运行正常" }),
+    ).toBeInTheDocument();
+
+    act(() =>
+      observer?.({
+        revision: 2,
+        status: { state: "desktop_owned", owner: "desktop" },
+        health: freshHealthy,
+        status_error: { code: "OPERATION_TIMEOUT" },
+      }),
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "路由运行正常" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("无法读取路由状态。请重新启动桌面应用或查看日志。"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("路由启动失败")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "停止路由" })).toBeEnabled();
+  });
+
+  it("shows status unavailable when the first status poll fails", async () => {
+    const api = createMockApi({
+      getPollSnapshot: vi.fn().mockResolvedValue({
+        revision: 1,
+        status_error: { code: "OPERATION_TIMEOUT" },
+      }),
+    });
+    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+
+    expect(
+      await screen.findByRole("heading", { name: "路由状态暂时不可用" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("路由启动失败")).not.toBeInTheDocument();
+    expect(
+      screen.getByText("无法读取路由状态。请重新启动桌面应用或查看日志。"),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps fresh cached health after a transient health error", async () => {
+    const api = createMockApi({
+      getPollSnapshot: vi.fn().mockResolvedValue({
+        revision: 1,
+        status: { state: "desktop_owned", owner: "desktop" },
+        health: freshHealthy,
+        health_error: { code: "OPERATION_TIMEOUT" },
+      }),
+    });
+    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+
+    expect(
+      await screen.findByRole("heading", { name: "路由运行正常" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("健康")).toBeInTheDocument();
+    expect(
+      screen.getByText("健康检查失败。路由进程状态未受影响。"),
+    ).toBeInTheDocument();
+  });
+
+  it("prioritizes a status warning when one snapshot has both errors", async () => {
+    const api = createMockApi({
+      getPollSnapshot: vi.fn().mockResolvedValue({
+        revision: 1,
+        status_error: { code: "OPERATION_TIMEOUT" },
+        health_error: { code: "OPERATION_TIMEOUT" },
+      }),
+    });
+    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+
+    expect(
+      await screen.findByText(
+        "无法读取路由状态。请重新启动桌面应用或查看日志。",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("健康检查失败。路由进程状态未受影响。"),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows only bounded sanitized unexpected-exit diagnostics", async () => {
     const secret = "sk-routerFailureCanary123456";
     const recentLogs = Array.from(
@@ -373,6 +468,34 @@ describe("RouterPage actions", () => {
     expect(
       screen.queryByText(/key-shaped-canary-secret/),
     ).not.toBeInTheDocument();
+  });
+
+  it("preserves a real start failure across a transient status error", async () => {
+    let observer: ((snapshot: PollSnapshot) => void) | undefined;
+    const api = createMockApi({
+      startRouter: vi.fn().mockRejectedValue({ code: "START_FAILED" }),
+      subscribePollSnapshots: vi.fn(async (listener) => {
+        observer = listener;
+        return () => undefined;
+      }),
+    });
+    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "启动路由" }));
+    expect(
+      await screen.findByRole("heading", { name: "路由启动失败" }),
+    ).toBeInTheDocument();
+
+    act(() =>
+      observer?.({
+        revision: 2,
+        status: { state: "absent" },
+        status_error: { code: "OPERATION_TIMEOUT" },
+      }),
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "路由启动失败" }),
+    ).toBeInTheDocument();
   });
 
   it("reconciles ROUTER_DEGRADED as running and keeps desktop stop enabled", async () => {

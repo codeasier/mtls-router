@@ -7,14 +7,121 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestProberReusesUpstreamConnection(t *testing.T) {
+	var newConnections atomic.Int32
+	server, certs := newUnstartedMTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "healthy")
+	}), 0)
+	server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			newConnections.Add(1)
+		}
+	}
+	server.StartTLS()
+	defer server.Close()
+
+	prober, err := NewProber(ProbeOptions{
+		UpstreamURL: server.URL,
+		ClientCert:  certs.clientCert,
+		ClientKey:   certs.clientKey,
+		UpstreamCA:  certs.ca,
+		Timeout:     time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer prober.Close()
+	if err := prober.Probe(); err != nil {
+		t.Fatal(err)
+	}
+	if err := prober.Probe(); err != nil {
+		t.Fatal(err)
+	}
+	if got := newConnections.Load(); got != 1 {
+		t.Fatalf("new connections = %d, want 1", got)
+	}
+}
+
+func TestProberReusesConnectionAfter5xxBody(t *testing.T) {
+	var newConnections atomic.Int32
+	states := make(chan connStateEvent, 16)
+	server, certs := newUnstartedMTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, "temporarily unavailable")
+	}), 0)
+	server.Config.ConnState = func(conn net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			newConnections.Add(1)
+		}
+		states <- connStateEvent{conn: conn, state: state}
+	}
+	server.StartTLS()
+	defer server.Close()
+
+	prober, err := NewProber(ProbeOptions{
+		UpstreamURL: server.URL,
+		ClientCert:  certs.clientCert,
+		ClientKey:   certs.clientKey,
+		UpstreamCA:  certs.ca,
+		Timeout:     time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer prober.Close()
+
+	if err := prober.Probe(); err == nil {
+		t.Fatal("first probe unexpectedly succeeded")
+	}
+	conn := waitForConnState(t, states, nil, http.StateIdle)
+	if err := prober.Probe(); err == nil {
+		t.Fatal("second probe unexpectedly succeeded")
+	}
+	waitForConnState(t, states, conn, http.StateIdle)
+	if got := newConnections.Load(); got != 1 {
+		t.Fatalf("new connections = %d, want 1", got)
+	}
+}
+
+func TestProberCloseClosesIdleConnection(t *testing.T) {
+	states := make(chan connStateEvent, 16)
+	server, certs := newUnstartedMTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "healthy")
+	}), 0)
+	server.Config.ConnState = func(conn net.Conn, state http.ConnState) {
+		states <- connStateEvent{conn: conn, state: state}
+	}
+	server.StartTLS()
+	defer server.Close()
+
+	prober, err := NewProber(ProbeOptions{
+		UpstreamURL: server.URL,
+		ClientCert:  certs.clientCert,
+		ClientKey:   certs.clientKey,
+		UpstreamCA:  certs.ca,
+		Timeout:     time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := prober.Probe(); err != nil {
+		t.Fatal(err)
+	}
+	conn := waitForConnState(t, states, nil, http.StateIdle)
+	prober.Close()
+	waitForConnState(t, states, conn, http.StateClosed)
+}
 
 func TestProbeSucceedsAgainstMTLSServer(t *testing.T) {
 	server, certs := newMTLSServer(t, http.StatusNoContent, 0, 0)
@@ -101,7 +208,38 @@ type mtlsCerts struct {
 	clientKey  string
 }
 
+type connStateEvent struct {
+	conn  net.Conn
+	state http.ConnState
+}
+
+func waitForConnState(t *testing.T, events <-chan connStateEvent, conn net.Conn, state http.ConnState) net.Conn {
+	t.Helper()
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case event := <-events:
+			if event.state == state && (conn == nil || event.conn == conn) {
+				return event.conn
+			}
+		case <-timer.C:
+			t.Fatalf("timed out waiting for connection state %s", state)
+		}
+	}
+}
+
 func newMTLSServer(t *testing.T, status int, delay time.Duration, tlsVersion uint16) (*httptest.Server, mtlsCerts) {
+	t.Helper()
+	server, certs := newUnstartedMTLSServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(delay)
+		w.WriteHeader(status)
+	}), tlsVersion)
+	server.StartTLS()
+	return server, certs
+}
+
+func newUnstartedMTLSServer(t *testing.T, handler http.Handler, tlsVersion uint16) (*httptest.Server, mtlsCerts) {
 	t.Helper()
 	caPEM, _, ca, caKey := testCertificate(t, "ca", true, nil, nil)
 	clientCertPEM, clientKeyPEM, _, _ := testCertificate(t, "client", false, ca, caKey)
@@ -112,7 +250,7 @@ func newMTLSServer(t *testing.T, status int, delay time.Duration, tlsVersion uin
 	}
 	clientCAs := x509.NewCertPool()
 	clientCAs.AppendCertsFromPEM([]byte(caPEM))
-	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { time.Sleep(delay); w.WriteHeader(status) }))
+	server := httptest.NewUnstartedServer(handler)
 	server.TLS = &tls.Config{
 		Certificates: []tls.Certificate{serverCert},
 		ClientCAs:    clientCAs,
@@ -120,7 +258,6 @@ func newMTLSServer(t *testing.T, status int, delay time.Duration, tlsVersion uin
 		MinVersion:   tlsVersion,
 		MaxVersion:   tlsVersion,
 	}
-	server.StartTLS()
 	return server, mtlsCerts{ca: caPEM, clientCert: clientCertPEM, clientKey: clientKeyPEM}
 }
 

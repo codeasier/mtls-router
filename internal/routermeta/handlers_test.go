@@ -5,10 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/codeasier/mtls-router/internal/health"
 )
@@ -91,7 +89,7 @@ func TestVersionHandlerRejectsNonGET(t *testing.T) {
 func TestHealthHandlerRejectsNonGET(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/health", nil)
-	HealthHandler(health.ProbeFunc(func(health.ProbeOptions) error { return nil })).ServeHTTP(rec, req)
+	HealthHandler(health.ProbeFunc(func() error { return nil })).ServeHTTP(rec, req)
 
 	assertMethodNotAllowed(t, rec)
 }
@@ -116,46 +114,8 @@ func assertMethodNotAllowed(t *testing.T, rec *httptest.ResponseRecorder) {
 	}
 }
 
-func TestHealthHandlerPassesRuntimeProbeOptions(t *testing.T) {
-	want := health.ProbeOptions{
-		UpstreamURL: "https://upstream.example.test",
-		ClientCert:  "client-cert-pem",
-		ClientKey:   "client-key-pem",
-		UpstreamCA:  "upstream-ca-pem",
-		TLSMin:      "tls1.3",
-		Timeout:     2 * time.Second,
-	}
-	var got health.ProbeOptions
-	probe := health.ProbeFunc(func(opts health.ProbeOptions) error {
-		got = opts
-		return nil
-	})
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
-	HealthHandler(probe, want).ServeHTTP(rec, req)
-
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("probe options = %+v, want %+v", got, want)
-	}
-}
-
-func TestHealthHandlerDefaultsProbeTimeoutWhenUnset(t *testing.T) {
-	var got health.ProbeOptions
-	probe := health.ProbeFunc(func(opts health.ProbeOptions) error {
-		got = opts
-		return nil
-	})
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
-	HealthHandler(probe, health.ProbeOptions{UpstreamURL: "https://upstream.example.test"}).ServeHTTP(rec, req)
-
-	if got.Timeout != 5*time.Second {
-		t.Fatalf("timeout = %s, want 5s", got.Timeout)
-	}
-}
-
 func TestHealthHandlerReturnsOKWhenProbeSucceeds(t *testing.T) {
-	probe := health.ProbeFunc(func(health.ProbeOptions) error { return nil })
+	probe := health.ProbeFunc(func() error { return nil })
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	HealthHandler(probe).ServeHTTP(rec, req)
@@ -174,7 +134,7 @@ func TestHealthHandlerReturnsOKWhenProbeSucceeds(t *testing.T) {
 
 func TestHealthHandlerReturnsDegradedButStill200WhenProbeFails(t *testing.T) {
 	const upstreamCanary = "https://user:auth-canary@upstream.example/private?api_key=sk-health-canary"
-	probe := health.ProbeFunc(func(health.ProbeOptions) error {
+	probe := health.ProbeFunc(func() error {
 		return errors.New("probe failed for " + upstreamCanary)
 	})
 	rec := httptest.NewRecorder()

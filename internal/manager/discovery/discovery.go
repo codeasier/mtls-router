@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -59,6 +60,7 @@ type Config struct {
 	ManagementProtocolVersion string
 	PortTimeout               time.Duration
 	RequestTimeout            time.Duration
+	HealthRequestTimeout      time.Duration
 	DialContext               func(context.Context, string, string) (net.Conn, error)
 	HTTPClient                *http.Client
 	ReadState                 func(string) (state.RouterState, error)
@@ -85,11 +87,14 @@ func New(config Config) *Discoverer {
 	if config.RequestTimeout <= 0 {
 		config.RequestTimeout = time.Second
 	}
+	if config.HealthRequestTimeout <= 0 {
+		config.HealthRequestTimeout = 11 * time.Second
+	}
 	if config.DialContext == nil {
 		config.DialContext = (&net.Dialer{Timeout: config.PortTimeout}).DialContext
 	}
 	if config.HTTPClient == nil {
-		config.HTTPClient = &http.Client{Timeout: config.RequestTimeout}
+		config.HTTPClient = &http.Client{}
 	}
 	if config.ReadState == nil {
 		config.ReadState = state.Read
@@ -101,6 +106,14 @@ func New(config Config) *Discoverer {
 }
 
 func (d *Discoverer) Discover(ctx context.Context) Result {
+	return d.discover(ctx, true)
+}
+
+func (d *Discoverer) DiscoverStatus(ctx context.Context) Result {
+	return d.discover(ctx, false)
+}
+
+func (d *Discoverer) discover(ctx context.Context, includeHealth bool) Result {
 	result := Result{Classification: UnknownOccupant, ListenAddr: d.config.BaseURL}
 	desktop, desktopErr := d.read(d.config.DesktopStatePath)
 	cli, cliErr := d.read(d.config.CLIStatePath)
@@ -133,8 +146,7 @@ func (d *Discoverer) Discover(ctx context.Context) Result {
 	}
 	_ = conn.Close()
 
-	versionErr := d.getJSON(ctx, "/version", &result.Version)
-	healthErr := d.getJSON(ctx, "/health", &result.Health)
+	versionErr := d.getJSON(ctx, "/version", &result.Version, d.config.RequestTimeout)
 	if versionErr != nil {
 		return result
 	}
@@ -150,9 +162,12 @@ func (d *Discoverer) Discover(ctx context.Context) Result {
 	}
 	result.State = *matched
 	result.Owner = owner
-	if healthErr != nil || result.Health.Status != "ok" {
-		result.Classification = Degraded
-		return result
+	if includeHealth {
+		healthErr := d.getJSON(ctx, "/health", &result.Health, d.config.HealthRequestTimeout)
+		if healthErr != nil || result.Health.Status != "ok" {
+			result.Classification = Degraded
+			return result
+		}
 	}
 	if owner == "desktop" {
 		result.Classification = DesktopOwned
@@ -249,8 +264,8 @@ func identity(value state.RouterState) process.Identity {
 	return process.Identity{PID: value.PID, StartedAt: value.ProcessStartedAt, Executable: value.ProcessExecutable}
 }
 
-func (d *Discoverer) getJSON(ctx context.Context, path string, target any) error {
-	requestCtx, cancel := context.WithTimeout(ctx, d.config.RequestTimeout)
+func (d *Discoverer) getJSON(ctx context.Context, path string, target any, timeout time.Duration) error {
+	requestCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, strings.TrimRight(d.config.BaseURL, "/")+path, nil)
 	if err != nil {
@@ -260,7 +275,10 @@ func (d *Discoverer) getJSON(ctx context.Context, path string, target any) error
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("endpoint returned HTTP %d", resp.StatusCode)
 	}
