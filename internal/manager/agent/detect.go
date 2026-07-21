@@ -61,7 +61,8 @@ const (
 )
 
 // RecoveryFileState describes one complete managed target without exposing its
-// contents, parser diagnostics, or credential-derived values.
+// contents, parser diagnostics, or credential-derived values. Reasons contains
+// only file-local blockers; manager-wide blockers are reported by RecoveryState.
 type RecoveryFileState struct {
 	Role    string           `json:"role"`
 	Path    string           `json:"path"`
@@ -142,8 +143,8 @@ type jsonInspector func(map[string]json.RawMessage) (configured, invalid bool)
 func inspectJSONState(kind Kind, name string, detected bool, command string, paths Paths, format Format, inspect jsonInspector) State {
 	state := baseState(kind, name, detected, command, paths, format)
 	file := &state.Recovery.Files[0]
-	if hasInvalidFileReason(file.Reasons) {
-		state.Invalid = true
+	if len(file.Reasons) != 0 {
+		state.Invalid = hasLegacyInvalidFileReason(file.Reasons)
 		finalizeRecovery(&state)
 		return state
 	}
@@ -177,6 +178,12 @@ func inspectJSONState(kind Kind, name string, detected bool, command string, pat
 	state.Configured, state.Invalid = inspect(root)
 	if state.Invalid {
 		file.Reasons = appendReason(file.Reasons, RecoveryUnsupportedStructure)
+	} else if kind == ClaudeCode {
+		if env, exists := root["env"]; exists {
+			if _, valid := decodeObject(env); !valid {
+				file.Reasons = appendReason(file.Reasons, RecoveryUnsupportedStructure)
+			}
+		}
 	}
 	finalizeRecovery(&state)
 	return state
@@ -206,7 +213,7 @@ func inspectClaude(root map[string]json.RawMessage) (bool, bool) {
 	}
 	env, valid := decodeObject(envRaw)
 	if !valid {
-		return false, true
+		return false, false
 	}
 	base, ok := rawString(env["ANTHROPIC_BASE_URL"])
 	if !ok || !validRouterBaseURL(base) || !hasNonemptyJSONString(env["ANTHROPIC_AUTH_TOKEN"]) {
@@ -284,12 +291,12 @@ func inspectCodex(detected bool, command string, paths Paths) State {
 		}
 	}
 	if !state.Exists {
-		state.Invalid = state.Invalid || hasInvalidFileReason(configFile.Reasons) || hasInvalidFileReason(authFile.Reasons)
+		state.Invalid = state.Invalid || hasLegacyInvalidFileReason(configFile.Reasons) || hasLegacyInvalidFileReason(authFile.Reasons)
 		finalizeRecovery(&state)
 		return state
 	}
 	if hasBlockingFileReason(configFile.Reasons) {
-		state.Invalid = true
+		state.Invalid = hasLegacyInvalidFileReason(configFile.Reasons)
 		finalizeRecovery(&state)
 		return state
 	}
@@ -319,7 +326,7 @@ func inspectCodex(detected bool, command string, paths Paths) State {
 	state.Configured = values["model_provider"] == "mtls-router" && modelOK && model != "" && storeOK && store == "file" &&
 		providerOK && provider["name"] == "mtls-router" && provider["wire_api"] == "responses" && provider["requires_openai_auth"] == true &&
 		validAPIValue(provider["base_url"]) && authConfigured && validCodexModelSettings(values)
-	state.Invalid = state.Invalid || hasInvalidFileReason(configFile.Reasons) || hasInvalidFileReason(authFile.Reasons)
+	state.Invalid = state.Invalid || hasLegacyInvalidFileReason(configFile.Reasons) || hasLegacyInvalidFileReason(authFile.Reasons)
 	finalizeRecovery(&state)
 	return state
 }

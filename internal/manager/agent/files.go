@@ -100,7 +100,6 @@ func createPrivateBackupWithHook(sourcePath string, content []byte, sourceMode o
 			return fail(err)
 		}
 		ok = true
-		_ = cleanup()
 		return path, nil
 	}
 	return "", errors.New("could not allocate unique backup path")

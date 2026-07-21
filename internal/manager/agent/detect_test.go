@@ -137,7 +137,7 @@ func TestDetectClassifiesRecoveryEligibility(t *testing.T) {
 
 	writeFile(t, path, `{"env":[]}`)
 	state = mustDetect(t, testDetector(home, nil))[0]
-	if !state.Invalid || state.Recovery.Eligible || !hasRecoveryReason(state.Recovery.Reasons, RecoveryUnsupportedStructure) {
+	if state.Invalid || state.Recovery.Eligible || !hasRecoveryReason(state.Recovery.Reasons, RecoveryUnsupportedStructure) {
 		t.Fatalf("unsupported nested recovery = %#v", state)
 	}
 }
@@ -176,7 +176,7 @@ func TestDetectRecoveryRejectsOversizedNonRegularAndLinkedTargets(t *testing.T) 
 		t.Skipf("symlink unavailable: %v", err)
 	}
 	state = mustDetect(t, testDetector(home, nil))[0]
-	if state.Recovery.Eligible || !hasRecoveryReason(state.Recovery.Reasons, RecoveryLinked) {
+	if state.Invalid || state.Recovery.Eligible || !hasRecoveryReason(state.Recovery.Reasons, RecoveryLinked) {
 		t.Fatalf("linked recovery = %#v", state.Recovery)
 	}
 }

@@ -57,10 +57,10 @@ func hasBlockingFileReason(reasons []RecoveryReason) bool {
 	return false
 }
 
-func hasInvalidFileReason(reasons []RecoveryReason) bool {
+func hasLegacyInvalidFileReason(reasons []RecoveryReason) bool {
 	for _, reason := range reasons {
 		switch reason {
-		case RecoverySyntaxInvalid, RecoveryUnsupportedStructure, RecoveryUnreadable, RecoveryOversized, RecoveryNonRegular, RecoveryLinked:
+		case RecoverySyntaxInvalid, RecoveryUnreadable, RecoveryOversized, RecoveryNonRegular:
 			return true
 		}
 	}

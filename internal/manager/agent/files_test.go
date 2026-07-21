@@ -61,32 +61,13 @@ func TestCreatePrivateBackupStageFailuresRemoveArtifact(t *testing.T) {
 	}
 }
 
-func TestCreatePrivateBackupRejectsIdentityAndContentChanges(t *testing.T) {
+func TestCreatePrivateBackupRejectsStoredByteChanges(t *testing.T) {
 	tests := []struct {
-		name string
-		hook func(backupStage, string) error
+		name  string
+		stage backupStage
 	}{
-		{
-			name: "identity",
-			hook: func(stage backupStage, path string) error {
-				if stage != backupStageIdentity {
-					return nil
-				}
-				if err := os.Remove(path); err != nil {
-					return err
-				}
-				return os.WriteFile(path, []byte("replacement"), 0o600)
-			},
-		},
-		{
-			name: "content mismatch",
-			hook: func(stage backupStage, path string) error {
-				if stage != backupStageRead {
-					return nil
-				}
-				return os.WriteFile(path, []byte("mismatch"), 0o600)
-			},
-		},
+		{name: "identity", stage: backupStageIdentity},
+		{name: "content mismatch", stage: backupStageRead},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -96,7 +77,17 @@ func TestCreatePrivateBackupRejectsIdentityAndContentChanges(t *testing.T) {
 			if err := os.WriteFile(source, content, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := createPrivateBackupWithHook(source, content, 0o600, "bak", test.hook); err == nil {
+			if _, err := createPrivateBackupWithHook(source, content, 0o600, "bak", func(stage backupStage, path string) error {
+				if stage != test.stage {
+					return nil
+				}
+				file, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
+				if err != nil {
+					return err
+				}
+				_, writeErr := file.Write([]byte("mismatch"))
+				return errors.Join(writeErr, file.Close())
+			}); err == nil {
 				t.Fatal("changed backup was accepted")
 			}
 			matches, err := filepath.Glob(source + ".bak-*")
