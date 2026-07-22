@@ -48,7 +48,7 @@ The desktop app never communicates with the router directly. It spawns `mtls-rou
 
 - Webview capabilities: only `core:default` — no shell/fs/http/opener permissions (enforced by test in `lib.rs`).
 - API keys stored in `Zeroizing<String>` — memory is zeroed on drop.
-- CSP: `default-src 'self'; connect-src ipc: http://ipc.localhost`.
+- CSP: `default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost; style-src 'self' 'unsafe-inline'`.
 - Manager handshake validated on startup: version, protocol version, deployment ID.
 
 ## Build

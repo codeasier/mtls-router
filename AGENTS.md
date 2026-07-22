@@ -78,7 +78,7 @@ Key invariants:
 
 ### Manager (`cmd/mtls-router-manager/` + `internal/manager/`)
 
-The manager is a mostly stateless-per-request JSON protocol server (`internal/manager/protocol/`); the exception is `occupant.Service`, which holds an in-memory single-use confirmation token between `Inspect` and `ForceTerminate`. It exposes 15 methods grouped as:
+The manager is a mostly stateless-per-request JSON protocol server (`internal/manager/protocol/`); a notable exception is `occupant.Service`, which holds an in-memory single-use confirmation token between `Inspect` and `ForceTerminate` (other long-lived state lives in `lifecycle.Manager` and `agent.Service`). It exposes 15 methods grouped as:
 
 - `manager.info`, `diagnostics.collect` — metadata
 - `router.status/start/stop/health/version/logs` — router lifecycle (spawns/monitors the router binary)
@@ -132,7 +132,7 @@ Router lifecycle (`router install/start/stop/status/setup`) and Agent configurat
 - `setup.ps1` must keep a UTF-8 BOM for Windows PowerShell 5.1; `main_test.go` asserts this.
 - Desktop sidecar build inputs use target-triple naming in `src-tauri/binaries/` (`mtls-router-<target>`); after Tauri packaging, installed binaries use plain names (`mtls-router`, `mtls-router-manager`).
 - Manager protocol error codes are stable for branching; messages are diagnostic only.
-- API key handling: Go manager sets `request.APIKey = ""` after successful decode (best-effort; underlying JSON/Scanner buffers are GC-managed, not guaranteed zeroed). Rust desktop holds the key in `ModelFlow.api_key: Zeroizing<String>` — memory is truly zeroed on drop. Keys never appear in env vars, CLI args, model config, logs, or temp files.
+- API key handling: Go manager sets `request.APIKey = ""` after successful decode (best-effort; underlying JSON/Scanner buffers are GC-managed, not guaranteed zeroed). Rust desktop holds the key in `ModelFlow.api_key: Zeroizing<String>` — memory is truly zeroed on drop. Atomic config writes use a permission-restricted temp file (`os.CreateTemp` + `restrictPrivate`) that is removed after rename. Keys never appear in env vars, CLI args, model config, logs, or persisted files beyond the atomic-write window.
 
 ## ANTI-PATTERNS
 
