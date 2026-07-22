@@ -14,35 +14,35 @@ The desktop app never communicates with the router directly. It spawns `mtls-rou
 
 ## Frontend (src/)
 
-| File | Role |
-|------|------|
-| `ipc.ts` | `DesktopApi` interface + `createDesktopApi()` — typed wrappers for all Tauri commands; `sanitizeSensitiveText()` for client-side redaction |
-| `App.tsx` | Root layout: sidebar nav (Router/Agents/Logs/Settings) + section rendering |
-| `RouterPage.tsx` | Router status, start/stop, health, occupant inspection/termination |
-| `AgentPage.tsx` | Agent detection, model discovery, config preview/write flow |
-| `LogsPage.tsx` | Router log viewer with auto-refresh |
-| `SettingsPage.tsx` | Autostart, diagnostics, uninstall prep, language |
-| `model.ts` | Shared types (`SectionId`, `navigationItems`) |
-| `i18n.tsx` | I18n context provider with `zh-CN` and `en` locales |
-| `locales/zh-CN.ts`, `locales/en.ts` | Translation dictionaries |
+| File                                | Role                                                                                                                                       |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ipc.ts`                            | `DesktopApi` interface + `createDesktopApi()` — typed wrappers for all Tauri commands; `sanitizeSensitiveText()` for client-side redaction |
+| `App.tsx`                           | Root layout: sidebar nav (Router/Agents/Logs/Settings) + section rendering                                                                 |
+| `RouterPage.tsx`                    | Router status, start/stop, health, occupant inspection/termination                                                                         |
+| `AgentPage.tsx`                     | Agent detection, model discovery, config preview/write flow                                                                                |
+| `LogsPage.tsx`                      | Router log viewer with auto-refresh                                                                                                        |
+| `SettingsPage.tsx`                  | Autostart, diagnostics, uninstall prep, language                                                                                           |
+| `model.ts`                          | Shared types (`SectionId`, `navigationItems`)                                                                                              |
+| `i18n.tsx`                          | I18n context provider with `zh-CN` and `en` locales                                                                                        |
+| `locales/zh-CN.ts`, `locales/en.ts` | Translation dictionaries                                                                                                                   |
 
 ## Backend (src-tauri/src/)
 
-| File | Role |
-|------|------|
-| `lib.rs` | App entry: plugin registration, setup (sidecar validation, manager spawn, scheduler start, tray), invoke handler registration |
-| `commands.rs` | All `#[tauri::command]` handlers; `AppState` (manager client, scheduler, paths, model flows); `ModelFlow` with `Zeroizing<String>` API key |
-| `manager.rs` | `ManagerClient` + `TauriTransportFactory` — spawns manager child, sends JSON requests, reads responses; `validate_handshake()` |
-| `scheduler.rs` | `PollScheduler` — periodic router status/health polling; emits `router-poll-snapshot` events; visibility-aware interval |
-| `sidecar.rs` | `SidecarPaths::resolve()` — locates `mtls-router[.exe]` and `mtls-router-manager[.exe]` beside the app binary (plain runtime names); validates SHA-256 + native arch/format |
-| `tray.rs` | System tray icon/menu; status-aware labels; window show/hide |
-| `orchestration.rs` | `first_launch()` — auto-starts router if sidecar is valid and no router is running |
-| `model_config.rs` | Model config import/export JSON validation |
-| `paths.rs` | Desktop data directory resolution (delegates to `MTLS_ROUTER_DESKTOP_DATA_DIR` or OS default) |
-| `process_identity.rs` | `current()` — captures PID + start time + executable for parent identity flags |
-| `autostart.rs` | Launch-at-login plugin wrapper; default-enabled on first launch |
-| `types.rs` | Serde types mirroring manager protocol results |
-| `error.rs` | `CommandError` — maps manager protocol errors to user-facing strings |
+| File                  | Role                                                                                                                                                                        |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lib.rs`              | App entry: plugin registration, setup (sidecar validation, manager spawn, scheduler start, tray), invoke handler registration                                               |
+| `commands.rs`         | All `#[tauri::command]` handlers; `AppState` (manager client, scheduler, paths, model flows); `ModelFlow` with `Zeroizing<String>` API key                                  |
+| `manager.rs`          | `ManagerClient` + `TauriTransportFactory` — spawns manager child, sends JSON requests, reads responses; `validate_handshake()`                                              |
+| `scheduler.rs`        | `PollScheduler` — periodic router status/health polling; emits `router-poll-snapshot` events; visibility-aware interval                                                     |
+| `sidecar.rs`          | `SidecarPaths::resolve()` — locates `mtls-router[.exe]` and `mtls-router-manager[.exe]` beside the app binary (plain runtime names); validates SHA-256 + native arch/format |
+| `tray.rs`             | System tray icon/menu; status-aware labels; window show/hide                                                                                                                |
+| `orchestration.rs`    | `first_launch()` — auto-starts router if sidecar is valid and no router is running                                                                                          |
+| `model_config.rs`     | Model config import/export JSON validation                                                                                                                                  |
+| `paths.rs`            | Desktop data directory resolution (delegates to `MTLS_ROUTER_DESKTOP_DATA_DIR` or OS default)                                                                               |
+| `process_identity.rs` | `current()` — captures PID + start time + executable for parent identity flags                                                                                              |
+| `autostart.rs`        | Launch-at-login plugin wrapper; default-enabled on first launch                                                                                                             |
+| `types.rs`            | Serde types mirroring manager protocol results                                                                                                                              |
+| `error.rs`            | `CommandError` — maps manager protocol errors to user-facing strings                                                                                                        |
 
 ## Security constraints
 
