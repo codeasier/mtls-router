@@ -19,8 +19,8 @@ func TestInfoExposesBuildMetadata(t *testing.T) {
 	if info.DeploymentID == "" {
 		t.Fatal("Info().DeploymentID should not be empty")
 	}
-	if info.ManagementProtocolVersion != "2" {
-		t.Fatalf("Info().ManagementProtocolVersion = %q, want protocol v2", info.ManagementProtocolVersion)
+	if info.ManagementProtocolVersion != "3" {
+		t.Fatalf("Info().ManagementProtocolVersion = %q, want protocol v3", info.ManagementProtocolVersion)
 	}
 }
 

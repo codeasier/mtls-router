@@ -45,7 +45,7 @@ Runtime includes transparent request/SSE streaming, startup upstream probing, ba
 | Management endpoints | `internal/routermeta/handlers.go` | `/version` and `/health` must take precedence over proxy route. |
 | Background mode | `internal/background/`, `main.go:startBackend` | Child args remove `-backend`; default log sits beside binary. |
 | Setup behavior | `setup.sh`, `setup.ps1`, `tests/setup_*_test.sh` | Router lifecycle and agent config commands are intentionally separate. |
-| Agent model contract | `docs/AGENT_MODELS.md`, `internal/manager/agent/modelconfig/` | Protocol v2 uses authenticated discovery and canonical key-free model config. |
+| Agent model contract | `docs/AGENT_MODELS.md`, `internal/manager/agent/modelconfig/` | Protocol v3 uses authenticated discovery and canonical key-free model config. |
 | Release packaging | `.github/workflows/release.yml`, `scripts/build.sh` | Matrix builds inject certs, upstream URL, version, commit, build date. |
 
 ## CODE MAP

@@ -16,7 +16,7 @@ RECEIPT_PATH="$STATE_DIR/install-receipt.json"
 PENDING_PATH="$STATE_DIR/install-pending.json"
 BACKUP_DIR="$STATE_DIR/install-previous"
 ROUTER_BASE_URL="http://127.0.0.1:19099"
-MANAGEMENT_PROTOCOL_VERSION="2"
+MANAGEMENT_PROTOCOL_VERSION="3"
 MAX_MODEL_CONFIG_SIZE=$((2 * 1024 * 1024))
 TRANSIENT_API_KEY=""
 TRANSIENT_REQUEST=""
@@ -351,7 +351,7 @@ manager_secret_call() {
   [[ "$(printf '%s\n' "$info_response" | wc -l | tr -d ' ')" == 1 ]] || fail "manager 返回了无效的握手响应。"
   expected_target="${ROUTER_ASSET#mtls-router-}"; expected_target="${expected_target/-//}"
   printf '%s' "$info_response" | jq -e --arg protocol "$MANAGEMENT_PROTOCOL_VERSION" --arg target "$expected_target" '.id == "setup-secret-info" and .error == null and .result.deployment_id != "" and .result.target == $target and .result.management_protocol_version == $protocol' >/dev/null ||
-    fail "manager protocol v2 握手失败；未接受含密钥请求。"
+    fail "manager protocol v3 握手失败；未接受含密钥请求。"
   if [[ "$RESOLVED_MANAGER" == "$MANAGER_PATH" ]]; then
     [[ "$(printf '%s' "$info_response" | jq -r .result.deployment_id)" == "$(jq -r .deployment_id "$RECEIPT_PATH")" ]] || fail "manager deployment 握手与安装 receipt 不匹配；未接受含密钥请求。"
   fi
@@ -501,10 +501,10 @@ show_preview() { show_fragments "$1"; printf '%s' "$1" | jq -r '(.result.files[]
 agent_flow() {
   local mode="$1" filter="$2" config_path="$3" detect agents_json models catalog response preview approve_drift=false approve_codex=false
   [[ "$mode" != write || -n "$filter" ]] || fail "--write-config 需要 --agent=claude,opencode,codex 显式指定要操作的 agent。"; detect="$(manager_call '{"id":"detect","method":"agent.detect","params":{}}')"
-  if [[ -z "$filter" ]]; then [[ -t 0 ]] || fail "Agent 配置需要交互选择。非交互自动化请使用 manager protocol v2 stdin。"; printf '%s' "$detect" | jq -r '.result.agents[] | select(.detected) | "DETECTED \(.agent): \(.path)"'; prompt_value "选择 Agent（逗号分隔 claude,opencode,codex）: "; filter="$PROMPT_VALUE"; [[ -n "$filter" ]] || fail "必须显式选择至少一个 Agent。"; fi
+  if [[ -z "$filter" ]]; then [[ -t 0 ]] || fail "Agent 配置需要交互选择。非交互自动化请使用 manager protocol v3 stdin。"; printf '%s' "$detect" | jq -r '.result.agents[] | select(.detected) | "DETECTED \(.agent): \(.path)"'; prompt_value "选择 Agent（逗号分隔 claude,opencode,codex）: "; filter="$PROMPT_VALUE"; [[ -n "$filter" ]] || fail "必须显式选择至少一个 Agent。"; fi
   parse_targets "$filter" "$detect"; ((${#TARGETS[@]})) || { warn "  未检测到 Agent。"; return; }; agents_json="$(printf '%s\n' "${TARGETS[@]}" | jq -R . | jq -s .)"
   [[ -z "$config_path" ]] || load_model_config "$config_path"
-  [[ -t 0 ]] || fail "Agent 配置需要隐藏交互输入。非交互自动化请使用 manager protocol v2 stdin：manager.info 握手后调用 agent.models、agent.render/agent.preview、agent.write；key 不得进入参数、环境或文件。MTLS_ROUTER_OPENAI_API_KEY 已移除。"
+  [[ -t 0 ]] || fail "Agent 配置需要隐藏交互输入。非交互自动化请使用 manager protocol v3 stdin：manager.info 握手后调用 agent.models、agent.render/agent.preview、agent.write；key 不得进入参数、环境或文件。MTLS_ROUTER_OPENAI_API_KEY 已移除。"
   printf '请输入 mtls-router OPENAI_API_KEY（输入隐藏）：' >&2; IFS= read -rs TRANSIENT_API_KEY || true; printf '\n' >&2; [[ -n "$TRANSIENT_API_KEY" ]] || fail "API key 不能为空。"
   TRANSIENT_REQUEST="$(jq -cn --argjson a "$agents_json" --arg k "$TRANSIENT_API_KEY" '{id:"models",method:"agent.models",params:{owner:"cli",agents:$a,api_key:$k}}')"; models="$(manager_secret_call "$TRANSIENT_REQUEST")"; TRANSIENT_REQUEST=""; printf '%s' "$models" | jq -r '.result.models[] | "MODEL \(.)"'; catalog="$(printf '%s' "$models" | jq -r .result.catalog_token)"
   if [[ -z "$config_path" ]]; then initialize_model_defaults "$models" "$agents_json"; build_model_config; fi
@@ -539,7 +539,7 @@ print_usage() {
 
 Agent 命令先隐藏读取 key，再发现模型；不会自动选择模型。向导覆盖 Agent-native
 typed fields，或读取不超过 2 MiB 的普通 JSON --model-config 文件。
-非交互自动化请使用 manager protocol v2 stdin：manager.info 握手后依次调用
+非交互自动化请使用 manager protocol v3 stdin：manager.info 握手后依次调用
 agent.models、agent.render/agent.preview、agent.write；key 不得进入参数、环境或文件。
 USAGE
 }

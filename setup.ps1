@@ -18,7 +18,7 @@ $ReceiptPath = Join-Path $StateDir 'install-receipt.json'
 $PendingPath = Join-Path $StateDir 'install-pending.json'
 $BackupDir = Join-Path $StateDir 'install-previous'
 $RouterBaseUrl = 'http://127.0.0.1:19099'
-$ManagementProtocolVersion = '2'
+$ManagementProtocolVersion = '3'
 $MaxModelConfigSize = 2 * 1024 * 1024
 $script:TransientApiKey = ''
 $script:TransientRequest = ''
@@ -313,7 +313,7 @@ function Invoke-ManagerSecret($Request) {
     $assets = Get-PlatformAssets
     $expectedTarget = 'windows/' + $(if ($assets.Manager -match '-arm64\.exe$') { 'arm64' } else { 'amd64' })
     if ($info.id -cne 'setup-secret-info' -or $info.error -or -not $info.result.deployment_id -or [string]$info.result.target -cne $expectedTarget -or [string]$info.result.management_protocol_version -cne $ManagementProtocolVersion) {
-        Write-Fail 'manager protocol v2 握手失败；未接受含密钥请求。'
+        Write-Fail 'manager protocol v3 握手失败；未接受含密钥请求。'
     }
     if ($pair.Manager -ceq $ManagerPath) {
         $receipt = Get-Content -LiteralPath $ReceiptPath -Raw | ConvertFrom-Json
@@ -435,8 +435,8 @@ function Show-Fragments($Result) { foreach ($f in $Result.fragments) { Write-Hos
 function Show-ExactPreview($Result) { Show-Fragments $Result; foreach ($f in $Result.files) { Write-Host "FILE $($f.operation): $($f.path)"; if ($f.backup_path) { Write-Host "  BACKUP: $($f.backup_path)" } }; foreach ($c in $Result.managed_collisions) { Write-Host "COLLISION $($c.agent) $($c.path): $($c.type) -> $($c.action)" }; if ($Result.state_change) { Write-Host "STATE $($Result.state_change.operation): $($Result.state_change.path)" }; if ($Result.state_backup) { Write-Host "STATE BACKUP: $($Result.state_backup.path)" } }
 
 function Invoke-AgentFlow($Mode, $Filter, $ModelConfigPath) {
-    if ($Mode -ceq 'write' -and -not $Filter) { Write-Fail '--write-config 需要 --agent=claude,opencode,codex 显式指定要操作的 agent。' }; $detect = Invoke-Manager '{"id":"detect","method":"agent.detect","params":{}}'; if (-not $Filter) { if ([Console]::IsInputRedirected) { Write-Fail 'Agent 配置需要交互选择。非交互自动化请使用 manager protocol v2 stdin。' }; foreach ($state in @($detect.result.agents | Where-Object detected)) { Write-Host "DETECTED $($state.agent): $($state.path)" }; $Filter = Read-Host '选择 Agent（逗号分隔 claude,opencode,codex）'; if (-not $Filter) { Write-Fail '必须显式选择至少一个 Agent。' } }; $targets = @(Get-AgentTargets $Filter $detect); if (-not $targets.Count) { Write-Warn '未检测到 Agent。'; return }
-    if ([Console]::IsInputRedirected) { Write-Fail 'Agent 配置需要隐藏交互输入。非交互自动化请使用 manager protocol v2 stdin：manager.info 握手后调用 agent.models、agent.render/agent.preview、agent.write；key 不得进入参数、环境或文件。MTLS_ROUTER_OPENAI_API_KEY 已移除。' }
+    if ($Mode -ceq 'write' -and -not $Filter) { Write-Fail '--write-config 需要 --agent=claude,opencode,codex 显式指定要操作的 agent。' }; $detect = Invoke-Manager '{"id":"detect","method":"agent.detect","params":{}}'; if (-not $Filter) { if ([Console]::IsInputRedirected) { Write-Fail 'Agent 配置需要交互选择。非交互自动化请使用 manager protocol v3 stdin。' }; foreach ($state in @($detect.result.agents | Where-Object detected)) { Write-Host "DETECTED $($state.agent): $($state.path)" }; $Filter = Read-Host '选择 Agent（逗号分隔 claude,opencode,codex）'; if (-not $Filter) { Write-Fail '必须显式选择至少一个 Agent。' } }; $targets = @(Get-AgentTargets $Filter $detect); if (-not $targets.Count) { Write-Warn '未检测到 Agent。'; return }
+    if ([Console]::IsInputRedirected) { Write-Fail 'Agent 配置需要隐藏交互输入。非交互自动化请使用 manager protocol v3 stdin：manager.info 握手后调用 agent.models、agent.render/agent.preview、agent.write；key 不得进入参数、环境或文件。MTLS_ROUTER_OPENAI_API_KEY 已移除。' }
     try { $secure = Read-Host '请输入 mtls-router OPENAI_API_KEY（输入隐藏）' -AsSecureString; $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure); try { $script:TransientApiKey = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }; if (-not $script:TransientApiKey) { Write-Fail 'API key 不能为空。' }
         $script:TransientRequest = [ordered]@{ id='models'; method='agent.models'; params=[ordered]@{ owner='cli'; agents=$targets; api_key=$script:TransientApiKey } } | ConvertTo-Json -Compress -Depth 30; $models = Invoke-ManagerSecret $script:TransientRequest; $script:TransientRequest = ''; foreach ($id in $models.result.models) { Write-Host "MODEL $id" }
         $modelConfig = if ($ModelConfigPath) { Read-ModelConfigFile $ModelConfigPath } else { $initialConfig = Get-AgentInitialConfig $targets $models; New-AgentModelConfig $targets $initialConfig }; $params = [ordered]@{ agents=$targets; catalog_token=$models.result.catalog_token; model_config=$modelConfig }
@@ -470,7 +470,7 @@ function Show-Usage {
 
 Agent 命令先隐藏读取 key，再发现模型；不会自动选择模型。向导覆盖 Agent-native
 typed fields，或读取不超过 2 MiB 的普通 JSON --model-config 文件。
-非交互自动化请使用 manager protocol v2 stdin：manager.info 握手后依次调用
+非交互自动化请使用 manager protocol v3 stdin：manager.info 握手后依次调用
 agent.models、agent.render/agent.preview、agent.write；key 不得进入参数、环境或文件。
 '@
 }

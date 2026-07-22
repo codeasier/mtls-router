@@ -1,7 +1,12 @@
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { PollSnapshot, RouterHealth, RouterStatus } from "./ipc";
+import type {
+  OccupantInspection,
+  PollSnapshot,
+  RouterHealth,
+  RouterStatus,
+} from "./ipc";
 import { MAX_FAILURE_LOG_LINES, RouterPage } from "./RouterPage";
 import { createMockApi } from "./test/api";
 import { renderWithI18n } from "./test/render";
@@ -520,14 +525,22 @@ describe("RouterPage actions", () => {
 });
 
 describe("RouterPage occupant recovery", () => {
-  const inspection = {
+  const inspection: OccupantInspection = {
     pid: 4242,
+    verification_mode: "verified_identity",
     process_name: "example-server",
     executable:
       "/Users/example/a-very-long-directory-name/another-directory/example-server",
     listen_addr: "127.0.0.1:19099",
     confirmation_token: "opaque-confirmation-token",
     expires_at: "2026-07-18T12:00:30Z",
+  };
+  const pidOnlyInspection: OccupantInspection = {
+    pid: 4343,
+    verification_mode: "windows_pid_only",
+    listen_addr: "127.0.0.1:19099",
+    confirmation_token: "pid-only-confirmation-token",
+    expires_at: "2026-07-22T12:00:30Z",
   };
 
   function occupiedApi(overrides = {}) {
@@ -551,6 +564,72 @@ describe("RouterPage occupant recovery", () => {
     expect(screen.getByRole("button", { name: "停止路由" })).toBeDisabled();
     expect(
       screen.getByRole("button", { name: "强制终止占用进程" }),
+    ).toBeEnabled();
+  });
+
+  it.each([
+    [
+      "PID-only identity field",
+      { ...pidOnlyInspection, process_name: "fabricated-name" },
+    ],
+    [
+      "extra identity-like field",
+      { ...inspection, process_owner: "fabricated-owner" },
+    ],
+    [
+      "wrong endpoint",
+      { ...pidOnlyInspection, listen_addr: "127.0.0.1:19100" },
+    ],
+    ["zero PID", { ...pidOnlyInspection, pid: 0 }],
+    ["PID above u32", { ...pidOnlyInspection, pid: 0x1_0000_0000 }],
+    ["blank token", { ...pidOnlyInspection, confirmation_token: " " }],
+    ["blank expiry", { ...pidOnlyInspection, expires_at: " " }],
+    ["malformed expiry", { ...pidOnlyInspection, expires_at: "next Tuesday" }],
+    [
+      "lowercase date-time separator",
+      { ...pidOnlyInspection, expires_at: "2026-07-22t12:00:30Z" },
+    ],
+    [
+      "lowercase UTC marker",
+      { ...pidOnlyInspection, expires_at: "2026-07-22T12:00:30z" },
+    ],
+    [
+      "leap second",
+      { ...pidOnlyInspection, expires_at: "2026-07-22T12:00:60Z" },
+    ],
+  ])(
+    "blocks a malformed runtime inspection with %s",
+    async (_case, malformed) => {
+      const api = occupiedApi({
+        inspectRouterOccupant: vi.fn().mockResolvedValue(malformed),
+      });
+      renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+
+      expect(
+        await screen.findByText(/无法完整验证占用进程身份/),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "强制终止占用进程" }),
+      ).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "重试检查" })).toBeEnabled();
+      expect(api.forceTerminateRouterOccupant).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["standard UTC", "2026-07-22T12:00:30Z"],
+    ["numeric offset", "2026-07-22T20:00:30+08:00"],
+  ])("accepts a manager %s expiry", async (_case, expiresAt) => {
+    const api = occupiedApi({
+      inspectRouterOccupant: vi.fn().mockResolvedValue({
+        ...pidOnlyInspection,
+        expires_at: expiresAt,
+      }),
+    });
+    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+
+    expect(
+      await screen.findByRole("button", { name: "强制终止占用进程" }),
     ).toBeEnabled();
   });
 
@@ -579,7 +658,7 @@ describe("RouterPage occupant recovery", () => {
 
   it("discards an in-flight inspection after status leaves occupied", async () => {
     let observer: ((snapshot: PollSnapshot) => void) | undefined;
-    let resolveInspection: ((value: typeof inspection) => void) | undefined;
+    let resolveInspection: ((value: OccupantInspection) => void) | undefined;
     const api = createMockApi({
       getPollSnapshot: vi.fn().mockResolvedValue({
         revision: 1,
@@ -591,7 +670,7 @@ describe("RouterPage occupant recovery", () => {
       }),
       inspectRouterOccupant: vi.fn(
         () =>
-          new Promise<typeof inspection>((resolve) => {
+          new Promise<OccupantInspection>((resolve) => {
             resolveInspection = resolve;
           }),
       ),
@@ -626,6 +705,86 @@ describe("RouterPage occupant recovery", () => {
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(api.forceTerminateRouterOccupant).not.toHaveBeenCalled();
+  });
+
+  it("shows only PID with the Windows warning in the panel and dialog", async () => {
+    const api = occupiedApi({
+      inspectRouterOccupant: vi.fn().mockResolvedValue(pidOnlyInspection),
+    });
+    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+
+    const action = await screen.findByRole("button", {
+      name: "强制终止占用进程",
+    });
+    const panel = action.closest("section")!;
+    expect(panel).toHaveTextContent("4343");
+    expect(panel).not.toHaveTextContent("127.0.0.1:19099");
+    expect(panel).toHaveTextContent(
+      "Windows 未验证该进程的身份、所有者、启动时间或可执行文件",
+    );
+    expect(
+      screen.queryByText("进程", { selector: "dt" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("可执行文件完整路径", { selector: "dt" }),
+    ).not.toBeInTheDocument();
+    expect(panel).not.toHaveTextContent("example-server");
+
+    fireEvent.click(action);
+
+    const dialog = screen.getByRole("dialog", { name: "确认强制终止占用进程" });
+    expect(dialog).toHaveTextContent("4343");
+    expect(dialog).not.toHaveTextContent("127.0.0.1:19099");
+    expect(dialog).toHaveTextContent(
+      "Windows 未验证该进程的身份、所有者、启动时间或可执行文件",
+    );
+    expect(dialog).toHaveTextContent(
+      "管理器会在终止前重新检查同一端口仍由同一 PID 占用",
+    );
+    expect(dialog).toHaveTextContent(
+      "PID 重用和无法读取托管路由状态仍会留下风险",
+    );
+    expect(dialog.querySelectorAll("dt")[0]).toHaveTextContent("PID");
+    expect(dialog.querySelectorAll("dt")).toHaveLength(1);
+    expect(dialog).not.toHaveTextContent("example-server");
+    expect(api.forceTerminateRouterOccupant).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "取消" })).toHaveFocus();
+  });
+
+  it("cancels PID-only confirmation without a request", async () => {
+    const api = occupiedApi({
+      inspectRouterOccupant: vi.fn().mockResolvedValue(pidOnlyInspection),
+    });
+    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "强制终止占用进程" }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(api.forceTerminateRouterOccupant).not.toHaveBeenCalled();
+  });
+
+  it("requires PID-only dialog confirmation, submits exactly the token, and does not start", async () => {
+    const api = occupiedApi({
+      inspectRouterOccupant: vi.fn().mockResolvedValue(pidOnlyInspection),
+    });
+    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "强制终止占用进程" }),
+    );
+    expect(api.forceTerminateRouterOccupant).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "强制终止" }));
+
+    await waitFor(() =>
+      expect(api.forceTerminateRouterOccupant).toHaveBeenCalledOnce(),
+    );
+    expect(api.forceTerminateRouterOccupant).toHaveBeenCalledWith(
+      pidOnlyInspection.confirmation_token,
+    );
+    expect(api.startRouter).not.toHaveBeenCalled();
   });
 
   it("closes on Escape before submit without a termination request", async () => {

@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"syscall"
 	"unsafe"
 
@@ -18,34 +17,53 @@ var getExtendedTCPTable = windows.NewLazySystemDLL("iphlpapi.dll").NewProc("GetE
 
 const windowsTCPRowOwnerPIDSize = 24
 
-func inspectNative(_ context.Context, listenAddr string) (Identity, error) {
+func inspectNative(ctx context.Context, listenAddr string) (Target, error) {
+	return inspectWindowsTarget(ctx, listenAddr, windowsTargetDependencies{
+		inspectPIDOwner: inspectPIDOwnerNative,
+		processSID: func(pid int) (string, error) {
+			windowsPID, err := windowsPID(pid)
+			if err != nil {
+				return "", err
+			}
+			return processSID(windowsPID)
+		},
+		currentSID:     currentUserNative,
+		inspectProcess: process.Inspect,
+	})
+}
+
+func inspectPIDOwnerNative(ctx context.Context, listenAddr string) (int, error) {
+	if ctx.Err() != nil {
+		return 0, ErrIdentityUnavailable
+	}
 	ip, port, err := validateAddress(listenAddr)
 	if err != nil {
-		return Identity{}, err
+		return 0, err
 	}
 	var size uint32
 	result, _, _ := getExtendedTCPTable.Call(0, uintptr(unsafe.Pointer(&size)), 1, windows.AF_INET, 3, 0)
+	if ctx.Err() != nil {
+		return 0, ErrIdentityUnavailable
+	}
 	if syscall.Errno(result) != windows.ERROR_INSUFFICIENT_BUFFER || size < 4 {
-		return Identity{}, ErrIdentityUnavailable
+		return 0, ErrIdentityUnavailable
 	}
 	buffer := make([]byte, size)
 	result, _, _ = getExtendedTCPTable.Call(uintptr(unsafe.Pointer(&buffer[0])), uintptr(unsafe.Pointer(&size)), 1, windows.AF_INET, 3, 0)
+	if ctx.Err() != nil {
+		return 0, ErrIdentityUnavailable
+	}
 	if result != 0 || size > uint32(len(buffer)) {
-		return Identity{}, ErrIdentityUnavailable
+		return 0, ErrIdentityUnavailable
 	}
 	pid, err := selectTCP4ListenerOwner(buffer[:size], ip, port)
 	if err != nil {
-		return Identity{}, err
+		return 0, err
 	}
-	userID, err := processSID(pid)
-	if err != nil {
-		return Identity{}, ErrIdentityUnavailable
+	if ctx.Err() != nil {
+		return 0, ErrIdentityUnavailable
 	}
-	identity, err := process.Inspect(int(pid))
-	if err != nil {
-		return Identity{}, ErrIdentityUnavailable
-	}
-	return Identity{ListenAddr: listenAddr, Network: "tcp4", SocketID: windowsSocketID(listenAddr, pid), Process: identity, UserID: userID}, nil
+	return int(pid), nil
 }
 
 func selectTCP4ListenerOwner(buffer []byte, ip []byte, port int) (uint32, error) {
@@ -53,16 +71,20 @@ func selectTCP4ListenerOwner(buffer []byte, ip []byte, port int) (uint32, error)
 		return 0, ErrIdentityUnavailable
 	}
 	count := uint64(binary.LittleEndian.Uint32(buffer[:4]))
-	wantedSize := uint64(4) + count*windowsTCPRowOwnerPIDSize
-	if wantedSize != uint64(len(buffer)) {
+	const rowOffset = uint64(4)
+	if count > (uint64(len(buffer))-rowOffset)/windowsTCPRowOwnerPIDSize {
 		return 0, ErrIdentityUnavailable
 	}
+	rowEnd := rowOffset + count*windowsTCPRowOwnerPIDSize
 	wantedAddress := binary.LittleEndian.Uint32(ip)
 	var owner uint32
-	for offset := 4; offset < len(buffer); offset += windowsTCPRowOwnerPIDSize {
+	for offset := int(rowOffset); offset < int(rowEnd); offset += windowsTCPRowOwnerPIDSize {
 		row := buffer[offset : offset+windowsTCPRowOwnerPIDSize]
+		if binary.LittleEndian.Uint32(row[0:4]) != 2 {
+			continue
+		}
 		localPort := int(binary.BigEndian.Uint16(row[8:10]))
-		if row[10] != 0 || row[11] != 0 || binary.LittleEndian.Uint32(row[0:4]) != 2 || binary.LittleEndian.Uint32(row[12:16]) != 0 || binary.LittleEndian.Uint32(row[16:20]) != 0 || binary.LittleEndian.Uint32(row[20:24]) == 0 {
+		if row[10] != 0 || row[11] != 0 || binary.LittleEndian.Uint32(row[12:16]) != 0 || binary.LittleEndian.Uint32(row[16:20]) != 0 || binary.LittleEndian.Uint32(row[20:24]) == 0 {
 			return 0, ErrIdentityUnavailable
 		}
 		localAddress := binary.LittleEndian.Uint32(row[4:8])
@@ -83,8 +105,26 @@ func selectTCP4ListenerOwner(buffer []byte, ip []byte, port int) (uint32, error)
 	return owner, nil
 }
 
-func windowsSocketID(listenAddr string, pid uint32) string {
-	return fmt.Sprintf("tcp4:%s:%d", listenAddr, pid)
+func supportsPIDOnlyNative() bool { return true }
+
+func signalPIDNative(pid int) error {
+	windowsPID, err := windowsPID(pid)
+	if err != nil {
+		return err
+	}
+	handle, err := windows.OpenProcess(windows.PROCESS_TERMINATE, false, windowsPID)
+	if errors.Is(err, windows.ERROR_INVALID_PARAMETER) {
+		return process.ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(handle)
+	if err := windows.TerminateProcess(handle, 1); errors.Is(err, windows.ERROR_INVALID_PARAMETER) {
+		return process.ErrNotFound
+	} else {
+		return err
+	}
 }
 
 func processSID(pid uint32) (string, error) {

@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/codeasier/mtls-router/internal/manager/agent/modelconfig"
+	"github.com/codeasier/mtls-router/internal/version"
 )
 
 const testAPIKey = "sk-agent-write-key-canary-7f2d"
@@ -127,7 +128,7 @@ func TestV2PreviewAcceptsReportedClaudeConfigurationWithoutFable(t *testing.T) {
 	models := []string{"gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"}
 	discovery, err := service.DiscoverModels(context.Background(), []Kind{ClaudeCode}, models, modelconfig.CatalogClaims{
 		Models: models, Agents: []modelconfig.Agent{modelconfig.Claude}, Owner: "desktop",
-		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "test", ProtocolVersion: "2",
+		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "test", ProtocolVersion: "3",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -160,7 +161,7 @@ func TestV2PreviewRejectsModelOutsideCatalogWithoutTransactionArtifacts(t *testi
 	}
 	discovery, err := service.DiscoverModels(context.Background(), []Kind{ClaudeCode}, []string{"model-a"}, modelconfig.CatalogClaims{
 		Models: []string{"model-a"}, Agents: []modelconfig.Agent{modelconfig.Claude}, Owner: "cli",
-		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "test", ProtocolVersion: "2",
+		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "test", ProtocolVersion: "3",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -190,7 +191,7 @@ func TestCatalogTokensBindSimplifyAcrossServiceProcesses(t *testing.T) {
 	}
 	fullCatalog, err := full.DiscoverModels(context.Background(), []Kind{ClaudeCode}, []string{"provider/slash"}, modelconfig.CatalogClaims{
 		Models: []string{"provider/slash"}, Agents: []modelconfig.Agent{modelconfig.Claude}, Owner: "cli",
-		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "test", ProtocolVersion: "2", Simplify: true,
+		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "test", ProtocolVersion: "3", Simplify: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -225,7 +226,7 @@ func TestCatalogTokensBindSimplifyAcrossServiceProcesses(t *testing.T) {
 
 	simplifiedCatalog, err := simplified.DiscoverModels(context.Background(), []Kind{ClaudeCode}, []string{"model-a"}, modelconfig.CatalogClaims{
 		Models: []string{"model-a"}, Agents: []modelconfig.Agent{modelconfig.Claude}, Owner: "cli",
-		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "test", ProtocolVersion: "2",
+		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "test", ProtocolVersion: "3",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -233,6 +234,36 @@ func TestCatalogTokensBindSimplifyAcrossServiceProcesses(t *testing.T) {
 	simplifiedConfig := json.RawMessage(`{"version":1,"claude":{"primary":{"model":"model-a"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true}}}`)
 	_, err = compatible.Render(context.Background(), []Kind{ClaudeCode}, simplifiedCatalog.CatalogToken, simplifiedConfig)
 	assertCode(t, err, CodeModelCatalogStale)
+}
+
+func TestCurrentServiceRejectsSignedOldProtocolCatalogForRenderAndPreview(t *testing.T) {
+	home := t.TempDir()
+	service := newTestService(t, filepath.Join(home, "manager-state"), home, map[string]bool{"claude": true}, nil)
+	if err := service.ensureSigner(); err != nil {
+		t.Fatal(err)
+	}
+	if version.ManagementProtocolVersion != "3" {
+		t.Fatalf("test requires management protocol v3, got %q", version.ManagementProtocolVersion)
+	}
+	token, err := service.signer.SignCatalog(modelconfig.CatalogClaims{
+		Models: []string{"model-a"}, Agents: []modelconfig.Agent{modelconfig.Claude}, Owner: "cli",
+		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "test", ProtocolVersion: "2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := json.RawMessage(`{"version":1,"claude":{"primary":{"model":"model-a"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true}}}`)
+
+	_, err = service.Render(context.Background(), []Kind{ClaudeCode}, token, config)
+	assertCode(t, err, CodeModelCatalogStale)
+	if err.Error() != "Agent model catalog is stale" {
+		t.Fatalf("render stale message = %q", err)
+	}
+	_, err = service.Preview(context.Background(), []Kind{ClaudeCode}, token, config)
+	assertCode(t, err, CodeModelCatalogStale)
+	if err.Error() != "Agent model catalog is stale" {
+		t.Fatalf("preview stale message = %q", err)
+	}
 }
 
 func TestRevisionTokenSurvivesOneRequestManagerProcesses(t *testing.T) {

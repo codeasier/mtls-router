@@ -447,7 +447,7 @@ func TestCatalogTokensBindEveryContextAndRejectTampering(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	claims := CatalogClaims{Models: []string{"z", "a", "a"}, Agents: []Agent{Codex, Claude}, Owner: "cli", RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "deployment-a", ProtocolVersion: "2", Simplify: true}
+	claims := CatalogClaims{Models: []string{"z", "a", "a"}, Agents: []Agent{Codex, Claude}, Owner: "cli", RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "deployment-a", ProtocolVersion: "3", Simplify: true}
 	token, err := signer.SignCatalog(claims)
 	if err != nil {
 		t.Fatal(err)
@@ -479,7 +479,7 @@ func TestCatalogTokenFalseSimplifyIsOmittedAndLegacyCompatible(t *testing.T) {
 	}
 	token, err := signer.SignCatalog(CatalogClaims{
 		Models: []string{"provider/model"}, Agents: []Agent{Claude}, Owner: "cli",
-		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "deployment", ProtocolVersion: "2",
+		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "deployment", ProtocolVersion: "3",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -500,7 +500,7 @@ func TestCatalogTokenFalseSimplifyIsOmittedAndLegacyCompatible(t *testing.T) {
 func TestCatalogTokenVersionScopeGenerationAndLimits(t *testing.T) {
 	key := make([]byte, 32)
 	signer, _ := NewTokenSigner(key, "generation-a")
-	base := CatalogClaims{Models: []string{"m"}, Agents: []Agent{OpenCode}, Owner: "desktop", RouterBaseURL: "http://[::1]:19099", DeploymentID: "deployment", ProtocolVersion: "2"}
+	base := CatalogClaims{Models: []string{"m"}, Agents: []Agent{OpenCode}, Owner: "desktop", RouterBaseURL: "http://[::1]:19099", DeploymentID: "deployment", ProtocolVersion: "3"}
 	for _, mutate := range []func(*CatalogClaims){
 		func(c *CatalogClaims) { c.Version = 2 },
 		func(c *CatalogClaims) { c.Owner = "other" },
@@ -530,7 +530,7 @@ func TestCatalogTokenVersionScopeGenerationAndLimits(t *testing.T) {
 
 func TestCatalogTokenRejectsEveryCrossProcessContextMismatch(t *testing.T) {
 	key := bytes.Repeat([]byte{0x42}, 32)
-	claims := CatalogClaims{Models: []string{"m"}, Agents: []Agent{Claude, Codex}, Owner: "cli", RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "deployment", ProtocolVersion: "2"}
+	claims := CatalogClaims{Models: []string{"m"}, Agents: []Agent{Claude, Codex}, Owner: "cli", RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "deployment", ProtocolVersion: "3"}
 	signer, _ := NewTokenSigner(key, "generation-a")
 	token, err := signer.SignCatalog(claims)
 	if err != nil {
@@ -575,7 +575,7 @@ func TestRevisionTokensBindConfigCatalogRouterDriftAndRevisions(t *testing.T) {
 	claims := RevisionClaims{
 		Agents: []Agent{OpenCode}, CanonicalConfig: json.RawMessage(`{"version":1}`), CatalogIdentity: "catalog-mac",
 		SidecarRevision: "sidecar-mac", RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "deployment",
-		ProtocolVersion: "2", ManagedDrift: true, DriftedAgents: []Agent{OpenCode},
+		ProtocolVersion: "3", ManagedDrift: true, DriftedAgents: []Agent{OpenCode},
 		Bindings: []RevisionBinding{{Context: "agent-file", Identity: "/config", Revision: "revision-mac"}},
 	}
 	token, err := signer.SignRevision(claims)
@@ -602,7 +602,7 @@ func TestRevisionTokenRejectsEveryCrossProcessContextMismatch(t *testing.T) {
 	claims := RevisionClaims{
 		Agents: []Agent{Claude, OpenCode}, CanonicalConfig: json.RawMessage(`{"version":1}`), CatalogIdentity: "catalog-mac",
 		SidecarRevision: "sidecar-mac", RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "deployment",
-		ProtocolVersion: "2", ManagedDrift: true, RequiresCodexAuthApproval: true, DriftedAgents: []Agent{Claude},
+		ProtocolVersion: "3", ManagedDrift: true, RequiresCodexAuthApproval: true, DriftedAgents: []Agent{Claude},
 		Bindings: []RevisionBinding{{Context: "agent-file", Identity: "/config", Revision: "revision-mac"}},
 	}
 	token, err := signer.SignRevision(claims)

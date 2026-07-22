@@ -153,7 +153,7 @@ jobs:
           go build -trimpath \
             -ldflags "-s -w -X 'github.com/codeasier/mtls-router/internal/version.Version=${RELEASE_VERSION}' -X 'github.com/codeasier/mtls-router/internal/version.Commit=${GITHUB_SHA::12}' -X 'github.com/codeasier/mtls-router/internal/version.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)' -X 'github.com/codeasier/mtls-router/internal/version.DeploymentID=${DEPLOYMENT_ID}' -X 'github.com/codeasier/mtls-router/internal/manager/preset.Encoded=${AGENT_MODEL_PRESET_BASE64}' -X 'github.com/codeasier/mtls-router/internal/manager/modelcatalog.Simplify=${SIMPLIFY}'" \
              -o "dist/mtls-router-manager-${GOOS}-${GOARCH}${ext}" ./cmd/mtls-router-manager
-          printf '{"schema_version":1,"producer":"cli-%s-%s","management_protocol_version":"2"}\n' "$GOOS" "$GOARCH" >"dist/release-metadata-cli-${GOOS}-${GOARCH}.json"
+          printf '{"schema_version":1,"producer":"cli-%s-%s","management_protocol_version":"3"}\n' "$GOOS" "$GOARCH" >"dist/release-metadata-cli-${GOOS}-${GOARCH}.json"
       - uses: actions/upload-artifact@v4
         with:
           name: mtls-router-cli-${{ matrix.goos }}-${{ matrix.goarch }}
@@ -175,7 +175,7 @@ jobs:
       DEPLOYMENT_ID: ${{ vars.DEPLOYMENT_ID }}
       AGENT_MODEL_PRESET_BASE64: ${{ vars.AGENT_MODEL_PRESET_BASE64 }}
       SIMPLIFY: ${{ needs.prepare.outputs.simplify }}
-      MANAGEMENT_PROTOCOL_VERSION: '2'
+      MANAGEMENT_PROTOCOL_VERSION: '3'
       APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
       APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
       APPLE_ID: ${{ secrets.APPLE_ID }}

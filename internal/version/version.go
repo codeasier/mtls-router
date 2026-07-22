@@ -21,7 +21,7 @@ var (
 
 // ManagementProtocolVersion is code-owned so router and manager builds cannot
 // accidentally publish an empty protocol identity.
-const ManagementProtocolVersion = "2"
+const ManagementProtocolVersion = "3"
 
 // BuildInfo is a snapshot of the build metadata.
 type BuildInfo struct {

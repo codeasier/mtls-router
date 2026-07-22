@@ -70,7 +70,7 @@ encoded or decoded content.
 
 `mtls-router-manager` has one command, `serve`. It reads one line-delimited JSON request at a time from stdin, processes requests sequentially, writes only protocol responses to stdout, and exits cleanly on stdin EOF. Diagnostics belong on stderr or in logs. Never add API keys to manager arguments or environment variables.
 
-Agent configuration uses management protocol v2. Release tests validate generated Claude JSON, opencode JSON, and Codex TOML/auth output through repository parser and snapshot coverage. The exact current stable Agent/schema inputs used by those tests, including source URL, revision, digest, and retrieval date, are pinned in [`internal/manager/agent/testdata/compatibility.json`](../internal/manager/agent/testdata/compatibility.json). Updating a pin requires reviewing the upstream schema, updating renderer/schema tests where necessary, and keeping English/Chinese Agent documentation aligned.
+Agent configuration uses management protocol v3. Release tests validate generated Claude JSON, opencode JSON, and Codex TOML/auth output through repository parser and snapshot coverage. The exact current stable Agent/schema inputs used by those tests, including source URL, revision, digest, and retrieval date, are pinned in [`internal/manager/agent/testdata/compatibility.json`](../internal/manager/agent/testdata/compatibility.json). Updating a pin requires reviewing the upstream schema, updating renderer/schema tests where necessary, and keeping English/Chinese Agent documentation aligned.
 
 ## Local placeholder router
 
@@ -104,7 +104,7 @@ Link these shared metadata variables into both the router and manager:
 - `github.com/codeasier/mtls-router/internal/version.BuildDate`
 - `github.com/codeasier/mtls-router/internal/version.DeploymentID`
 
-`internal/version.ManagementProtocolVersion` is the code-owned protocol ID and is currently `2`; it is not an `-X` linker variable. `DeploymentID` is a non-sensitive identifier for the fixed service environment. A production build must use the same non-empty, non-`dev`, non-`unknown` deployment ID and protocol ID in router, manager, and desktop. External-router reuse is intentionally disabled for default development identities.
+`internal/version.ManagementProtocolVersion` is the code-owned protocol ID and is currently `3`; it is not an `-X` linker variable. `DeploymentID` is a non-sensitive identifier for the fixed service environment. A production build must use the same non-empty, non-`dev`, non-`unknown` deployment ID and protocol ID in router, manager, and desktop. External-router reuse is intentionally disabled for default development identities.
 
 Example router build:
 
@@ -180,7 +180,7 @@ managers.
 For a local native development launch:
 
 ```bash
-DEPLOYMENT_ID=dev VERSION=dev MANAGEMENT_PROTOCOL_VERSION=2 npm run tauri -- dev
+DEPLOYMENT_ID=dev VERSION=dev MANAGEMENT_PROTOCOL_VERSION=3 npm run tauri -- dev
 ```
 
 For a native bundle build, set release metadata explicitly:
@@ -188,7 +188,7 @@ For a native bundle build, set release metadata explicitly:
 ```bash
 DEPLOYMENT_ID=production-service \
 VERSION=v0.2.0 \
-MANAGEMENT_PROTOCOL_VERSION=2 \
+MANAGEMENT_PROTOCOL_VERSION=3 \
 npm run tauri -- build --target aarch64-apple-darwin
 ```
 
@@ -217,7 +217,7 @@ That automated inspection does not install or launch the packaged application. B
 2. Inspect package contents for exactly one architecture-compatible manager and router sidecar and no raw PEM/key files.
 3. Confirm executable permissions on macOS/Linux and current-user installation/launch without elevation.
 4. Recompute and compare packaged sidecar SHA-256 values with the values embedded in the desktop build.
-5. Run `manager.info` and router `/version`; require matching version, non-default deployment ID, and management protocol `2` across desktop, manager, router, setup metadata, and release artifact metadata. Reject every mixed v1/v2 combination before key-bearing Agent requests.
+5. Run `manager.info` and router `/version`; require matching version, non-default deployment ID, and management protocol `3` across desktop, manager, router, setup metadata, and release artifact metadata. Reject every mixed v2/v3 combination before key-bearing Agent requests.
 6. Verify Windows signature status or macOS code signature, notarization, and stapling with native platform tools; explicitly record absent status.
 7. Install and launch, validate first launch, second-instance activation, sidecar failure behavior, tray/close/quit, default autostart, external reuse, unknown port conflict, Agent preview/write/rollback, logs, and uninstall preparation/cleanup.
 8. Confirm Windows uninstall removes current-user autostart. Confirm macOS/Linux **Prepare for uninstall** removes autostart and exits before deletion.
@@ -232,7 +232,7 @@ The current `.github/workflows/release.yml` builds router and manager binaries f
 
 Production CLI and desktop sidecars require repository secrets `CLIENT_CERT_PEM`, `CLIENT_KEY_PEM`, and `UPSTREAM_CA_PEM`, plus variables `UPSTREAM_URL` and a non-default `DEPLOYMENT_ID`. Optional repository variable `AGENT_MODEL_PRESET_BASE64` supplies the same preset to every standalone manager and desktop manager sidecar; empty is valid and means no preset. Release preflight validates a configured value through the manager loader before matrix builds without printing its contents. Optional repository variable `SIMPLIFY` follows the normalization rules above and defaults to `True` when unset or empty. It is normalized before matrix fan-out and propagated to every standalone and desktop manager as the same canonical value; the desktop build script may idempotently validate and normalize it again. Router builds never receive either manager-only value. Optional platform credentials select the signed/notarized release branches described above.
 
-Each CLI and desktop matrix producer emits code-owned protocol metadata. `scripts/package-release.sh` requires exactly one metadata file per producer and requires every file to declare schema `1` and management protocol `2` before it assembles archives. This preflight is shared by normal and recovery publication, so a valid but mixed v1/v2 artifact set is not publishable.
+Each CLI and desktop matrix producer emits code-owned protocol metadata. `scripts/package-release.sh` requires exactly one metadata file per producer and requires every file to declare schema `1` and management protocol `3` before it assembles archives. This preflight is shared by normal and recovery publication, so a valid but mixed v2/v3 artifact set is not publishable.
 
 Set release inputs with `gh`:
 

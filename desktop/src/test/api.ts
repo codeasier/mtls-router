@@ -16,6 +16,7 @@ export function createMockApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
     stopRouter: vi.fn().mockResolvedValue({ state: "absent" }),
     inspectRouterOccupant: vi.fn().mockResolvedValue({
       pid: 4242,
+      verification_mode: "verified_identity",
       process_name: "example-server",
       executable: "/usr/local/bin/example-server",
       listen_addr: "127.0.0.1:19099",
@@ -33,7 +34,7 @@ export function createMockApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
       desktop: "desktop-v1",
       manager: "manager-v1",
       router: "router-v1",
-      management_protocol: "2",
+      management_protocol: "3",
     }),
     getRouterLogs: vi.fn().mockResolvedValue({ lines: [] }),
     collectDiagnostics: vi.fn().mockResolvedValue({ summary: "safe summary" }),

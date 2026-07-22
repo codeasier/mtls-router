@@ -58,7 +58,7 @@ export const zhCN = {
   "router.state.occupied.title": "端口已被占用",
   "router.state.occupied.signal": "端口冲突",
   "router.state.occupied.detail":
-    "本地端口由未知进程占用。只有在验证身份并得到明确确认后才能强制终止。",
+    "本地端口由未知进程占用。强制终止必须经过完整身份验证，或在 Windows 仅 PID 警告后进行明确确认。",
   "router.state.failed.title": "路由启动失败",
   "router.state.failed.signal": "需要处理",
   "router.state.failed.detail":
@@ -119,6 +119,8 @@ export const zhCN = {
   "router.occupant.dialogTitle": "确认强制终止占用进程",
   "router.occupant.warning":
     "终止会立即执行，不会先尝试正常退出。该进程中未保存的数据可能丢失。",
+  "router.occupant.pidOnlyWarning":
+    "Windows 未验证该进程的身份、所有者、启动时间或可执行文件。管理器会在终止前重新检查同一端口仍由同一 PID 占用，但 PID 重用和无法读取托管路由状态仍会留下风险。终止会立即执行，未保存的数据可能丢失。",
   "router.occupant.cancel": "取消",
   "router.occupant.confirm": "强制终止",
   "router.occupant.terminating": "正在终止...",

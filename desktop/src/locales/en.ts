@@ -63,7 +63,7 @@ export const en: Record<TranslationKey, string> = {
   "router.state.occupied.title": "Port is occupied",
   "router.state.occupied.signal": "Port conflict",
   "router.state.occupied.detail":
-    "An unknown process owns the local port. It can be force-terminated only after identity verification and explicit confirmation.",
+    "An unknown process owns the local port. Force termination requires either complete identity verification or an explicitly warned Windows PID-only confirmation.",
   "router.state.failed.title": "Router failed to start",
   "router.state.failed.signal": "Action required",
   "router.state.failed.detail":
@@ -131,6 +131,8 @@ export const en: Record<TranslationKey, string> = {
   "router.occupant.dialogTitle": "Confirm force termination",
   "router.occupant.warning":
     "Termination is immediate and will not attempt a graceful exit first. Unsaved data in this process may be lost.",
+  "router.occupant.pidOnlyWarning":
+    "Windows did not verify this process's identity, owner, start time, or executable. The manager will recheck that the same port is still owned by the same PID immediately before termination, but PID reuse and unreadable managed-router state leave residual risk. Termination is immediate, and unsaved data may be lost.",
   "router.occupant.cancel": "Cancel",
   "router.occupant.confirm": "Force terminate",
   "router.occupant.terminating": "Terminating...",
