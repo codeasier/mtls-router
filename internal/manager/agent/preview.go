@@ -14,9 +14,11 @@ const (
 	jsoncMigrationWarning = "opencode.jsonc will be migrated to opencode.json; comments and formatting will not be preserved"
 	jsoncOverrideWarning  = "OPENCODE_CONFIG JSONC will be normalized to strict JSON in place; comments and formatting will not be preserved"
 	backupWarning         = "Backups are sensitive recovery artifacts and may contain a previous API key"
+	rebuildWarning        = "Rebuild replaces the complete Agent configuration; unrelated settings, comments, and formatting will not be preserved"
 )
 
 type writePlan struct {
+	agents                    []agentPlan
 	selected                  []Kind
 	files                     []plannedFile
 	input                     renderInput
@@ -32,26 +34,29 @@ type writePlan struct {
 }
 
 type plannedFile struct {
-	agent          Kind
-	format         Format
-	sourcePath     string
-	targetPath     string
-	operation      Operation
-	containsAPIKey bool
-	preserves      []string
-	warning        string
-	sourceRevision fileRevision
-	targetRevision fileRevision
-	sourceContent  []byte
-	sourceMode     os.FileMode
-	targetMode     os.FileMode
-	backupRequired bool
-	backupSource   string
-	backupPath     string
-	restoreFrom    string
-	render         func([]byte) ([]byte, error)
-	role           string
-	scope          journalScope
+	agent           Kind
+	mode            ConfigMode
+	format          Format
+	sourcePath      string
+	targetPath      string
+	operation       Operation
+	containsAPIKey  bool
+	preserves       []string
+	warning         string
+	sourceRevision  fileRevision
+	targetRevision  fileRevision
+	sourceContent   []byte
+	sourceMode      os.FileMode
+	targetMode      os.FileMode
+	backupRequired  bool
+	backupSource    string
+	backupPath      string
+	restoreFrom     string
+	render          func([]byte) ([]byte, error)
+	role            string
+	companionExists bool
+	syntaxInvalid   bool
+	scope           journalScope
 }
 
 type journalScope string
@@ -61,15 +66,15 @@ const (
 	scopeManagerState journalScope = "manager_state"
 )
 
-func (s *Service) buildPlan(selected []Kind, input renderInput, catalog modelconfig.CatalogClaims, canonical json.RawMessage) (writePlan, error) {
+func (s *Service) buildPlan(agents []agentPlan, input renderInput, catalog modelconfig.CatalogClaims, canonical json.RawMessage) (writePlan, error) {
 	if input.config == nil {
 		return writePlan{}, operationError(CodeInvalidParams, "canonical model configuration is required")
 	}
-	normalized, err := normalizeSelection(selected)
-	if err != nil {
-		return writePlan{}, err
+	selected := make([]Kind, len(agents))
+	for i, item := range agents {
+		selected[i] = item.kind
 	}
-	states, err := s.detector.Detect()
+	states, err := s.detectLocked()
 	if err != nil {
 		return writePlan{}, operationError(CodeAgentNotFound, "could not detect supported Agents")
 	}
@@ -78,30 +83,36 @@ func (s *Service) buildPlan(selected []Kind, input renderInput, catalog modelcon
 	if err != nil {
 		return writePlan{}, err
 	}
-	plan := writePlan{selected: normalized, input: input, catalog: catalog, canonical: canonical, sidecar: sidecar, sidecarRevision: sidecarRevision, sidecarContent: sidecarContent, sidecarMode: sidecarMode}
+	plan := writePlan{agents: agents, selected: selected, input: input, catalog: catalog, canonical: canonical, sidecar: sidecar, sidecarRevision: sidecarRevision, sidecarContent: sidecarContent, sidecarMode: sidecarMode}
 	s.currentSidecar = sidecar
 	defer func() { s.currentSidecar = lastAppliedState{} }()
-	for _, kind := range normalized {
+	for _, item := range agents {
+		kind := item.kind
 		state, ok := byKind[kind]
 		if !ok || !state.Detected {
 			return writePlan{}, operationError(CodeAgentNotFound, agentName(kind)+" is not detected")
 		}
-		if state.Invalid {
-			return writePlan{}, operationError(CodeConfigInvalid, agentName(kind)+" configuration is invalid")
-		}
 		var files []plannedFile
-		switch kind {
-		case ClaudeCode:
-			files, err = s.planClaude(state)
-		case OpenCode:
-			files, err = s.planOpenCode(state)
-		case Codex:
-			files, err = s.planCodex(state)
+		if item.mode == ConfigModeRebuild {
+			files, err = s.planRebuild(state)
+		} else {
+			if state.Invalid {
+				return writePlan{}, operationError(CodeConfigInvalid, agentName(kind)+" configuration is invalid")
+			}
+			switch kind {
+			case ClaudeCode:
+				files, err = s.planClaude(state)
+			case OpenCode:
+				files, err = s.planOpenCode(state)
+			case Codex:
+				files, err = s.planCodex(state)
+			}
 		}
 		if err != nil {
 			return writePlan{}, err
 		}
 		for i := range files {
+			files[i].mode = item.mode
 			files[i].scope = scopeAgent
 			if files[i].role == "" {
 				files[i].role = "config"
@@ -111,6 +122,96 @@ func (s *Service) buildPlan(selected []Kind, input renderInput, catalog modelcon
 	}
 	s.inspectOwnership(&plan)
 	return plan, nil
+}
+
+func (s *Service) planRebuild(state State) ([]plannedFile, error) {
+	if err := validateRebuildState(state); err != nil {
+		return nil, err
+	}
+	files := make([]plannedFile, 0, len(state.Recovery.Files))
+	for _, recovery := range state.Recovery.Files {
+		revision, content, mode, err := s.readKeyedRevision(recovery.Path, revisionContextAgentFile)
+		if err != nil || revision.Exists != recovery.Exists {
+			return nil, operationError(CodeConfigInvalid, agentName(state.Agent)+" recovery state is unavailable")
+		}
+		operation := OperationCreate
+		if revision.Exists {
+			operation = OperationReplace
+		}
+		file := plannedFile{
+			agent: state.Agent, mode: ConfigModeRebuild, role: recovery.Role, format: recovery.Format,
+			sourcePath: recovery.Path, targetPath: recovery.Path, operation: operation,
+			containsAPIKey: recovery.Role == "auth" || state.Agent != Codex, warning: rebuildWarning,
+			sourceRevision: revision, targetRevision: revision, sourceContent: content,
+			sourceMode: mode, targetMode: mode, backupRequired: revision.Exists,
+			backupSource: recovery.Path, restoreFrom: recovery.Path,
+		}
+		file.syntaxInvalid = containsRecoveryReason(recovery.Reasons, RecoverySyntaxInvalid)
+		if !revision.Exists {
+			file.targetMode = 0o600
+		}
+		switch state.Agent {
+		case ClaudeCode:
+			file.render = func(key []byte) ([]byte, error) {
+				return renderClaudeFragment(s.currentInput.config.Claude, s.currentInput.routerBaseURL, string(key))
+			}
+		case OpenCode:
+			file.format = FormatJSON
+			file.render = func(key []byte) ([]byte, error) {
+				return renderOpenCodeFragment(s.currentInput.config.OpenCode, s.currentInput.apiBaseURL, string(key))
+			}
+		case Codex:
+			if recovery.Role == "config" {
+				file.render = func([]byte) ([]byte, error) {
+					return renderCodexFragment(s.currentInput.config.Codex, s.currentInput.apiBaseURL)
+				}
+			} else {
+				file.render = func(key []byte) ([]byte, error) { return renderCodexAuthFragment(string(key), nil) }
+			}
+		}
+		files = append(files, file)
+	}
+	if state.Agent == Codex && len(files) == 2 {
+		files[0].companionExists = files[1].sourceRevision.Exists
+		files[1].companionExists = files[0].sourceRevision.Exists
+	}
+	return files, nil
+}
+
+func validateRebuildState(state State) error {
+	if !state.Detected || !state.Invalid || !state.Recovery.Eligible {
+		return operationError(CodeConfigInvalid, agentName(state.Agent)+" configuration is not eligible for rebuild")
+	}
+	expected := []RecoveryFileState{{Role: "config", Path: state.Path, Format: state.Format}}
+	if state.Agent == Codex {
+		expected = []RecoveryFileState{{Role: "config", Path: state.Path, Format: FormatTOML}, {Role: "auth", Path: state.AuthPath, Format: FormatJSON}}
+	}
+	if len(state.Recovery.Files) != len(expected) {
+		return operationError(CodeConfigInvalid, agentName(state.Agent)+" recovery metadata is invalid")
+	}
+	for _, reason := range state.Recovery.Reasons {
+		if reason != RecoverySyntaxInvalid {
+			return operationError(CodeConfigInvalid, agentName(state.Agent)+" recovery metadata is unsafe")
+		}
+	}
+	syntaxInvalid := false
+	for i, file := range state.Recovery.Files {
+		want := expected[i]
+		if file.Role != want.Role || filepath.Clean(file.Path) != filepath.Clean(want.Path) || file.Format != want.Format {
+			return operationError(CodeConfigInvalid, agentName(state.Agent)+" recovery metadata is invalid")
+		}
+		for _, reason := range file.Reasons {
+			if reason == RecoverySyntaxInvalid {
+				syntaxInvalid = true
+			} else {
+				return operationError(CodeConfigInvalid, agentName(state.Agent)+" recovery metadata is unsafe")
+			}
+		}
+	}
+	if !syntaxInvalid {
+		return operationError(CodeConfigInvalid, agentName(state.Agent)+" configuration is not syntax-invalid")
+	}
+	return nil
 }
 
 func (s *Service) planClaude(state State) ([]plannedFile, error) {
@@ -292,6 +393,8 @@ func (s *Service) planCodex(state State) ([]plannedFile, error) {
 		backupSource: state.AuthPath, restoreFrom: state.AuthPath,
 	}
 	auth.role = "auth"
+	config.companionExists = authRevision.Exists
+	auth.companionExists = configRevision.Exists
 	auth.render = func(key []byte) ([]byte, error) { return renderCodexAuthFragment(string(key), authRoot) }
 	return []plannedFile{config, auth}, nil
 }
@@ -332,7 +435,11 @@ func (s *Service) obsoleteCodexOptional() []string {
 }
 
 func (s *Service) inspectOwnership(plan *writePlan) {
-	for _, kind := range plan.selected {
+	for _, item := range plan.agents {
+		kind := item.kind
+		if item.mode == ConfigModeRebuild {
+			continue
+		}
 		previous, exists := plan.sidecar.Agents[kind]
 		if exists {
 			for _, recorded := range previous.Files {

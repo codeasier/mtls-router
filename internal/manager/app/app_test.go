@@ -56,6 +56,7 @@ func (f *fakeLifecycle) UnexpectedExit() <-chan lifecycle.UnexpectedExit { retur
 type fakeAgent struct {
 	render          func(context.Context, []agent.Kind, string, json.RawMessage) (agent.RenderResult, error)
 	preview         func(context.Context, []agent.Kind) (agent.Preview, error)
+	previewRequest  func(context.Context, agent.PreviewRequest) (agent.Preview, error)
 	validatePreview func(context.Context, agent.WriteRequest) error
 	binding         func(context.Context, []agent.Kind, string, json.RawMessage) (agent.CatalogBinding, error)
 	write           func(context.Context, agent.WriteRequest) (agent.WriteResult, error)
@@ -126,6 +127,13 @@ func (f *fakeAgent) Preview(ctx context.Context, selected []agent.Kind) (agent.P
 	return f.preview(ctx, selected)
 }
 
+func (f *fakeAgent) PreviewRequest(ctx context.Context, request agent.PreviewRequest) (agent.Preview, error) {
+	if f.previewRequest != nil {
+		return f.previewRequest(ctx, request)
+	}
+	return f.preview(ctx, request.Agents)
+}
+
 func (f *fakeAgent) Write(ctx context.Context, request agent.WriteRequest) (agent.WriteResult, error) {
 	return f.write(ctx, request)
 }
@@ -142,6 +150,77 @@ func (f *fakeAgent) CatalogBinding(ctx context.Context, selected []agent.Kind, t
 		return agent.CatalogBinding{}, errors.New("binding unavailable")
 	}
 	return f.binding(ctx, selected, token, config)
+}
+
+func TestAgentPreviewMapsModesWarningsAndSidecarBackupPlan(t *testing.T) {
+	var captured agent.PreviewRequest
+	manager := newWithDependencies(Config{}, dependencies{agent: &fakeAgent{
+		previewRequest: func(_ context.Context, request agent.PreviewRequest) (agent.Preview, error) {
+			captured = request
+			return agent.Preview{
+				RevisionToken: "revision", ModelConfig: request.ModelConfig,
+				Agents: []agent.AgentPreview{{
+					Agent: agent.ClaudeCode, Mode: agent.ConfigModeRebuild,
+					Files: []agent.FilePreview{{
+						Role: "config", Path: "/settings.json", Format: agent.FormatJSON, Operation: agent.OperationReplace,
+						Backup: agent.BackupPlan{Required: true, Pattern: "/settings.json.bak-<timestamp>-<random>", Sensitive: true, Warning: "backup warning"}, Warning: "rebuild warning",
+					}},
+				}},
+				StateChange: &agent.FilePreview{Path: "/state.json", Format: agent.FormatJSON, Operation: agent.OperationReplace, Backup: agent.BackupPlan{
+					Required: true, Pattern: "/state.json.bak-<timestamp>-<random>", Sensitive: true, Warning: "state backup warning",
+				}},
+			}, nil
+		},
+	}})
+	request := `{"id":"preview","method":"agent.preview","params":{"agents":["claude"],"modes":{"claude":"rebuild"},"catalog_token":"catalog","model_config":{"version":1}}}` + "\n"
+	var output strings.Builder
+	if err := manager.Serve(context.Background(), strings.NewReader(request), &output); err != nil {
+		t.Fatal(err)
+	}
+	if captured.Modes[agent.ClaudeCode] != agent.ConfigModeRebuild {
+		t.Fatalf("captured request = %#v", captured)
+	}
+	var response protocol.Response
+	if err := json.Unmarshal([]byte(strings.TrimSpace(output.String())), &response); err != nil {
+		t.Fatal(err)
+	}
+	var result protocol.AgentPreviewResult
+	if err := json.Unmarshal(response.Result, &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Files) != 1 || result.Files[0].Mode != "rebuild" || result.Files[0].Warning != "rebuild warning" || !result.Files[0].BackupRequired || result.Files[0].BackupPattern == "" {
+		t.Fatalf("preview files = %#v", result.Files)
+	}
+	if result.StateChange == nil || !result.StateChange.BackupRequired || !result.StateChange.BackupSensitive || result.StateChange.BackupPattern != "/state.json.bak-<timestamp>-<random>" || result.StateChange.Warning != "state backup warning" {
+		t.Fatalf("state change = %#v", result.StateChange)
+	}
+	if result.StateChange.BackupPath != "" || result.StateBackup != nil {
+		t.Fatalf("preview exposed actual state backup: change=%#v backup=%#v", result.StateChange, result.StateBackup)
+	}
+}
+
+func TestAgentRenderRejectsModesAndStrictRecoveryOverrides(t *testing.T) {
+	manager := newWithDependencies(Config{}, dependencies{agent: &fakeAgent{render: func(context.Context, []agent.Kind, string, json.RawMessage) (agent.RenderResult, error) {
+		return agent.RenderResult{}, nil
+	}}})
+	requests := []string{
+		`{"id":"render-modes","method":"agent.render","params":{"agents":["claude"],"modes":{"claude":"merge"},"catalog_token":"catalog","model_config":{"version":1}}}`,
+		`{"id":"force","method":"agent.preview","params":{"agents":["claude"],"catalog_token":"catalog","model_config":{"version":1},"force":true}}`,
+		`{"id":"ignore","method":"agent.preview","params":{"agents":["claude"],"catalog_token":"catalog","model_config":{"version":1},"ignore_parse_errors":true}}`,
+	}
+	var output strings.Builder
+	if err := manager.Serve(context.Background(), strings.NewReader(strings.Join(requests, "\n")+"\n"), &output); err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(output.String()), "\n") {
+		var response protocol.Response
+		if err := json.Unmarshal([]byte(line), &response); err != nil {
+			t.Fatal(err)
+		}
+		if response.Error == nil || response.Error.Code != protocol.CodeInvalidParams {
+			t.Fatalf("response = %s", line)
+		}
+	}
 }
 
 func TestServeWiresEveryMethodSequentiallyAndSanitizesOutput(t *testing.T) {
@@ -666,6 +745,46 @@ func TestAgentWritePreflightOrderPrecedesWriteArtifacts(t *testing.T) {
 	want := []string{"preview", "router-binding", "catalog-refresh", "artifacts"}
 	if fmt.Sprint(calls) != fmt.Sprint(want) {
 		t.Fatalf("call order = %v, want %v", calls, want)
+	}
+}
+
+func TestAgentWriteThreadsRebuildModesApprovalAndStateBackupArtifact(t *testing.T) {
+	config := json.RawMessage(`{"version":1,"claude":{"primary":{"model":"model-a"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true}}}`)
+	var validated, written agent.WriteRequest
+	agentManager := &fakeAgent{
+		validatePreview: func(_ context.Context, request agent.WriteRequest) error { validated = request; return nil },
+		binding: func(context.Context, []agent.Kind, string, json.RawMessage) (agent.CatalogBinding, error) {
+			return agent.CatalogBinding{Owner: "cli", RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "2"}, nil
+		},
+		write: func(_ context.Context, request agent.WriteRequest) (agent.WriteResult, error) {
+			written = request
+			return agent.WriteResult{TransactionID: "transaction", StateChange: &agent.FileWriteStatus{Path: "/state.json", Replaced: true}, StateBackup: &agent.FileWriteStatus{Path: "/state.json.bak-real", BackupPath: "/state.json.bak-real"}}, nil
+		},
+	}
+	manager := newWithDependencies(Config{}, dependencies{
+		agent: agentManager,
+		trusted: fakeTrustedRouter{revalidate: func(context.Context, protocol.RouterOwner, string, trustedrouter.Binding) ([]string, *protocol.Error) {
+			return []string{"model-a"}, nil
+		}},
+	})
+	params := map[string]any{
+		"agents": []string{"claude"}, "modes": map[string]string{"claude": "rebuild"}, "approve_rebuild": []string{"claude"},
+		"catalog_token": "catalog", "model_config": config, "revision_token": "revision", "api_key": integrationKey,
+		"approve_managed_overwrite": false, "approve_codex_auth_change": false,
+	}
+	raw, _ := json.Marshal(params)
+	value, gotErr := manager.agentWrite(context.Background(), raw)
+	if gotErr != nil {
+		t.Fatal(gotErr)
+	}
+	for name, request := range map[string]agent.WriteRequest{"validated": validated, "written": written} {
+		if request.Modes[agent.ClaudeCode] != agent.ConfigModeRebuild || len(request.ApproveRebuild) != 1 || request.ApproveRebuild[0] != agent.ClaudeCode {
+			t.Fatalf("%s request = %#v", name, request)
+		}
+	}
+	result := value.(protocol.AgentWriteResult)
+	if result.StateChange == nil || result.StateChange.Path != "/state.json" || result.StateBackup == nil || result.StateBackup.Path != "/state.json.bak-real" {
+		t.Fatalf("write result = %#v", result)
 	}
 }
 

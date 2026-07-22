@@ -94,6 +94,13 @@ func (s *Service) ValidatePreview(ctx context.Context, request WriteRequest) err
 	if err := s.ensureExistingSigner(); err != nil {
 		return err
 	}
+	agents, err := normalizeAgentPlans(request.Agents, request.Modes)
+	if err != nil {
+		return err
+	}
+	if err := validateRebuildApproval(agents, request.ApproveRebuild); err != nil {
+		return err
+	}
 	claims, config, canonical, err := s.validateV2(request.Agents, request.CatalogToken, request.ModelConfig)
 	if err != nil {
 		return err
@@ -104,7 +111,7 @@ func (s *Service) ValidatePreview(ctx context.Context, request WriteRequest) err
 	}
 	s.currentInput = renderInput{config: config, routerBaseURL: claims.RouterBaseURL, apiBaseURL: apiBaseURL, ownRootModel: true}
 	defer func() { s.currentInput = renderInput{} }()
-	plan, err := s.buildPlan(request.Agents, s.currentInput, claims, canonical)
+	plan, err := s.buildPlan(agents, s.currentInput, claims, canonical)
 	if err != nil {
 		return err
 	}
@@ -161,6 +168,25 @@ const (
 	OperationPreserve Operation = "preserve"
 )
 
+type ConfigMode string
+
+const (
+	ConfigModeMerge   ConfigMode = "merge"
+	ConfigModeRebuild ConfigMode = "rebuild"
+)
+
+type PreviewRequest struct {
+	Agents       []Kind
+	Modes        map[Kind]ConfigMode
+	CatalogToken string
+	ModelConfig  json.RawMessage
+}
+
+type agentPlan struct {
+	kind Kind
+	mode ConfigMode
+}
+
 // BackupPlan describes a potential sensitive backup without reserving a path
 // or writing anything during preview.
 type BackupPlan struct {
@@ -172,6 +198,7 @@ type BackupPlan struct {
 
 // FilePreview is a typed, key-free description of one affected path.
 type FilePreview struct {
+	Role           string      `json:"role"`
 	Path           string      `json:"path"`
 	SourcePath     string      `json:"source_path,omitempty"`
 	Format         Format      `json:"format"`
@@ -186,6 +213,7 @@ type FilePreview struct {
 // AgentPreview groups all affected files for one selected Agent.
 type AgentPreview struct {
 	Agent    Kind          `json:"agent"`
+	Mode     ConfigMode    `json:"mode"`
 	Name     string        `json:"name"`
 	Files    []FilePreview `json:"files"`
 	Warnings []string      `json:"warnings,omitempty"`
@@ -220,6 +248,8 @@ type Preview struct {
 // consumed only in memory and is never included in results or journal state.
 type WriteRequest struct {
 	Agents                  []Kind
+	Modes                   map[Kind]ConfigMode
+	ApproveRebuild          []Kind
 	RevisionToken           string
 	APIKey                  string
 	CatalogToken            string
@@ -388,6 +418,10 @@ func (s *Service) Detect(ctx context.Context) ([]State, error) {
 	if err := contextError(ctx); err != nil {
 		return nil, err
 	}
+	return s.detectLocked()
+}
+
+func (s *Service) detectLocked() ([]State, error) {
 	states, err := s.detector.Detect()
 	if err != nil {
 		return nil, err
@@ -412,6 +446,13 @@ func (s *Service) Detect(ctx context.Context) ([]State, error) {
 // Preview validates selected targets and returns a structured, key-free change
 // set. It performs no writes, including directory or backup creation.
 func (s *Service) Preview(ctx context.Context, selected []Kind, values ...any) (Preview, error) {
+	var request PreviewRequest
+	request.Agents = selected
+	if len(values) == 2 {
+		request.CatalogToken, _ = values[0].(string)
+		request.ModelConfig, _ = values[1].(json.RawMessage)
+		return s.PreviewRequest(ctx, request)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	lock, err := acquireTransactionLock(ctx, s.stateDir)
@@ -424,13 +465,7 @@ func (s *Service) Preview(ctx context.Context, selected []Kind, values ...any) (
 	}
 	var catalogToken string
 	var rawConfig json.RawMessage
-	if len(values) == 2 {
-		if err := s.ensureExistingSigner(); err != nil {
-			return Preview{}, err
-		}
-		catalogToken, _ = values[0].(string)
-		rawConfig, _ = values[1].(json.RawMessage)
-	} else if len(values) == 0 && s.legacyRender != nil {
+	if len(values) == 0 && s.legacyRender != nil {
 		if err := s.ensureSigner(); err != nil {
 			return Preview{}, err
 		}
@@ -457,7 +492,48 @@ func (s *Service) Preview(ctx context.Context, selected []Kind, values ...any) (
 	}
 	s.currentInput = renderInput{config: config, routerBaseURL: claims.RouterBaseURL, apiBaseURL: apiBaseURL, ownRootModel: len(values) == 2}
 	defer func() { s.currentInput = renderInput{} }()
-	plan, err := s.buildPlan(selected, s.currentInput, claims, canonical)
+	agents, err := normalizeAgentPlans(selected, nil)
+	if err != nil {
+		return Preview{}, err
+	}
+	plan, err := s.buildPlan(agents, s.currentInput, claims, canonical)
+	if err != nil {
+		return Preview{}, err
+	}
+	return s.previewForPlan(plan)
+}
+
+// PreviewRequest is the typed protocol path. Preview remains as the merge-only
+// compatibility wrapper for existing concrete callers.
+func (s *Service) PreviewRequest(ctx context.Context, request PreviewRequest) (Preview, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	lock, err := acquireTransactionLock(ctx, s.stateDir)
+	if err != nil {
+		return Preview{}, err
+	}
+	defer lock.release()
+	if err := contextError(ctx); err != nil {
+		return Preview{}, err
+	}
+	if err := s.ensureExistingSigner(); err != nil {
+		return Preview{}, err
+	}
+	agents, err := normalizeAgentPlans(request.Agents, request.Modes)
+	if err != nil {
+		return Preview{}, err
+	}
+	claims, config, canonical, err := s.validateV2(request.Agents, request.CatalogToken, request.ModelConfig)
+	if err != nil {
+		return Preview{}, err
+	}
+	apiBaseURL, err := apiURL(claims.RouterBaseURL)
+	if err != nil {
+		return Preview{}, operationError(CodeModelCatalogStale, "model catalog router address is invalid")
+	}
+	s.currentInput = renderInput{config: config, routerBaseURL: claims.RouterBaseURL, apiBaseURL: apiBaseURL, ownRootModel: true}
+	defer func() { s.currentInput = renderInput{} }()
+	plan, err := s.buildPlan(agents, s.currentInput, claims, canonical)
 	if err != nil {
 		return Preview{}, err
 	}
@@ -531,6 +607,13 @@ func (s *Service) Write(ctx context.Context, request WriteRequest) (WriteResult,
 	if request.APIKey == "" || request.RevisionToken == "" {
 		return WriteResult{}, operationError(CodeInvalidParams, "API key and revision token are required")
 	}
+	agents, err := normalizeAgentPlans(request.Agents, request.Modes)
+	if err != nil {
+		return WriteResult{}, err
+	}
+	if err := validateRebuildApproval(agents, request.ApproveRebuild); err != nil {
+		return WriteResult{}, err
+	}
 	key := []byte(request.APIKey)
 	defer zeroBytes(key)
 	if err := s.ensureSigner(); err != nil {
@@ -559,7 +642,7 @@ func (s *Service) Write(ctx context.Context, request WriteRequest) (WriteResult,
 	}
 	s.currentInput = renderInput{config: config, routerBaseURL: claims.RouterBaseURL, apiBaseURL: apiBaseURL, ownRootModel: !legacyRequest}
 	defer func() { s.currentInput = renderInput{} }()
-	plan, err := s.buildPlan(request.Agents, s.currentInput, claims, canonical)
+	plan, err := s.buildPlan(agents, s.currentInput, claims, canonical)
 	if err != nil {
 		return WriteResult{}, err
 	}
@@ -579,6 +662,9 @@ func (s *Service) Write(ctx context.Context, request WriteRequest) (WriteResult,
 	}
 	if subtle.ConstantTimeCompare([]byte(currentToken), []byte(request.RevisionToken)) != 1 {
 		return WriteResult{}, operationError(CodePreviewStale, "Agent configuration changed after preview")
+	}
+	if err := s.revalidateRebuildAgents(plan, nil); err != nil {
+		return WriteResult{}, err
 	}
 	if err := contextError(ctx); err != nil {
 		return WriteResult{}, err
@@ -645,7 +731,7 @@ func (s *Service) Write(ctx context.Context, request WriteRequest) (WriteResult,
 			file.backupPath = backupPath
 			createdBackups = append(createdBackups, backupPath)
 			if file.scope == scopeManagerState {
-				result.StateBackup = &FileWriteStatus{Path: file.targetPath, BackupPath: backupPath}
+				result.StateBackup = &FileWriteStatus{Path: backupPath, BackupPath: backupPath}
 			} else {
 				appendAgentBackup(&result, file.agent, file.targetPath, backupPath)
 			}
@@ -704,6 +790,7 @@ func (s *Service) Write(ctx context.Context, request WriteRequest) (WriteResult,
 	}
 
 	replaced := false
+	rebuildReplaced := map[string]bool{}
 	for i := range plan.files {
 		file := &plan.files[i]
 		if err := contextError(ctx); err != nil {
@@ -717,6 +804,11 @@ func (s *Service) Write(ctx context.Context, request WriteRequest) (WriteResult,
 			if err := s.verifyPlannedRevision(file.targetPath, file.targetRevision, file.scope); err != nil {
 				failure := operationError(CodePreviewStale, "Agent configuration target changed while writing")
 				return s.failAndRollback(ctx, &journal, result, failure, replaced)
+			}
+		}
+		if file.mode == ConfigModeRebuild {
+			if err := s.revalidateRebuildAgents(plan, rebuildReplaced); err != nil {
+				return s.failAndRollback(ctx, &journal, result, err, replaced)
 			}
 		}
 		if s.hooks.beforeReplace != nil {
@@ -745,6 +837,9 @@ func (s *Service) Write(ctx context.Context, request WriteRequest) (WriteResult,
 		}
 		zeroBytes(output)
 		replaced = true
+		if file.mode == ConfigModeRebuild {
+			rebuildReplaced[file.targetPath] = true
+		}
 		markPlannedFileReplaced(&result, file)
 		journal.Entries[i].Progress = progressReplaced
 		if err := s.writeJournal(journal); err != nil {
@@ -905,24 +1000,192 @@ func normalizeSelection(selected []Kind) ([]Kind, error) {
 	return result, nil
 }
 
+func normalizeAgentPlans(selected []Kind, modes map[Kind]ConfigMode) ([]agentPlan, error) {
+	normalized, err := normalizeSelection(selected)
+	if err != nil {
+		return nil, err
+	}
+	if len(modes) != 0 && len(modes) != len(normalized) {
+		return nil, operationError(CodeInvalidParams, "Agent modes must exactly match selected Agents")
+	}
+	selectedSet := make(map[Kind]bool, len(normalized))
+	for _, kind := range normalized {
+		selectedSet[kind] = true
+	}
+	for kind, mode := range modes {
+		if !selectedSet[kind] || (mode != ConfigModeMerge && mode != ConfigModeRebuild) {
+			return nil, operationError(CodeInvalidParams, "Agent modes must exactly match selected Agents")
+		}
+	}
+	result := make([]agentPlan, 0, len(normalized))
+	for _, kind := range normalized {
+		mode := modes[kind]
+		if len(modes) == 0 {
+			mode = ConfigModeMerge
+		}
+		result = append(result, agentPlan{kind: kind, mode: mode})
+	}
+	return result, nil
+}
+
+func validateRebuildApproval(plans []agentPlan, approval []Kind) error {
+	want := map[Kind]bool{}
+	for _, plan := range plans {
+		if plan.mode == ConfigModeRebuild {
+			want[plan.kind] = true
+		}
+	}
+	got := map[Kind]bool{}
+	for _, kind := range approval {
+		if got[kind] || !want[kind] {
+			return operationError(CodeInvalidParams, "rebuild approval must exactly match rebuild Agents")
+		}
+		got[kind] = true
+	}
+	if len(got) != len(want) {
+		return operationError(CodeInvalidParams, "rebuild approval must exactly match rebuild Agents")
+	}
+	return nil
+}
+
 func (s *Service) tokenForPlan(plan writePlan) (string, error) {
-	agents := make([]modelconfig.Agent, 0, len(plan.selected))
-	bindings := make([]modelconfig.RevisionBinding, 0, len(plan.files)*2)
-	for _, kind := range plan.selected {
-		agents = append(agents, modelAgent(kind))
+	agents := make([]modelconfig.RevisionAgent, 0, len(plan.agents))
+	files := make([]modelconfig.RevisionFile, 0, len(plan.files))
+	for _, item := range plan.agents {
+		agents = append(agents, modelconfig.RevisionAgent{Agent: modelAgent(item.kind), Mode: string(item.mode)})
 	}
 	for _, file := range plan.files {
-		bindings = append(bindings,
-			modelconfig.RevisionBinding{Context: "source", Identity: filepath.Clean(file.sourcePath), Revision: revisionTokenValue(file.sourceRevision)},
-			modelconfig.RevisionBinding{Context: "target", Identity: filepath.Clean(file.targetPath), Revision: revisionTokenValue(file.targetRevision)},
-		)
+		if file.scope == scopeManagerState {
+			continue
+		}
+		files = append(files, modelconfig.RevisionFile{
+			Agent: modelAgent(file.agent), Role: file.role, Format: string(file.format),
+			SourcePath: filepath.Clean(file.sourcePath), TargetPath: filepath.Clean(file.targetPath), Operation: string(file.operation),
+			BackupRequired: file.backupRequired, BackupSource: backupClaimPath(file),
+			SourceRevision: revisionClaim(file.sourceRevision), TargetRevision: revisionClaim(file.targetRevision), CompanionExists: file.companionExists,
+		})
 	}
 	return s.signer.SignRevision(modelconfig.RevisionClaims{
-		Agents: agents, CanonicalConfig: plan.canonical, CatalogIdentity: catalogIdentity(plan.catalog),
-		SidecarRevision: revisionTokenValue(plan.sidecarRevision), RouterBaseURL: plan.catalog.RouterBaseURL,
-		DeploymentID: plan.catalog.DeploymentID, ProtocolVersion: plan.catalog.ProtocolVersion, Bindings: bindings,
+		AgentPlans: agents, CanonicalConfig: plan.canonical, CatalogIdentity: catalogIdentity(plan.catalog),
+		SidecarRevision: revisionClaim(plan.sidecarRevision), RouterBaseURL: plan.catalog.RouterBaseURL,
+		DeploymentID: plan.catalog.DeploymentID, ProtocolVersion: plan.catalog.ProtocolVersion, Files: files,
 		ManagedDrift: len(plan.drifted) != 0, DriftedAgents: kindsToModelAgents(plan.drifted), RequiresCodexAuthApproval: plan.requiresCodexAuthApproval,
 	})
+}
+
+func revisionClaim(value fileRevision) modelconfig.RevisionState {
+	return modelconfig.RevisionState{Exists: value.Exists, Size: value.Size, Mode: value.Mode, Digest: value.Digest}
+}
+
+func cleanOptionalPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	return filepath.Clean(path)
+}
+
+func backupClaimPath(file plannedFile) string {
+	if !file.backupRequired {
+		return ""
+	}
+	return cleanOptionalPath(file.backupSource)
+}
+
+func (s *Service) revalidateRebuildAgents(plan writePlan, replaced map[string]bool) error {
+	states, err := s.detectLocked()
+	if err != nil {
+		return operationError(CodePreviewStale, "Agent recovery state changed after preview")
+	}
+	byKind := orderedStates(states)
+	for _, item := range plan.agents {
+		if item.mode == ConfigModeRebuild {
+			state := byKind[item.kind]
+			// The journal created by this lock holder is expected while replacing.
+			// Remove only that manager-wide blocker; all file blockers remain.
+			if _, err := os.Stat(s.journalPath()); err == nil && !s.writesDisabled {
+				state.Recovery.Reasons = withoutRecoveryReason(state.Recovery.Reasons, RecoveryTransactionPending)
+				state.Recovery.Eligible = rebuildFilesEligible(state.Recovery.Files) && len(state.Recovery.Reasons) == 1 && state.Recovery.Reasons[0] == RecoverySyntaxInvalid
+			}
+			if len(replaced) == 0 {
+				if err := validateRebuildState(state); err != nil {
+					return operationError(CodePreviewStale, "Agent recovery state changed after preview")
+				}
+				continue
+			}
+			if err := s.validateRebuildProgress(plan, item.kind, state, replaced); err != nil {
+				return operationError(CodePreviewStale, "Agent recovery state changed after preview")
+			}
+		}
+	}
+	return nil
+}
+
+func (s *Service) validateRebuildProgress(plan writePlan, kind Kind, state State, replaced map[string]bool) error {
+	files := make([]plannedFile, 0, 2)
+	for _, file := range plan.files {
+		if file.agent == kind && file.mode == ConfigModeRebuild {
+			files = append(files, file)
+		}
+	}
+	if !state.Detected || len(state.Recovery.Files) != len(files) || s.writesDisabled {
+		return errors.New("invalid rebuild progress")
+	}
+	recoveryByRole := make(map[string]RecoveryFileState, len(state.Recovery.Files))
+	for _, recovery := range state.Recovery.Files {
+		if _, exists := recoveryByRole[recovery.Role]; exists {
+			return errors.New("duplicate rebuild metadata role")
+		}
+		recoveryByRole[recovery.Role] = recovery
+	}
+	for _, file := range files {
+		recovery, exists := recoveryByRole[file.role]
+		if !exists {
+			return errors.New("missing rebuild metadata role")
+		}
+		if recovery.Role != file.role || filepath.Clean(recovery.Path) != filepath.Clean(file.targetPath) || (kind != OpenCode && recovery.Format != file.format) {
+			return errors.New("changed rebuild metadata")
+		}
+		if replaced[file.targetPath] {
+			continue
+		}
+		if err := s.verifyPlannedRevision(file.sourcePath, file.sourceRevision, file.scope); err != nil || hasBlockingFileReason(recovery.Reasons) || containsRecoveryReason(recovery.Reasons, RecoverySyntaxInvalid) != file.syntaxInvalid {
+			return errors.New("changed rebuild source")
+		}
+	}
+	return nil
+}
+
+func withoutRecoveryReason(values []RecoveryReason, remove RecoveryReason) []RecoveryReason {
+	result := make([]RecoveryReason, 0, len(values))
+	for _, value := range values {
+		if value != remove {
+			result = append(result, value)
+		}
+	}
+	return result
+}
+
+func containsRecoveryReason(values []RecoveryReason, want RecoveryReason) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func rebuildFilesEligible(files []RecoveryFileState) bool {
+	hasSyntaxInvalid := false
+	for _, file := range files {
+		for _, reason := range file.Reasons {
+			if reason == RecoverySyntaxInvalid {
+				hasSyntaxInvalid = true
+			} else {
+				return false
+			}
+		}
+	}
+	return hasSyntaxInvalid
 }
 
 func catalogIdentity(claims modelconfig.CatalogClaims) string {
@@ -989,8 +1252,9 @@ func (s *Service) previewForPlan(plan writePlan) (Preview, error) {
 		preview.StateChange.Backup.Pattern = s.sidecarPath() + ".bak-<timestamp>-<random>"
 		preview.StateChange.Backup.Warning = backupWarning
 	}
-	for _, kind := range plan.selected {
-		agentPreview := AgentPreview{Agent: kind, Name: agentName(kind)}
+	for _, item := range plan.agents {
+		kind := item.kind
+		agentPreview := AgentPreview{Agent: kind, Mode: item.mode, Name: agentName(kind)}
 		for _, file := range plan.files {
 			if file.agent != kind {
 				continue
@@ -1005,6 +1269,7 @@ func (s *Service) previewForPlan(plan writePlan) (Preview, error) {
 				operations = append(operations, OperationPreserve)
 			}
 			agentPreview.Files = append(agentPreview.Files, FilePreview{
+				Role:           file.role,
 				Path:           file.targetPath,
 				SourcePath:     differentPath(file.sourcePath, file.targetPath),
 				Format:         file.format,

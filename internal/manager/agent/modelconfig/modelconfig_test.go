@@ -573,10 +573,10 @@ func TestRevisionTokensBindConfigCatalogRouterDriftAndRevisions(t *testing.T) {
 	key := make([]byte, 32)
 	signer, _ := NewTokenSigner(key, "generation-r")
 	claims := RevisionClaims{
-		Agents: []Agent{OpenCode}, CanonicalConfig: json.RawMessage(`{"version":1}`), CatalogIdentity: "catalog-mac",
-		SidecarRevision: "sidecar-mac", RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "deployment",
+		AgentPlans: []RevisionAgent{{Agent: OpenCode, Mode: "rebuild"}}, CanonicalConfig: json.RawMessage(`{"version":1}`), CatalogIdentity: "catalog-mac",
+		SidecarRevision: RevisionState{Exists: true, Size: 1, Mode: 0o600, Digest: "sidecar-mac"}, RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "deployment",
 		ProtocolVersion: "3", ManagedDrift: true, DriftedAgents: []Agent{OpenCode},
-		Bindings: []RevisionBinding{{Context: "agent-file", Identity: "/config", Revision: "revision-mac"}},
+		Files: []RevisionFile{{Agent: OpenCode, Role: "config", Format: "json", SourcePath: "/config", TargetPath: "/config", Operation: "replace", BackupRequired: true, BackupSource: "/config", SourceRevision: RevisionState{Exists: true, Size: 2, Mode: 0o600, Digest: "revision-mac"}, TargetRevision: RevisionState{Exists: true, Size: 2, Mode: 0o600, Digest: "revision-mac"}}},
 	}
 	token, err := signer.SignRevision(claims)
 	if err != nil {
@@ -600,10 +600,13 @@ func TestRevisionTokenRejectsEveryCrossProcessContextMismatch(t *testing.T) {
 	key := bytes.Repeat([]byte{0x24}, 32)
 	signer, _ := NewTokenSigner(key, "generation-r")
 	claims := RevisionClaims{
-		Agents: []Agent{Claude, OpenCode}, CanonicalConfig: json.RawMessage(`{"version":1}`), CatalogIdentity: "catalog-mac",
-		SidecarRevision: "sidecar-mac", RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "deployment",
+		AgentPlans: []RevisionAgent{{Agent: Claude, Mode: "merge"}, {Agent: OpenCode, Mode: "rebuild"}}, CanonicalConfig: json.RawMessage(`{"version":1}`), CatalogIdentity: "catalog-mac",
+		SidecarRevision: RevisionState{Exists: true, Size: 1, Mode: 0o600, Digest: "sidecar-mac"}, RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "deployment",
 		ProtocolVersion: "3", ManagedDrift: true, RequiresCodexAuthApproval: true, DriftedAgents: []Agent{Claude},
-		Bindings: []RevisionBinding{{Context: "agent-file", Identity: "/config", Revision: "revision-mac"}},
+		Files: []RevisionFile{
+			{Agent: Claude, Role: "config", Format: "json", SourcePath: "/claude", TargetPath: "/claude", Operation: "replace", BackupRequired: true, BackupSource: "/claude", SourceRevision: RevisionState{Exists: true, Size: 2, Mode: 0o600, Digest: "claude-mac"}, TargetRevision: RevisionState{Exists: true, Size: 2, Mode: 0o600, Digest: "claude-mac"}},
+			{Agent: OpenCode, Role: "config", Format: "json", SourcePath: "/config", TargetPath: "/config", Operation: "replace", BackupRequired: true, BackupSource: "/config", SourceRevision: RevisionState{Exists: true, Size: 2, Mode: 0o600, Digest: "revision-mac"}, TargetRevision: RevisionState{Exists: true, Size: 2, Mode: 0o600, Digest: "revision-mac"}},
+		},
 	}
 	token, err := signer.SignRevision(claims)
 	if err != nil {
@@ -618,10 +621,11 @@ func TestRevisionTokenRejectsEveryCrossProcessContextMismatch(t *testing.T) {
 		mutate func(*RevisionClaims)
 	}{
 		{name: "version", mutate: func(c *RevisionClaims) { c.Version = 2 }},
-		{name: "agents", mutate: func(c *RevisionClaims) { c.Agents = []Agent{Claude} }},
+		{name: "agents", mutate: func(c *RevisionClaims) { c.AgentPlans = []RevisionAgent{{Agent: Claude, Mode: "merge"}} }},
+		{name: "mode", mutate: func(c *RevisionClaims) { c.AgentPlans[1].Mode = "merge" }},
 		{name: "config", mutate: func(c *RevisionClaims) { c.CanonicalConfig = json.RawMessage(`{"version":2}`) }},
 		{name: "catalog", mutate: func(c *RevisionClaims) { c.CatalogIdentity = "other" }},
-		{name: "sidecar", mutate: func(c *RevisionClaims) { c.SidecarRevision = "other" }},
+		{name: "sidecar", mutate: func(c *RevisionClaims) { c.SidecarRevision.Digest = "other" }},
 		{name: "address", mutate: func(c *RevisionClaims) { c.RouterBaseURL = "http://127.0.0.1:19100" }},
 		{name: "deployment", mutate: func(c *RevisionClaims) { c.DeploymentID = "other" }},
 		{name: "protocol", mutate: func(c *RevisionClaims) { c.ProtocolVersion = "1" }},
@@ -630,9 +634,11 @@ func TestRevisionTokenRejectsEveryCrossProcessContextMismatch(t *testing.T) {
 		{name: "managed drift", mutate: func(c *RevisionClaims) { c.ManagedDrift = false }},
 		{name: "auth approval", mutate: func(c *RevisionClaims) { c.RequiresCodexAuthApproval = false }},
 		{name: "drifted agents", mutate: func(c *RevisionClaims) { c.DriftedAgents = []Agent{OpenCode} }},
-		{name: "binding context", mutate: func(c *RevisionClaims) { c.Bindings[0].Context = "backup-verification" }},
-		{name: "binding identity", mutate: func(c *RevisionClaims) { c.Bindings[0].Identity = "/other" }},
-		{name: "binding revision", mutate: func(c *RevisionClaims) { c.Bindings[0].Revision = "other" }},
+		{name: "file role", mutate: func(c *RevisionClaims) { c.Files[1].Role = "auth" }},
+		{name: "file source", mutate: func(c *RevisionClaims) { c.Files[1].SourcePath = "/other" }},
+		{name: "file target", mutate: func(c *RevisionClaims) { c.Files[1].TargetPath = "/other" }},
+		{name: "file revision", mutate: func(c *RevisionClaims) { c.Files[1].SourceRevision.Digest = "other" }},
+		{name: "backup", mutate: func(c *RevisionClaims) { c.Files[1].BackupSource = "/other" }},
 	}
 	for _, test := range mutations {
 		t.Run(test.name, func(t *testing.T) {
@@ -645,6 +651,118 @@ func TestRevisionTokenRejectsEveryCrossProcessContextMismatch(t *testing.T) {
 	if _, err := secondProcess.VerifyCatalog(token); !errors.Is(err, ErrTokenInvalid) {
 		t.Fatalf("revision token accepted in catalog context: %v", err)
 	}
+}
+
+func TestRevisionClaimsRejectIncompleteAndIncoherentFilePlans(t *testing.T) {
+	signer, _ := NewTokenSigner(bytes.Repeat([]byte{0x31}, 32), "generation-r")
+	existing := RevisionState{Exists: true, Size: 2, Mode: 0o600, Digest: "revision-mac"}
+	base := RevisionClaims{
+		AgentPlans: []RevisionAgent{{Agent: Codex, Mode: "rebuild"}}, CanonicalConfig: json.RawMessage(`{"version":1}`), CatalogIdentity: "catalog-mac",
+		SidecarRevision: RevisionState{Exists: true, Size: 3, Mode: 0o600, Digest: "sidecar-mac"}, RouterBaseURL: "http://127.0.0.1:19099",
+		DeploymentID: "deployment", ProtocolVersion: "2",
+		Files: []RevisionFile{
+			{Agent: Codex, Role: "config", Format: "toml", SourcePath: "/codex/config.toml", TargetPath: "/codex/config.toml", Operation: "replace", BackupRequired: true, BackupSource: "/codex/config.toml", SourceRevision: existing, TargetRevision: existing, CompanionExists: true},
+			{Agent: Codex, Role: "auth", Format: "json", SourcePath: "/codex/auth.json", TargetPath: "/codex/auth.json", Operation: "replace", BackupRequired: true, BackupSource: "/codex/auth.json", SourceRevision: existing, TargetRevision: existing, CompanionExists: true},
+		},
+	}
+	if _, err := signer.SignRevision(base); err != nil {
+		t.Fatalf("valid complete claims: %v", err)
+	}
+	tests := []struct {
+		name   string
+		mutate func(*RevisionClaims)
+	}{
+		{name: "missing planned file", mutate: func(c *RevisionClaims) { c.Files = c.Files[:1] }},
+		{name: "wrong config format", mutate: func(c *RevisionClaims) {
+			for i := range c.Files {
+				if c.Files[i].Role == "config" {
+					c.Files[i].Format = "json"
+				}
+			}
+		}},
+		{name: "create existing target", mutate: func(c *RevisionClaims) { c.Files[0].Operation = "create" }},
+		{name: "backup not required for existing source", mutate: func(c *RevisionClaims) { c.Files[0].BackupRequired = false; c.Files[0].BackupSource = "" }},
+		{name: "backup source differs", mutate: func(c *RevisionClaims) { c.Files[0].BackupSource = "/other" }},
+		{name: "same path source revision differs", mutate: func(c *RevisionClaims) { c.Files[0].SourceRevision.Size++ }},
+		{name: "target revision differs", mutate: func(c *RevisionClaims) { c.Files[0].TargetRevision.Digest = "other" }},
+		{name: "companion mismatch", mutate: func(c *RevisionClaims) { c.Files[0].CompanionExists = false }},
+		{name: "companion on non-Codex", mutate: func(c *RevisionClaims) {
+			c.AgentPlans = []RevisionAgent{{Agent: Claude, Mode: "merge"}}
+			c.Files = []RevisionFile{{Agent: Claude, Role: "config", Format: "json", SourcePath: "/claude", TargetPath: "/claude", Operation: "replace", BackupRequired: true, BackupSource: "/claude", SourceRevision: existing, TargetRevision: existing, CompanionExists: true}}
+		}},
+		{name: "absent sidecar has size", mutate: func(c *RevisionClaims) { c.SidecarRevision = RevisionState{Size: 1} }},
+		{name: "absent sidecar has mode", mutate: func(c *RevisionClaims) { c.SidecarRevision = RevisionState{Mode: 0o600} }},
+		{name: "absent sidecar has digest", mutate: func(c *RevisionClaims) { c.SidecarRevision = RevisionState{Digest: "digest"} }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			claims := cloneRevisionClaims(t, base)
+			test.mutate(&claims)
+			if _, err := signer.SignRevision(claims); !errors.Is(err, ErrTokenInvalid) {
+				t.Fatalf("SignRevision() error = %v, want ErrTokenInvalid", err)
+			}
+		})
+	}
+}
+
+func TestRevisionTokensBindEveryFileAndSidecarField(t *testing.T) {
+	signer, _ := NewTokenSigner(bytes.Repeat([]byte{0x32}, 32), "generation-r")
+	existing := RevisionState{Exists: true, Size: 2, Mode: 0o600, Digest: "revision-mac"}
+	base := RevisionClaims{
+		AgentPlans: []RevisionAgent{{Agent: OpenCode, Mode: "merge"}}, CanonicalConfig: json.RawMessage(`{"version":1}`), CatalogIdentity: "catalog-mac",
+		SidecarRevision: RevisionState{Exists: true, Size: 3, Mode: 0o600, Digest: "sidecar-mac"}, RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "deployment", ProtocolVersion: "2",
+		Files: []RevisionFile{{Agent: OpenCode, Role: "config", Format: "json", SourcePath: "/config", TargetPath: "/config", Operation: "replace", BackupRequired: true, BackupSource: "/config", SourceRevision: existing, TargetRevision: existing}},
+	}
+	baseToken, err := signer.SignRevision(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutations := []struct {
+		name   string
+		mutate func(*RevisionClaims)
+	}{
+		{name: "mode", mutate: func(c *RevisionClaims) { c.AgentPlans[0].Mode = "rebuild" }},
+		{name: "format", mutate: func(c *RevisionClaims) { c.Files[0].Format = "jsonc" }},
+		{name: "source size", mutate: func(c *RevisionClaims) { c.Files[0].SourceRevision.Size++; c.Files[0].TargetRevision.Size++ }},
+		{name: "source mode", mutate: func(c *RevisionClaims) {
+			c.Files[0].SourceRevision.Mode = 0o640
+			c.Files[0].TargetRevision.Mode = 0o640
+		}},
+		{name: "source digest", mutate: func(c *RevisionClaims) {
+			c.Files[0].SourceRevision.Digest = "other"
+			c.Files[0].TargetRevision.Digest = "other"
+		}},
+		{name: "sidecar existence", mutate: func(c *RevisionClaims) { c.SidecarRevision = RevisionState{} }},
+		{name: "sidecar size", mutate: func(c *RevisionClaims) { c.SidecarRevision.Size++ }},
+		{name: "sidecar mode", mutate: func(c *RevisionClaims) { c.SidecarRevision.Mode = 0o640 }},
+		{name: "sidecar digest", mutate: func(c *RevisionClaims) { c.SidecarRevision.Digest = "other" }},
+	}
+	for _, test := range mutations {
+		t.Run(test.name, func(t *testing.T) {
+			claims := cloneRevisionClaims(t, base)
+			test.mutate(&claims)
+			token, err := signer.SignRevision(claims)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if token == baseToken {
+				t.Fatal("mutation did not change revision token")
+			}
+		})
+	}
+}
+
+func cloneRevisionClaims(t *testing.T, value RevisionClaims) RevisionClaims {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result RevisionClaims
+	if err := json.Unmarshal(raw, &result); err != nil {
+		t.Fatal(err)
+	}
+	return result
 }
 
 func tamperCatalogForTest(t *testing.T, token string, mutate func(*CatalogClaims)) string {
