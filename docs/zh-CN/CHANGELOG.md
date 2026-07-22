@@ -11,6 +11,7 @@
 - 为每个显式 Claude 选择新增可选显示名称和规范 `context: "1m"`。规范与目录身份始终使用 base model ID；仅在 Claude 渲染边界追加 `[1m]`，不推断能力，也不管理 `CLAUDE_CODE_DISABLE_1M_CONTEXT`。
 - 为 manager 二进制新增不可变、无 key 的构建 preset。Protocol v2 现在会在对每个已请求 Agent section 独立执行认证校验后，返回稳定的 `preset.model_config` 和 `preset.unavailable_agents` object。
 - 新增仅供 manager 使用的 `SIMPLIFY` 构建策略。未设置/空值和 ASCII 大小写 boolean 会在编译前规范化；默认 `True` 排除包含 ASCII `/` 的有效 ID，`False` 保留全部有效 ID。
+- 新增需单独批准的桌面端备份并重建恢复，仅适用于严格符合条件的语法无效 Claude Code、opencode 和 Codex 配置。语法有效、目标不安全或事务恢复未解决时仍不符合条件。
 
 ### 变更
 
@@ -19,6 +20,7 @@
 - Claude 改为 managed `env` merge；opencode 改为精确选择的 provider 目录；Codex 从历史 `custom` provider 迁移到专用 `mtls-router`，并单独批准 file-backed API-key auth。
 - 检测现在只描述本地结构完整性；当前授权只能由模型发现和写入时刷新证明。
 - 将经过校验、去重、数量限制、排序和构建过滤的目录作为 protocol token/result、existing 与 preset 可用性、导入、预览和写入时刷新的权威依据。过滤发生在完整校验之后，因此隐藏位置的 malformed ID 仍返回 `MODEL_RESPONSE_INVALID`，全部被过滤时返回 `MODEL_CATALOG_EMPTY`，刷新时模型消失仍会安全失败。
+- Rebuild 不再对 malformed 输入执行保留 merge，而是渲染纯托管文件：Claude 只保留托管 `env`，opencode 在已批准路径变为 strict JSON，Codex 同时替换 `config.toml` 和 `auth.json`。安装脚本 Agent 命令仍只支持 merge，不提供强制覆盖 fallback。
 
 ### 安全与发布
 
@@ -26,6 +28,7 @@
 - 明确 Agent 文件与批准的备份可能含 key，而 model config、token、sidecar、日志、诊断和 protocol result 不含 key。
 - 新增可选 `AGENT_MODEL_PRESET_BASE64` release input，并提供 preflight 校验和相同的 standalone/desktop manager 注入。无效非空输入会让 manager 启动失败且不泄漏内容；空输入有效，router binary（包括 desktop router sidecar）绝不会收到 preset 数据。
 - Release 构建会在编译前规范化 `SIMPLIFY`，并只向 standalone 和 desktop manager 注入同一个值。它不是 router/运行时偏好，也不会改变 proxy 路由支持。
+- Rebuild 会在替换前逐字节备份完整已批准集合中的每个现有文件。成功结果只报告敏感备份路径而不显示内容；备份失败不修改目标，之后失败会执行事务 rollback，无法证明恢复完成时会禁用后续写入。
 
 ---
 

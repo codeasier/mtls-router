@@ -56,18 +56,24 @@ Router 页面会区分本地进程和上游健康。运行中的进程可能处�
 
 Agent 页面支持 Claude Code、opencode 和 Codex。检测只返回元数据：路径、格式、是否存在、可写性以及已配置或无效状态，不返回已存储的 API key 值。检测遵循 `CLAUDE_CONFIG_DIR`、`OPENCODE_CONFIG` 和 `CODEX_HOME`；Codex home 目录存在时也可识别 Codex 桌面安装。
 
+正常**合并**会保留受支持的无关配置。**备份并重建**是独立的破坏性恢复操作，只会为符合条件的语法无效文件显示。它会用纯托管输出替换完整的已批准 Agent 文件集；无关设置、注释、格式以及有效伴随文件中的元数据都会丢失。备份可能包含 API key。继续前必须确认这些损失并保护每个备份。
+
 Agent 配置必须显式执行 key-before-discovery 流程：
 
-1. 刷新检测，只选择有效且可写的 Agent。
+1. 刷新检测。为有效且可写的 Agent 选择**合并**。对于无效 Agent，只有检测标记为符合条件时才能选择**备份并重建**；其他无效配置必须手工修复。
 2. 输入 API key。React 会立即清空输入框；Rust 只在一次性且不可 replay 的临时流程中保留它。
 3. 通过可信本地 router 发现 manager 经过认证和构建过滤的模型目录。默认会排除包含 ASCII `/` 的有效 ID；使用 `SIMPLIFY=False` 构建的 release 会保留它们。该过滤目录是所有已选 Agent、导入配置、preset、预览和刷新的权威依据。这是不可变的 manager 构建策略，不是运行时偏好，也不是对 proxy 路由支持的限制。桌面端绝不会选择第一个模型、按模型名称或能力推断选择，也不会替换模型。可见的构建 preset 只有在 manager 根据该目录验证某个 section 的全部精确 ID 后，才能提供该 section 作为可编辑初始值。
 4. 每个 Agent 独立采用 `existing > preset > empty` 初始化；界面会标明 section 来自 existing 配置还是推荐 preset，并为不可用的完整 preset section 列出缺失 base ID。配置各 Agent 原生选择：Claude 主模型/角色继承以及可选显示名称和 Standard/1M context、opencode 模型子集/默认/选项，以及一个 Codex 模型/选项。Claude 提供本地化的**启用 Fable**控件。空 Claude 表单默认禁用 Fable；启用时创建 inherit-primary 选择，并显示与现有角色相同的继承/显式模型、显示名称和 Standard/1M 控件；禁用时删除完整 Fable 选择及其 metadata。Existing Claude 作为完整 section 优先于 preset Claude，因此不会把 preset Fable 合并进省略 Fable 的 existing Claude section。Preset 值始终可编辑且不代表任何批准。未设置的可选字段保持省略。可以导入或导出无 key 的规范 model config；导入会完整替换当前表单，而不是与 existing 或 preset 值合并，并在导出、预览与写入中精确保留已启用或省略的 Fable。
-5. 生成结构化预览，审查脱敏片段以及每个创建、替换、保留、迁移、漂移批准、状态和备份操作。不设置显式 `OPENCODE_CONFIG` 时，标准 `~/.config/opencode/opencode.jsonc` 会迁移到同目录的 `opencode.json`；已有同名 sibling 会构成迁移冲突。显式 `OPENCODE_CONFIG` 指定 `.jsonc` 文件时，只会在该精确路径原地替换为 strict JSON；已有文件会备份，并且不会触碰 sibling `opencode.json`。两种 JSONC 操作都会丢失注释和格式。Codex 可能同时修改 `config.toml` 和 `auth.json`，切换 file-backed API-key auth 需要单独批准。
-6. 批准并写入。Manager 会消耗内存中的 key，在创建任何写入产物前刷新目录，随后检查修改和备份路径。
+5. 生成结构化预览，审查脱敏片段以及每个创建、替换、保留、迁移、漂移批准、状态和备份操作。正常 merge 在未设置显式 `OPENCODE_CONFIG` 时，会把标准 `~/.config/opencode/opencode.jsonc` 迁移到 sibling `opencode.json`；已有 sibling 会构成迁移冲突。显式 `.jsonc` override 会原地规范化。Rebuild 则在已批准 JSON 或 JSONC 路径原地替换为 strict JSON，不执行 sibling 迁移。Codex rebuild 始终替换 `config.toml` 和 `auth.json`，创建缺失的伴随文件并丢弃有效伴随 metadata；该文件对中每个现有文件都必须备份。
+6. 批准并写入。Rebuild Agent 会出现在单独的破坏性确认中，并且必须与预览精确一致。Manager 会消耗内存中的 key，在创建任何写入产物前刷新目录，随后检查修改路径和实际备份路径。
+
+重建资格要求至少一个文件语法无效，并且完整托管文件集没有其他 blocker。结构有效但不受支持、文件不可读或超限、非普通文件、链接、路径不可写、父目录不可用、存在待恢复事务或禁用写入时，都不符合条件。语法有效和 parser 兼容性问题必须修复，不能重建。不同 Agent 可在同一事务中独立选择 merge 或 rebuild；不存在自动恢复、解析绕过、全局强制覆盖，也不会在 merge 失败后 fallback 到 rebuild。
+
+Rebuild 输出有意只包含托管内容：Claude `settings.json` 只包含托管 `env`；opencode strict JSON 只包含根 `model` 和 `provider.mtls-router`；Codex `config.toml` 只包含托管 model/provider 设置，`auth.json` 只包含 `auth_mode` 和 `OPENAI_API_KEY`。精确输出和资格契约见 [Agent 模型配置](AGENT_MODELS.md#破坏性重建恢复)。
 
 写入前，manager 会再次确认文件仍与已批准的 revision 一致。`PREVIEW_STALE` 表示目标已变化；此时不会开始写入，必须重新预览。替换现有文件前会创建备份。一次多 Agent 写入是一个事务：失败时会回滚本事务已经修改的文件，但保留诊断备份。如果无法证明回滚成功，后续 Agent 写入会安全失败。
 
-备份保留在原配置旁边，可能包含旧 API key。它们属于敏感恢复产物，应当像原 Agent 文件一样保护、保留或删除。预览和结果页面会标明备份路径，但绝不会显示备份内容。
+备份保留在原配置旁边，可能包含旧 API key。它们属于敏感恢复产物，应当像原 Agent 文件一样保护、保留或删除。预览只显示计划的 sibling 备份 pattern；创建并逐字节验证备份后，成功结果才显示实际路径。两者都绝不会显示备份内容，失败操作可能只显示错误。存在事务 journal 或未解决恢复时绝不能手工还原；应联系维护者，因为修改目标会导致恢复无法证明其身份。恢复问题解决后，应停止拥有文件的 Agent，保留当前文件，验证原路径及父目录仍是预期当前用户所有且不是链接，再通过同目录私有临时文件加原子替换恢复。对于 Codex，只恢复事务前存在的文件；只有已审查操作能证明伴随文件之前不存在时，才能删除该事务新建的文件，否则应联系维护者。
 
 检测中的 `configured` 仅表示本地托管字段结构完整且内部一致，不证明所选模型当前已获授权。需要手工刷新时重新进入配置并提供 key；系统不会后台同步目录或重写 Agent 文件。目录/认证/校验失败、模型消失、未批准漂移或所有权状态无效都会安全失败，不使用静态/cache fallback，也不会部分写入。服务契约、规范 schema、省略、迁移与所有权规则见 [Agent 模型配置](AGENT_MODELS.md)。
 

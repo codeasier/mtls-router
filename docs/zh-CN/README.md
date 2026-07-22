@@ -210,11 +210,15 @@ Windows PowerShell：
 
 `mtls-router` 二进制本身只管理 router，不提供 `print-config` 这类 agent 配置命令。
 
+正常 Agent 写入采用保留合并：manager 只修改文档声明的路径，并保留受支持的无关设置。安装脚本的 `agent print-config` 和 `agent write-config` 命令只支持 merge；它们绝不会请求破坏性恢复、绕过解析，也不会用强制覆盖重试 `CONFIG_INVALID`。
+
+桌面端还会为严格符合条件的语法无效配置提供**备份并重建**。该操作具有破坏性：它会用全新的纯托管输出替换完整的已批准 Agent 文件集，并丢弃无关设置、注释、格式以及有效 Codex 伴随文件中的元数据。替换前会把该集合中每个现有文件逐字节备份到源文件旁；备份可能包含 API key，必须像原配置一样保护。重建需要单独预览和确认，不存在自动或全局强制覆盖 fallback。详见[桌面应用](DESKTOP.md#配置-agent)、精确的 [Agent 恢复契约](AGENT_MODELS.md#破坏性重建恢复)和[恢复故障排查](TROUBLESHOOTING.md#agent-配置无效)。
+
 - Claude Code 只把受管理的 `env` key 合并到 `~/.claude/settings.json` 或 `$CLAUDE_CONFIG_DIR/settings.json`，并支持主模型及可继承的 Haiku、Sonnet、Opus 选择。Fable 是可选的：启用后可继承 primary，或显式选择模型、显示名称及 Standard/1M context；省略时不会隐式添加或管理。启用 Fable 会渲染 `ANTHROPIC_DEFAULT_FABLE_MODEL`，设置名称时还会渲染 `ANTHROPIC_DEFAULT_FABLE_MODEL_NAME`。Claude preset 与 existing 初始化始终以完整 section 为原子单位，因此绝不会把 preset Fable 合并进已有 Claude section。Fable 禁用时，manager 会保留从未取得所有权的手工 Fable key，只删除 sidecar 能证明之前由 manager 所有的 stale Fable 路径；认领已有未托管值前必须经过 collision/drift 批准。Fable alias 要求 Claude Code 2.1.170 或更高版本。与此独立，数值 custom-model context override 从 Claude Code 2.1.193 起可直接作用于未知模型名称；更早版本可能忽略这些数值 override。每个显式选择都可设置显示名称和可选规范字段 `context: "1m"`；manager 始终以认证目录中的 base model ID 作为规范身份，只在渲染 Claude 模型环境变量时追加 `[1m]`。它不会推断 1M 能力；如果 Claude 或上游在运行时拒绝，也不会 fallback。
 - opencode 会把精确选择的目录子集写入 `provider.mtls-router`，并写入由 manager 拥有的根默认模型。不设置显式 `OPENCODE_CONFIG` 时，已有的标准 `~/.config/opencode/opencode.jsonc` 会迁移到同目录的 `opencode.json`；显式指定 `.jsonc` 覆盖路径时，则会在该精确路径原地规范化。两种操作都会丢失注释和格式。
 - Codex 会把专用 `[model_providers.mtls-router]` Responses provider 和选中的 typed model setting 写入 `~/.codex/config.toml`，遵循 `CODEX_HOME`。把 CLI/IDE 共享认证切换为官方 file-backed API-key 模式需要单独预览批准。
 
-Manager 目录中保留的每个模型都视为支持 Claude Messages 与 token counting、opencode Chat Completions、兼容 Completions 和 Codex Responses，包括流式响应。`configured` 检测只表示本地托管结构完整；当前授权由模型发现和写入时刷新证明。未设置的可选模型字段保持省略。发现失败、目录 stale、模型消失、漂移或所有权状态无效都会安全失败，不使用静态/cache fallback，也不产生部分变更。无关设置会保留；托管漂移需要批准，备份可能含 key，必须妥善保护。规范 schema、选项、刷新、失败、迁移、所有权和备份契约见 [Agent 模型配置](AGENT_MODELS.md)。
+Manager 目录中保留的每个模型都视为支持 Claude Messages 与 token counting、opencode Chat Completions、兼容 Completions 和 Codex Responses，包括流式响应。`configured` 检测只表示本地托管结构完整；当前授权由模型发现和写入时刷新证明。未设置的可选模型字段保持省略。发现失败、目录 stale、模型消失、漂移或所有权状态无效都会安全失败，不使用静态/cache fallback，也不产生部分变更。正常 merge 会保留无关设置；托管漂移需要批准，备份可能含 key，必须妥善保护。规范 schema、选项、刷新、失败、迁移、所有权、恢复和备份契约见 [Agent 模型配置](AGENT_MODELS.md)。
 
 安装脚本不会安装任何 agent，也不会启动任何 agent。
 

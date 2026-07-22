@@ -96,19 +96,27 @@ do not patch the sidecar or add `SIMPLIFY` to router runtime configuration.
 
 `CONFIG_INVALID` means the existing JSON, JSONC, TOML, or Codex auth JSON cannot be safely interpreted for the requested operation. No file is changed.
 
-1. Open the path shown by detection.
-2. Fix its syntax with the owning Agent stopped if that Agent may write concurrently.
-3. For canonical `~/.config/opencode/opencode.jsonc` with no explicit `OPENCODE_CONFIG`, check whether an existing sibling `opencode.json` conflicts with the proposed JSONC-to-JSON migration.
-4. For an explicit `.jsonc` `OPENCODE_CONFIG`, check that the exact override path and its parent are writable; the sibling `opencode.json` is unrelated and is not a fallback.
-5. Refresh detection and generate a new preview.
+Prefer manual repair and normal preservation merge. Stop the owning Agent, open every path shown by detection, fix the syntax, refresh detection, and generate a new preview. A syntactically valid but unsupported root structure is not recoverable by rebuild. Neither is a parser compatibility defect: valid forms such as accepted BOM-prefixed JSON or quoted TOML keys must remain valid and merge normally rather than being discarded.
 
-The manager preserves unrelated supported settings, but it does not attempt to guess repairs for invalid syntax.
+The desktop offers **Back up and rebuild** only when at least one file is syntax-invalid and every file in that Agent's complete managed set has no other recovery blocker. Unreadable, oversized, non-regular, linked, or non-writable files; unavailable parents; unsupported valid structures; pending transaction recovery; and disabled writes are ineligible. For Codex, this assessment always covers both `config.toml` and `auth.json`.
+
+**Rebuild is destructive.** It discards unrelated settings, comments, formatting, and valid companion metadata. Claude is replaced with managed `env` only; opencode is replaced at the approved path with strict managed-only JSON, including when that path ends in `.jsonc`; Codex replaces both files. There is no automatic or global force-overwrite fallback.
+
+If that loss is acceptable:
+
+1. Stop every selected Agent and refresh detection.
+2. Select **Back up and rebuild** only for the eligible invalid Agent; valid Agents may independently remain on **Merge**.
+3. Enter the key, configure models, and review every redacted managed fragment, affected path, create/replace operation, and planned backup pattern.
+4. Confirm the separate destructive prompt. Write rechecks syntax, safety, complete file sets, revisions, and the catalog before creating artifacts.
+5. On success, record every changed and actual backup path. Each existing approved target was backed up byte-for-byte before any replacement. On failure, preserve the error even if no artifact paths are displayed.
+
+Backups are sensitive and may contain API keys or other credentials. Never attach or share them unredacted. To restore, stop the owning Agent and preserve any transaction journal and current files needed for diagnosis. Verify that the original path and parent still have the expected current-user, non-link identity, then write the backup through a private same-directory temporary file and atomically replace the target; never copy through a link. For Codex, restore each file that existed before the transaction. Remove a companion only when the reviewed preview/result proves that the transaction created it; if its prior state is uncertain or recovery is unresolved, contact the maintainer instead. Refresh detection and preview again, and do not delete remaining backups or transaction state until recovery is proven complete.
 
 ## Preview became stale
 
 `PREVIEW_STALE` means a selected target changed after preview. The write is rejected before mutation.
 
-Return to configuration and generate a new preview from the retained key-free catalog/config when the client permits it. If the catalog token is also stale, enter the key and discover models again. For an explicit `OPENCODE_CONFIG`, verify that the exact override path was not changed after preview. Do not retry with an old revision token.
+Return to configuration and generate a new preview from the retained key-free catalog/config when the client permits it. If the catalog token is also stale, enter the key and discover models again. For rebuild, a manually repaired source, changed companion existence, new blocker, or any path/revision change also makes the approval stale and may make rebuild ineligible. Do not retry with an old revision token or switch from merge to rebuild without a new preview and destructive confirmation.
 
 ## Model configuration errors
 
@@ -173,9 +181,13 @@ require Claude Code 2.1.193 or newer and may be ignored by older versions.
 
 ## Write or rollback failed
 
-A multi-Agent write is transactional. On a later failure, already replaced targets are restored and diagnostic backups are retained. `ROLLBACK_FAILED` disables further Agent writes because restoration could not be proven.
+A multi-Agent merge/rebuild write is transactional:
 
-Do not delete backups or the manager transaction state while investigating. Record changed, backup, and rollback-backup paths from the result, quit the Agents that own those files, and contact the maintainer. Backups may contain old API keys and must not be attached unredacted.
+- `BACKUP_FAILED` occurs before replacement. No target changed, created backup artifacts were cleaned up, and writes remain available after the underlying file/directory problem is corrected. If cleanup cannot be proven, the result is `ROLLBACK_FAILED` instead.
+- `WRITE_FAILED` with successful rollback means every changed target and manager sidecar was restored. Diagnostic and original backups remain for review.
+- `ROLLBACK_FAILED` means restoration or startup transaction recovery could not be proven. Further Agent writes and rebuild eligibility are disabled until the unresolved recovery is repaired; restarting does not bypass it.
+
+Do not delete backups or the manager transaction state while investigating. Record any changed, backup, and rollback-backup paths shown by a successful result; a failed desktop operation may expose only the error even when local diagnostic artifacts remain. Quit the Agents that own those files and contact the maintainer. Backups may contain old API keys and must not be attached unredacted. Never force another write, remove only part of a Codex pair, or replace the signing key/sidecar to bypass unresolved recovery.
 
 ## Autostart or uninstall preparation failed
 
