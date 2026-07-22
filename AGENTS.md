@@ -78,7 +78,7 @@ Key invariants:
 
 ### Manager (`cmd/mtls-router-manager/` + `internal/manager/`)
 
-The manager is a stateless-per-request JSON protocol server (`internal/manager/protocol/`). It exposes 15 methods grouped as:
+The manager is a mostly stateless-per-request JSON protocol server (`internal/manager/protocol/`); the exception is `occupant.Service`, which holds an in-memory single-use confirmation token between `Inspect` and `ForceTerminate`. It exposes 15 methods grouped as:
 
 - `manager.info`, `diagnostics.collect` — metadata
 - `router.status/start/stop/health/version/logs` — router lifecycle (spawns/monitors the router binary)
@@ -90,7 +90,7 @@ Sub-package responsibilities:
 - `lifecycle` — process spawn, state file, parent monitoring, unexpected exit detection
 - `discovery` — classifies router state (desktop_owned / external_compatible / degraded / stale / absent)
 - `agent` — detection, config rendering (per-agent format: JSON/TOML), transactional write with backup/rollback
-- `agent/modelconfig` — canonical key-free model config schema v3, validation, merge
+- `agent/modelconfig` — canonical key-free model config schema v1: `Decode`/`DecodeStructural`/`Canonical`/`DeepMerge`, token signing
 - `trustedrouter` — authenticated model catalog discovery via router `/v1/models`
 - `occupant` — port occupant identity inspection and guarded force-termination
 - `protocol` — request/response types, method deadlines, error codes
@@ -109,7 +109,7 @@ Sub-package responsibilities:
 - `src/commands.rs` — Tauri command handlers that proxy to the manager client
 - `src/manager.rs` — spawns and communicates with `mtls-router-manager serve` over stdin/stdout
 - `src/scheduler.rs` — poll scheduler that emits `router-poll-snapshot` events to the frontend
-- `src/sidecar.rs` — resolves and validates sidecar binary paths (target-triple naming)
+- `src/sidecar.rs` — resolves and validates sidecar binary paths (plain runtime names `mtls-router[-manager][.exe]`; target-triple names are build inputs only)
 - `src/tray.rs` — system tray with status-aware menu
 - `src/orchestration.rs` — first-launch flow (auto-start router if sidecar is valid)
 - `src/model_config.rs` — model config import/export validation
@@ -132,7 +132,7 @@ Router lifecycle (`router install/start/stop/status/setup`) and Agent configurat
 - `setup.ps1` must keep a UTF-8 BOM for Windows PowerShell 5.1; `main_test.go` asserts this.
 - Desktop sidecar build inputs use target-triple naming in `src-tauri/binaries/` (`mtls-router-<target>`); after Tauri packaging, installed binaries use plain names (`mtls-router`, `mtls-router-manager`).
 - Manager protocol error codes are stable for branching; messages are diagnostic only.
-- API keys are confined to short-lived, zeroizable memory: manager zeroes `request.APIKey = ""` after successful decode; desktop holds the key in `ModelFlow.api_key: Zeroizing<String>` from model discovery until config write, then memory is zeroed on drop. Keys never appear in env vars, CLI args, model config, logs, or temp files.
+- API key handling: Go manager sets `request.APIKey = ""` after successful decode (best-effort; underlying JSON/Scanner buffers are GC-managed, not guaranteed zeroed). Rust desktop holds the key in `ModelFlow.api_key: Zeroizing<String>` — memory is truly zeroed on drop. Keys never appear in env vars, CLI args, model config, logs, or temp files.
 
 ## ANTI-PATTERNS
 
