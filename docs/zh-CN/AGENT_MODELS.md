@@ -142,7 +142,7 @@ Preset 模型不可用是唯一不导致 discovery 整体失败的情况：它�
 
 完整纯托管输出如下：
 
-- **Claude Code：**一个根 object 只包含 `env` 的 `settings.json`。无条件 key 为 `ANTHROPIC_BASE_URL`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_MODEL`、`ANTHROPIC_CUSTOM_MODEL_OPTION`、Haiku/Sonnet/Opus 的 `ANTHROPIC_DEFAULT_*_MODEL` key、`ENABLE_TOOL_SEARCH` 和 `DISABLE_AUTOUPDATER`。只有实际选择时才会添加显示名称 key、Fable model/name key、`CLAUDE_CODE_MAX_CONTEXT_TOKENS`、`CLAUDE_CODE_MAX_OUTPUT_TOKENS` 和允许的 description extra。
+- **Claude Code：**一个根 object 只包含 `env` 的 `settings.json`。无条件 key 为 `ANTHROPIC_BASE_URL`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_MODEL`、`ANTHROPIC_CUSTOM_MODEL_OPTION`、Haiku/Sonnet/Opus 的 `ANTHROPIC_DEFAULT_*_MODEL` key、`ENABLE_TOOL_SEARCH` 和 `DISABLE_AUTOUPDATER`。只有实际选择时才会添加显示名称 key（`ANTHROPIC_CUSTOM_MODEL_OPTION_NAME` 和 `ANTHROPIC_DEFAULT_*_MODEL_NAME` key）、Fable model/name key、`CLAUDE_CODE_MAX_CONTEXT_TOKENS`、`CLAUDE_CODE_MAX_OUTPUT_TOKENS` 和允许的 description extra。
 - **opencode：**一个根 object 只包含 `model` 和 `provider.mtls-router` 的 strict JSON。Provider 精确只包含 `npm`、`name`、`options` 和 `models`；`npm` 为 `"@ai-sdk/openai-compatible"`，`name` 为 `"mtls-router"`，`options` 只包含 `baseURL` 和 `apiKey`，`models` 包含精确选择的 definition。已批准 `.jsonc` 路径会原地替换为 strict JSON；重建绝不会执行正常 sibling `opencode.json` 迁移。
 - **Codex：**完整集合始终同时包含 `config.toml` 和 `auth.json`，即使只有一个文件 malformed。`config.toml` 只包含 `model_provider = "mtls-router"`、所选 `model`、`cli_auth_credentials_store = "file"`、已选择的可选模型设置，以及精确包含 `name`、`wire_api = "responses"`、`requires_openai_auth = true` 和 `base_url` 的 `model_providers.mtls-router`。`auth.json` 精确只包含 `auth_mode: "apikey"` 与 `OPENAI_API_KEY`。缺失伴随文件会创建；每个现有伴随文件都会替换，因此有效伴随 metadata 会丢失。
 
