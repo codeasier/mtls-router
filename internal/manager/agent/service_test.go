@@ -17,6 +17,360 @@ import (
 
 const testAPIKey = "sk-agent-write-key-canary-7f2d"
 
+func TestNormalizeAgentModesAndRebuildApproval(t *testing.T) {
+	selected := []Kind{OpenCode, ClaudeCode, ClaudeCode}
+	plans, err := normalizeAgentPlans(selected, nil)
+	if err != nil || len(plans) != 2 || plans[0] != (agentPlan{kind: ClaudeCode, mode: ConfigModeMerge}) || plans[1] != (agentPlan{kind: OpenCode, mode: ConfigModeMerge}) {
+		t.Fatalf("default plans = %#v, %v", plans, err)
+	}
+	plans, err = normalizeAgentPlans(selected, map[Kind]ConfigMode{ClaudeCode: ConfigModeMerge, OpenCode: ConfigModeRebuild})
+	if err != nil || plans[1].mode != ConfigModeRebuild {
+		t.Fatalf("mixed plans = %#v, %v", plans, err)
+	}
+	if err := validateRebuildApproval(plans, []Kind{OpenCode}); err != nil {
+		t.Fatal(err)
+	}
+	for _, modes := range []map[Kind]ConfigMode{
+		{OpenCode: ConfigModeRebuild},
+		{ClaudeCode: ConfigModeMerge, OpenCode: ConfigModeRebuild, Codex: ConfigModeMerge},
+		{ClaudeCode: ConfigModeMerge, OpenCode: "force"},
+	} {
+		_, err := normalizeAgentPlans(selected, modes)
+		assertCode(t, err, CodeInvalidParams)
+	}
+	for _, approval := range [][]Kind{nil, {ClaudeCode}, {OpenCode, OpenCode}, {OpenCode, Codex}} {
+		assertCode(t, validateRebuildApproval(plans, approval), CodeInvalidParams)
+	}
+}
+
+func TestRebuildWritesManagedOnlyAndRequiresExactApproval(t *testing.T) {
+	home := t.TempDir()
+	claudePath := filepath.Join(home, ".claude", "settings.json")
+	marker := "MALFORMED-SOURCE-MARKER"
+	writeFile(t, claudePath, `{`+marker)
+	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true}, nil)
+	preview, catalogToken, modelConfig := rebuildLegacyPreview(t, service, ClaudeCode)
+	if preview.Agents[0].Mode != ConfigModeRebuild || len(preview.Agents[0].Files) != 1 {
+		t.Fatalf("rebuild preview = %#v", preview)
+	}
+	file := preview.Agents[0].Files[0]
+	if file.Role != "config" || file.Path != claudePath || file.Operation != OperationReplace || !file.Backup.Required || len(file.Preserves) != 0 || file.Warning != rebuildWarning {
+		t.Fatalf("rebuild file = %#v", file)
+	}
+	encoded, _ := json.Marshal(preview)
+	if bytes.Contains(encoded, []byte(marker)) || bytes.Contains(encoded, []byte(testAPIKey)) {
+		t.Fatalf("rebuild preview leaked sensitive source: %s", encoded)
+	}
+	request := WriteRequest{Agents: []Kind{ClaudeCode}, Modes: map[Kind]ConfigMode{ClaudeCode: ConfigModeRebuild}, CatalogToken: catalogToken, ModelConfig: modelConfig, RevisionToken: preview.RevisionToken, APIKey: testAPIKey}
+	_, err := service.Write(context.Background(), request)
+	assertCode(t, err, CodeInvalidParams)
+	states, detectErr := service.Detect(context.Background())
+	if detectErr != nil || !states[0].Recovery.Eligible {
+		t.Fatalf("recovery after rejected approval = %#v, %v", states[0].Recovery, detectErr)
+	}
+	request.ApproveRebuild = []Kind{ClaudeCode}
+	result, err := service.Write(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := readJSONObject(t, claudePath)
+	if len(root) != 1 || root["env"] == nil {
+		t.Fatalf("rebuilt Claude root = %#v", root)
+	}
+	backup := result.Agents[0].Backups[0]
+	if readString(t, backup) != `{`+marker {
+		t.Fatal("rebuild backup did not preserve original bytes")
+	}
+	assertResultKeyFree(t, result)
+}
+
+func TestRebuildOpenCodeJSONCInPlaceAndCodexPlansCompleteSet(t *testing.T) {
+	t.Run("opencode jsonc", func(t *testing.T) {
+		home := t.TempDir()
+		path := filepath.Join(home, ".config", "opencode", "opencode.jsonc")
+		writeFile(t, path, `{"unterminated":`)
+		service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"opencode": true}, nil)
+		preview, _, _ := rebuildLegacyPreview(t, service, OpenCode)
+		file := preview.Agents[0].Files[0]
+		if file.Path != path || file.SourcePath != "" || file.Format != FormatJSON {
+			t.Fatalf("JSONC rebuild migrated: %#v", file)
+		}
+	})
+	t.Run("codex complete set", func(t *testing.T) {
+		home := t.TempDir()
+		configPath := filepath.Join(home, ".codex", "config.toml")
+		authPath := filepath.Join(home, ".codex", "auth.json")
+		writeFile(t, configPath, `invalid = [`)
+		writeFile(t, authPath, `{"unrelated":"discard"}`)
+		service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"codex": true}, nil)
+		preview, _, _ := rebuildLegacyPreview(t, service, Codex)
+		if len(preview.Agents[0].Files) != 2 || preview.Agents[0].Files[0].Role != "config" || preview.Agents[0].Files[1].Role != "auth" || !preview.Agents[0].Files[0].Backup.Required || !preview.Agents[0].Files[1].Backup.Required {
+			t.Fatalf("Codex rebuild files = %#v", preview.Agents[0].Files)
+		}
+	})
+}
+
+func TestRebuildRejectsRepairedSourceAsStale(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".claude", "settings.json")
+	writeFile(t, path, `{broken`)
+	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true}, nil)
+	preview, catalogToken, modelConfig := rebuildLegacyPreview(t, service, ClaudeCode)
+	writeFile(t, path, `{}`)
+	_, err := service.Write(context.Background(), WriteRequest{
+		Agents: []Kind{ClaudeCode}, Modes: map[Kind]ConfigMode{ClaudeCode: ConfigModeRebuild}, ApproveRebuild: []Kind{ClaudeCode}, CatalogToken: catalogToken, ModelConfig: modelConfig, RevisionToken: preview.RevisionToken, APIKey: testAPIKey,
+	})
+	assertCode(t, err, CodeConfigInvalid)
+	assertNoBackupFiles(t, home)
+}
+
+func TestMixedMergeAndRebuildCommitsAtomically(t *testing.T) {
+	home := t.TempDir()
+	claudePath := filepath.Join(home, ".claude", "settings.json")
+	openCodePath := filepath.Join(home, ".config", "opencode", "opencode.json")
+	writeFile(t, claudePath, `{"theme":"keep"}`)
+	writeFile(t, openCodePath, `{malformed`)
+	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true, "opencode": true}, nil)
+	preview, token, raw := previewWithModes(t, service, []Kind{ClaudeCode, OpenCode}, map[Kind]ConfigMode{ClaudeCode: ConfigModeMerge, OpenCode: ConfigModeRebuild})
+	if preview.Agents[0].Mode != ConfigModeMerge || preview.Agents[1].Mode != ConfigModeRebuild {
+		t.Fatalf("mixed preview = %#v", preview.Agents)
+	}
+	result, err := service.Write(context.Background(), WriteRequest{
+		Agents: []Kind{ClaudeCode, OpenCode}, Modes: map[Kind]ConfigMode{ClaudeCode: ConfigModeMerge, OpenCode: ConfigModeRebuild}, ApproveRebuild: []Kind{OpenCode},
+		CatalogToken: token, ModelConfig: raw, RevisionToken: preview.RevisionToken, APIKey: testAPIKey,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !jsonStringEquals(readJSONObject(t, claudePath)["theme"], "keep") {
+		t.Fatal("merge Agent did not preserve unrelated setting")
+	}
+	openCode := readJSONObject(t, openCodePath)
+	if len(openCode) != 2 || openCode["model"] == nil || openCode["provider"] == nil {
+		t.Fatalf("rebuilt opencode root = %#v", openCode)
+	}
+	if len(result.Agents) != 2 || !result.Agents[0].Success || !result.Agents[1].Success {
+		t.Fatalf("mixed result = %#v", result)
+	}
+}
+
+func TestCodexRebuildAuthOnlyMalformedWritesCompleteManagedSet(t *testing.T) {
+	home := t.TempDir()
+	configPath := filepath.Join(home, ".codex", "config.toml")
+	authPath := filepath.Join(home, ".codex", "auth.json")
+	writeFile(t, configPath, "unrelated = \"discard\"\n")
+	writeFile(t, authPath, `{malformed-auth`)
+	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"codex": true}, nil)
+	preview, token, raw := previewWithModes(t, service, []Kind{Codex}, map[Kind]ConfigMode{Codex: ConfigModeRebuild})
+	if len(preview.Agents[0].Files) != 2 {
+		t.Fatalf("Codex preview = %#v", preview.Agents[0].Files)
+	}
+	_, err := service.Write(context.Background(), WriteRequest{
+		Agents: []Kind{Codex}, Modes: map[Kind]ConfigMode{Codex: ConfigModeRebuild}, ApproveRebuild: []Kind{Codex}, CatalogToken: token, ModelConfig: raw,
+		RevisionToken: preview.RevisionToken, APIKey: testAPIKey, ApproveCodexAuthChange: preview.RequiresCodexAuthApproval,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, valid := decodeTOML([]byte(readString(t, configPath)))
+	if !valid || config["unrelated"] != nil || config["model_provider"] != "mtls-router" {
+		t.Fatalf("rebuilt Codex config = %#v", config)
+	}
+	auth := readJSONObject(t, authPath)
+	if len(auth) != 2 || !jsonStringEquals(auth["auth_mode"], "apikey") || !jsonStringEquals(auth["OPENAI_API_KEY"], testAPIKey) {
+		t.Fatalf("rebuilt Codex auth = %#v", auth)
+	}
+}
+
+func TestCodexRebuildConcurrentCompanionChangeRollsBack(t *testing.T) {
+	home := t.TempDir()
+	configPath := filepath.Join(home, ".codex", "config.toml")
+	authPath := filepath.Join(home, ".codex", "auth.json")
+	originalConfig := `invalid = [`
+	originalAuth := `{"old":"auth"}`
+	writeFile(t, configPath, originalConfig)
+	writeFile(t, authPath, originalAuth)
+	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"codex": true}, nil)
+	preview, token, raw := previewWithModes(t, service, []Kind{Codex}, map[Kind]ConfigMode{Codex: ConfigModeRebuild})
+	concurrentAuth := `{"repaired":"concurrently"}`
+	service.hooks.afterReplace = func(path string) {
+		if path == configPath {
+			writeFile(t, authPath, concurrentAuth)
+		}
+	}
+	result, err := service.Write(context.Background(), WriteRequest{
+		Agents: []Kind{Codex}, Modes: map[Kind]ConfigMode{Codex: ConfigModeRebuild}, ApproveRebuild: []Kind{Codex}, CatalogToken: token, ModelConfig: raw,
+		RevisionToken: preview.RevisionToken, APIKey: testAPIKey, ApproveCodexAuthChange: preview.RequiresCodexAuthApproval,
+	})
+	assertCode(t, err, CodeRollbackFailed)
+	if readString(t, configPath) != originalConfig || readString(t, authPath) != concurrentAuth || !result.Agents[0].Files[0].Restored || !service.WritesDisabled() {
+		t.Fatalf("concurrent rollback result=%#v config=%q auth=%q", result, readString(t, configPath), readString(t, authPath))
+	}
+}
+
+func TestValidateRebuildProgressMatchesRecoveryFilesByRole(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	authPath := filepath.Join(filepath.Dir(configPath), "auth.json")
+	plan := writePlan{files: []plannedFile{
+		{agent: Codex, mode: ConfigModeRebuild, role: "config", format: FormatTOML, targetPath: configPath},
+		{agent: Codex, mode: ConfigModeRebuild, role: "auth", format: FormatJSON, targetPath: authPath},
+	}}
+	state := State{Detected: true, Recovery: RecoveryState{Files: []RecoveryFileState{
+		{Role: "auth", Path: authPath, Format: FormatJSON},
+		{Role: "config", Path: configPath, Format: FormatTOML},
+	}}}
+	replaced := map[string]bool{configPath: true, authPath: true}
+	service := &Service{}
+	if err := service.validateRebuildProgress(plan, Codex, state, replaced); err != nil {
+		t.Fatalf("reversed recovery order rejected: %v", err)
+	}
+	state.Recovery.Files[0].Path = filepath.Join(filepath.Dir(authPath), "other-auth.json")
+	if err := service.validateRebuildProgress(plan, Codex, state, replaced); err == nil {
+		t.Fatal("changed recovery path accepted")
+	}
+}
+
+func TestRebuildEveryBackupStageFailureChangesNoTarget(t *testing.T) {
+	for _, stage := range []backupStage{backupStagePermission, backupStageWrite, backupStageSync, backupStageReopen, backupStageRead, backupStageIdentity, backupStageContent} {
+		t.Run(string(stage), func(t *testing.T) {
+			home := t.TempDir()
+			path := filepath.Join(home, ".claude", "settings.json")
+			original := `{malformed`
+			writeFile(t, path, original)
+			service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true}, nil)
+			preview, token, raw := previewWithModes(t, service, []Kind{ClaudeCode}, map[Kind]ConfigMode{ClaudeCode: ConfigModeRebuild})
+			service.hooks.backupStage = func(current backupStage, _ string) error {
+				if current == stage {
+					return errors.New("injected backup stage failure")
+				}
+				return nil
+			}
+			_, err := service.Write(context.Background(), WriteRequest{
+				Agents: []Kind{ClaudeCode}, Modes: map[Kind]ConfigMode{ClaudeCode: ConfigModeRebuild}, ApproveRebuild: []Kind{ClaudeCode}, CatalogToken: token, ModelConfig: raw,
+				RevisionToken: preview.RevisionToken, APIKey: testAPIKey,
+			})
+			assertCode(t, err, CodeBackupFailed)
+			if readString(t, path) != original {
+				t.Fatalf("backup stage %s changed target", stage)
+			}
+			assertNoBackupFiles(t, home)
+		})
+	}
+}
+
+func TestRebuildRollbackFailureDisablesWritesAndEligibility(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".claude", "settings.json")
+	writeFile(t, path, `{malformed`)
+	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true}, nil)
+	preview, token, raw := previewWithModes(t, service, []Kind{ClaudeCode}, map[Kind]ConfigMode{ClaudeCode: ConfigModeRebuild})
+	service.hooks.afterReplace = func(string) { service.hooks.afterReplace = nil }
+	service.hooks.beforeRollback = func(string) error { return errors.New("injected rollback failure") }
+	service.hooks.beforeReplace = func(string) error {
+		service.hooks.beforeReplace = nil
+		return nil
+	}
+	// Force failure after replacement by making journal progress persistence fail
+	// through cancellation in the post-replacement hook.
+	ctx, cancel := context.WithCancel(context.Background())
+	service.hooks.afterReplace = func(string) { cancel() }
+	_, err := service.Write(ctx, WriteRequest{
+		Agents: []Kind{ClaudeCode}, Modes: map[Kind]ConfigMode{ClaudeCode: ConfigModeRebuild}, ApproveRebuild: []Kind{ClaudeCode}, CatalogToken: token, ModelConfig: raw,
+		RevisionToken: preview.RevisionToken, APIKey: testAPIKey,
+	})
+	assertCode(t, err, CodeRollbackFailed)
+	if !service.WritesDisabled() {
+		t.Fatal("rollback failure did not disable writes")
+	}
+	states, detectErr := service.Detect(context.Background())
+	if detectErr != nil || states[0].Recovery.Eligible || !containsRecoveryReason(states[0].Recovery.Reasons, RecoveryWritesDisabled) {
+		t.Fatalf("disabled recovery = %#v err=%v", states[0].Recovery, detectErr)
+	}
+	_, err = service.PreviewRequest(context.Background(), PreviewRequest{Agents: []Kind{ClaudeCode}, Modes: map[Kind]ConfigMode{ClaudeCode: ConfigModeRebuild}, CatalogToken: token, ModelConfig: raw})
+	assertCode(t, err, CodeConfigInvalid)
+}
+
+func TestRebuildRejectsPendingAndWritesDisabledState(t *testing.T) {
+	for _, state := range []string{"pending", "disabled"} {
+		t.Run(state, func(t *testing.T) {
+			home := t.TempDir()
+			stateDir := filepath.Join(home, "state")
+			writeFile(t, filepath.Join(home, ".claude", "settings.json"), `{malformed`)
+			service := newTestService(t, stateDir, home, map[string]bool{"claude": true}, nil)
+			_, token, raw := previewWithModes(t, service, []Kind{ClaudeCode}, map[Kind]ConfigMode{ClaudeCode: ConfigModeRebuild})
+			if state == "pending" {
+				writeFile(t, service.journalPath(), `{}`)
+			} else {
+				service.writesDisabled = true
+			}
+			_, err := service.PreviewRequest(context.Background(), PreviewRequest{Agents: []Kind{ClaudeCode}, Modes: map[Kind]ConfigMode{ClaudeCode: ConfigModeRebuild}, CatalogToken: token, ModelConfig: raw})
+			assertCode(t, err, CodeConfigInvalid)
+		})
+	}
+}
+
+func TestMergePreviewTokenCannotAuthorizeRebuild(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".claude", "settings.json")
+	writeFile(t, path, `{}`)
+	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true}, nil)
+	merge, token, raw := previewWithModes(t, service, []Kind{ClaudeCode}, nil)
+	writeFile(t, path, `{malformed`)
+	_, err := service.Write(context.Background(), WriteRequest{
+		Agents: []Kind{ClaudeCode}, Modes: map[Kind]ConfigMode{ClaudeCode: ConfigModeRebuild}, ApproveRebuild: []Kind{ClaudeCode}, CatalogToken: token, ModelConfig: raw,
+		RevisionToken: merge.RevisionToken, APIKey: testAPIKey,
+	})
+	assertCode(t, err, CodePreviewStale)
+}
+
+func TestPreviewExistingSidecarReportsBackupPlanWithoutArtifactPath(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".claude", "settings.json")
+	writeFile(t, path, `{}`)
+	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true}, nil)
+	first := mustPreview(t, service, []Kind{ClaudeCode})
+	if _, err := service.Write(context.Background(), WriteRequest{Agents: []Kind{ClaudeCode}, RevisionToken: first.RevisionToken, APIKey: testAPIKey}); err != nil {
+		t.Fatal(err)
+	}
+	preview := mustPreview(t, service, []Kind{ClaudeCode})
+	if preview.StateChange == nil || !preview.StateChange.Backup.Required || !preview.StateChange.Backup.Sensitive || preview.StateChange.Backup.Pattern == "" || preview.StateChange.Backup.Warning != backupWarning {
+		t.Fatalf("existing sidecar preview = %#v", preview.StateChange)
+	}
+	if preview.StateBackup != nil || strings.Contains(preview.StateChange.Backup.Pattern, ".bak-") && !strings.HasSuffix(preview.StateChange.Backup.Pattern, ".bak-<timestamp>-<random>") {
+		t.Fatalf("preview reserved actual state backup = %#v", preview)
+	}
+}
+
+func TestRebuildReplacementFailureRollsBackAgentAndSidecar(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".claude", "settings.json")
+	stateDir := filepath.Join(home, "state")
+	writeFile(t, path, `{}`)
+	service := newTestService(t, stateDir, home, map[string]bool{"claude": true}, nil)
+	first := mustPreview(t, service, []Kind{ClaudeCode})
+	if _, err := service.Write(context.Background(), WriteRequest{Agents: []Kind{ClaudeCode}, RevisionToken: first.RevisionToken, APIKey: testAPIKey}); err != nil {
+		t.Fatal(err)
+	}
+	originalSidecar := readString(t, service.sidecarPath())
+	originalAgent := `{malformed-rebuild`
+	writeFile(t, path, originalAgent)
+	preview, token, raw := previewWithModes(t, service, []Kind{ClaudeCode}, map[Kind]ConfigMode{ClaudeCode: ConfigModeRebuild})
+	service.hooks.beforeReplace = func(target string) error {
+		if target == service.sidecarPath() {
+			return errors.New("injected sidecar replacement failure")
+		}
+		return nil
+	}
+	result, err := service.Write(context.Background(), WriteRequest{
+		Agents: []Kind{ClaudeCode}, Modes: map[Kind]ConfigMode{ClaudeCode: ConfigModeRebuild}, ApproveRebuild: []Kind{ClaudeCode}, CatalogToken: token, ModelConfig: raw,
+		RevisionToken: preview.RevisionToken, APIKey: testAPIKey,
+	})
+	assertCode(t, err, CodeWriteFailed)
+	if readString(t, path) != originalAgent || readString(t, service.sidecarPath()) != originalSidecar || !result.Agents[0].RolledBack || service.WritesDisabled() {
+		t.Fatalf("rebuild rollback result=%#v agent=%q sidecar=%q disabled=%t", result, readString(t, path), readString(t, service.sidecarPath()), service.WritesDisabled())
+	}
+}
+
 func TestPreviewIsStructuredKeyFreeAndDoesNotWrite(t *testing.T) {
 	home := t.TempDir()
 	stateDir := filepath.Join(home, "manager-state")
@@ -1181,6 +1535,43 @@ func newTestService(t *testing.T, stateDir, home string, commands map[string]boo
 		t.Fatal(err)
 	}
 	return service
+}
+
+func rebuildLegacyPreview(t *testing.T, service *Service, kinds ...Kind) (Preview, string, json.RawMessage) {
+	modes := make(map[Kind]ConfigMode, len(kinds))
+	for _, kind := range kinds {
+		modes[kind] = ConfigModeRebuild
+	}
+	return previewWithModes(t, service, kinds, modes)
+}
+
+func previewWithModes(t *testing.T, service *Service, kinds []Kind, modes map[Kind]ConfigMode) (Preview, string, json.RawMessage) {
+	t.Helper()
+	models := []string{"model-primary", "model-sonnet"}
+	discovery, err := service.DiscoverModels(context.Background(), kinds, models, modelconfig.CatalogClaims{
+		Models: models, Agents: kindsToModelAgents(kinds), Owner: "cli", RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "test", ProtocolVersion: "3",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := modelconfig.Canonical(projectConfig(legacyTestRenderInput().Config, kinds))
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, err := service.PreviewRequest(context.Background(), PreviewRequest{Agents: kinds, Modes: modes, CatalogToken: discovery.CatalogToken, ModelConfig: raw})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return preview, discovery.CatalogToken, raw
+}
+
+func mustPreview(t *testing.T, service *Service, kinds []Kind) Preview {
+	t.Helper()
+	preview, err := service.Preview(context.Background(), kinds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return preview
 }
 
 func legacyTestRenderInput() *LegacyRenderInput {

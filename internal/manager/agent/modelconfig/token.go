@@ -41,30 +41,49 @@ type CatalogClaims struct {
 	KeyGeneration    string   `json:"key_generation"`
 }
 
-// RevisionClaims bind an approved canonical configuration to all state that
-// must remain unchanged before a write. Bindings are caller-defined keyed
-// revision MACs, allowing sidecar and file snapshots to share this contract.
+// RevisionClaims bind an approved canonical configuration and complete file
+// plan to all state that must remain unchanged before a write.
 type RevisionClaims struct {
-	Version                   int               `json:"version"`
-	Agents                    []Agent           `json:"agents"`
-	CanonicalConfig           json.RawMessage   `json:"canonical_config"`
-	CatalogIdentity           string            `json:"catalog_identity"`
-	SidecarRevision           string            `json:"sidecar_revision"`
-	RouterBaseURL             string            `json:"router_base_url"`
-	DeploymentID              string            `json:"deployment_id"`
-	ProtocolVersion           string            `json:"protocol_version"`
-	Canonicalization          string            `json:"canonicalization"`
-	KeyGeneration             string            `json:"key_generation"`
-	ManagedDrift              bool              `json:"managed_drift"`
-	RequiresCodexAuthApproval bool              `json:"requires_codex_auth_approval"`
-	DriftedAgents             []Agent           `json:"drifted_agents"`
-	Bindings                  []RevisionBinding `json:"bindings"`
+	Version                   int             `json:"version"`
+	AgentPlans                []RevisionAgent `json:"agent_plans"`
+	CanonicalConfig           json.RawMessage `json:"canonical_config"`
+	CatalogIdentity           string          `json:"catalog_identity"`
+	SidecarRevision           RevisionState   `json:"sidecar_revision"`
+	RouterBaseURL             string          `json:"router_base_url"`
+	DeploymentID              string          `json:"deployment_id"`
+	ProtocolVersion           string          `json:"protocol_version"`
+	Canonicalization          string          `json:"canonicalization"`
+	KeyGeneration             string          `json:"key_generation"`
+	ManagedDrift              bool            `json:"managed_drift"`
+	RequiresCodexAuthApproval bool            `json:"requires_codex_auth_approval"`
+	DriftedAgents             []Agent         `json:"drifted_agents"`
+	Files                     []RevisionFile  `json:"files"`
 }
 
-type RevisionBinding struct {
-	Context  string `json:"context"`
-	Identity string `json:"identity"`
-	Revision string `json:"revision"`
+type RevisionAgent struct {
+	Agent Agent  `json:"agent"`
+	Mode  string `json:"mode"`
+}
+
+type RevisionState struct {
+	Exists bool   `json:"exists"`
+	Size   int64  `json:"size,omitempty"`
+	Mode   uint32 `json:"mode,omitempty"`
+	Digest string `json:"digest,omitempty"`
+}
+
+type RevisionFile struct {
+	Agent           Agent         `json:"agent"`
+	Role            string        `json:"role"`
+	Format          string        `json:"format"`
+	SourcePath      string        `json:"source_path"`
+	TargetPath      string        `json:"target_path"`
+	Operation       string        `json:"operation"`
+	BackupRequired  bool          `json:"backup_required"`
+	BackupSource    string        `json:"backup_source,omitempty"`
+	SourceRevision  RevisionState `json:"source_revision"`
+	TargetRevision  RevisionState `json:"target_revision"`
+	CompanionExists bool          `json:"companion_exists,omitempty"`
 }
 
 // TokenSigner authenticates opaque cross-process tokens with a private
@@ -117,7 +136,7 @@ func (s *TokenSigner) VerifyCatalog(token string) (CatalogClaims, error) {
 }
 
 func (s *TokenSigner) SignRevision(claims RevisionClaims) (string, error) {
-	if !validAgents(claims.Agents) || !validAgents(claims.DriftedAgents) {
+	if !validRevisionAgents(claims.AgentPlans) || !validAgents(claims.DriftedAgents) {
 		return "", ErrTokenInvalid
 	}
 	claims = normalizeRevisionClaims(claims)
@@ -234,15 +253,27 @@ func normalizeCatalogClaims(c CatalogClaims) CatalogClaims {
 }
 
 func normalizeRevisionClaims(c RevisionClaims) RevisionClaims {
-	c.Agents = normalizeAgents(c.Agents)
+	sort.Slice(c.AgentPlans, func(i, j int) bool { return agentRank(c.AgentPlans[i].Agent) < agentRank(c.AgentPlans[j].Agent) })
 	c.DriftedAgents = normalizeAgents(c.DriftedAgents)
-	sort.Slice(c.Bindings, func(i, j int) bool {
-		if c.Bindings[i].Context != c.Bindings[j].Context {
-			return c.Bindings[i].Context < c.Bindings[j].Context
+	sort.Slice(c.Files, func(i, j int) bool {
+		if c.Files[i].Agent != c.Files[j].Agent {
+			return agentRank(c.Files[i].Agent) < agentRank(c.Files[j].Agent)
 		}
-		return c.Bindings[i].Identity < c.Bindings[j].Identity
+		if c.Files[i].Role != c.Files[j].Role {
+			return c.Files[i].Role < c.Files[j].Role
+		}
+		return c.Files[i].TargetPath < c.Files[j].TargetPath
 	})
 	return c
+}
+
+func agentRank(value Agent) int {
+	for i, agent := range []Agent{Claude, OpenCode, Codex} {
+		if value == agent {
+			return i
+		}
+	}
+	return 3
 }
 
 func normalizeStrings(values []string) []string {
@@ -283,6 +314,15 @@ func validAgents(values []Agent) bool {
 	return true
 }
 
+func validRevisionAgents(values []RevisionAgent) bool {
+	for _, value := range values {
+		if !validAgents([]Agent{value.Agent}) {
+			return false
+		}
+	}
+	return true
+}
+
 func validateCatalogClaims(c CatalogClaims) error {
 	if c.Version != TokenVersion || c.Canonicalization != CanonicalizationJCS1 || len(c.Models) == 0 || len(c.Models) > maxCatalogTokenModels || len(c.Agents) == 0 || (c.Owner != "cli" && c.Owner != "desktop") {
 		return ErrTokenInvalid
@@ -296,17 +336,66 @@ func validateCatalogClaims(c CatalogClaims) error {
 }
 
 func validateRevisionClaims(c RevisionClaims) error {
-	if c.Version != TokenVersion || c.Canonicalization != CanonicalizationJCS1 || len(c.Agents) == 0 || len(c.CanonicalConfig) == 0 || len(c.Bindings) > 32 {
+	if c.Version != TokenVersion || c.Canonicalization != CanonicalizationJCS1 || len(c.AgentPlans) == 0 || len(c.AgentPlans) > 3 || len(c.CanonicalConfig) == 0 || len(c.Files) > 16 {
 		return ErrTokenInvalid
 	}
-	for _, value := range []string{c.CatalogIdentity, c.SidecarRevision, c.RouterBaseURL, c.DeploymentID, c.ProtocolVersion, c.Canonicalization, c.KeyGeneration} {
+	for _, value := range []string{c.CatalogIdentity, c.RouterBaseURL, c.DeploymentID, c.ProtocolVersion, c.Canonicalization, c.KeyGeneration} {
 		if !validTokenField(value) {
 			return ErrTokenInvalid
 		}
 	}
-	for _, binding := range c.Bindings {
-		if !validTokenField(binding.Context) || !validTokenField(binding.Identity) || !validTokenField(binding.Revision) {
+	if !validRevisionState(c.SidecarRevision) {
+		return ErrTokenInvalid
+	}
+	planned := make(map[Agent]bool, len(c.AgentPlans))
+	filesByAgent := make(map[Agent]map[string]RevisionFile, len(c.AgentPlans))
+	for _, plan := range c.AgentPlans {
+		if planned[plan.Agent] || (plan.Mode != "merge" && plan.Mode != "rebuild") {
 			return ErrTokenInvalid
+		}
+		planned[plan.Agent] = true
+		filesByAgent[plan.Agent] = map[string]RevisionFile{}
+	}
+	seenFiles := map[string]bool{}
+	for _, file := range c.Files {
+		identity := string(file.Agent) + "\x00" + file.Role + "\x00" + file.TargetPath
+		if !planned[file.Agent] || seenFiles[identity] || (file.Role != "config" && file.Role != "auth") ||
+			(file.Format != "json" && file.Format != "jsonc" && file.Format != "toml") ||
+			(file.Operation != "create" && file.Operation != "replace") ||
+			!validTokenField(file.SourcePath) || !validTokenField(file.TargetPath) ||
+			file.BackupRequired != file.SourceRevision.Exists || file.BackupRequired != (file.BackupSource != "") ||
+			(file.BackupSource != "" && !validTokenField(file.BackupSource)) ||
+			!validRevisionState(file.SourceRevision) || !validRevisionState(file.TargetRevision) ||
+			(file.Operation == "create") != !file.TargetRevision.Exists ||
+			(file.Operation == "replace") != file.TargetRevision.Exists ||
+			(file.BackupRequired && file.BackupSource != file.SourcePath) ||
+			(file.SourcePath == file.TargetPath && file.SourceRevision != file.TargetRevision) ||
+			(file.SourcePath != file.TargetPath && file.TargetRevision.Exists) {
+			return ErrTokenInvalid
+		}
+		seenFiles[identity] = true
+		if _, exists := filesByAgent[file.Agent][file.Role]; exists {
+			return ErrTokenInvalid
+		}
+		filesByAgent[file.Agent][file.Role] = file
+	}
+	for agent, files := range filesByAgent {
+		config, configOK := files["config"]
+		switch agent {
+		case Claude:
+			if !configOK || len(files) != 1 || config.Format != "json" || config.CompanionExists {
+				return ErrTokenInvalid
+			}
+		case OpenCode:
+			if !configOK || len(files) != 1 || (config.Format != "json" && config.Format != "jsonc") || config.CompanionExists {
+				return ErrTokenInvalid
+			}
+		case Codex:
+			auth, authOK := files["auth"]
+			if !configOK || !authOK || len(files) != 2 || config.Format != "toml" || auth.Format != "json" ||
+				config.CompanionExists != auth.SourceRevision.Exists || auth.CompanionExists != config.SourceRevision.Exists {
+				return ErrTokenInvalid
+			}
 		}
 	}
 	var value any
@@ -318,6 +407,13 @@ func validateRevisionClaims(c RevisionClaims) error {
 		return ErrTokenInvalid
 	}
 	return nil
+}
+
+func validRevisionState(value RevisionState) bool {
+	if !value.Exists {
+		return value.Size == 0 && value.Mode == 0 && value.Digest == ""
+	}
+	return value.Size >= 0 && value.Size <= 1<<30 && validTokenField(value.Digest)
 }
 
 func validTokenField(value string) bool {

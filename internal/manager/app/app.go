@@ -78,7 +78,7 @@ type agentPreviewValidator interface {
 }
 
 type agentPreviewerV2 interface {
-	Preview(context.Context, []agent.Kind, ...any) (agent.Preview, error)
+	PreviewRequest(context.Context, agent.PreviewRequest) (agent.Preview, error)
 }
 type agentPreviewerLegacy interface {
 	Preview(context.Context, []agent.Kind) (agent.Preview, error)
@@ -562,7 +562,11 @@ func (a *App) agentPreview(ctx context.Context, params json.RawMessage) (any, *p
 	var preview agent.Preview
 	var previewErr error
 	if service, ok := a.deps.agent.(agentPreviewerV2); ok {
-		preview, previewErr = service.Preview(ctx, selected, request.CatalogToken, request.ModelConfig)
+		modes, modeErr := agentModes(request.Modes)
+		if modeErr != nil {
+			return nil, modeErr
+		}
+		preview, previewErr = service.PreviewRequest(ctx, agent.PreviewRequest{Agents: selected, Modes: modes, CatalogToken: request.CatalogToken, ModelConfig: request.ModelConfig})
 	} else if service, ok := a.deps.agent.(agentPreviewerLegacy); ok {
 		preview, previewErr = service.Preview(ctx, selected)
 	} else {
@@ -596,7 +600,17 @@ func (a *App) agentWrite(ctx context.Context, params json.RawMessage) (any, *pro
 		request.APIKey = ""
 		return nil, modelContractUnavailable()
 	}
-	writeRequest := agent.WriteRequest{Agents: selected, CatalogToken: request.CatalogToken, ModelConfig: request.ModelConfig, RevisionToken: request.RevisionToken, ApproveManagedOverwrite: *request.ApproveManagedOverwrite, ApproveCodexAuthChange: *request.ApproveCodexAuthChange}
+	modes, modeErr := agentModes(request.Modes)
+	if modeErr != nil {
+		request.APIKey = ""
+		return nil, modeErr
+	}
+	approved, approvalErr := approvedAgents(request.ApproveRebuild)
+	if approvalErr != nil {
+		request.APIKey = ""
+		return nil, approvalErr
+	}
+	writeRequest := agent.WriteRequest{Agents: selected, Modes: modes, ApproveRebuild: approved, CatalogToken: request.CatalogToken, ModelConfig: request.ModelConfig, RevisionToken: request.RevisionToken, ApproveManagedOverwrite: *request.ApproveManagedOverwrite, ApproveCodexAuthChange: *request.ApproveCodexAuthChange}
 	validator, ok := a.deps.agent.(agentPreviewValidator)
 	if !ok {
 		request.APIKey = ""
@@ -704,6 +718,9 @@ func (a *App) agentRender(ctx context.Context, params json.RawMessage) (any, *pr
 	if err := decodeAgentConfigParams(params, &request); err != nil {
 		return nil, err
 	}
+	if len(request.Modes) != 0 {
+		return nil, invalidParams("modes are supported only by Agent preview and write")
+	}
 	if a.deps.agent == nil {
 		return nil, modelContractUnavailable()
 	}
@@ -765,7 +782,11 @@ func mapPreview(value agent.Preview) protocol.AgentPreviewResult {
 	}
 	for _, item := range value.Agents {
 		for _, file := range item.Files {
-			result.Files = append(result.Files, protocol.AgentFileEffect{Path: file.Path, Role: fileRole(item.Agent, file.Path), Format: string(file.Format), Operation: string(file.Operation)})
+			result.Files = append(result.Files, protocol.AgentFileEffect{
+				Agent: string(item.Agent), Mode: string(item.Mode), Path: file.Path, Role: file.Role, Format: string(file.Format), Operation: string(file.Operation),
+				BackupRequired: file.Backup.Required, BackupPattern: file.Backup.Pattern, BackupSensitive: file.Backup.Sensitive,
+				Preserves: append([]string(nil), file.Preserves...), Warning: file.Warning,
+			})
 		}
 	}
 	for _, kind := range value.DriftedAgents {
@@ -775,19 +796,16 @@ func mapPreview(value agent.Preview) protocol.AgentPreviewResult {
 		result.ManagedCollisions = append(result.ManagedCollisions, protocol.ManagedCollision{Agent: string(collision.Agent), Path: collision.Path, Type: collision.Type, Action: collision.Action})
 	}
 	if value.StateChange != nil {
-		result.StateChange = &protocol.AgentFileEffect{Path: value.StateChange.Path, Role: "state", Format: string(value.StateChange.Format), Operation: string(value.StateChange.Operation)}
+		result.StateChange = &protocol.AgentFileEffect{
+			Path: value.StateChange.Path, Role: "state", Format: string(value.StateChange.Format), Operation: string(value.StateChange.Operation),
+			BackupRequired: value.StateChange.Backup.Required, BackupPattern: value.StateChange.Backup.Pattern,
+			BackupSensitive: value.StateChange.Backup.Sensitive, Warning: value.StateChange.Backup.Warning,
+		}
 	}
 	if value.StateBackup != nil {
 		result.StateBackup = &protocol.AgentFileEffect{Path: value.StateBackup.Path, Role: "state", Format: string(value.StateBackup.Format), Operation: "backup"}
 	}
 	return result
-}
-
-func fileRole(kind agent.Kind, path string) string {
-	if kind == agent.Codex && filepath.Base(path) == "auth.json" {
-		return "auth"
-	}
-	return "config"
 }
 
 func mapWrite(value agent.WriteResult) protocol.AgentWriteResult {
@@ -806,6 +824,39 @@ func mapWrite(value agent.WriteResult) protocol.AgentWriteResult {
 		result.StateBackup = &protocol.AgentFileEffect{Path: value.StateBackup.Path, Role: "state", Format: "json", Operation: "backup"}
 	}
 	return result
+}
+
+func agentModes(values map[string]string) (map[agent.Kind]agent.ConfigMode, *protocol.Error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	result := make(map[agent.Kind]agent.ConfigMode, len(values))
+	for key, value := range values {
+		kind := agent.Kind(key)
+		if kind != agent.ClaudeCode && kind != agent.OpenCode && kind != agent.Codex {
+			return nil, invalidParams("unsupported Agent mode")
+		}
+		mode := agent.ConfigMode(value)
+		if mode != agent.ConfigModeMerge && mode != agent.ConfigModeRebuild {
+			return nil, invalidParams("unsupported Agent mode")
+		}
+		result[kind] = mode
+	}
+	return result, nil
+}
+
+func approvedAgents(values []string) ([]agent.Kind, *protocol.Error) {
+	result := make([]agent.Kind, 0, len(values))
+	seen := map[agent.Kind]bool{}
+	for _, value := range values {
+		kind := agent.Kind(value)
+		if (kind != agent.ClaudeCode && kind != agent.OpenCode && kind != agent.Codex) || seen[kind] {
+			return nil, invalidParams("invalid rebuild approval")
+		}
+		seen[kind] = true
+		result = append(result, kind)
+	}
+	return result, nil
 }
 
 func decodeEmpty(params json.RawMessage) *protocol.Error {

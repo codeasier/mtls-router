@@ -152,19 +152,22 @@ type AgentModelsParams struct {
 }
 
 type AgentConfigParams struct {
-	Agents       []string        `json:"agents"`
-	CatalogToken string          `json:"catalog_token"`
-	ModelConfig  json.RawMessage `json:"model_config"`
+	Agents       []string          `json:"agents"`
+	Modes        map[string]string `json:"modes,omitempty"`
+	CatalogToken string            `json:"catalog_token"`
+	ModelConfig  json.RawMessage   `json:"model_config"`
 }
 
 type AgentWriteParams struct {
-	Agents                  []string        `json:"agents"`
-	CatalogToken            string          `json:"catalog_token"`
-	ModelConfig             json.RawMessage `json:"model_config"`
-	RevisionToken           string          `json:"revision_token"`
-	ApproveManagedOverwrite *bool           `json:"approve_managed_overwrite"`
-	ApproveCodexAuthChange  *bool           `json:"approve_codex_auth_change"`
-	APIKey                  string          `json:"api_key"`
+	Agents                  []string          `json:"agents"`
+	Modes                   map[string]string `json:"modes,omitempty"`
+	ApproveRebuild          []string          `json:"approve_rebuild,omitempty"`
+	CatalogToken            string            `json:"catalog_token"`
+	ModelConfig             json.RawMessage   `json:"model_config"`
+	RevisionToken           string            `json:"revision_token"`
+	ApproveManagedOverwrite *bool             `json:"approve_managed_overwrite"`
+	ApproveCodexAuthChange  *bool             `json:"approve_codex_auth_change"`
+	APIKey                  string            `json:"api_key"`
 }
 
 type ManagerInfoResult struct {
@@ -291,11 +294,18 @@ type AgentRenderResult struct {
 }
 
 type AgentFileEffect struct {
-	Path       string `json:"path"`
-	Role       string `json:"role"`
-	Format     string `json:"format"`
-	Operation  string `json:"operation"`
-	BackupPath string `json:"backup_path,omitempty"`
+	Agent           string   `json:"agent,omitempty"`
+	Mode            string   `json:"mode,omitempty"`
+	Path            string   `json:"path"`
+	Role            string   `json:"role"`
+	Format          string   `json:"format"`
+	Operation       string   `json:"operation"`
+	BackupPath      string   `json:"backup_path,omitempty"`
+	BackupRequired  bool     `json:"backup_required,omitempty"`
+	BackupPattern   string   `json:"backup_pattern,omitempty"`
+	BackupSensitive bool     `json:"backup_sensitive,omitempty"`
+	Preserves       []string `json:"preserves,omitempty"`
+	Warning         string   `json:"warning,omitempty"`
 }
 
 type ManagedCollision struct {
