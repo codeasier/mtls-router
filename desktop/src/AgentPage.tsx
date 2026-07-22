@@ -13,6 +13,8 @@ import {
   type AgentDetection,
   type AgentFileEffect,
   type AgentId,
+  type AgentMode,
+  type AgentModes,
   type AgentModelsResult,
   type AgentPreview,
   type AgentState,
@@ -39,7 +41,36 @@ const agentNames: Record<AgentId, string> = {
   opencode: "opencode",
   codex: "Codex",
 };
+type SelectedModes = Partial<Record<AgentId, AgentMode>>;
 const roleNames = ["haiku", "sonnet", "opus"] as const;
+
+function isAgentId(value: unknown): value is AgentId {
+  return agentOrder.some((agent) => agent === value);
+}
+
+function validateRebuildPreview(
+  preview: AgentPreview | null,
+  selected: AgentId[],
+) {
+  if (!preview) return null;
+  const previewAgents = new Set<AgentId>();
+  const previewFiles = new Set<string>();
+  for (const effect of preview.files) {
+    if (effect.mode !== "rebuild") continue;
+    if (!isAgentId(effect.agent)) return null;
+    const fileKey = `${effect.agent}\0${effect.path}`;
+    if (previewFiles.has(fileKey)) return null;
+    previewFiles.add(fileKey);
+    previewAgents.add(effect.agent);
+  }
+  if (
+    previewAgents.size !== selected.length ||
+    selected.some((agent) => !previewAgents.has(agent))
+  ) {
+    return null;
+  }
+  return selected;
+}
 
 function safe(value: string | undefined) {
   return sanitizeSensitiveText(value ?? "");
@@ -119,7 +150,78 @@ function selectable(agent: AgentState) {
   return agent.detected && agent.writable && !agent.invalid;
 }
 function initialSelection(detection: AgentDetection) {
-  return detection.agents.filter(selectable).map((agent) => agent.agent);
+  return Object.fromEntries(
+    detection.agents.filter(selectable).map((agent) => [agent.agent, "merge"]),
+  ) as SelectedModes;
+}
+function staleSelectionIsReusable(
+  detection: AgentDetection,
+  selectedModes: SelectedModes,
+) {
+  const states = new Map(detection.agents.map((agent) => [agent.agent, agent]));
+  return (
+    agentOrder.some((agent) => selectedModes[agent]) &&
+    agentOrder.every((agent) => {
+      const mode = selectedModes[agent];
+      if (!mode) return true;
+      const state = states.get(agent);
+      return mode === "rebuild"
+        ? Boolean(state?.invalid && state.recovery?.eligible)
+        : Boolean(state && selectable(state));
+    })
+  );
+}
+function recoveryReasons(agent: AgentState) {
+  return [
+    ...(agent.recovery?.reasons ?? []),
+    ...(agent.recovery?.files.flatMap((file) => file.reasons ?? []) ?? []),
+  ].filter((reason, index, reasons) => reasons.indexOf(reason) === index);
+}
+function recoveryReason(reason: string, t: Translator) {
+  switch (reason) {
+    case "syntax_invalid":
+      return t("agents.recovery.reason.syntaxInvalid");
+    case "unsupported_structure":
+      return t("agents.recovery.reason.unsupportedStructure");
+    case "unreadable":
+      return t("agents.recovery.reason.unreadable");
+    case "oversized":
+      return t("agents.recovery.reason.oversized");
+    case "non_regular":
+      return t("agents.recovery.reason.nonRegular");
+    case "linked":
+      return t("agents.recovery.reason.linked");
+    case "not_writable":
+      return t("agents.recovery.reason.notWritable");
+    case "parent_unavailable":
+      return t("agents.recovery.reason.parentUnavailable");
+    case "transaction_recovery_pending":
+      return t("agents.recovery.reason.transactionPending");
+    case "writes_disabled":
+      return t("agents.recovery.reason.writesDisabled");
+    default:
+      return t("agents.recovery.reason.unknown");
+  }
+}
+function detectionState(agent: AgentState | undefined, t: Translator) {
+  if (!agent?.detected) return t("agents.detection.absent");
+  if (agent.invalid) return t("agents.detection.invalid");
+  if (!agent.writable) return t("agents.detection.readonly");
+  if (agent.configured) return t("agents.detection.configured");
+  if (!agent.exists) return t("agents.detection.create");
+  return t("agents.detection.ready");
+}
+function detectionGuidance(agent: AgentState | undefined, t: Translator) {
+  if (!agent?.detected) return t("agents.guidance.absent");
+  if (agent.invalid)
+    return t(
+      agent.recovery?.eligible
+        ? "agents.recovery.guidance.eligible"
+        : "agents.recovery.guidance.ineligible",
+    );
+  if (!agent.writable) return t("agents.guidance.readonly");
+  if (agent.configured) return t("agents.guidance.configured");
+  return t("agents.guidance.ready");
 }
 function ClaudeSelectionFields({
   id,
@@ -449,13 +551,63 @@ function ObjectField({
 }
 
 function FileEffect({ effect }: { effect: AgentFileEffect }) {
+  const { t } = useI18n();
+  const operation =
+    effect.operation === "create"
+      ? t("agents.operation.create")
+      : effect.operation === "replace"
+        ? t("agents.operation.replace")
+        : effect.operation === "preserve"
+          ? t("agents.operation.preserve")
+          : safe(effect.operation);
   return (
-    <article className="effect-card">
-      <span>{safe(effect.operation).toUpperCase()}</span>
-      <strong>{safe(effect.role)}</strong>
+    <article
+      className={`effect-card${effect.mode === "rebuild" ? " effect-card--rebuild" : ""}`}
+    >
+      <div className="effect-card__badges">
+        <span>{operation}</span>
+        {effect.mode && <span>{t(`agents.mode.${effect.mode}`)}</span>}
+        {effect.backup_sensitive && (
+          <span className="effect-card__sensitive">
+            {t("agents.sensitiveBackup")}
+          </span>
+        )}
+      </div>
+      <dl className="effect-card__details">
+        {effect.agent && (
+          <div>
+            <dt>{t("agents.effect.agent")}</dt>
+            <dd>{agentNames[effect.agent]}</dd>
+          </div>
+        )}
+        <div>
+          <dt>{t("agents.effect.role")}</dt>
+          <dd>{safe(effect.role)}</dd>
+        </div>
+      </dl>
+      <span className="effect-card__label">{t("agents.effect.path")}</span>
       <code>{safe(effect.path)}</code>
+      {effect.backup_required && effect.backup_pattern && (
+        <>
+          <span className="effect-card__label">
+            {t("agents.effect.backupPattern")}
+          </span>
+          <code className="backup-path">{safe(effect.backup_pattern)}</code>
+        </>
+      )}
       {effect.backup_path && (
         <code className="backup-path">{safe(effect.backup_path)}</code>
+      )}
+      {effect.preserves && effect.preserves.length > 0 && (
+        <p>
+          <strong>{t("agents.effect.preserves")}</strong>{" "}
+          {effect.preserves.map(safe).join(", ")}
+        </p>
+      )}
+      {effect.warning && (
+        <p className="effect-card__warning">
+          <strong>{t("agents.effect.warning")}</strong> {safe(effect.warning)}
+        </p>
       )}
     </article>
   );
@@ -464,7 +616,7 @@ function FileEffect({ effect }: { effect: AgentFileEffect }) {
 export function AgentPage({ api }: { api: DesktopApi }) {
   const { t } = useI18n();
   const [detection, setDetection] = useState<AgentDetection | null>(null);
-  const [selected, setSelected] = useState<AgentId[]>([]);
+  const [selectedModes, setSelectedModes] = useState<SelectedModes>({});
   const [stage, setStage] = useState<Stage>("select");
   const [key, setKey] = useState("");
   const [discovery, setDiscovery] = useState<AgentModelsResult | null>(null);
@@ -485,17 +637,77 @@ export function AgentPage({ api }: { api: DesktopApi }) {
   >({});
   const [approveDrift, setApproveDrift] = useState(false);
   const [approveAuth, setApproveAuth] = useState(false);
+  const [rebuildDialogOpen, setRebuildDialogOpen] = useState(false);
   const [busy, setBusy] = useState(true);
   const [message, setMessage] = useState("");
   const flowRef = useRef("");
+  const writeInFlightRef = useRef(false);
+  const cancelRebuildRef = useRef<HTMLButtonElement>(null);
+  const confirmRebuildRef = useRef<HTMLButtonElement>(null);
+  const rebuildTriggerRef = useRef<HTMLButtonElement>(null);
   const reportDetectionFailure = useEffectEvent(() =>
     setMessage(t("agents.error.detect")),
   );
+  const selected = agentOrder.filter((agent) => selectedModes[agent]);
+  const modes = Object.fromEntries(
+    selected.map((agent) => [agent, selectedModes[agent]]),
+  ) as AgentModes;
 
   async function destroyFlow() {
     const flow = flowRef.current;
     flowRef.current = "";
     if (flow) await api.destroyAgentModelFlow(flow).catch(() => undefined);
+  }
+  function resetApprovals() {
+    setApproveDrift(false);
+    setApproveAuth(false);
+    setRebuildDialogOpen(false);
+  }
+  function clearFlowState(target: Stage) {
+    flowRef.current = "";
+    setKey("");
+    setDiscovery(null);
+    setConfig({ version: 1 });
+    setSources({ claude: "empty", opencode: "empty", codex: "empty" });
+    setPreview(null);
+    setResult(null);
+    setExtras({ claude: "", opencode: "", codex: "" });
+    setObjectFieldErrors({});
+    setSearch("");
+    resetApprovals();
+    setStage(target);
+  }
+  async function refreshDetection(target: Stage = "select") {
+    await destroyFlow();
+    clearFlowState(target);
+    setDetection(null);
+    setSelectedModes({});
+    const value = await api.detectAgents();
+    setDetection(value);
+    setSelectedModes(initialSelection(value));
+  }
+  async function recoverStalePreview() {
+    setPreview(null);
+    resetApprovals();
+    try {
+      const value = await api.detectAgents();
+      setDetection(value);
+      if (staleSelectionIsReusable(value, selectedModes)) {
+        setStage("configure");
+        setMessage(t("agents.error.previewStale"));
+        return;
+      }
+      await destroyFlow();
+      clearFlowState("select");
+      setSelectedModes(initialSelection(value));
+      setMessage(t("agents.error.previewStale"));
+    } catch {
+      await destroyFlow();
+      clearFlowState("select");
+      setDetection(null);
+      setSelectedModes({});
+      setMessage(t("agents.error.detect"));
+    }
   }
   useEffect(() => {
     let active = true;
@@ -504,7 +716,7 @@ export function AgentPage({ api }: { api: DesktopApi }) {
       .then((value) => {
         if (active) {
           setDetection(value);
-          setSelected(initialSelection(value));
+          setSelectedModes(initialSelection(value));
         }
       })
       .catch(() => active && reportDetectionFailure())
@@ -517,12 +729,45 @@ export function AgentPage({ api }: { api: DesktopApi }) {
     };
   }, [api]);
 
+  useEffect(() => {
+    if (!rebuildDialogOpen) return;
+    cancelRebuildRef.current?.focus();
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape" && !writeInFlightRef.current) {
+        rebuildTriggerRef.current?.focus();
+        setRebuildDialogOpen(false);
+      }
+    }
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [rebuildDialogOpen]);
+
+  function closeRebuildDialog() {
+    rebuildTriggerRef.current?.focus();
+    setRebuildDialogOpen(false);
+  }
+
   function toggleAgent(agent: AgentId) {
-    setSelected((current) =>
-      current.includes(agent)
-        ? current.filter((item) => item !== agent)
-        : agentOrder.filter((item) => item === agent || current.includes(item)),
-    );
+    setSelectedModes((current) => {
+      const next = { ...current };
+      if (next[agent] === "merge") delete next[agent];
+      else next[agent] = "merge";
+      return next;
+    });
+    setPreview(null);
+    resetApprovals();
+  }
+  function toggleRebuild(agent: AgentId) {
+    const state = byAgent.get(agent);
+    if (!state?.invalid || !state.recovery?.eligible) return;
+    setSelectedModes((current) => {
+      const next = { ...current };
+      if (next[agent] === "rebuild") delete next[agent];
+      else next[agent] = "rebuild";
+      return next;
+    });
+    setPreview(null);
+    resetApprovals();
   }
   async function startOver(target: Stage = "select") {
     await destroyFlow();
@@ -530,8 +775,7 @@ export function AgentPage({ api }: { api: DesktopApi }) {
     setDiscovery(null);
     setPreview(null);
     setResult(null);
-    setApproveDrift(false);
-    setApproveAuth(false);
+    resetApprovals();
     setMessage("");
     setStage(target);
   }
@@ -636,7 +880,9 @@ export function AgentPage({ api }: { api: DesktopApi }) {
         discovery.flow_id,
         discovery.catalog_token,
         finalConfig(),
+        modes,
       );
+      resetApprovals();
       setPreview(value);
       setConfig(value.model_config);
       setStage("preview");
@@ -664,8 +910,9 @@ export function AgentPage({ api }: { api: DesktopApi }) {
       setBusy(false);
     }
   }
-  async function write() {
-    if (!discovery || !preview) return;
+  async function write(approveRebuild: AgentId[]) {
+    if (!discovery || !preview || writeInFlightRef.current) return;
+    writeInFlightRef.current = true;
     setBusy(true);
     setStage("write");
     setMessage("");
@@ -678,6 +925,7 @@ export function AgentPage({ api }: { api: DesktopApi }) {
         preview.revision_token,
         approveDrift,
         approveAuth,
+        approveRebuild,
       );
       flowRef.current = "";
       setResult(value);
@@ -685,8 +933,21 @@ export function AgentPage({ api }: { api: DesktopApi }) {
     } catch (error) {
       const code = errorCode(error);
       if (code === "PREVIEW_STALE") {
-        setStage("configure");
-        setMessage(t("agents.previewRefreshed"));
+        await recoverStalePreview();
+      } else if (code === "BACKUP_FAILED") {
+        await destroyFlow();
+        clearFlowState("select");
+        setSelectedModes(detection ? initialSelection(detection) : {});
+        setMessage(t("agents.error.backupFailed"));
+      } else if (code === "WRITE_FAILED") {
+        await destroyFlow();
+        clearFlowState("select");
+        setSelectedModes(detection ? initialSelection(detection) : {});
+        setMessage(t("agents.error.rolledBack"));
+      } else if (code === "ROLLBACK_FAILED") {
+        await destroyFlow();
+        await refreshDetection("select").catch(() => undefined);
+        setMessage(t("agents.error.rollbackFailed"));
       } else if (
         code === "MODEL_NOT_AVAILABLE" ||
         code === "MODEL_CATALOG_STALE"
@@ -699,8 +960,25 @@ export function AgentPage({ api }: { api: DesktopApi }) {
         setMessage(t("agents.error.write"));
       }
     } finally {
+      writeInFlightRef.current = false;
       setBusy(false);
     }
+  }
+  async function finish() {
+    setBusy(true);
+    setMessage("");
+    try {
+      await refreshDetection("select");
+    } catch {
+      clearFlowState("select");
+      setMessage(t("agents.error.detect"));
+    } finally {
+      setBusy(false);
+    }
+  }
+  function confirmRebuild(agents: AgentId[]) {
+    setRebuildDialogOpen(false);
+    void write(agents);
   }
   async function importConfig(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -753,6 +1031,14 @@ export function AgentPage({ api }: { api: DesktopApi }) {
   const byAgent = new Map(
     detection?.agents.map((agent) => [agent.agent, agent]) ?? [],
   );
+  const selectedRebuildAgents = agentOrder.filter(
+    (agent) => selectedModes[agent] === "rebuild",
+  );
+  const rebuildPreviewAgents = validateRebuildPreview(
+    preview,
+    selectedRebuildAgents,
+  );
+  const rebuildPreviewMatchesSelection = rebuildPreviewAgents !== null;
   const invalid = configError();
   return (
     <section className="agents-workbench" aria-labelledby="agents-heading">
@@ -797,9 +1083,14 @@ export function AgentPage({ api }: { api: DesktopApi }) {
           <div className="agent-card-grid">
             {agentOrder.map((id) => {
               const agent = byAgent.get(id);
+              const mode = selectedModes[id];
+              const canRebuild = Boolean(
+                agent?.invalid && agent.recovery?.eligible,
+              );
+              const reasons = agent ? recoveryReasons(agent) : [];
               return (
                 <article
-                  className={`agent-card${selected.includes(id) ? " is-selected" : ""}`}
+                  className={`agent-card${mode ? " is-selected" : ""}`}
                   key={id}
                 >
                   <h3>{agentNames[id]}</h3>
@@ -810,19 +1101,42 @@ export function AgentPage({ api }: { api: DesktopApi }) {
                     {agent ? safe(agent.path) : t("agents.noResult")}
                   </p>
                   <span className="agent-state">
-                    {agent?.configured
-                      ? t("agents.detection.configured")
-                      : t("agents.detection.ready")}
+                    {detectionState(agent, t)}
                   </span>
+                  <p className="agent-card__guidance">
+                    {detectionGuidance(agent, t)}
+                  </p>
+                  {agent?.invalid && (
+                    <ul className="agent-recovery-reasons">
+                      {(reasons.length ? reasons : [""]).map((reason) => (
+                        <li key={reason || "unknown"}>
+                          {recoveryReason(reason, t)}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                   <label className="agent-select">
                     <input
                       type="checkbox"
-                      checked={selected.includes(id)}
+                      aria-label={t("agents.selectAgent", {
+                        agent: agentNames[id],
+                      })}
+                      checked={mode === "merge"}
                       disabled={!agent || !selectable(agent)}
                       onChange={() => toggleAgent(id)}
                     />
                     <span>{t("agents.select")}</span>
                   </label>
+                  {canRebuild && (
+                    <button
+                      type="button"
+                      className={`agent-rebuild-toggle${mode === "rebuild" ? " is-active" : ""}`}
+                      aria-pressed={mode === "rebuild"}
+                      onClick={() => toggleRebuild(id)}
+                    >
+                      {t("agents.recovery.toggle", { agent: agentNames[id] })}
+                    </button>
+                  )}
                 </article>
               );
             })}
@@ -1405,12 +1719,18 @@ export function AgentPage({ api }: { api: DesktopApi }) {
               </label>
             )}
             <button
+              ref={rebuildTriggerRef}
               className="control-button"
               disabled={
                 (preview.managed_config_drift && !approveDrift) ||
-                (preview.requires_codex_auth_approval && !approveAuth)
+                (preview.requires_codex_auth_approval && !approveAuth) ||
+                !rebuildPreviewMatchesSelection
               }
-              onClick={() => void write()}
+              onClick={() => {
+                if (!rebuildPreviewAgents) return;
+                if (rebuildPreviewAgents.length) setRebuildDialogOpen(true);
+                else void write([]);
+              }}
             >
               {t("agents.write")}
             </button>
@@ -1437,24 +1757,112 @@ export function AgentPage({ api }: { api: DesktopApi }) {
               <article key={agent.agent}>
                 <div className="result-card__heading">
                   <h4>{agentNames[agent.agent]}</h4>
+                  {selectedModes[agent.agent] === "rebuild" && (
+                    <span className="result-mode">
+                      {t("agents.mode.rebuild")}
+                    </span>
+                  )}
                   <span className={agent.success ? "result-ok" : "result-fail"}>
                     {agent.success ? t("agents.success") : t("agents.failure")}
                   </span>
                 </div>
                 {agent.changed?.map((path) => (
-                  <code key={path}>{safe(path)}</code>
+                  <div className="result-path" key={path}>
+                    <span>{t("agents.changed")}</span>
+                    <code>{safe(path)}</code>
+                  </div>
                 ))}
                 {agent.backups?.map((path) => (
-                  <code key={path}>{safe(path)}</code>
+                  <div className="result-path result-path--backup" key={path}>
+                    <span>{t("agents.backups")}</span>
+                    <code>{safe(path)}</code>
+                  </div>
                 ))}
               </article>
             ))}
           </div>
-          <button className="control-button" onClick={() => void startOver()}>
+          <button
+            className="control-button"
+            disabled={busy}
+            onClick={() => void finish()}
+          >
             {t("agents.finish")}
           </button>
         </div>
       )}
+      {rebuildDialogOpen &&
+        rebuildPreviewAgents &&
+        rebuildPreviewAgents.length > 0 && (
+          <div
+            className="dialog-backdrop"
+            onMouseDown={(event) => {
+              if (
+                event.target === event.currentTarget &&
+                !writeInFlightRef.current
+              ) {
+                closeRebuildDialog();
+              }
+            }}
+          >
+            <section
+              className="danger-dialog rebuild-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="rebuild-dialog-title"
+              aria-describedby="rebuild-dialog-warning"
+              onKeyDown={(event) => {
+                if (event.key !== "Tab") return;
+                if (
+                  event.shiftKey &&
+                  document.activeElement === cancelRebuildRef.current
+                ) {
+                  event.preventDefault();
+                  confirmRebuildRef.current?.focus();
+                } else if (
+                  !event.shiftKey &&
+                  document.activeElement === confirmRebuildRef.current
+                ) {
+                  event.preventDefault();
+                  cancelRebuildRef.current?.focus();
+                }
+              }}
+            >
+              <p className="overline">{t("agents.rebuildConfirm.overline")}</p>
+              <h2 id="rebuild-dialog-title">
+                {t("agents.rebuildConfirm.title")}
+              </h2>
+              <p>{t("agents.rebuildConfirm.description")}</p>
+              <ul className="rebuild-dialog__agents">
+                {rebuildPreviewAgents.map((agent) => (
+                  <li key={agent}>{agentNames[agent]}</li>
+                ))}
+              </ul>
+              <p id="rebuild-dialog-warning" className="danger-dialog__warning">
+                {t("agents.recovery.warning")}
+              </p>
+              <div className="danger-dialog__actions">
+                <button
+                  ref={cancelRebuildRef}
+                  type="button"
+                  className="text-button"
+                  disabled={busy}
+                  onClick={closeRebuildDialog}
+                >
+                  {t("agents.rebuildConfirm.cancel")}
+                </button>
+                <button
+                  ref={confirmRebuildRef}
+                  type="button"
+                  className="control-button control-button--danger"
+                  disabled={busy}
+                  onClick={() => confirmRebuild(rebuildPreviewAgents)}
+                >
+                  {t("agents.rebuildConfirm.confirm")}
+                </button>
+              </div>
+            </section>
+          </div>
+        )}
     </section>
   );
 }

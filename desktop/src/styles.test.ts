@@ -129,3 +129,36 @@ describe("responsive Claude role layout", () => {
     );
   });
 });
+
+describe("responsive rebuild flow", () => {
+  it("stacks preview and result content before the narrow layout", () => {
+    const medium = compact(extractMediaBlock(css, 800));
+    expect(medium).toMatch(
+      /\.preview-layout\s*,\s*\.result-grid\s*\{[^}]*grid-template-columns:\s*1fr;/,
+    );
+    expect(medium).toMatch(/\.approval-rail\s*\{[^}]*width:\s*100%;/);
+  });
+
+  it("keeps destructive confirmation usable at phone widths", () => {
+    const narrow = compact(extractMediaBlock(css, 540));
+    expect(narrow).toMatch(
+      /\.danger-dialog__actions\s*\{[^}]*align-items:\s*stretch;[^}]*flex-direction:\s*column;/,
+    );
+    expect(narrow).toMatch(/\.dialog-backdrop\s*\{[^}]*padding:\s*10px;/);
+    expect(narrow).toMatch(
+      /\.danger-dialog\s*\{[^}]*max-height:\s*calc\(100dvh - 20px\);/,
+    );
+  });
+
+  it("allows rebuild paths and warnings to wrap without widening cards", () => {
+    expect(compact(findRuleDeclarations(css, ".effect-card"))).toMatch(
+      /(?:^|;)\s*min-width:\s*0\s*;/,
+    );
+    expect(compact(findRuleDeclarations(css, ".effect-card code"))).toMatch(
+      /(?:^|;)\s*overflow-wrap:\s*anywhere\s*;/,
+    );
+    expect(compact(findRuleDeclarations(css, ".result-path code"))).toMatch(
+      /(?:^|;)\s*overflow-wrap:\s*anywhere\s*;/,
+    );
+  });
+});

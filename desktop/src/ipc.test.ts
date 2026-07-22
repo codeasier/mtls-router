@@ -6,9 +6,67 @@ import {
   MAX_LOG_LINES,
   POLL_SNAPSHOT_EVENT,
   sanitizeSensitiveText,
+  type AgentDetection,
+  type AgentModes,
+  type AgentPreview,
   type InvokeFn,
   type ListenFn,
 } from "./ipc";
+
+const detectionFixture = {
+  agents: [
+    {
+      agent: "claude",
+      name: "Claude Code",
+      detected: true,
+      path: "/home/example/.claude/settings.json",
+      format: "json",
+      exists: true,
+      writable: false,
+      configured: false,
+      invalid: true,
+      migratable: false,
+      recovery: {
+        eligible: true,
+        reasons: ["syntax_invalid"],
+        files: [
+          {
+            role: "config",
+            path: "/home/example/.claude/settings.json",
+            format: "json",
+            exists: true,
+            reasons: ["syntax_invalid"],
+          },
+        ],
+      },
+    },
+  ],
+} satisfies AgentDetection;
+
+const previewFixture = {
+  revision_token: "revision-1",
+  model_config: { version: 1 },
+  fragments: [],
+  files: [
+    {
+      agent: "claude",
+      mode: "rebuild",
+      path: "/home/example/.claude/settings.json",
+      role: "config",
+      format: "json",
+      operation: "replace",
+      backup_required: true,
+      backup_pattern: "/home/example/.claude/settings.json.bak.*",
+      backup_sensitive: true,
+      preserves: ["unrelated files"],
+      warning: "Existing invalid configuration will be rebuilt",
+    },
+  ],
+  managed_config_drift: false,
+  drifted_agents: [],
+  managed_collisions: [],
+  requires_codex_auth_approval: false,
+} satisfies AgentPreview;
 
 describe("typed desktop API", () => {
   it("centralizes lifecycle command names and typed arguments", async () => {
@@ -91,7 +149,8 @@ describe("typed desktop API", () => {
         fable: { model: "m", name: "Fable", context: "1m" as const },
       },
     };
-    await api.previewAgents(["claude"], "flow", "catalog", modelConfig);
+    const modes = { claude: "rebuild" } satisfies AgentModes;
+    await api.previewAgents(["claude"], "flow", "catalog", modelConfig, modes);
     await api.renderAgentConfig(["claude"], "flow", "catalog", modelConfig);
     await api.writeAgents(
       ["claude"],
@@ -101,6 +160,7 @@ describe("typed desktop API", () => {
       "revision-1",
       false,
       false,
+      ["claude"],
     );
 
     expect(invoke).toHaveBeenNthCalledWith(1, COMMANDS.agentDetect);
@@ -113,6 +173,7 @@ describe("typed desktop API", () => {
         flow_id: "flow",
         catalog_token: "catalog",
         model_config: modelConfig,
+        modes,
       },
     });
     expect(invoke).toHaveBeenNthCalledWith(4, COMMANDS.agentRender, {
@@ -132,11 +193,27 @@ describe("typed desktop API", () => {
         revision_token: "revision-1",
         approve_managed_overwrite: false,
         approve_codex_auth_change: false,
+        approve_rebuild: ["claude"],
       },
     });
+    expect(invoke.mock.calls[4][1]).not.toHaveProperty("request.modes");
     expect(JSON.stringify(invoke.mock.calls.slice(2))).not.toContain(
       transientKey,
     );
+  });
+
+  it("preserves recovery detection and rebuild preview fields", () => {
+    expect(detectionFixture.agents[0].recovery.files[0]).toMatchObject({
+      role: "config",
+      reasons: ["syntax_invalid"],
+    });
+    expect(previewFixture.files[0]).toMatchObject({
+      agent: "claude",
+      mode: "rebuild",
+      backup_required: true,
+      backup_sensitive: true,
+      preserves: ["unrelated files"],
+    });
   });
 
   it("uses only narrow settings and uninstall commands", async () => {
