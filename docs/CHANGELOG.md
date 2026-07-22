@@ -2,7 +2,9 @@
 
 [中文](zh-CN/CHANGELOG.md)
 
-## Unreleased
+## v0.2.0 - 2026-07-23
+
+This release introduces authenticated, catalog-driven Agent configuration across the manager, setup scripts, and desktop app, with immutable build presets, explicit recovery workflows, and fail-closed handling of model availability, authorization, and sensitive configuration state.
 
 ### Added
 
