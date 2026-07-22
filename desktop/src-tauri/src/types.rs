@@ -428,6 +428,24 @@ pub struct ComponentVersions {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct AgentRecoveryFileState {
+    pub role: String,
+    pub path: String,
+    pub format: String,
+    pub exists: bool,
+    #[serde(default)]
+    pub reasons: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+pub struct AgentRecoveryState {
+    pub eligible: bool,
+    #[serde(default)]
+    pub reasons: Vec<String>,
+    pub files: Vec<AgentRecoveryFileState>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct AgentState {
     pub agent: String,
     pub name: String,
@@ -444,6 +462,7 @@ pub struct AgentState {
     pub invalid: bool,
     #[serde(default)]
     pub migratable: bool,
+    pub recovery: AgentRecoveryState,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -462,12 +481,26 @@ pub struct AgentFragment {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct AgentFileEffect {
+    #[serde(default)]
+    pub agent: String,
+    #[serde(default)]
+    pub mode: String,
     pub path: String,
     pub role: String,
     pub format: String,
     pub operation: String,
     #[serde(default)]
     pub backup_path: String,
+    #[serde(default)]
+    pub backup_required: bool,
+    #[serde(default)]
+    pub backup_pattern: String,
+    #[serde(default)]
+    pub backup_sensitive: bool,
+    #[serde(default)]
+    pub preserves: Vec<String>,
+    #[serde(default)]
+    pub warning: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -557,6 +590,97 @@ mod tests {
                 "safe line".to_owned(),
                 "api_key=[REDACTED]".to_owned()
             ])
+        );
+    }
+
+    #[test]
+    fn agent_recovery_and_rebuild_preview_fields_survive_serde() {
+        let detection_json = serde_json::json!({
+            "agents": [{
+                "agent": "claude",
+                "name": "Claude Code",
+                "detected": true,
+                "path": "/home/example/.claude/settings.json",
+                "format": "json",
+                "exists": true,
+                "writable": false,
+                "configured": false,
+                "invalid": true,
+                "migratable": false,
+                "recovery": {
+                    "eligible": true,
+                    "reasons": ["syntax_invalid"],
+                    "files": [{
+                        "role": "config",
+                        "path": "/home/example/.claude/settings.json",
+                        "format": "json",
+                        "exists": true,
+                        "reasons": ["syntax_invalid"]
+                    }]
+                }
+            }]
+        });
+        let detection: AgentDetect = serde_json::from_value(detection_json).unwrap();
+        let detection_value = serde_json::to_value(detection).unwrap();
+        assert_eq!(detection_value["agents"][0]["migratable"], false);
+        assert_eq!(detection_value["agents"][0]["recovery"]["eligible"], true);
+        assert_eq!(
+            detection_value["agents"][0]["recovery"]["reasons"],
+            serde_json::json!(["syntax_invalid"])
+        );
+        assert_eq!(
+            detection_value["agents"][0]["recovery"]["files"][0],
+            serde_json::json!({
+                "role": "config",
+                "path": "/home/example/.claude/settings.json",
+                "format": "json",
+                "exists": true,
+                "reasons": ["syntax_invalid"]
+            })
+        );
+
+        let preview_json = serde_json::json!({
+            "revision_token": "revision-1",
+            "model_config": {"version": 1},
+            "fragments": [],
+            "files": [{
+                "agent": "claude",
+                "mode": "rebuild",
+                "path": "/home/example/.claude/settings.json",
+                "role": "config",
+                "format": "json",
+                "operation": "replace",
+                "backup_required": true,
+                "backup_pattern": "/home/example/.claude/settings.json.bak.*",
+                "backup_sensitive": true,
+                "preserves": ["unrelated files"],
+                "warning": "Existing invalid configuration will be rebuilt"
+            }],
+            "managed_config_drift": false,
+            "drifted_agents": [],
+            "managed_collisions": [],
+            "requires_codex_auth_approval": false,
+            "state_change": null,
+            "state_backup": null
+        });
+        let preview: AgentPreview = serde_json::from_value(preview_json).unwrap();
+        let preview_value = serde_json::to_value(preview).unwrap();
+        assert_eq!(
+            preview_value["files"][0],
+            serde_json::json!({
+                "agent": "claude",
+                "mode": "rebuild",
+                "path": "/home/example/.claude/settings.json",
+                "role": "config",
+                "format": "json",
+                "operation": "replace",
+                "backup_path": "",
+                "backup_required": true,
+                "backup_pattern": "/home/example/.claude/settings.json.bak.*",
+                "backup_sensitive": true,
+                "preserves": ["unrelated files"],
+                "warning": "Existing invalid configuration will be rebuilt"
+            })
         );
     }
 }

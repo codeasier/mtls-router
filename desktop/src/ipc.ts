@@ -114,6 +114,8 @@ export interface DesktopPaths {
 }
 
 export type AgentId = "claude" | "opencode" | "codex";
+export type AgentMode = "merge" | "rebuild";
+export type AgentModes = Partial<Record<AgentId, AgentMode>>;
 export type NativeLanguage = "zh-CN" | "en";
 export type JsonObject = Record<string, unknown>;
 
@@ -220,6 +222,20 @@ export function initializeAgentConfig(
   return { config, sources };
 }
 
+export interface AgentRecoveryFileState {
+  role: string;
+  path: string;
+  format: string;
+  exists: boolean;
+  reasons?: string[];
+}
+
+export interface AgentRecoveryState {
+  eligible: boolean;
+  reasons?: string[];
+  files: AgentRecoveryFileState[];
+}
+
 export interface AgentState {
   agent: AgentId;
   name: string;
@@ -232,6 +248,8 @@ export interface AgentState {
   writable: boolean;
   configured: boolean;
   invalid: boolean;
+  migratable?: boolean;
+  recovery: AgentRecoveryState;
 }
 
 export interface AgentDetection {
@@ -263,11 +281,18 @@ export interface AgentFragment {
   content: string;
 }
 export interface AgentFileEffect {
+  agent?: AgentId;
+  mode?: AgentMode;
   path: string;
   role: string;
   format: string;
   operation: string;
   backup_path?: string;
+  backup_required?: boolean;
+  backup_pattern?: string;
+  backup_sensitive?: boolean;
+  preserves?: string[];
+  warning?: string;
 }
 export interface AgentPreview {
   revision_token: string;
@@ -341,6 +366,7 @@ export interface DesktopApi {
     flowId: string,
     catalogToken: string,
     modelConfig: ModelConfig,
+    modes: AgentModes,
   ): Promise<AgentPreview>;
   writeAgents(
     agents: AgentId[],
@@ -350,6 +376,7 @@ export interface DesktopApi {
     revisionToken: string,
     approveManagedOverwrite: boolean,
     approveCodexAuthChange: boolean,
+    approveRebuild: AgentId[],
   ): Promise<AgentWriteResult>;
   destroyAgentModelFlow(flowId: string): Promise<void>;
   importAgentModelConfig(
@@ -445,13 +472,14 @@ export function createDesktopApi(
           model_config: modelConfig,
         },
       }),
-    previewAgents: (agents, flowId, catalogToken, modelConfig) =>
+    previewAgents: (agents, flowId, catalogToken, modelConfig, modes) =>
       invoke(COMMANDS.agentPreview, {
         request: {
           agents,
           flow_id: flowId,
           catalog_token: catalogToken,
           model_config: modelConfig,
+          modes,
         },
       }),
     writeAgents: (
@@ -462,6 +490,7 @@ export function createDesktopApi(
       revisionToken,
       approveManagedOverwrite,
       approveCodexAuthChange,
+      approveRebuild,
     ) =>
       invoke(COMMANDS.agentWrite, {
         request: {
@@ -472,6 +501,7 @@ export function createDesktopApi(
           revision_token: revisionToken,
           approve_managed_overwrite: approveManagedOverwrite,
           approve_codex_auth_change: approveCodexAuthChange,
+          approve_rebuild: approveRebuild,
         },
       }),
     destroyAgentModelFlow: (flowId) =>

@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { AgentPage } from "./AgentPage";
@@ -22,6 +23,7 @@ const detection: AgentDetection = {
     writable: true,
     configured: false,
     invalid: false,
+    recovery: { eligible: false, files: [] },
   })),
 };
 const discovery: AgentModelsResult = {
@@ -48,6 +50,11 @@ const configured: ModelConfig = {
   opencode: { default_model: "model-a", models: { "model-a": {} } },
   codex: { model: "model-b" },
 };
+const mergeModes = {
+  claude: "merge",
+  opencode: "merge",
+  codex: "merge",
+} as const;
 const preview: AgentPreview = {
   revision_token: "revision",
   model_config: configured,
@@ -80,6 +87,93 @@ const preview: AgentPreview = {
     },
   ],
   requires_codex_auth_approval: true,
+};
+const rebuildDetection: AgentDetection = {
+  agents: [
+    detection.agents[0],
+    {
+      ...detection.agents[1],
+      invalid: true,
+      configured: false,
+      recovery: {
+        eligible: true,
+        reasons: ["syntax_invalid"],
+        files: [
+          {
+            role: "config",
+            path: "/safe/opencode/config.json",
+            format: "json",
+            exists: true,
+            reasons: ["syntax_invalid"],
+          },
+        ],
+      },
+    },
+    {
+      ...detection.agents[2],
+      detected: false,
+      exists: false,
+      writable: false,
+    },
+  ],
+};
+const rebuildDiscovery: AgentModelsResult = {
+  ...discovery,
+  existing: {
+    model_config: {
+      version: 1,
+      claude: configured.claude,
+      opencode: configured.opencode,
+    },
+    unavailable_models: {},
+    drifted_agents: ["claude"],
+  },
+};
+const rebuildPreview: AgentPreview = {
+  ...preview,
+  model_config: rebuildDiscovery.existing.model_config as ModelConfig,
+  fragments: [
+    {
+      agent: "opencode",
+      role: "config",
+      path: "/safe/opencode/config.json",
+      format: "json",
+      content: '{"api_key":"sk-preview-canary-secret"}',
+    },
+  ],
+  files: [
+    {
+      agent: "claude",
+      mode: "merge",
+      path: "/safe/claude/settings.json",
+      role: "config",
+      format: "json",
+      operation: "replace",
+      preserves: ["unrelated root fields"],
+    },
+    {
+      agent: "opencode",
+      mode: "rebuild",
+      path: "/safe/opencode/config.json",
+      role: "config",
+      format: "json",
+      operation: "replace",
+      backup_required: true,
+      backup_pattern: "/safe/opencode/config.json.bak-<timestamp>-<random>",
+      backup_sensitive: true,
+      preserves: ["managed model selection only"],
+      warning: "Existing unrelated settings will be discarded.",
+    },
+    {
+      agent: "opencode",
+      mode: "rebuild",
+      path: "/safe/opencode/models.json",
+      role: "models",
+      format: "json",
+      operation: "create",
+      preserves: [],
+    },
+  ],
 };
 
 async function reachCredential(
@@ -121,6 +215,43 @@ function completeRequiredConfig() {
   fireEvent.change(screen.getByLabelText(/活动模型|Active model/), {
     target: { value: "model-b" },
   });
+}
+
+async function reachRebuildPreview(
+  overrides: Parameters<typeof createMockApi>[0] = {},
+  value: AgentPreview = rebuildPreview,
+) {
+  const api = createMockApi({
+    detectAgents: vi.fn().mockResolvedValue(rebuildDetection),
+    discoverModels: vi.fn().mockResolvedValue(rebuildDiscovery),
+    previewAgents: vi.fn().mockResolvedValue(value),
+    ...overrides,
+  });
+  render(<AgentPage api={api} />);
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: /备份并重建 opencode|Back up and rebuild opencode/,
+    }),
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: /继续输入凭据|Continue to credential/ }),
+  );
+  fireEvent.change(screen.getByLabelText(/API (?:key|密钥)/), {
+    target: { value: "sk-ui-canary-secret" },
+  });
+  fireEvent.click(
+    screen.getByRole("button", { name: /发现模型|Discover models/ }),
+  );
+  await screen.findByText(/共同模型目录|Common model catalog/);
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: /生成写入预览|Generate write preview/,
+    }),
+  );
+  await screen.findByText(
+    "/safe/opencode/config.json.bak-<timestamp>-<random>",
+  );
+  return api;
 }
 
 describe("Agent model workbench", () => {
@@ -280,6 +411,158 @@ describe("Agent model workbench", () => {
       expect(path).toHaveClass("agent-card__config-path");
       expect(path).toHaveTextContent(agent.path);
     }
+  });
+
+  it("recovery selection keeps merge and eligible rebuild modes independent", async () => {
+    const recoveryDetection: AgentDetection = {
+      agents: [
+        detection.agents[0],
+        {
+          ...detection.agents[1],
+          invalid: true,
+          configured: false,
+          recovery: {
+            eligible: true,
+            files: [
+              {
+                role: "config",
+                path: "/safe/opencode",
+                format: "json",
+                exists: true,
+                reasons: ["syntax_invalid"],
+              },
+            ],
+          },
+        },
+        {
+          ...detection.agents[2],
+          invalid: true,
+          configured: false,
+          recovery: {
+            eligible: false,
+            reasons: ["linked"],
+            files: [],
+          },
+        },
+      ],
+    };
+    const api = createMockApi({
+      detectAgents: vi.fn().mockResolvedValue(recoveryDetection),
+      discoverModels: vi.fn().mockResolvedValue({
+        ...discovery,
+        existing: {
+          model_config: configured,
+          unavailable_models: {},
+          drifted_agents: [],
+        },
+      }),
+    });
+    render(<AgentPage api={api} />);
+
+    const claude = await screen.findByRole("checkbox", {
+      name: /选择 Claude Code|Select Claude Code/,
+    });
+    const opencode = screen.getByRole("checkbox", {
+      name: /选择 opencode|Select opencode/,
+    });
+    const codex = screen.getByRole("checkbox", {
+      name: /选择 Codex|Select Codex/,
+    });
+    expect(claude).toBeChecked();
+    expect(opencode).toBeDisabled();
+    expect(codex).toBeDisabled();
+    expect(screen.getByText(/链接文件|linked file/i)).toBeVisible();
+    expect(
+      screen.queryByRole("button", {
+        name: /备份并重建 Codex|Back up and rebuild Codex/,
+      }),
+    ).not.toBeInTheDocument();
+
+    const rebuild = screen.getByRole("button", {
+      name: /备份并重建 opencode|Back up and rebuild opencode/,
+    });
+    fireEvent.click(rebuild);
+    expect(rebuild).toHaveAttribute("aria-pressed", "true");
+    expect(claude).toBeChecked();
+    expect(
+      screen.getByText(/已选择 2 个 Agent|2 Agents selected/),
+    ).toBeVisible();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /继续输入凭据|Continue to credential/,
+      }),
+    );
+    fireEvent.change(screen.getByLabelText(/API (?:key|密钥)/), {
+      target: { value: "recovery-selection-secret" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: /发现模型|Discover models/ }),
+    );
+    await screen.findByText(/共同模型目录|Common model catalog/);
+    expect(screen.queryByDisplayValue("recovery-selection-secret")).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /生成写入预览|Generate write preview/,
+      }),
+    );
+
+    await waitFor(() => expect(api.previewAgents).toHaveBeenCalledTimes(1));
+    expect(api.discoverModels).toHaveBeenCalledWith(
+      ["claude", "opencode"],
+      "recovery-selection-secret",
+    );
+    expect(api.previewAgents).toHaveBeenCalledWith(
+      ["claude", "opencode"],
+      discovery.flow_id,
+      discovery.catalog_token,
+      {
+        version: 1,
+        claude: configured.claude,
+        opencode: configured.opencode,
+      },
+      { claude: "merge", opencode: "rebuild" },
+    );
+  });
+
+  it("recovery selection shows actual absent and read-only guidance", async () => {
+    const api = createMockApi({
+      detectAgents: vi.fn().mockResolvedValue({
+        agents: [
+          {
+            ...detection.agents[0],
+            detected: false,
+            exists: false,
+            writable: false,
+          },
+          { ...detection.agents[1], writable: false },
+          detection.agents[2],
+        ],
+      }),
+    });
+    render(<AgentPage api={api} />);
+
+    expect(
+      await screen.findByRole("checkbox", {
+        name: /选择 Claude Code|Select Claude Code/,
+      }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("checkbox", { name: /选择 opencode|Select opencode/ }),
+    ).toBeDisabled();
+    expect(screen.getByText(/未检测到|Not detected/)).toBeVisible();
+    expect(screen.getByText(/不可写|Not writable/)).toBeVisible();
+    expect(
+      screen.getByText(/安装或启动该 Agent|Install or start this Agent/),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        /恢复当前用户对配置目录的写权限|Restore current-user write access/,
+      ),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: /备份并重建|Back up and rebuild/ }),
+    ).not.toBeInTheDocument();
   });
 
   it("does not auto-select models and clears the credential immediately on discovery submit", async () => {
@@ -514,6 +797,7 @@ describe("Agent model workbench", () => {
         },
         codex: { model: "model-b" },
       },
+      mergeModes,
     );
   });
 
@@ -614,6 +898,7 @@ describe("Agent model workbench", () => {
         opencode: { default_model: "model-a", models: { "model-a": {} } },
         codex: { model: "model-b" },
       },
+      mergeModes,
     );
   });
 
@@ -694,6 +979,7 @@ describe("Agent model workbench", () => {
       discovery.flow_id,
       discovery.catalog_token,
       imported,
+      mergeModes,
     );
   });
 
@@ -772,6 +1058,7 @@ describe("Agent model workbench", () => {
       discovery.flow_id,
       discovery.catalog_token,
       imported,
+      mergeModes,
     );
   });
 
@@ -865,6 +1152,7 @@ describe("Agent model workbench", () => {
       discovery.flow_id,
       discovery.catalog_token,
       inherited,
+      mergeModes,
     );
   });
 
@@ -931,6 +1219,399 @@ describe("Agent model workbench", () => {
       normalizedPreview.revision_token,
       false,
       false,
+      [],
+    );
+  });
+
+  it("renders a sanitized rebuild preview and requires exact accessible confirmation", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 360,
+    });
+    let resolveWrite: (() => void) | undefined;
+    const api = await reachRebuildPreview({
+      writeAgents: vi.fn().mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveWrite = () =>
+              resolve({ transaction_id: "tx-rebuild", agents: [] });
+          }),
+      ),
+    });
+
+    expect(screen.getAllByText(/重建|Rebuild/)).toHaveLength(2);
+    expect(screen.getByText(/合并|Merge/)).toBeVisible();
+    expect(screen.getByText("/safe/claude/settings.json")).toBeVisible();
+    expect(screen.getAllByText("/safe/opencode/config.json")).toHaveLength(2);
+    expect(screen.getByText("/safe/opencode/models.json")).toBeVisible();
+    expect(
+      screen.getByText("/safe/opencode/config.json.bak-<timestamp>-<random>"),
+    ).toBeVisible();
+    expect(screen.getByText(/SENSITIVE BACKUP/)).toBeVisible();
+    expect(screen.getByText(/managed model selection only/)).toBeVisible();
+    expect(
+      screen.getByText(/Existing unrelated settings will be discarded/),
+    ).toBeVisible();
+    expect(document.documentElement.outerHTML).not.toContain(
+      "sk-ui-canary-secret",
+    );
+    expect(document.body.textContent).not.toContain("sk-preview-canary-secret");
+
+    const write = screen.getByRole("button", {
+      name: /写入所选 Agent|Write selected Agents/,
+    });
+    expect(write).toBeDisabled();
+    fireEvent.click(screen.getByLabelText(/漂移|drifted/));
+    expect(write).toBeDisabled();
+    fireEvent.click(screen.getByLabelText(/Codex/));
+    expect(write).toBeEnabled();
+    fireEvent.click(write);
+
+    let dialog = screen.getByRole("dialog", {
+      name: /确认备份并重建|Confirm backup and rebuild/,
+    });
+    const cancel = screen.getByRole("button", { name: /^取消$|^Cancel$/ });
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+    expect(cancel).toHaveFocus();
+    expect(dialog).toHaveTextContent("opencode");
+    expect(dialog).not.toHaveTextContent("Claude Code");
+    const confirm = screen.getByRole("button", {
+      name: /^备份并重建$|^Back up and rebuild$/,
+    });
+    fireEvent.keyDown(cancel, { key: "Tab", shiftKey: true });
+    expect(confirm).toHaveFocus();
+    fireEvent.keyDown(confirm, { key: "Tab" });
+    expect(cancel).toHaveFocus();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await waitFor(() => expect(write).toHaveFocus());
+
+    fireEvent.click(write);
+    dialog = screen.getByRole("dialog");
+    fireEvent.mouseDown(dialog.parentElement!, {
+      target: dialog.parentElement,
+    });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await waitFor(() => expect(write).toHaveFocus());
+
+    fireEvent.click(write);
+    const finalConfirm = screen.getByRole("button", {
+      name: /^备份并重建$|^Back up and rebuild$/,
+    });
+    finalConfirm.focus();
+    await user.keyboard("{Enter}");
+    expect(api.writeAgents).toHaveBeenCalledTimes(1);
+    expect(api.writeAgents).toHaveBeenCalledWith(
+      ["claude", "opencode"],
+      rebuildDiscovery.flow_id,
+      rebuildDiscovery.catalog_token,
+      rebuildPreview.model_config,
+      rebuildPreview.revision_token,
+      true,
+      true,
+      ["opencode"],
+    );
+    resolveWrite?.();
+  });
+
+  it("fails closed when preview includes an extra rebuild Agent", async () => {
+    const api = await reachRebuildPreview(
+      {},
+      {
+        ...rebuildPreview,
+        managed_config_drift: false,
+        requires_codex_auth_approval: false,
+        files: [
+          ...rebuildPreview.files,
+          {
+            agent: "codex",
+            mode: "rebuild",
+            path: "/safe/codex/config.toml",
+            role: "config",
+            format: "toml",
+            operation: "replace",
+          },
+        ],
+      },
+    );
+
+    const write = screen.getByRole("button", {
+      name: /写入所选 Agent|Write selected Agents/,
+    });
+    expect(write).toBeDisabled();
+    await userEvent.setup().click(write);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(api.writeAgents).not.toHaveBeenCalled();
+  });
+
+  it("reuses discovery and Rust flow when stale rebuild selections remain eligible", async () => {
+    const detectAgents = vi
+      .fn()
+      .mockResolvedValueOnce(rebuildDetection)
+      .mockResolvedValueOnce({
+        agents: rebuildDetection.agents.map((agent) => ({ ...agent })),
+      });
+    const api = await reachRebuildPreview(
+      {
+        detectAgents,
+        writeAgents: vi.fn().mockRejectedValue({
+          code: "PREVIEW_STALE",
+          message: "sk-reusable-stale-canary-secret",
+        }),
+      },
+      {
+        ...rebuildPreview,
+        managed_config_drift: false,
+        requires_codex_auth_approval: false,
+      },
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /写入所选 Agent|Write selected Agents/,
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /^备份并重建$|^Back up and rebuild$/,
+      }),
+    );
+
+    expect(
+      await screen.findByText(/预览后文件发生变化|Files changed after preview/),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", {
+        name: /生成写入预览|Generate write preview/,
+      }),
+    ).toBeVisible();
+    expect(screen.queryByLabelText(/API (?:key|密钥)/)).not.toBeInTheDocument();
+    expect(detectAgents).toHaveBeenCalledTimes(2);
+    expect(api.discoverModels).toHaveBeenCalledTimes(1);
+    expect(api.destroyAgentModelFlow).not.toHaveBeenCalled();
+    expect(document.body.textContent).not.toContain(
+      "sk-reusable-stale-canary-secret",
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /生成写入预览|Generate write preview/,
+      }),
+    );
+    await waitFor(() => expect(api.previewAgents).toHaveBeenCalledTimes(2));
+    expect(api.previewAgents).toHaveBeenLastCalledWith(
+      ["claude", "opencode"],
+      rebuildDiscovery.flow_id,
+      rebuildDiscovery.catalog_token,
+      rebuildPreview.model_config,
+      { claude: "merge", opencode: "rebuild" },
+    );
+  });
+
+  it("falls back to authoritative selection when a stale rebuild source was repaired", async () => {
+    const refreshed: AgentDetection = {
+      agents: detection.agents.map((agent) => ({ ...agent, configured: true })),
+    };
+    const detectAgents = vi
+      .fn()
+      .mockResolvedValueOnce(rebuildDetection)
+      .mockResolvedValueOnce(refreshed);
+    const api = await reachRebuildPreview(
+      {
+        detectAgents,
+        writeAgents: vi.fn().mockRejectedValue({
+          code: "PREVIEW_STALE",
+          message: "sk-stale-canary-secret",
+        }),
+      },
+      {
+        ...rebuildPreview,
+        managed_config_drift: false,
+        requires_codex_auth_approval: false,
+      },
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /写入所选 Agent|Write selected Agents/,
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /^备份并重建$|^Back up and rebuild$/,
+      }),
+    );
+
+    expect(
+      await screen.findByText(/预览后文件发生变化|Files changed after preview/),
+    ).toBeVisible();
+    expect(detectAgents).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/已选择 3 个 Agent|3 Agents selected/),
+    ).toBeVisible();
+    expect(document.body.textContent).not.toContain("sk-stale-canary-secret");
+    expect(api.destroyAgentModelFlow).toHaveBeenCalledWith(
+      rebuildDiscovery.flow_id,
+    );
+  });
+
+  it("clears stale flow and safely reports a detection failure", async () => {
+    const detectAgents = vi
+      .fn()
+      .mockResolvedValueOnce(rebuildDetection)
+      .mockRejectedValueOnce(new Error("sk-detect-canary-secret"));
+    const api = await reachRebuildPreview(
+      {
+        detectAgents,
+        writeAgents: vi.fn().mockRejectedValue({ code: "PREVIEW_STALE" }),
+      },
+      {
+        ...rebuildPreview,
+        managed_config_drift: false,
+        requires_codex_auth_approval: false,
+      },
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /写入所选 Agent|Write selected Agents/,
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /^备份并重建$|^Back up and rebuild$/,
+      }),
+    );
+
+    expect(
+      await screen.findByText(/Agent 检测失败|Agent detection failed/),
+    ).toBeVisible();
+    expect(api.destroyAgentModelFlow).toHaveBeenCalledWith(
+      rebuildDiscovery.flow_id,
+    );
+    expect(screen.queryByLabelText(/API (?:key|密钥)/)).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("sk-detect-canary-secret");
+  });
+
+  it.each([
+    ["BACKUP_FAILED", /备份失败|Backup failed/, 1],
+    ["WRITE_FAILED", /已从回滚备份恢复|restored from rollback backups/, 1],
+    ["ROLLBACK_FAILED", /无法完成回滚|Rollback could not be completed/, 2],
+  ] as const)(
+    "reports stable %s rebuild outcomes and refreshes only unresolved rollback",
+    async (code, message, detectionCalls) => {
+      const writesDisabled: AgentDetection = {
+        agents: rebuildDetection.agents.map((agent) => ({
+          ...agent,
+          writable: false,
+          recovery: agent.recovery
+            ? {
+                ...agent.recovery,
+                eligible: false,
+                reasons: ["writes_disabled"],
+              }
+            : {
+                eligible: false,
+                reasons: ["writes_disabled"],
+                files: [],
+              },
+        })),
+      };
+      const detectAgents = vi
+        .fn()
+        .mockResolvedValueOnce(rebuildDetection)
+        .mockResolvedValue(writesDisabled);
+      const api = await reachRebuildPreview(
+        {
+          detectAgents,
+          writeAgents: vi.fn().mockRejectedValue({
+            code,
+            message: `sk-${code.toLowerCase()}-canary-secret`,
+          }),
+        },
+        {
+          ...rebuildPreview,
+          managed_config_drift: false,
+          requires_codex_auth_approval: false,
+        },
+      );
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: /写入所选 Agent|Write selected Agents/,
+        }),
+      );
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: /^备份并重建$|^Back up and rebuild$/,
+        }),
+      );
+
+      expect(await screen.findByText(message)).toBeVisible();
+      expect(detectAgents).toHaveBeenCalledTimes(detectionCalls);
+      expect(document.body.textContent).not.toContain("canary-secret");
+      expect(api.destroyAgentModelFlow).toHaveBeenCalledWith(
+        rebuildDiscovery.flow_id,
+      );
+      if (code === "ROLLBACK_FAILED") {
+        expect(screen.getByText(/已禁用|disabled/i)).toBeVisible();
+      }
+    },
+  );
+
+  it("shows actual backup paths on success and refreshes detection on Finish", async () => {
+    const detectAgents = vi.fn().mockResolvedValue(rebuildDetection);
+    const api = await reachRebuildPreview(
+      {
+        detectAgents,
+        writeAgents: vi.fn().mockResolvedValue({
+          transaction_id: "tx-success",
+          agents: [
+            {
+              agent: "opencode",
+              success: true,
+              changed: ["/safe/opencode/config.json"],
+              backups: ["/safe/opencode/config.json.bak-actual-42"],
+            },
+          ],
+        }),
+      },
+      {
+        ...rebuildPreview,
+        managed_config_drift: false,
+        requires_codex_auth_approval: false,
+      },
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /写入所选 Agent|Write selected Agents/,
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /^备份并重建$|^Back up and rebuild$/,
+      }),
+    );
+
+    expect(
+      await screen.findByText("/safe/opencode/config.json.bak-actual-42"),
+    ).toBeVisible();
+    expect(screen.getByText(/已创建备份|Backup created/)).toBeVisible();
+    expect(screen.getByText(/^重建$|^Rebuild$/)).toBeVisible();
+    expect(detectAgents).toHaveBeenCalledTimes(1);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /完成并刷新检测|Finish and refresh detection/,
+      }),
+    );
+    await waitFor(() => expect(detectAgents).toHaveBeenCalledTimes(2));
+    expect(api.writeAgents).toHaveBeenLastCalledWith(
+      ["claude", "opencode"],
+      rebuildDiscovery.flow_id,
+      rebuildDiscovery.catalog_token,
+      rebuildPreview.model_config,
+      rebuildPreview.revision_token,
+      false,
+      false,
+      ["opencode"],
     );
   });
 
@@ -1233,6 +1914,8 @@ describe("Agent model workbench", () => {
         expect(
           await screen.findByText(/共同模型目录|Common model catalog/),
         ).toBeInTheDocument();
+        expect(api.detectAgents).toHaveBeenCalledTimes(2);
+        expect(api.destroyAgentModelFlow).not.toHaveBeenCalled();
       }
       expect(document.documentElement.outerHTML).not.toContain(
         `write-secret-${code}`,

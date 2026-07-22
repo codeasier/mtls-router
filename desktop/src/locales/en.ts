@@ -191,6 +191,8 @@ export const en: Record<TranslationKey, string> = {
   "agents.operation.create": "Create",
   "agents.operation.replace": "Replace",
   "agents.operation.preserve": "Preserve unmanaged configuration",
+  "agents.mode.merge": "Merge",
+  "agents.mode.rebuild": "Rebuild",
   "agents.detection.absent": "Not detected",
   "agents.detection.invalid": "Invalid configuration",
   "agents.detection.readonly": "Not writable",
@@ -206,6 +208,35 @@ export const en: Record<TranslationKey, string> = {
     "Local managed fields are complete; discover models to verify current authorization before updating.",
   "agents.guidance.ready":
     "Configuration can be generated; previewing does not write files.",
+  "agents.recovery.guidance.eligible":
+    "This invalid configuration can be backed up and rebuilt from a clean managed configuration.",
+  "agents.recovery.guidance.ineligible":
+    "Automatic rebuild is unavailable. Resolve the reason shown here, then refresh detection.",
+  "agents.recovery.toggle": "Back up and rebuild {agent}",
+  "agents.recovery.warning":
+    "Unrelated settings, comments, formatting, and valid companion-file metadata will not be preserved.",
+  "agents.recovery.reason.syntaxInvalid":
+    "The configuration syntax is invalid.",
+  "agents.recovery.reason.unsupportedStructure":
+    "The configuration structure cannot be rebuilt safely.",
+  "agents.recovery.reason.unreadable":
+    "The configuration file cannot be read by the current user.",
+  "agents.recovery.reason.oversized":
+    "The configuration file exceeds the supported size limit.",
+  "agents.recovery.reason.nonRegular":
+    "The configuration path is not a regular file.",
+  "agents.recovery.reason.linked":
+    "A linked file cannot be rebuilt automatically.",
+  "agents.recovery.reason.notWritable":
+    "The configuration file is not writable by the current user.",
+  "agents.recovery.reason.parentUnavailable":
+    "The configuration directory is unavailable or not writable.",
+  "agents.recovery.reason.transactionPending":
+    "A previous configuration transaction requires recovery first.",
+  "agents.recovery.reason.writesDisabled":
+    "Agent configuration writes are disabled in this environment.",
+  "agents.recovery.reason.unknown":
+    "Automatic rebuild is unavailable for this configuration.",
   "agents.migration": "JSONC -> JSON migration",
   "agents.sourceFile": "Source file {path}",
   "agents.migrationWarning":
@@ -244,6 +275,14 @@ export const en: Record<TranslationKey, string> = {
     "Unable to generate a preview. No files were changed. Refresh detection and retry ({code}).",
   "agents.error.write":
     "Write failed and the key input was cleared. The transaction did not complete; review the result and retry.",
+  "agents.error.previewStale":
+    "Files changed after preview. Detection was refreshed; select the Agents and review a new preview.",
+  "agents.error.backupFailed":
+    "Backup failed before replacement. No target file was changed.",
+  "agents.error.rolledBack":
+    "Writing failed, and all changed targets were restored from rollback backups.",
+  "agents.error.rollbackFailed":
+    "Rollback could not be completed. Agent writes are disabled until recovery is resolved.",
   "agents.overline": "SELECT / DISCOVER / MODEL ORCHESTRATION / WRITE",
   "agents.heading": "Model configuration workbench",
   "agents.currentStage": "Current stage {stage}",
@@ -344,6 +383,12 @@ export const en: Record<TranslationKey, string> = {
   "agents.exportConfig": "Export canonical config",
   "agents.fragments": "Redacted managed fragments",
   "agents.effects": "File, backup, and state effects",
+  "agents.effect.agent": "Agent",
+  "agents.effect.role": "Role",
+  "agents.effect.path": "Target path",
+  "agents.effect.backupPattern": "Planned backup path",
+  "agents.effect.preserves": "Preserves:",
+  "agents.effect.warning": "Warning:",
   "agents.approveDrift": "Approve replacing drifted managed namespaces",
   "agents.approveCodexAuth":
     "Approve switching Codex to file-backed API-key auth",
@@ -368,6 +413,7 @@ export const en: Record<TranslationKey, string> = {
   "agents.notConfigured": "Not configured",
   "agents.selected": "Selected",
   "agents.select": "Select this Agent",
+  "agents.selectAgent": "Select {agent}",
   "agents.selectedCount": "{count} Agents selected",
   "agents.generatePreview": "Generate write preview",
   "agents.fileCount": "{count} files",
@@ -386,6 +432,12 @@ export const en: Record<TranslationKey, string> = {
   "agents.apiKey": "API key",
   "agents.executing": "Executing transaction...",
   "agents.write": "Write selected Agents",
+  "agents.rebuildConfirm.overline": "DESTRUCTIVE CONFIRMATION",
+  "agents.rebuildConfirm.title": "Confirm backup and rebuild",
+  "agents.rebuildConfirm.description":
+    "Only these Agents will be approved for destructive rebuild:",
+  "agents.rebuildConfirm.cancel": "Cancel",
+  "agents.rebuildConfirm.confirm": "Back up and rebuild",
   "agents.cancelKey": "Cancel and clear key",
   "agents.transactionComplete": "TRANSACTION COMPLETE",
   "agents.resultHeading": "Agent configuration result",
@@ -396,6 +448,7 @@ export const en: Record<TranslationKey, string> = {
   "agents.rolledBack": "This change was rolled back",
   "agents.errorCode": "Error code: {code}",
   "agents.changed": "Changed",
+  "agents.backups": "Backup created",
   "agents.none": "None",
   "agents.rollbackBackup": "Rollback diagnostic backups",
   "agents.finish": "Finish and refresh detection",

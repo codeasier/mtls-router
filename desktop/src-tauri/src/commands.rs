@@ -36,6 +36,7 @@ pub(crate) struct ModelFlow {
     agents: Vec<String>,
     models: Vec<String>,
     catalog_token: String,
+    modes: Option<HashMap<String, String>>,
 }
 
 struct PendingFlow {
@@ -75,6 +76,7 @@ pub struct AgentConfigRequest {
     pub flow_id: String,
     pub catalog_token: String,
     pub model_config: ModelConfig,
+    pub modes: Option<HashMap<String, String>>,
 }
 
 #[derive(Deserialize)]
@@ -87,6 +89,7 @@ pub struct AgentWriteRequest {
     pub revision_token: String,
     pub approve_managed_overwrite: bool,
     pub approve_codex_auth_change: bool,
+    pub approve_rebuild: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -293,6 +296,7 @@ async fn agent_models_command(
             agents: request.agents.clone(),
             models: Vec::new(),
             catalog_token: String::new(),
+            modes: None,
         },
     );
     let mut pending = PendingFlow {
@@ -330,8 +334,25 @@ pub async fn agent_render(
     request: AgentConfigRequest,
     state: tauri::State<'_, AppState>,
 ) -> Result<AgentRenderResult> {
-    validate_config_request(&request, &state).await?;
-    state.manager.call("agent.render", json!({ "agents": request.agents, "catalog_token": request.catalog_token, "model_config": request.model_config })).await
+    agent_render_command(request, &state.manager, &state.model_flows).await
+}
+
+async fn agent_render_command(
+    request: AgentConfigRequest,
+    manager: &ManagerClient,
+    model_flows: &Arc<Mutex<HashMap<String, ModelFlow>>>,
+) -> Result<AgentRenderResult> {
+    if request
+        .modes
+        .as_ref()
+        .is_some_and(|modes| !modes.is_empty())
+    {
+        return Err(CommandError::invalid_params(
+            "modes are supported only by Agent preview and write",
+        ));
+    }
+    validate_config_request(&request, model_flows).await?;
+    manager.call("agent.render", json!({ "agents": request.agents, "catalog_token": request.catalog_token, "model_config": request.model_config })).await
 }
 
 #[tauri::command]
@@ -339,8 +360,34 @@ pub async fn agent_preview(
     request: AgentConfigRequest,
     state: tauri::State<'_, AppState>,
 ) -> Result<AgentPreview> {
-    validate_config_request(&request, &state).await?;
-    state.manager.call("agent.preview", json!({ "agents": request.agents, "catalog_token": request.catalog_token, "model_config": request.model_config })).await
+    agent_preview_command(request, &state.manager, &state.model_flows).await
+}
+
+async fn agent_preview_command(
+    request: AgentConfigRequest,
+    manager: &ManagerClient,
+    model_flows: &Arc<Mutex<HashMap<String, ModelFlow>>>,
+) -> Result<AgentPreview> {
+    let modes = validate_agent_modes(&request.agents, request.modes.as_ref())?;
+    validate_config_request(&request, model_flows).await?;
+    let result = manager
+        .call(
+            "agent.preview",
+            json!({
+                "agents": request.agents,
+                "modes": modes,
+                "catalog_token": request.catalog_token,
+                "model_config": request.model_config,
+            }),
+        )
+        .await?;
+    let mut flows = model_flows.lock().await;
+    let flow = flows.get_mut(&request.flow_id).ok_or_else(flow_expired)?;
+    if flow.agents != request.agents || flow.catalog_token != request.catalog_token {
+        return Err(flow_expired());
+    }
+    flow.modes = Some(modes);
+    Ok(result)
 }
 
 async fn agent_detect_command(manager: &ManagerClient) -> Result<AgentDetect> {
@@ -370,6 +417,10 @@ async fn agent_write_command(
         if flow.agents != request.agents || flow.catalog_token != request.catalog_token {
             return Err(flow_expired());
         }
+        let modes = flow.modes.as_ref().ok_or_else(|| {
+            CommandError::invalid_params("a successful Agent preview is required before write")
+        })?;
+        validate_rebuild_approval(&request.agents, modes, &request.approve_rebuild)?;
         model_config::validate(&request.model_config, &request.agents, &flow.models)?;
         if contains_exact_string(
             &serde_json::to_value(&request.model_config)
@@ -389,6 +440,8 @@ async fn agent_write_command(
         "revision_token": request.revision_token,
         "approve_managed_overwrite": request.approve_managed_overwrite,
         "approve_codex_auth_change": request.approve_codex_auth_change,
+        "modes": flow.modes.as_ref().expect("validated bound preview modes"),
+        "approve_rebuild": request.approve_rebuild,
         "api_key": flow.api_key.as_str(),
     });
     match manager.call("agent.write", params).await {
@@ -586,18 +639,70 @@ fn validate_preset_result(
     Ok(())
 }
 
-async fn validate_config_request(request: &AgentConfigRequest, state: &AppState) -> Result<()> {
+async fn validate_config_request(
+    request: &AgentConfigRequest,
+    model_flows: &Arc<Mutex<HashMap<String, ModelFlow>>>,
+) -> Result<()> {
     validate_agents(&request.agents)?;
     validate_flow_id(&request.flow_id)?;
     if request.catalog_token.is_empty() || request.catalog_token.len() > 512 * 1024 {
         return Err(CommandError::invalid_params("catalog token is invalid"));
     }
-    let flows = state.model_flows.lock().await;
+    let flows = model_flows.lock().await;
     let flow = flows.get(&request.flow_id).ok_or_else(flow_expired)?;
     if flow.agents != request.agents || flow.catalog_token != request.catalog_token {
         return Err(flow_expired());
     }
     model_config::validate(&request.model_config, &request.agents, &flow.models)
+}
+
+fn validate_agent_modes(
+    agents: &[String],
+    modes: Option<&HashMap<String, String>>,
+) -> Result<HashMap<String, String>> {
+    validate_agents(agents)?;
+    let modes = modes.ok_or_else(|| CommandError::invalid_params("Agent modes are required"))?;
+    if modes.len() != agents.len() {
+        return Err(CommandError::invalid_params(
+            "Agent modes must exactly match selected Agents",
+        ));
+    }
+    let mut normalized = HashMap::with_capacity(agents.len());
+    for agent in agents {
+        let mode = modes.get(agent).ok_or_else(|| {
+            CommandError::invalid_params("Agent modes must exactly match selected Agents")
+        })?;
+        if !matches!(mode.as_str(), "merge" | "rebuild") {
+            return Err(CommandError::invalid_params(
+                "Agent mode must be merge or rebuild",
+            ));
+        }
+        normalized.insert(agent.clone(), mode.clone());
+    }
+    Ok(normalized)
+}
+
+fn validate_rebuild_approval(
+    agents: &[String],
+    modes: &HashMap<String, String>,
+    approval: &[String],
+) -> Result<()> {
+    let mut approved = std::collections::HashSet::with_capacity(approval.len());
+    if approval.iter().any(|agent| !approved.insert(agent)) {
+        return Err(CommandError::invalid_params(
+            "rebuild approval contains duplicate Agents",
+        ));
+    }
+    let rebuild = agents
+        .iter()
+        .filter(|agent| modes.get(*agent).is_some_and(|mode| mode == "rebuild"))
+        .collect::<std::collections::HashSet<_>>();
+    if approved != rebuild {
+        return Err(CommandError::invalid_params(
+            "rebuild approval must exactly match previewed rebuild Agents",
+        ));
+    }
+    Ok(())
 }
 
 fn contains_exact_string(value: &Value, secret: &str) -> bool {
@@ -697,6 +802,59 @@ mod tests {
         (ManagerClient::new(Arc::new(factory)), requests)
     }
 
+    fn mixed_model_config() -> ModelConfig {
+        serde_json::from_value(json!({
+            "version": 1,
+            "claude": {
+                "primary": {"model": "m1"},
+                "haiku": {"inherit_primary": true},
+                "sonnet": {"inherit_primary": true},
+                "opus": {"inherit_primary": true}
+            },
+            "opencode": {"default_model": "m1", "models": {"m1": {}}}
+        }))
+        .unwrap()
+    }
+
+    fn mixed_flow(modes: Option<HashMap<String, String>>) -> ModelFlow {
+        ModelFlow {
+            api_key: Zeroizing::new("flow-secret".into()),
+            agents: vec!["claude".into(), "opencode".into()],
+            models: vec!["m1".into()],
+            catalog_token: "catalog".into(),
+            modes,
+        }
+    }
+
+    fn preview_response() -> Vec<u8> {
+        serde_json::to_vec(&json!({"id":"desktop-1","result":{
+            "revision_token":"revision",
+            "model_config": serde_json::to_value(mixed_model_config()).unwrap(),
+            "fragments":[],
+            "files":[],
+            "managed_config_drift":false,
+            "drifted_agents":[],
+            "managed_collisions":[],
+            "requires_codex_auth_approval":false,
+            "state_change":null,
+            "state_backup":null
+        }}))
+        .unwrap()
+    }
+
+    fn write_request(flow_id: String, approval: Vec<String>) -> AgentWriteRequest {
+        AgentWriteRequest {
+            agents: vec!["claude".into(), "opencode".into()],
+            flow_id,
+            catalog_token: "catalog".into(),
+            model_config: mixed_model_config(),
+            revision_token: "revision".into(),
+            approve_managed_overwrite: false,
+            approve_codex_auth_change: false,
+            approve_rebuild: approval,
+        }
+    }
+
     #[test]
     fn command_arguments_are_restricted() {
         assert!(validate_log_limit(0).is_err());
@@ -744,6 +902,7 @@ mod tests {
                     agents: vec!["claude".into()],
                     models: vec!["m1".into()],
                     catalog_token: "catalog".into(),
+                    modes: None,
                 },
             )])));
             let state = AppState {
@@ -882,6 +1041,299 @@ mod tests {
     }
 
     #[test]
+    fn agent_preview_forwards_complete_normalized_modes_and_binds_after_success() {
+        tauri::async_runtime::block_on(async {
+            let (manager, requests) = fake_client(vec![preview_response()]);
+            let flow_id = Uuid::new_v4().to_string();
+            let flows = Arc::new(Mutex::new(HashMap::from([(
+                flow_id.clone(),
+                mixed_flow(None),
+            )])));
+            let mut caller_modes = HashMap::from([
+                ("claude".into(), "rebuild".into()),
+                ("opencode".into(), "merge".into()),
+            ]);
+
+            agent_preview_command(
+                AgentConfigRequest {
+                    agents: vec!["claude".into(), "opencode".into()],
+                    flow_id: flow_id.clone(),
+                    catalog_token: "catalog".into(),
+                    model_config: mixed_model_config(),
+                    modes: Some(caller_modes.clone()),
+                },
+                &manager,
+                &flows,
+            )
+            .await
+            .unwrap();
+            caller_modes.insert("claude".into(), "merge".into());
+
+            let requests = requests.lock().unwrap();
+            let request = requests
+                .iter()
+                .find(|request| request["method"] == "agent.preview")
+                .unwrap();
+            assert_eq!(request["params"]["modes"]["claude"], "rebuild");
+            assert_eq!(request["params"]["modes"]["opencode"], "merge");
+            drop(requests);
+            assert_eq!(
+                flows.lock().await[&flow_id].modes,
+                Some(HashMap::from([
+                    ("claude".into(), "rebuild".into()),
+                    ("opencode".into(), "merge".into())
+                ]))
+            );
+        });
+    }
+
+    #[test]
+    fn agent_preview_rejects_malformed_modes_without_mutating_bound_flow() {
+        tauri::async_runtime::block_on(async {
+            let (manager, requests) = fake_client(vec![]);
+            let flow_id = Uuid::new_v4().to_string();
+            let bound = HashMap::from([
+                ("claude".into(), "merge".into()),
+                ("opencode".into(), "merge".into()),
+            ]);
+            let flows = Arc::new(Mutex::new(HashMap::from([(
+                flow_id.clone(),
+                mixed_flow(Some(bound.clone())),
+            )])));
+            let malformed = [
+                None,
+                Some(HashMap::from([("claude".into(), "merge".into())])),
+                Some(HashMap::from([
+                    ("claude".into(), "merge".into()),
+                    ("opencode".into(), "merge".into()),
+                    ("codex".into(), "merge".into()),
+                ])),
+                Some(HashMap::from([
+                    ("claude".into(), "replace".into()),
+                    ("opencode".into(), "merge".into()),
+                ])),
+            ];
+
+            for modes in malformed {
+                let error = agent_preview_command(
+                    AgentConfigRequest {
+                        agents: vec!["claude".into(), "opencode".into()],
+                        flow_id: flow_id.clone(),
+                        catalog_token: "catalog".into(),
+                        model_config: mixed_model_config(),
+                        modes,
+                    },
+                    &manager,
+                    &flows,
+                )
+                .await
+                .unwrap_err();
+                assert_eq!(error.code, "INVALID_PARAMS");
+            }
+            assert!(requests
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|request| request["method"] != "agent.preview"));
+            assert_eq!(flows.lock().await[&flow_id].modes, Some(bound));
+        });
+    }
+
+    #[test]
+    fn agent_preview_manager_failure_does_not_replace_bound_modes() {
+        tauri::async_runtime::block_on(async {
+            let failed = serde_json::to_vec(&json!({"id":"desktop-1","error":{
+                "code":"PREVIEW_FAILED", "message":"preview failed"
+            }}))
+            .unwrap();
+            let (manager, _) = fake_client(vec![failed]);
+            let flow_id = Uuid::new_v4().to_string();
+            let bound = HashMap::from([
+                ("claude".into(), "merge".into()),
+                ("opencode".into(), "merge".into()),
+            ]);
+            let flows = Arc::new(Mutex::new(HashMap::from([(
+                flow_id.clone(),
+                mixed_flow(Some(bound.clone())),
+            )])));
+
+            let error = agent_preview_command(
+                AgentConfigRequest {
+                    agents: vec!["claude".into(), "opencode".into()],
+                    flow_id: flow_id.clone(),
+                    catalog_token: "catalog".into(),
+                    model_config: mixed_model_config(),
+                    modes: Some(HashMap::from([
+                        ("claude".into(), "rebuild".into()),
+                        ("opencode".into(), "merge".into()),
+                    ])),
+                },
+                &manager,
+                &flows,
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(error.code, "PREVIEW_FAILED");
+            assert_eq!(flows.lock().await[&flow_id].modes, Some(bound));
+        });
+    }
+
+    #[test]
+    fn agent_render_rejects_modes_and_write_request_rejects_caller_modes() {
+        tauri::async_runtime::block_on(async {
+            let (manager, requests) = fake_client(vec![]);
+            let flow_id = Uuid::new_v4().to_string();
+            let flows = Arc::new(Mutex::new(HashMap::from([(
+                flow_id.clone(),
+                mixed_flow(None),
+            )])));
+            let error = agent_render_command(
+                AgentConfigRequest {
+                    agents: vec!["claude".into(), "opencode".into()],
+                    flow_id,
+                    catalog_token: "catalog".into(),
+                    model_config: mixed_model_config(),
+                    modes: Some(HashMap::from([
+                        ("claude".into(), "merge".into()),
+                        ("opencode".into(), "merge".into()),
+                    ])),
+                },
+                &manager,
+                &flows,
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(error.code, "INVALID_PARAMS");
+            assert!(requests
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|request| request["method"] != "agent.render"));
+        });
+
+        let request = json!({
+            "agents":["claude", "opencode"],
+            "flow_id":Uuid::new_v4().to_string(),
+            "catalog_token":"catalog",
+            "model_config":serde_json::to_value(mixed_model_config()).unwrap(),
+            "revision_token":"revision",
+            "approve_managed_overwrite":false,
+            "approve_codex_auth_change":false,
+            "approve_rebuild":["claude"],
+            "modes":{"claude":"merge", "opencode":"merge"}
+        });
+        assert!(serde_json::from_value::<AgentWriteRequest>(request).is_err());
+    }
+
+    #[test]
+    fn agent_write_forwards_only_bound_modes_and_exact_rebuild_approval() {
+        tauri::async_runtime::block_on(async {
+            let response = serde_json::to_vec(&json!({"id":"desktop-1","result":{
+                "transaction_id":"transaction",
+                "agents":[],
+                "state_change":null,
+                "state_backup":null
+            }}))
+            .unwrap();
+            let (manager, requests) = fake_client(vec![response]);
+            let flow_id = Uuid::new_v4().to_string();
+            let bound = HashMap::from([
+                ("claude".into(), "rebuild".into()),
+                ("opencode".into(), "merge".into()),
+            ]);
+            let flows = Arc::new(Mutex::new(HashMap::from([(
+                flow_id.clone(),
+                mixed_flow(Some(bound.clone())),
+            )])));
+
+            agent_write_command(
+                write_request(flow_id.clone(), vec!["claude".into()]),
+                &manager,
+                &flows,
+            )
+            .await
+            .unwrap();
+
+            let requests = requests.lock().unwrap();
+            let request = requests
+                .iter()
+                .find(|request| request["method"] == "agent.write")
+                .unwrap();
+            assert_eq!(request["params"]["modes"], json!(bound));
+            assert_eq!(request["params"]["approve_rebuild"], json!(["claude"]));
+            assert!(!flows.lock().await.contains_key(&flow_id));
+        });
+    }
+
+    #[test]
+    fn agent_write_rejects_malformed_or_non_exact_rebuild_approvals() {
+        tauri::async_runtime::block_on(async {
+            let (manager, requests) = fake_client(vec![]);
+            let flow_id = Uuid::new_v4().to_string();
+            let bound = HashMap::from([
+                ("claude".into(), "rebuild".into()),
+                ("opencode".into(), "merge".into()),
+            ]);
+            let flows = Arc::new(Mutex::new(HashMap::from([(
+                flow_id.clone(),
+                mixed_flow(Some(bound.clone())),
+            )])));
+
+            for approval in [
+                vec![],
+                vec!["claude".into(), "claude".into()],
+                vec!["opencode".into()],
+                vec!["claude".into(), "opencode".into()],
+            ] {
+                let error =
+                    agent_write_command(write_request(flow_id.clone(), approval), &manager, &flows)
+                        .await
+                        .unwrap_err();
+                assert_eq!(error.code, "INVALID_PARAMS");
+            }
+            assert!(requests
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|request| request["method"] != "agent.write"));
+            assert_eq!(flows.lock().await[&flow_id].modes, Some(bound));
+        });
+    }
+
+    #[test]
+    fn agent_write_preview_stale_retains_complete_bound_flow() {
+        tauri::async_runtime::block_on(async {
+            let stale = serde_json::to_vec(&json!({"id":"desktop-1","error":{
+                "code":"PREVIEW_STALE", "message":"preview is stale"
+            }}))
+            .unwrap();
+            let (manager, _) = fake_client(vec![stale]);
+            let flow_id = Uuid::new_v4().to_string();
+            let bound = HashMap::from([
+                ("claude".into(), "rebuild".into()),
+                ("opencode".into(), "merge".into()),
+            ]);
+            let flows = Arc::new(Mutex::new(HashMap::from([(
+                flow_id.clone(),
+                mixed_flow(Some(bound.clone())),
+            )])));
+
+            let error = agent_write_command(
+                write_request(flow_id.clone(), vec!["claude".into()]),
+                &manager,
+                &flows,
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(error.code, "PREVIEW_STALE");
+            let flows = flows.lock().await;
+            let flow = flows.get(&flow_id).unwrap();
+            assert_eq!(flow.api_key.as_str(), "flow-secret");
+            assert_eq!(flow.modes, Some(bound));
+        });
+    }
+
+    #[test]
     fn discovery_destroys_secret_flow_on_malformed_and_schema_invalid_responses() {
         tauri::async_runtime::block_on(async {
             for response in [
@@ -964,6 +1416,7 @@ mod tests {
                     agents: vec!["claude".into()],
                     models: vec!["m1".into()],
                     catalog_token: "catalog".into(),
+                    modes: Some(HashMap::from([("claude".into(), "merge".into())])),
                 },
             )])));
             let error = agent_write_command(
@@ -975,6 +1428,7 @@ mod tests {
                     revision_token: "revision".into(),
                     approve_managed_overwrite: false,
                     approve_codex_auth_change: false,
+                    approve_rebuild: vec![],
                 },
                 &manager,
                 &flows,
