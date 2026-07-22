@@ -11,7 +11,7 @@ Control plane for mtls-router: router lifecycle management, Agent configuration,
 | `lifecycle` | Router process spawn/stop/reclaim; desktop foreground + CLI detached modes; parent monitoring; unexpected exit detection | `Manager`, `Start(ctx, owner)`, `Stop(ctx)`, `Reclaim()`, `MonitorParent(ctx)` |
 | `discovery` | Classifies router state by correlating HTTP `/version` + `/health` with durable state files and OS process identity | `Discoverer`, `Discover(ctx)`, `DiscoverStatus(ctx)`, `Classification` constants |
 | `agent` | Agent detection, config rendering (Claude JSON / opencode JSONC / Codex TOML), transactional write with backup/rollback, model discovery | `Service`, `Detect()`, `Render()`, `Write()`, `PreviewRequest()`, `DiscoverModels()` |
-| `agent/modelconfig` | Canonical key-free model config schema v3: decode, validate, merge, token generation | `Config`, `DecodeStructural()`, `Validate()`, `MaxConfigSize` |
+| `agent/modelconfig` | Canonical key-free model config schema v1: decode, merge, canonical serialization, token signing | `Config`, `Version`, `Decode()`, `DecodeStructural()`, `Canonical()`, `DeepMerge()`, `MaxConfigSize` |
 | `trustedrouter` | Authenticated model catalog discovery via router `/v1/models`; binding revalidation before write | `Coordinator`, `Fetch(ctx, owner, apiKey)`, `Revalidate(ctx, owner, apiKey, binding)` |
 | `occupant` | Port occupant identity inspection (lsof/netstat per-OS) and guarded force-termination with single-use confirmation token | `Service`, `Inspect(ctx)`, `ForceTerminate(ctx, token)` |
 | `state` | Atomic JSON state file read/write for router process identity; file locking | `RouterState`, `Read(path)`, `Write(path, value)`, `AcquireLock(path)` |
@@ -34,9 +34,9 @@ agent.preview             agent.write
 
 ## Architecture patterns
 
-- **Stateless per-request**: each JSON request is handled independently; long-running state lives in `lifecycle.Manager` and `state` files.
-- **Triple identity verification**: every process signal is preceded by PID + start-time + executable validation to prevent PID-reuse attacks.
-- **API key zeroing**: `request.APIKey = ""` immediately after use at every exit path in `app`.
+- **Mostly stateless per-request**: each JSON request is handled independently; long-running state lives in `lifecycle.Manager` and `state` files. Exception: `occupant.Service` holds an in-memory single-use confirmation token between `Inspect` and `ForceTerminate` (mutex-guarded, expires after 30 s).
+- **Identity verification before signaling**: on Unix/macOS the verified-identity path validates PID + start-time + executable before every signal. On Windows the PID-only path re-confirms the listening PID via `InspectPIDOwner` then calls `SignalPID` directly (no start-time/executable check).
+- **API key zeroing**: `request.APIKey = ""` on explicit exit paths after successful parameter decode in `app`. Note: if `DecodeParams` itself fails (e.g. unknown fields), already-populated fields may not be zeroed.
 - **Transaction recovery**: `agent` writes use a state directory with rollback capability; `New()` performs recovery on startup.
 - **Discovery classification**: `desktop_owned > external_compatible > degraded > stale > absent > unknown_occupant`.
 

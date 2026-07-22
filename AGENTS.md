@@ -130,9 +130,9 @@ Router lifecycle (`router install/start/stop/status/setup`) and Agent configurat
 - Runtime flags have env twins prefixed `MTLS_`; precedence is `flag > env > build-time > default`.
 - Release artifacts: `mtls-router-${GOOS}-${GOARCH}` with `.exe` only for Windows.
 - `setup.ps1` must keep a UTF-8 BOM for Windows PowerShell 5.1; `main_test.go` asserts this.
-- Desktop sidecar binaries use target-triple naming: `mtls-router-<target>` and `mtls-router-manager-<target>`.
+- Desktop sidecar build inputs use target-triple naming in `src-tauri/binaries/` (`mtls-router-<target>`); after Tauri packaging, installed binaries use plain names (`mtls-router`, `mtls-router-manager`).
 - Manager protocol error codes are stable for branching; messages are diagnostic only.
-- API keys exist only in stdin request bodies and are zeroed immediately after use (`request.APIKey = ""`).
+- API keys are confined to short-lived, zeroizable memory: manager zeroes `request.APIKey = ""` after successful decode; desktop holds the key in `ModelFlow.api_key: Zeroizing<String>` from model discovery until config write, then memory is zeroed on drop. Keys never appear in env vars, CLI args, model config, logs, or temp files.
 
 ## ANTI-PATTERNS
 

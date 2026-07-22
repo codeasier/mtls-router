@@ -34,7 +34,7 @@ The desktop app never communicates with the router directly. It spawns `mtls-rou
 | `commands.rs` | All `#[tauri::command]` handlers; `AppState` (manager client, scheduler, paths, model flows); `ModelFlow` with `Zeroizing<String>` API key |
 | `manager.rs` | `ManagerClient` + `TauriTransportFactory` — spawns manager child, sends JSON requests, reads responses; `validate_handshake()` |
 | `scheduler.rs` | `PollScheduler` — periodic router status/health polling; emits `router-poll-snapshot` events; visibility-aware interval |
-| `sidecar.rs` | `SidecarPaths::resolve()` — locates `mtls-router-<target>` and `mtls-router-manager-<target>` beside the app binary |
+| `sidecar.rs` | `SidecarPaths::resolve()` — locates `mtls-router[.exe]` and `mtls-router-manager[.exe]` beside the app binary (plain runtime names); validates SHA-256 + native arch/format |
 | `tray.rs` | System tray icon/menu; status-aware labels; window show/hide |
 | `orchestration.rs` | `first_launch()` — auto-starts router if sidecar is valid and no router is running |
 | `model_config.rs` | Model config import/export JSON validation |
@@ -58,7 +58,7 @@ npm run sidecars:build    # builds Go router + manager for host target into src-
 npm exec tauri -- build   # full Tauri build (requires sidecars present)
 ```
 
-Sidecar naming: `mtls-router-<target-triple>` and `mtls-router-manager-<target-triple>` (e.g., `mtls-router-aarch64-apple-darwin`).
+Sidecar naming: build inputs in `src-tauri/binaries/` use target-triple names (`mtls-router-<target-triple>`, e.g. `mtls-router-aarch64-apple-darwin`); after Tauri packaging the installed binaries use plain names (`mtls-router`, `mtls-router-manager`, with `.exe` on Windows).
 
 ## Testing
 
