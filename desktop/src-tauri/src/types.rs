@@ -1,4 +1,5 @@
-use serde::{Deserialize, Serialize};
+use chrono::DateTime;
+use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -81,14 +82,326 @@ pub struct RouterLogs {
     pub lines: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OccupantVerificationMode {
+    VerifiedIdentity,
+    WindowsPidOnly,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct OccupantInspection {
     pub pid: u32,
-    pub process_name: String,
-    pub executable: String,
+    pub verification_mode: OccupantVerificationMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub process_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub executable: Option<String>,
     pub listen_addr: String,
     pub confirmation_token: String,
     pub expires_at: String,
+}
+
+fn is_manager_rfc3339(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.len() < 20
+        || bytes[4] != b'-'
+        || bytes[7] != b'-'
+        || bytes[10] != b'T'
+        || bytes[13] != b':'
+        || bytes[16] != b':'
+    {
+        return false;
+    }
+    for index in [0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18] {
+        if !bytes[index].is_ascii_digit() {
+            return false;
+        }
+    }
+    if bytes[17] > b'5' {
+        return false;
+    }
+
+    let mut timezone_start = 19;
+    if bytes.get(timezone_start) == Some(&b'.') {
+        timezone_start += 1;
+        let fraction_start = timezone_start;
+        while bytes.get(timezone_start).is_some_and(u8::is_ascii_digit) {
+            timezone_start += 1;
+        }
+        if timezone_start == fraction_start {
+            return false;
+        }
+    }
+
+    match &bytes[timezone_start..] {
+        [b'Z'] => true,
+        [sign @ (b'+' | b'-'), hour_tens, hour_ones, b':', minute_tens, minute_ones] => {
+            let _ = sign;
+            hour_tens.is_ascii_digit()
+                && hour_ones.is_ascii_digit()
+                && minute_tens.is_ascii_digit()
+                && minute_ones.is_ascii_digit()
+        }
+        _ => false,
+    }
+}
+
+impl<'de> Deserialize<'de> for OccupantInspection {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct WireInspection {
+            pid: u32,
+            verification_mode: OccupantVerificationMode,
+            process_name: Option<String>,
+            executable: Option<String>,
+            listen_addr: String,
+            confirmation_token: String,
+            expires_at: String,
+        }
+
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let object = value
+            .as_object()
+            .ok_or_else(|| D::Error::custom("occupant inspection must be an object"))?;
+        let has_process_name = object.contains_key("process_name");
+        let has_executable = object.contains_key("executable");
+        let wire: WireInspection = serde_json::from_value(value).map_err(D::Error::custom)?;
+
+        if wire.pid == 0 {
+            return Err(D::Error::custom("occupant inspection PID must be positive"));
+        }
+        if wire.listen_addr != "127.0.0.1:19099" {
+            return Err(D::Error::custom(
+                "occupant inspection listen address must match the fixed endpoint",
+            ));
+        }
+        if wire.confirmation_token.trim().is_empty() {
+            return Err(D::Error::custom(
+                "occupant inspection confirmation token must not be blank",
+            ));
+        }
+        if !is_manager_rfc3339(&wire.expires_at)
+            || DateTime::parse_from_rfc3339(&wire.expires_at).is_err()
+        {
+            return Err(D::Error::custom(
+                "occupant inspection expiry must be RFC3339",
+            ));
+        }
+
+        match wire.verification_mode {
+            OccupantVerificationMode::VerifiedIdentity => {
+                if !matches!(wire.process_name.as_deref(), Some(value) if !value.trim().is_empty())
+                    || !matches!(wire.executable.as_deref(), Some(value) if !value.trim().is_empty())
+                {
+                    return Err(D::Error::custom(
+                        "verified identity requires process name and executable",
+                    ));
+                }
+            }
+            OccupantVerificationMode::WindowsPidOnly => {
+                if has_process_name || has_executable {
+                    return Err(D::Error::custom(
+                        "Windows PID-only inspection cannot include process metadata",
+                    ));
+                }
+            }
+        }
+
+        Ok(Self {
+            pid: wire.pid,
+            verification_mode: wire.verification_mode,
+            process_name: wire.process_name,
+            executable: wire.executable,
+            listen_addr: wire.listen_addr,
+            confirmation_token: wire.confirmation_token,
+            expires_at: wire.expires_at,
+        })
+    }
+}
+
+#[cfg(test)]
+mod occupant_inspection_tests {
+    use super::{OccupantInspection, OccupantVerificationMode};
+    use serde_json::json;
+
+    #[test]
+    fn deserializes_verified_identity_shape() {
+        let shape = json!({
+            "pid": 4242,
+            "verification_mode": "verified_identity",
+            "process_name": "example-server",
+            "executable": "C:\\example-server.exe",
+            "listen_addr": "127.0.0.1:19099",
+            "confirmation_token": "verified-token",
+            "expires_at": "2026-07-22T12:00:30Z"
+        });
+        let inspection: OccupantInspection = serde_json::from_value(shape.clone()).unwrap();
+
+        assert_eq!(
+            inspection.verification_mode,
+            OccupantVerificationMode::VerifiedIdentity
+        );
+        assert_eq!(inspection.process_name.as_deref(), Some("example-server"));
+        assert_eq!(
+            inspection.executable.as_deref(),
+            Some("C:\\example-server.exe")
+        );
+        assert_eq!(serde_json::to_value(inspection).unwrap(), shape);
+    }
+
+    #[test]
+    fn deserializes_windows_pid_only_shape_without_metadata() {
+        let shape = json!({
+            "pid": 4242,
+            "verification_mode": "windows_pid_only",
+            "listen_addr": "127.0.0.1:19099",
+            "confirmation_token": "pid-only-token",
+            "expires_at": "2026-07-22T12:00:30Z"
+        });
+        let inspection: OccupantInspection = serde_json::from_value(shape.clone()).unwrap();
+
+        assert_eq!(
+            inspection.verification_mode,
+            OccupantVerificationMode::WindowsPidOnly
+        );
+        assert_eq!(inspection.process_name, None);
+        assert_eq!(inspection.executable, None);
+        assert_eq!(serde_json::to_value(inspection).unwrap(), shape);
+    }
+
+    #[test]
+    fn rejects_unknown_verification_mode() {
+        let result = serde_json::from_value::<OccupantInspection>(json!({
+            "pid": 4242,
+            "verification_mode": "unknown",
+            "listen_addr": "127.0.0.1:19099",
+            "confirmation_token": "token",
+            "expires_at": "2026-07-22T12:00:30Z"
+        }));
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_fields() {
+        let result = serde_json::from_value::<OccupantInspection>(json!({
+            "pid": 4242,
+            "verification_mode": "verified_identity",
+            "process_name": "example-server",
+            "executable": "C:\\example-server.exe",
+            "process_owner": "example-user",
+            "listen_addr": "127.0.0.1:19099",
+            "confirmation_token": "token",
+            "expires_at": "2026-07-22T12:00:30Z"
+        }));
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_invalid_base_fields() {
+        for invalid_field in [
+            json!({"pid": 0}),
+            json!({"listen_addr": "127.0.0.1:19100"}),
+            json!({"listen_addr": " "}),
+            json!({"confirmation_token": " "}),
+            json!({"expires_at": " "}),
+            json!({"expires_at": "not-a-timestamp"}),
+            json!({"expires_at": "2026-07-22t12:00:30Z"}),
+            json!({"expires_at": "2026-07-22T12:00:30z"}),
+            json!({"expires_at": "2026-07-22T12:00:60Z"}),
+        ] {
+            let mut shape = json!({
+                "pid": 4242,
+                "verification_mode": "windows_pid_only",
+                "listen_addr": "127.0.0.1:19099",
+                "confirmation_token": "token",
+                "expires_at": "2026-07-22T12:00:30+08:00"
+            });
+            shape.as_object_mut().unwrap().extend(
+                invalid_field
+                    .as_object()
+                    .unwrap()
+                    .iter()
+                    .map(|(key, value)| (key.clone(), value.clone())),
+            );
+
+            assert!(serde_json::from_value::<OccupantInspection>(shape).is_err());
+        }
+    }
+
+    #[test]
+    fn accepts_manager_timestamp_forms() {
+        for expires_at in ["2026-07-22T12:00:30Z", "2026-07-22T20:00:30+08:00"] {
+            let result = serde_json::from_value::<OccupantInspection>(json!({
+                "pid": 4242,
+                "verification_mode": "windows_pid_only",
+                "listen_addr": "127.0.0.1:19099",
+                "confirmation_token": "token",
+                "expires_at": expires_at
+            }));
+
+            assert!(result.is_ok(), "expected {expires_at} to be accepted");
+        }
+    }
+
+    #[test]
+    fn rejects_verified_identity_without_nonempty_metadata() {
+        for metadata in [
+            json!({"executable": "C:\\example-server.exe"}),
+            json!({"process_name": "example-server"}),
+            json!({"process_name": "", "executable": "C:\\example-server.exe"}),
+            json!({"process_name": "example-server", "executable": "  "}),
+        ] {
+            let mut shape = json!({
+                "pid": 4242,
+                "verification_mode": "verified_identity",
+                "listen_addr": "127.0.0.1:19099",
+                "confirmation_token": "token",
+                "expires_at": "2026-07-22T12:00:30Z"
+            });
+            shape.as_object_mut().unwrap().extend(
+                metadata
+                    .as_object()
+                    .unwrap()
+                    .iter()
+                    .map(|(key, value)| (key.clone(), value.clone())),
+            );
+
+            assert!(serde_json::from_value::<OccupantInspection>(shape).is_err());
+        }
+    }
+
+    #[test]
+    fn rejects_windows_pid_only_with_process_metadata() {
+        for metadata in [
+            json!({"process_name": "example-server"}),
+            json!({"executable": "C:\\example-server.exe"}),
+            json!({"process_name": "", "executable": ""}),
+        ] {
+            let mut shape = json!({
+                "pid": 4242,
+                "verification_mode": "windows_pid_only",
+                "listen_addr": "127.0.0.1:19099",
+                "confirmation_token": "token",
+                "expires_at": "2026-07-22T12:00:30Z"
+            });
+            shape.as_object_mut().unwrap().extend(
+                metadata
+                    .as_object()
+                    .unwrap()
+                    .iter()
+                    .map(|(key, value)| (key.clone(), value.clone())),
+            );
+
+            assert!(serde_json::from_value::<OccupantInspection>(shape).is_err());
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]

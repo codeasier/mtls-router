@@ -30,13 +30,29 @@ type Identity struct {
 	UserID     string
 }
 
+type VerificationMode string
+
+const (
+	VerificationModeVerifiedIdentity VerificationMode = "verified_identity"
+	VerificationModeWindowsPIDOnly   VerificationMode = "windows_pid_only"
+)
+
+// Target is the authorization subject bound to a confirmation token.
+type Target struct {
+	Mode       VerificationMode
+	Identity   Identity
+	PID        int
+	ListenAddr string
+}
+
 type Inspection struct {
-	PID               int       `json:"pid"`
-	ProcessName       string    `json:"process_name"`
-	Executable        string    `json:"executable"`
-	ListenAddr        string    `json:"listen_addr"`
-	ConfirmationToken string    `json:"confirmation_token"`
-	ExpiresAt         time.Time `json:"expires_at"`
+	PID               int              `json:"pid"`
+	VerificationMode  VerificationMode `json:"verification_mode"`
+	ProcessName       string           `json:"process_name,omitempty"`
+	Executable        string           `json:"executable,omitempty"`
+	ListenAddr        string           `json:"listen_addr"`
+	ConfirmationToken string           `json:"confirmation_token"`
+	ExpiresAt         time.Time        `json:"expires_at"`
 }
 
 type Result struct {

@@ -46,8 +46,8 @@ Go control plane rather than diverging implementations.
 - Manage router lifecycle, status, health, version, and logs safely.
 - Run in the system tray and enable current-user autostart by default.
 - Reuse compatible externally started routers without taking ownership.
-- Provide an explicit, confirmed recovery action for an inspectable current-user
-  process occupying port 19099.
+- Provide an explicit, confirmed recovery action using complete current-user
+  identity by default, with a narrow warned Windows PID-only exception.
 - Detect, preview, and configure Claude Code, opencode, and Codex.
 - Keep API keys out of desktop persistence, process arguments, environment
   variables, logs, state, protocol responses, and diagnostics.
@@ -64,8 +64,9 @@ Go control plane rather than diverging implementations.
 - Installing or launching Claude Code, opencode, or Codex.
 - Exposing router management endpoints publicly.
 - Automatically choosing a new local port when 19099 is occupied.
-- Automatically killing an unrecognized process that occupies port 19099, or
-  killing one without current-user ownership and complete identity validation.
+- Automatically killing an unrecognized process that occupies port 19099.
+- PID-only occupant recovery on macOS or Linux, elevation for occupant recovery,
+  or automatic router start after occupant termination.
 - Automatically restoring or deleting Agent files, backups, logs, or state
   during uninstall.
 - Adding a general-purpose shell, arbitrary file API, or arbitrary process API
@@ -127,8 +128,12 @@ Every manager method MUST have an internal deadline:
   five seconds.
 - `router.stop`: seven seconds, including the five-second graceful wait.
 - `router.inspect_occupant`: two seconds.
-- `router.force_terminate_occupant`: three seconds, including a two-second
-  post-termination wait.
+- `router.force_terminate_occupant`: a three-second protocol window; Windows
+  PID-only release verification may perform one additional
+  `PollInterval`-bounded final owner lookup after cancellation or deadline,
+  solely to classify release as described by the force-termination
+  specification. This is not a strict three-second wall-clock completion
+  guarantee.
 - `router.start`: twenty seconds, including startup probe/readiness.
 - `agent.write`: thirty seconds, including rollback.
 
@@ -371,21 +376,34 @@ Given an unrecognized service on port 19099, when the desktop starts, then it
 reports a port conflict, does not terminate the service automatically, and does
 not silently choose another port.
 
-An unknown occupant MAY be force-terminated only when native inspection proves
-one complete process identity owned by the current manager user. The Router
-page MUST show the process name and PID and require a destructive confirmation
-dialog that also shows the complete executable path and warns that termination
-is immediate and may lose unsaved data. The manager MUST consume a short-lived,
-single-use confirmation token, revalidate the full listener and process
-identity immediately before signaling, and use unconditional process
+Complete identity is the default on every platform. Native inspection MUST
+prove one complete process identity owned by the current manager user. The
+Router page MUST show process name and PID and require a destructive
+confirmation dialog that also shows the complete executable path and warns that
+termination is immediate and may lose unsaved data. The manager MUST consume a
+short-lived, single-use confirmation token, revalidate the full listener and
+process identity immediately before signaling, and use unconditional process
 termination without first sending a graceful signal.
 
-This exception MUST NOT request elevation or apply to another user's,
-ambiguous, changed, protected, or unverifiable process. It MUST NOT alter the
-regular Stop, Quit, parent-death, external-router, or tray ownership rules. The
-tray MUST NOT expose force termination, and releasing the port MUST NOT start
-the router automatically. If inspection or termination is unavailable, the UI
-MUST retain manual operating-system-tool recovery guidance.
+On Windows only, if one unique PID owns the exact TCP4
+`127.0.0.1:19099` listener but complete identity is unavailable, the page MAY
+offer a `windows_pid_only` target. It MUST show only PID and listen address and
+explicitly warn that identity, owner, start time, and executable are unverified.
+A failed SID/identity read or readable other-user SID MAY enter this degraded
+flow. The confirmation token MUST bind mode, address, and PID. Immediately
+before signaling, the manager MUST require the same unique PID on the same exact
+port and recheck desktop, serving manager, and readable desktop/CLI
+managed-router PID protection. Listener disappearance, PID change, duplicate or
+wildcard rows, malformed data, or other ambiguity MUST be refused without a
+signal. Unreadable lifecycle state is skipped, Windows MAY deny termination,
+and PID reuse remains possible after the owner recheck.
+
+Neither mode may request elevation. The exception MUST NOT alter regular Stop,
+Quit, parent-death, external-router, launch-at-login, or tray ownership rules.
+The tray MUST NOT expose force termination, and releasing the port MUST NOT
+start the router automatically. If inspection or termination is unavailable,
+the UI MUST retain manual operating-system-tool recovery guidance. macOS and
+Linux complete-identity behavior is unchanged.
 
 #### Scenario: explicitly confirmed current-user occupant
 
@@ -394,6 +412,15 @@ user verifies its process name, PID, and complete executable path, accepts the
 immediate data-loss warning, and explicitly confirms force termination, then
 the manager revalidates and terminates only that unchanged identity, verifies
 port release, and leaves the router stopped.
+
+#### Scenario: explicitly confirmed Windows PID-only occupant
+
+Given Windows identifies one unique exact TCP4 PID but cannot verify complete
+identity, when the user reviews PID/address, accepts the explicit unverified
+warning, and confirms, then the manager immediately requires the same
+unprotected port/PID, attempts termination, verifies release without signaling
+a replacement, and leaves the router stopped. A disappeared, changed, or
+ambiguous listener is refused; a Windows denial is reported safely.
 
 ### FR-5: Router status and health UI
 

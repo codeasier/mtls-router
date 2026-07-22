@@ -153,7 +153,7 @@ Returns JSON describing the running binary and process:
   "commit": "abc1234",
   "build_date": "2026-06-21T09:23:24Z",
   "deployment_id": "production-service",
-  "management_protocol_version": "2",
+  "management_protocol_version": "3",
   "pid": 12345,
   "started_at": "2026-06-21T09:23:24Z"
 }
@@ -197,9 +197,16 @@ The setup scripts separate router lifecycle commands from agent configuration co
 
 `router install` only downloads and installs the binary. `router start` only starts an already installed binary and fails with a clear message if it is missing. `router setup` installs and starts the router, matching the no-argument default behavior.
 
-`agent print-config` and `agent write-config --agent=...` both read the key without echo before discovering the manager's authenticated, build-filtered `GET /v1/models` catalog. By default the manager excludes valid IDs containing ASCII `/`; releases built with `SIMPLIFY=False` retain them. This immutable manager build policy controls configuration choices and refresh validation; it is not a runtime preference and does not limit the proxy routes listed below. The commands never choose the first model, infer a choice from model names or capabilities, or substitute another model. A release may provide a visible, editable preset, but each Agent section is offered only after its exact model IDs are validated against that filtered catalog; otherwise the complete section is unavailable and no replacement is selected. Per Agent, initialization is `existing > preset > empty`. Print returns manager-rendered, API-key-redacted managed fragments; write shows an exact preview and revalidates the catalog immediately before one transactional write. Add `--model-config=<path>` to supply the key-free canonical JSON choices instead of answering model prompts; this explicit import replaces all generated defaults. The legacy top-level `--print-config` and `--write-config --agent=...` options remain compatibility aliases for the same v2 flow. Agent commands only execute a checksum-verified sibling manager or a receipt-verified installed manager; they never download a manager implicitly.
+`agent print-config` and `agent write-config --agent=...` both read the key without echo before discovering the manager's authenticated, build-filtered `GET /v1/models` catalog. By default the manager excludes valid IDs containing ASCII `/`; releases built with `SIMPLIFY=False` retain them. This immutable manager build policy controls configuration choices and refresh validation; it is not a runtime preference and does not limit the proxy routes listed below. The commands never choose the first model, infer a choice from model names or capabilities, or substitute another model. A release may provide a visible, editable preset, but each Agent section is offered only after its exact model IDs are validated against that filtered catalog; otherwise the complete section is unavailable and no replacement is selected. Per Agent, initialization is `existing > preset > empty`. Print returns manager-rendered, API-key-redacted managed fragments; write shows an exact preview and revalidates the catalog immediately before one transactional write. Add `--model-config=<path>` to supply the key-free canonical JSON choices instead of answering model prompts; this explicit import replaces all generated defaults. The legacy top-level `--print-config` and `--write-config --agent=...` options remain compatibility aliases for the Agent configuration flow introduced in protocol v2. Agent commands only execute a checksum-verified sibling manager or a receipt-verified installed manager; they never download a manager implicitly.
 
-`MTLS_ROUTER_OPENAI_API_KEY` has been removed because environment variables are an unsafe secret transport. It no longer supplies a key. Noninteractive automation must verify `manager.info` protocol `2`, call `agent.models`, construct canonical model config, then call `agent.render` or `agent.preview` and `agent.write`. The key appears only in the `agent.models` and `agent.write` stdin request bodies. Do not put it in command-line arguments, environment variables, model config, logs, shell history, or temporary request files. See the complete [Agent Model Configuration](docs/AGENT_MODELS.md#protocol-v2-automation) contract.
+The current receipt-verified manager handshake is:
+
+```json
+{"id":"info","method":"manager.info","params":{}}
+{"id":"info","result":{"version":"v0.1.1","commit":"abc1234","build_date":"2026-06-21T09:23:24Z","target":"linux/amd64","deployment_id":"production-service","management_protocol_version":"3"}}
+```
+
+`MTLS_ROUTER_OPENAI_API_KEY` has been removed because environment variables are an unsafe secret transport. It no longer supplies a key. Noninteractive automation must verify `manager.info` protocol `3`, call `agent.models`, construct canonical model config, then call `agent.render` or `agent.preview` and `agent.write`. The key appears only in the `agent.models` and `agent.write` stdin request bodies. Do not put it in command-line arguments, environment variables, model config, logs, shell history, or temporary request files. See the complete [Agent Model Configuration](docs/AGENT_MODELS.md#protocol-v3-automation) contract.
 
 The `mtls-router` binary itself manages the router only; it does not provide agent configuration commands such as `print-config`.
 

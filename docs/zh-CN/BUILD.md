@@ -58,7 +58,7 @@ Manager 可从 `AGENT_MODEL_PRESET_BASE64` 接收一份可选构建期 Agent mod
 
 `mtls-router-manager` 只有一个命令 `serve`。它从 stdin 逐行读取 JSON 请求，串行处理，只把协议响应写到 stdout，并在 stdin EOF 时正常退出。诊断应写 stderr 或日志。绝不能把 API key 加入 manager 参数或环境变量。
 
-Agent 配置使用 management protocol v2。Release 测试通过仓库 parser 与 snapshot 覆盖验证生成的 Claude JSON、opencode JSON 和 Codex TOML/auth 输出。测试使用的精确 current stable Agent/schema 输入，包括 source URL、revision、digest 和 retrieval date，固定在 [`internal/manager/agent/testdata/compatibility.json`](../../internal/manager/agent/testdata/compatibility.json)。更新 pin 时必须审查上游 schema，按需更新 renderer/schema 测试，并保持中英文 Agent 文档一致。
+Agent 配置使用 management protocol v3。Release 测试通过仓库 parser 与 snapshot 覆盖验证生成的 Claude JSON、opencode JSON 和 Codex TOML/auth 输出。测试使用的精确 current stable Agent/schema 输入，包括 source URL、revision、digest 和 retrieval date，固定在 [`internal/manager/agent/testdata/compatibility.json`](../../internal/manager/agent/testdata/compatibility.json)。更新 pin 时必须审查上游 schema，按需更新 renderer/schema 测试，并保持中英文 Agent 文档一致。
 
 ## 本地占位 router
 
@@ -92,7 +92,7 @@ Router 不在运行时读取证书。以下仅 router 使用的值通过 linker 
 - `github.com/codeasier/mtls-router/internal/version.BuildDate`
 - `github.com/codeasier/mtls-router/internal/version.DeploymentID`
 
-`internal/version.ManagementProtocolVersion` 是代码内 protocol ID，当前为 `2`，不是可用 `-X` 注入的 linker 变量。`DeploymentID` 是固定服务环境的非敏感标识。生产构建必须让 router、manager 和 desktop 使用相同的非空、非 `dev`、非 `unknown` deployment ID 和 protocol ID。默认开发身份会有意禁用外部 router 复用。
+`internal/version.ManagementProtocolVersion` 是代码内 protocol ID，当前为 `3`，不是可用 `-X` 注入的 linker 变量。`DeploymentID` 是固定服务环境的非敏感标识。生产构建必须让 router、manager 和 desktop 使用相同的非空、非 `dev`、非 `unknown` deployment ID 和 protocol ID。默认开发身份会有意禁用外部 router 复用。
 
 Router 构建示例：
 
@@ -164,7 +164,7 @@ src-tauri/binaries/mtls-router-<target-triple>[.exe]
 本机开发启动：
 
 ```bash
-DEPLOYMENT_ID=dev VERSION=dev MANAGEMENT_PROTOCOL_VERSION=2 npm run tauri -- dev
+DEPLOYMENT_ID=dev VERSION=dev MANAGEMENT_PROTOCOL_VERSION=3 npm run tauri -- dev
 ```
 
 本机 bundle 构建需要显式设置 release 元数据：
@@ -172,7 +172,7 @@ DEPLOYMENT_ID=dev VERSION=dev MANAGEMENT_PROTOCOL_VERSION=2 npm run tauri -- dev
 ```bash
 DEPLOYMENT_ID=production-service \
 VERSION=v0.2.0 \
-MANAGEMENT_PROTOCOL_VERSION=2 \
+MANAGEMENT_PROTOCOL_VERSION=3 \
 npm run tauri -- build --target aarch64-apple-darwin
 ```
 
@@ -201,7 +201,7 @@ Release workflow 实现了有条件的平台签名和状态验证：
 2. 检查包内容，确保只有一组架构兼容的 manager/router sidecar，且不存在原始 PEM/key 文件。
 3. 确认 macOS/Linux 执行权限，并验证无需提权的当前用户安装/启动。
 4. 重新计算打包 sidecar SHA-256，并与桌面构建内嵌值比较。
-5. 运行 `manager.info` 和 router `/version`；要求 desktop、manager、router、setup metadata 和 release artifact metadata 的版本、非默认 deployment ID 及 management protocol `2` 一致。在任何 key-bearing Agent 请求前拒绝全部混合 v1/v2 组合。
+5. 运行 `manager.info` 和 router `/version`；要求 desktop、manager、router、setup metadata 和 release artifact metadata 的版本、非默认 deployment ID 及 management protocol `3` 一致。在任何 key-bearing Agent 请求前拒绝全部混合 v2/v3 组合。
 6. 使用平台原生工具验证 Windows 签名，或 macOS code signature、notarization 和 stapling；状态缺失时必须明确记录。
 7. 安装并启动，验证首次启动、第二实例激活、sidecar 失败、托盘/关闭/退出、默认 autostart、外部复用、未知端口冲突、Agent 预览/写入/回滚、日志以及卸载准备/清理。
 8. 确认 Windows 卸载移除当前用户 autostart。确认 macOS/Linux **准备卸载**在删除前移除 autostart 并退出。
@@ -216,7 +216,7 @@ Release workflow 实现了有条件的平台签名和状态验证：
 
 生产 CLI 和桌面 sidecar 需要 repository secrets `CLIENT_CERT_PEM`、`CLIENT_KEY_PEM`、`UPSTREAM_CA_PEM`，以及 variables `UPSTREAM_URL` 和非默认 `DEPLOYMENT_ID`。可选 repository variable `AGENT_MODEL_PRESET_BASE64` 会向每个 standalone manager 和 desktop manager sidecar 提供相同 preset；空值有效并表示无 preset。Release preflight 会在 matrix build 前通过 manager loader 校验已配置的值，且不打印其内容。可选 repository variable `SIMPLIFY` 遵循上述规范化规则，未设置或为空时默认为 `True`。它会在 matrix fan-out 前规范化，并以同一个规范值传给所有 standalone 和 desktop manager；desktop 构建脚本可以再次执行幂等校验和规范化。Router build 绝不会收到这两个仅供 manager 使用的值。可选平台凭据会选择上文所述的签名/notarization release 分支。
 
-每个 CLI 和 desktop matrix producer 都会生成 code-owned protocol metadata。`scripts/package-release.sh` 在组装 archive 前要求每个 producer 恰好一个 metadata 文件，并要求全部文件声明 schema `1` 与 management protocol `2`。正常发布和恢复发布共用此 preflight，因此有效但混合 v1/v2 的 artifact set 无法发布。
+每个 CLI 和 desktop matrix producer 都会生成 code-owned protocol metadata。`scripts/package-release.sh` 在组装 archive 前要求每个 producer 恰好一个 metadata 文件，并要求全部文件声明 schema `1` 与 management protocol `3`。正常发布和恢复发布共用此 preflight，因此有效但混合 v2/v3 的 artifact set 无法发布。
 
 使用 `gh` 设置 release 输入：
 

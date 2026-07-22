@@ -58,14 +58,26 @@ export interface RouterHealth {
   checked_at: string;
 }
 
-export interface OccupantInspection {
+interface OccupantInspectionBase {
   pid: number;
-  process_name: string;
-  executable: string;
   listen_addr: string;
   confirmation_token: string;
   expires_at: string;
 }
+
+export type OccupantInspection = OccupantInspectionBase &
+  (
+    | {
+        verification_mode: "verified_identity";
+        process_name: string;
+        executable: string;
+      }
+    | {
+        verification_mode: "windows_pid_only";
+        process_name?: never;
+        executable?: never;
+      }
+  );
 
 export interface PollError {
   code: string;

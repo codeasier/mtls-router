@@ -23,8 +23,12 @@ type procListener struct {
 	port  int
 }
 
-func inspectNative(ctx context.Context, listenAddr string) (Identity, error) {
-	return inspectLinux(ctx, listenAddr, "/proc", process.Inspect)
+func inspectNative(ctx context.Context, listenAddr string) (Target, error) {
+	identity, err := inspectLinux(ctx, listenAddr, "/proc", process.Inspect)
+	if err != nil {
+		return Target{}, err
+	}
+	return Target{Mode: VerificationModeVerifiedIdentity, Identity: identity, PID: identity.Process.PID, ListenAddr: identity.ListenAddr}, nil
 }
 
 func inspectLinux(ctx context.Context, listenAddr, procRoot string, inspectProcess func(int) (process.Identity, error)) (Identity, error) {

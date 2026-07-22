@@ -221,6 +221,7 @@ func New(config Config, simplify bool) (*App, error) {
 			}
 			return false
 		},
+		IsProtectedPID: protectedStatePID(config.Paths.DesktopStateFile, config.Paths.CLIStateFile),
 	}, occupant.Dependencies{Discover: discoverer.DiscoverStatus})
 
 	trusted := &trustedrouter.Coordinator{
@@ -473,9 +474,24 @@ func (a *App) routerInspectOccupant(ctx context.Context, params json.RawMessage)
 		return nil, mapOccupantError(err)
 	}
 	return protocol.RouterOccupantInspectionResult{
-		PID: inspection.PID, ProcessName: inspection.ProcessName, Executable: inspection.Executable,
+		PID: inspection.PID, VerificationMode: string(inspection.VerificationMode), ProcessName: inspection.ProcessName, Executable: inspection.Executable,
 		ListenAddr: inspection.ListenAddr, ConfirmationToken: inspection.ConfirmationToken, ExpiresAt: inspection.ExpiresAt,
 	}, nil
+}
+
+func protectedStatePID(paths ...string) func(int) bool {
+	return func(pid int) bool {
+		if pid <= 0 {
+			return false
+		}
+		for _, path := range paths {
+			value, err := state.Read(path)
+			if err == nil && value.PID > 0 && value.PID == pid {
+				return true
+			}
+		}
+		return false
+	}
 }
 
 func (a *App) routerForceTerminateOccupant(ctx context.Context, params json.RawMessage) (any, *protocol.Error) {

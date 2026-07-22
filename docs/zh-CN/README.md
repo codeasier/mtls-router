@@ -153,7 +153,7 @@ Windows PowerShell：
   "commit": "abc1234",
   "build_date": "2026-06-21T09:23:24Z",
   "deployment_id": "production-service",
-  "management_protocol_version": "2",
+  "management_protocol_version": "3",
   "pid": 12345,
   "started_at": "2026-06-21T09:23:24Z"
 }
@@ -197,9 +197,16 @@ Windows PowerShell：
 
 `router install` 只下载并安装二进制。`router start` 只启动已安装的二进制；如果不存在，会明确提示先执行 `router install` 或 `router setup`。`router setup` 会安装并启动 router，等价于无参数默认行为。
 
-`agent print-config` 和 `agent write-config --agent=...` 都会先隐藏读取 key，再发现 manager 经过认证和构建过滤的 `GET /v1/models` 目录。Manager 默认排除包含 ASCII `/` 的有效 ID；使用 `SIMPLIFY=False` 构建的 release 会保留它们。这个不可变的 manager 构建策略控制配置选择和刷新校验；它不是运行时偏好，也不限制下文列出的 proxy 路由。命令绝不会选择目录中的第一个模型、按模型名称或能力推断选择，也不会替换为另一个模型。Release 可以提供可见、可编辑的 preset，但只有在 manager 根据该过滤目录验证某个 Agent section 的全部精确模型 ID 后，才会提供该 section；否则整个 section 不可用，且不会选择替代项。每个 Agent 的初始化优先级为 `existing > preset > empty`。Print 返回 manager 动态渲染且 API-key 脱敏的托管片段；write 显示精确预览，并在一次事务写入前立即重新验证目录。可添加 `--model-config=<path>`，使用无 key 的规范 JSON 选择替代模型问答；该显式导入会完整替换全部生成的默认值。旧的顶层 `--print-config` 和 `--write-config --agent=...` 仍作为同一 v2 流程的兼容别名。Agent 命令只会执行经 checksum 验证的同目录 manager，或经安装 receipt 验证的 manager；绝不会隐式下载 manager。
+`agent print-config` 和 `agent write-config --agent=...` 都会先隐藏读取 key，再发现 manager 经过认证和构建过滤的 `GET /v1/models` 目录。Manager 默认排除包含 ASCII `/` 的有效 ID；使用 `SIMPLIFY=False` 构建的 release 会保留它们。这个不可变的 manager 构建策略控制配置选择和刷新校验；它不是运行时偏好，也不限制下文列出的 proxy 路由。命令绝不会选择目录中的第一个模型、按模型名称或能力推断选择，也不会替换为另一个模型。Release 可以提供可见、可编辑的 preset，但只有在 manager 根据该过滤目录验证某个 Agent section 的全部精确模型 ID 后，才会提供该 section；否则整个 section 不可用，且不会选择替代项。每个 Agent 的初始化优先级为 `existing > preset > empty`。Print 返回 manager 动态渲染且 API-key 脱敏的托管片段；write 显示精确预览，并在一次事务写入前立即重新验证目录。可添加 `--model-config=<path>`，使用无 key 的规范 JSON 选择替代模型问答；该显式导入会完整替换全部生成的默认值。旧的顶层 `--print-config` 和 `--write-config --agent=...` 仍作为 protocol v2 引入的 Agent 配置流程的兼容别名。Agent 命令只会执行经 checksum 验证的同目录 manager，或经安装 receipt 验证的 manager；绝不会隐式下载 manager。
 
-由于环境变量不是安全的 secret 传输方式，`MTLS_ROUTER_OPENAI_API_KEY` 已移除，不再提供 key。非交互自动化必须验证 `manager.info` protocol `2`，调用 `agent.models`，构造规范 model config，再调用 `agent.render` 或 `agent.preview` 与 `agent.write`。Key 只出现在 `agent.models` 和 `agent.write` stdin 请求体中。不要把 key 放入命令行参数、环境变量、model config、日志、shell history 或临时请求文件。完整契约见 [Agent 模型配置](AGENT_MODELS.md#protocol-v2-自动化)。
+当前经 receipt 验证的 manager 握手为：
+
+```json
+{"id":"info","method":"manager.info","params":{}}
+{"id":"info","result":{"version":"v0.1.1","commit":"abc1234","build_date":"2026-06-21T09:23:24Z","target":"linux/amd64","deployment_id":"production-service","management_protocol_version":"3"}}
+```
+
+由于环境变量不是安全的 secret 传输方式，`MTLS_ROUTER_OPENAI_API_KEY` 已移除，不再提供 key。非交互自动化必须验证 `manager.info` protocol `3`，调用 `agent.models`，构造规范 model config，再调用 `agent.render` 或 `agent.preview` 与 `agent.write`。Key 只出现在 `agent.models` 和 `agent.write` stdin 请求体中。不要把 key 放入命令行参数、环境变量、model config、日志、shell history 或临时请求文件。完整契约见 [Agent 模型配置](AGENT_MODELS.md#protocol-v3-自动化)。
 
 `mtls-router` 二进制本身只管理 router，不提供 `print-config` 这类 agent 配置命令。
 

@@ -237,3 +237,25 @@ func TestDecodeParamsRejectsUnknownFields(t *testing.T) {
 		t.Fatalf("error = %#v", err)
 	}
 }
+
+func TestForceTerminateOccupantParamsRemainStrictlyTokenOnly(t *testing.T) {
+	for _, raw := range []string{
+		`{"confirmation_token":"token","pid":4242}`,
+		`{"confirmation_token":"token","executable":"listener.exe"}`,
+		`{"confirmation_token":"token","confirmed":true}`,
+	} {
+		var params RouterForceTerminateOccupantParams
+		err := DecodeParams(json.RawMessage(raw), &params)
+		if err == nil || err.Code != CodeInvalidParams {
+			t.Errorf("DecodeParams(%s) error = %#v", raw, err)
+		}
+	}
+
+	var params RouterForceTerminateOccupantParams
+	if err := DecodeParams(json.RawMessage(`{"confirmation_token":"token"}`), &params); err != nil {
+		t.Fatalf("token-only request rejected: %#v", err)
+	}
+	if params.ConfirmationToken != "token" {
+		t.Fatalf("confirmation token = %q", params.ConfirmationToken)
+	}
+}

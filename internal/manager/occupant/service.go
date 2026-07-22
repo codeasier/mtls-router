@@ -24,27 +24,31 @@ type Config struct {
 	DesktopPID      int
 	ManagerIdentity process.Identity
 	IsProtected     func(Identity) bool
+	IsProtectedPID  func(int) bool
 	ReleaseTimeout  time.Duration
 	PollInterval    time.Duration
 }
 
 type Dependencies struct {
-	Discover    func(context.Context) discovery.Result
-	Inspect     func(context.Context, string) (Identity, error)
-	CurrentUser func() (string, error)
-	SameProcess func(process.Identity, process.Identity) (bool, error)
-	Validate    func(process.Identity, string) (process.Status, error)
-	Signal      func(process.Identity, os.Signal) error
-	Dial        func(context.Context, string, string) (net.Conn, error)
-	Random      io.Reader
-	Now         func() time.Time
-	Sleep       func(context.Context, time.Duration) error
+	Discover        func(context.Context) discovery.Result
+	Inspect         func(context.Context, string) (Target, error)
+	SupportsPIDOnly func() bool
+	InspectPIDOwner func(context.Context, string) (int, error)
+	SignalPID       func(int) error
+	CurrentUser     func() (string, error)
+	SameProcess     func(process.Identity, process.Identity) (bool, error)
+	Validate        func(process.Identity, string) (process.Status, error)
+	Signal          func(process.Identity, os.Signal) error
+	Dial            func(context.Context, string, string) (net.Conn, error)
+	Random          io.Reader
+	Now             func() time.Time
+	Sleep           func(context.Context, time.Duration) error
 }
 
 type tokenRecord struct {
 	value     string
 	expiresAt time.Time
-	identity  Identity
+	target    Target
 }
 
 type Service struct {
@@ -63,6 +67,15 @@ func New(config Config, deps Dependencies) *Service {
 	}
 	if deps.Inspect == nil {
 		deps.Inspect = inspectNative
+	}
+	if deps.SupportsPIDOnly == nil {
+		deps.SupportsPIDOnly = supportsPIDOnlyNative
+	}
+	if deps.InspectPIDOwner == nil {
+		deps.InspectPIDOwner = inspectPIDOwnerNative
+	}
+	if deps.SignalPID == nil {
+		deps.SignalPID = signalPIDNative
 	}
 	if deps.CurrentUser == nil {
 		deps.CurrentUser = currentUserNative
@@ -107,7 +120,7 @@ func (s *Service) Inspect(ctx context.Context) (Inspection, error) {
 	if err := s.requireUnknown(ctx); err != nil {
 		return Inspection{}, err
 	}
-	identity, err := s.inspectEligible(ctx)
+	target, err := s.inspectEligible(ctx)
 	if err != nil {
 		return Inspection{}, err
 	}
@@ -117,14 +130,18 @@ func (s *Service) Inspect(ctx context.Context) (Inspection, error) {
 	}
 	now := s.deps.Now().UTC()
 	record := &tokenRecord{
-		value: base64.RawURLEncoding.EncodeToString(random), expiresAt: now.Add(tokenLifetime), identity: identity,
+		value: base64.RawURLEncoding.EncodeToString(random), expiresAt: now.Add(tokenLifetime), target: target,
 	}
 	s.token = record
-	return Inspection{
-		PID: identity.Process.PID, ProcessName: filepath.Base(identity.Process.Executable),
-		Executable: identity.Process.Executable, ListenAddr: identity.ListenAddr,
+	inspection := Inspection{
+		PID: target.PID, VerificationMode: target.Mode, ListenAddr: target.ListenAddr,
 		ConfirmationToken: record.value, ExpiresAt: record.expiresAt,
-	}, nil
+	}
+	if target.Mode == VerificationModeVerifiedIdentity {
+		inspection.ProcessName = filepath.Base(target.Identity.Process.Executable)
+		inspection.Executable = target.Identity.Process.Executable
+	}
+	return inspection, nil
 }
 
 func (s *Service) ForceTerminate(ctx context.Context, token string) (Result, error) {
@@ -138,51 +155,125 @@ func (s *Service) ForceTerminate(ctx context.Context, token string) (Result, err
 	preSignalCtx, cancel := reserveReleaseWindow(ctx, s.config.ReleaseTimeout)
 	defer cancel()
 	if err := s.requireUnknown(preSignalCtx); err != nil {
+		if record.target.Mode == VerificationModeWindowsPIDOnly && errors.Is(err, ErrNotFound) {
+			return Result{}, ErrChanged
+		}
 		return Result{}, err
 	}
-	live, err := s.inspectEligible(preSignalCtx)
+	switch record.target.Mode {
+	case VerificationModeVerifiedIdentity:
+		return s.forceTerminateVerified(preSignalCtx, ctx, record.target)
+	case VerificationModeWindowsPIDOnly:
+		return s.forceTerminatePIDOnly(preSignalCtx, ctx, record.target)
+	default:
+		return Result{}, ErrChanged
+	}
+}
+
+func (s *Service) forceTerminateVerified(preSignalCtx, ctx context.Context, target Target) (Result, error) {
+	live, err := s.inspectVerifiedEligible(preSignalCtx)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return Result{}, ErrChanged
 		}
 		return Result{}, err
 	}
-	same, err := sameIdentity(record.identity, live, s.deps.SameProcess)
+	same, err := sameIdentity(target.Identity, live.Identity, s.deps.SameProcess)
 	if err != nil || !same {
 		return Result{}, ErrChanged
 	}
-	status, err := s.deps.Validate(live.Process, live.Process.Executable)
+	status, err := s.deps.Validate(live.Identity.Process, live.Identity.Process.Executable)
 	if err != nil || status != process.StatusGenuine {
 		return Result{}, ErrChanged
 	}
-	if err := s.deps.Signal(live.Process, os.Kill); err != nil {
+	if err := s.deps.Signal(live.Identity.Process, os.Kill); err != nil {
 		if errors.Is(err, process.ErrIdentityMismatch) || errors.Is(err, process.ErrNotFound) {
 			return Result{}, ErrChanged
 		}
 		return Result{}, ErrTerminationFailed
 	}
-	return s.waitReleased(ctx, live)
+	return s.waitReleased(ctx, live.Identity)
 }
 
-func (s *Service) inspectEligible(ctx context.Context) (Identity, error) {
-	identity, err := s.deps.Inspect(ctx, s.config.ListenAddr)
-	if err != nil {
-		return Identity{}, err
+func (s *Service) forceTerminatePIDOnly(preSignalCtx, ctx context.Context, target Target) (Result, error) {
+	livePID, err := s.deps.InspectPIDOwner(preSignalCtx, target.ListenAddr)
+	if err != nil || livePID != target.PID {
+		return Result{}, ErrChanged
 	}
+	if s.isProtectedPID(livePID) {
+		return Result{}, ErrProtected
+	}
+	if preSignalCtx.Err() != nil {
+		return Result{}, ErrChanged
+	}
+	if err := s.deps.SignalPID(livePID); err != nil {
+		if errors.Is(err, process.ErrNotFound) {
+			return Result{}, ErrChanged
+		}
+		return Result{}, ErrTerminationFailed
+	}
+	return s.waitPIDReleased(ctx, target)
+}
+
+func (s *Service) inspectEligible(ctx context.Context) (Target, error) {
+	target, err := s.deps.Inspect(ctx, s.config.ListenAddr)
+	if err != nil {
+		return Target{}, err
+	}
+	switch target.Mode {
+	case VerificationModeVerifiedIdentity:
+		return s.validateVerifiedTarget(target)
+	case VerificationModeWindowsPIDOnly:
+		return s.validatePIDOnlyTarget(target)
+	default:
+		return Target{}, ErrIdentityUnavailable
+	}
+}
+
+func (s *Service) inspectVerifiedEligible(ctx context.Context) (Target, error) {
+	target, err := s.deps.Inspect(ctx, s.config.ListenAddr)
+	if err != nil {
+		return Target{}, err
+	}
+	if target.Mode != VerificationModeVerifiedIdentity {
+		return Target{}, ErrChanged
+	}
+	return s.validateVerifiedTarget(target)
+}
+
+func (s *Service) validateVerifiedTarget(target Target) (Target, error) {
+	identity := target.Identity
 	if identity.ListenAddr != s.config.ListenAddr || identity.Network != "tcp4" || identity.SocketID == "" || identity.Process.PID <= 0 || identity.Process.StartedAt == "" || identity.Process.Executable == "" || identity.UserID == "" {
-		return Identity{}, ErrIdentityUnavailable
+		return Target{}, ErrIdentityUnavailable
+	}
+	if target.PID != identity.Process.PID || target.ListenAddr != identity.ListenAddr {
+		return Target{}, ErrIdentityUnavailable
 	}
 	userID, err := s.deps.CurrentUser()
 	if err != nil || userID == "" {
-		return Identity{}, ErrIdentityUnavailable
+		return Target{}, ErrIdentityUnavailable
 	}
 	if identity.UserID != userID {
-		return Identity{}, ErrNotOwned
+		return Target{}, ErrNotOwned
 	}
 	if identity.Process.PID == s.config.DesktopPID || identity.Process.PID == s.config.ManagerIdentity.PID || (s.config.IsProtected != nil && s.config.IsProtected(identity)) {
-		return Identity{}, ErrProtected
+		return Target{}, ErrProtected
 	}
-	return identity, nil
+	return target, nil
+}
+
+func (s *Service) validatePIDOnlyTarget(target Target) (Target, error) {
+	if s.deps.SupportsPIDOnly == nil || !s.deps.SupportsPIDOnly() || s.deps.InspectPIDOwner == nil || s.deps.SignalPID == nil || target.ListenAddr != s.config.ListenAddr || target.PID <= 0 {
+		return Target{}, ErrIdentityUnavailable
+	}
+	if s.isProtectedPID(target.PID) {
+		return Target{}, ErrProtected
+	}
+	return target, nil
+}
+
+func (s *Service) isProtectedPID(pid int) bool {
+	return pid == s.config.DesktopPID || pid == s.config.ManagerIdentity.PID || (s.config.IsProtectedPID != nil && s.config.IsProtectedPID(pid))
 }
 
 func (s *Service) requireUnknown(ctx context.Context) error {
@@ -217,7 +308,7 @@ func (s *Service) waitReleased(parent context.Context, identity Identity) (Resul
 			}
 			_ = conn.Close()
 			if replacement, inspectErr := s.deps.Inspect(ctx, identity.ListenAddr); inspectErr == nil {
-				same, _ := sameIdentity(identity, replacement, s.deps.SameProcess)
+				same, _ := sameIdentity(identity, replacement.Identity, s.deps.SameProcess)
 				if !same {
 					return Result{}, ErrChanged
 				}
@@ -230,6 +321,33 @@ func (s *Service) waitReleased(parent context.Context, identity Identity) (Resul
 				return Result{}, ErrChanged
 			case process.StatusGenuine:
 				return Result{}, ErrTerminationFailed
+			default:
+				return Result{}, ErrPortReleaseTimeout
+			}
+		}
+	}
+}
+
+func (s *Service) waitPIDReleased(parent context.Context, target Target) (Result, error) {
+	ctx, cancel := context.WithTimeout(parent, s.config.ReleaseTimeout)
+	defer cancel()
+	for {
+		pid, err := s.deps.InspectPIDOwner(ctx, target.ListenAddr)
+		if errors.Is(err, ErrNotFound) {
+			return Result{State: string(discovery.Absent)}, nil
+		}
+		if err != nil || pid != target.PID {
+			return Result{}, ErrChanged
+		}
+		if err := s.deps.Sleep(ctx, s.config.PollInterval); err != nil {
+			finalCtx, cancel := context.WithTimeout(context.WithoutCancel(parent), s.config.PollInterval)
+			pid, inspectErr := s.deps.InspectPIDOwner(finalCtx, target.ListenAddr)
+			cancel()
+			switch {
+			case errors.Is(inspectErr, ErrNotFound):
+				return Result{State: string(discovery.Absent)}, nil
+			case inspectErr != nil || pid != target.PID:
+				return Result{}, ErrChanged
 			default:
 				return Result{}, ErrPortReleaseTimeout
 			}

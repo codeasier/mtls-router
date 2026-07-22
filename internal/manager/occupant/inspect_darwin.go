@@ -72,7 +72,15 @@ func matchDarwinTCP4Listener(record darwinTCP4Record, ip net.IP, port int) darwi
 	return darwinListenerRejected
 }
 
-func inspectNative(ctx context.Context, listenAddr string) (Identity, error) {
+func inspectNative(ctx context.Context, listenAddr string) (Target, error) {
+	identity, err := inspectDarwin(ctx, listenAddr)
+	if err != nil {
+		return Target{}, err
+	}
+	return Target{Mode: VerificationModeVerifiedIdentity, Identity: identity, PID: identity.Process.PID, ListenAddr: identity.ListenAddr}, nil
+}
+
+func inspectDarwin(ctx context.Context, listenAddr string) (Identity, error) {
 	ip, port, err := validateAddress(listenAddr)
 	if err != nil {
 		return Identity{}, err

@@ -257,6 +257,56 @@ function occupantError(code: string): OccupantError {
   }
 }
 
+function validOccupantInspection(value: unknown): value is OccupantInspection {
+  if (!value || typeof value !== "object") return false;
+  const inspection = value as Record<string, unknown>;
+  const keys = Object.keys(inspection);
+  const hasExactKeys = (allowed: readonly string[]) =>
+    keys.length === allowed.length &&
+    keys.every((key) => allowed.includes(key));
+  const rfc3339 =
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:[0-5]\d(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+  const validBase =
+    Number.isInteger(inspection.pid) &&
+    (inspection.pid as number) > 0 &&
+    (inspection.pid as number) <= 0xffffffff &&
+    inspection.listen_addr === "127.0.0.1:19099" &&
+    typeof inspection.confirmation_token === "string" &&
+    inspection.confirmation_token.trim() !== "" &&
+    typeof inspection.expires_at === "string" &&
+    rfc3339.test(inspection.expires_at) &&
+    Number.isFinite(Date.parse(inspection.expires_at));
+  if (!validBase) return false;
+
+  if (inspection.verification_mode === "verified_identity") {
+    return (
+      hasExactKeys([
+        "pid",
+        "verification_mode",
+        "process_name",
+        "executable",
+        "listen_addr",
+        "confirmation_token",
+        "expires_at",
+      ]) &&
+      typeof inspection.process_name === "string" &&
+      inspection.process_name.trim() !== "" &&
+      typeof inspection.executable === "string" &&
+      inspection.executable.trim() !== ""
+    );
+  }
+  if (inspection.verification_mode === "windows_pid_only") {
+    return hasExactKeys([
+      "pid",
+      "verification_mode",
+      "listen_addr",
+      "confirmation_token",
+      "expires_at",
+    ]);
+  }
+  return false;
+}
+
 const occupantErrorKeys = {
   "not-owned": "router.occupant.error.not-owned",
   unverifiable: "router.occupant.error.unverifiable",
@@ -346,7 +396,11 @@ export function RouterPage({
         generation === occupantGeneration.current &&
         statusState.current?.state === "unknown_occupant"
       ) {
-        setOccupant(inspected);
+        if (validOccupantInspection(inspected)) {
+          setOccupant(inspected);
+        } else {
+          setOccupantFailure("unverifiable");
+        }
       }
     } catch (error) {
       if (
@@ -458,6 +512,7 @@ export function RouterPage({
       status.owner === "desktop") ||
     (!operation && status?.state === "degraded" && status.owner === "desktop");
   const canRetryHealth = available && !operation && !checkingHealth;
+  const pidOnlyOccupant = occupant?.verification_mode === "windows_pid_only";
 
   async function refreshSnapshot() {
     const snapshot = await api.getPollSnapshot();
@@ -643,15 +698,22 @@ export function RouterPage({
             {occupant && !inspectingOccupant && (
               <div className="occupant-target">
                 <dl>
-                  <div>
-                    <dt>{t("router.occupant.process")}</dt>
-                    <dd>{occupant.process_name}</dd>
-                  </div>
+                  {!pidOnlyOccupant && (
+                    <div>
+                      <dt>{t("router.occupant.process")}</dt>
+                      <dd>{occupant.process_name}</dd>
+                    </div>
+                  )}
                   <div>
                     <dt>{t("router.occupant.pid")}</dt>
                     <dd>{occupant.pid}</dd>
                   </div>
                 </dl>
+                {pidOnlyOccupant && (
+                  <p className="danger-dialog__warning">
+                    {t("router.occupant.pidOnlyWarning")}
+                  </p>
+                )}
                 <button
                   type="button"
                   className="control-button control-button--danger"
@@ -734,21 +796,29 @@ export function RouterPage({
               {t("router.occupant.dialogTitle")}
             </h2>
             <dl className="danger-dialog__details">
-              <div>
-                <dt>{t("router.occupant.process")}</dt>
-                <dd>{occupant.process_name}</dd>
-              </div>
+              {!pidOnlyOccupant && (
+                <div>
+                  <dt>{t("router.occupant.process")}</dt>
+                  <dd>{occupant.process_name}</dd>
+                </div>
+              )}
               <div>
                 <dt>{t("router.occupant.pid")}</dt>
                 <dd>{occupant.pid}</dd>
               </div>
-              <div className="danger-dialog__path">
-                <dt>{t("router.occupant.executable")}</dt>
-                <dd>{occupant.executable}</dd>
-              </div>
+              {!pidOnlyOccupant && (
+                <div className="danger-dialog__path">
+                  <dt>{t("router.occupant.executable")}</dt>
+                  <dd>{occupant.executable}</dd>
+                </div>
+              )}
             </dl>
             <p id="occupant-dialog-warning" className="danger-dialog__warning">
-              {t("router.occupant.warning")}
+              {t(
+                pidOnlyOccupant
+                  ? "router.occupant.pidOnlyWarning"
+                  : "router.occupant.warning",
+              )}
             </p>
             <div className="danger-dialog__actions">
               <button

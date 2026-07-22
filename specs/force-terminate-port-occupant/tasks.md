@@ -9,7 +9,9 @@ this specification package is approved.
 - [x] **1.1 Add reusable complete-process identity operations**
   - Add comparison of PID, process start identity, and normalized executable.
   - Add identity-validated signaling for an already complete identity.
-  - Do not add a PID-only signal API or weaken managed-router binary checks.
+  - Keep the generic process API identity-safe and do not weaken managed-router
+    binary checks. The separate occupant package may expose only its
+    Windows-native PID termination capability for the defined PID-only mode.
   - Test PID, start identity, executable mismatch, absence, and signal refusal.
   - Verification: `go test ./internal/manager/process`.
 
@@ -19,7 +21,8 @@ this specification package is approved.
     and user identity fields.
   - Define fail-closed errors for absent, other-user, incomplete, ambiguous,
     changed, and protected targets.
-  - Keep complete identity internal and return only safe presentation metadata.
+  - Keep tagged complete-identity/PID-only targets internal and return only the
+    safe presentation metadata allowed for each mode.
   - Verification: focused package unit tests.
 
 - [ ] **1.3 Implement Linux listener-owner discovery**
@@ -35,8 +38,11 @@ this specification package is approved.
   - Use `GetExtendedTcpTable` owner-PID listener data for the exact endpoint.
   - Use process-token user SID for ownership and existing process inspection
     for start/executable identity.
-  - Reject inaccessible tokens, duplicate owners, unsupported endpoint shapes,
-    and incomplete identities.
+  - Prefer complete identity; when SID/start/executable inspection fails or a
+    readable SID belongs to another user, represent the unique exact TCP4 PID
+    as an explicitly unverified Windows-only target.
+  - Reject no listener, duplicate owners/rows, wildcard, malformed, ambiguous,
+    and unsupported endpoint shapes without entering PID-only mode.
   - Add injectable native-table and SID tests.
   - Verification: native Windows tests and cgo-free Windows amd64/arm64 builds.
 
@@ -53,7 +59,8 @@ this specification package is approved.
 
 - [x] **2.1 Implement occupant inspection tokens**
   - Generate tokens from at least 32 cryptographically secure random bytes.
-  - Bind each token to the complete occupant identity and listen address.
+  - Bind each token to a tagged target and listen address: complete identity for
+    `verified_identity`, or the unique PID for `windows_pid_only`.
   - Keep at most one active token per address in manager memory.
   - Expire tokens after 30 seconds and invalidate them on use, replacement, or
     manager restart.
@@ -64,19 +71,33 @@ this specification package is approved.
 - [ ] **2.2 Implement protected-target and force-termination behavior**
   - Require discovery to be `unknown_occupant` during inspection and again
     before termination.
-  - Reject other-user, desktop, manager, managed-router, and incomplete targets.
+  - Reject desktop, manager, and protected managed-router targets. Reject
+    other-user/incomplete complete-mode targets while allowing only the defined
+    warned Windows PID-only exception.
   - Consume the token, rediscover the listener, and compare every identity
     field before signaling.
   - Perform final process identity validation immediately before `os.Kill`.
-  - Wait at most two seconds for original identity exit and TCP refusal.
+  - In complete mode, wait at most two seconds for original identity exit and
+    TCP refusal.
+  - In Windows PID-only mode, poll the exact owner under a two-second deadline,
+    then perform one final `PollInterval`-bounded lookup; classify the
+    same PID as release timeout and replacement/ambiguity as changed.
   - Never signal a replacement listener and never start the router.
+  - For Windows PID-only mode, bind the token to address/PID, immediately
+    recheck the same unique exact owner, and refuse disappearance, change, or
+    ambiguity without signaling.
+  - Protect desktop/manager PIDs and router PIDs from readable lifecycle state;
+    skip unreadable lifecycle state as the approved availability tradeoff.
+  - Return sanitized termination failure when Windows denies termination and
+    retain PID reuse as a documented residual risk.
   - Test every no-signal path plus immediate force termination and replacement
     listener behavior.
   - Verification: occupant race tests and native integration tests.
 
 - [x] **2.3 Add manager protocol methods and stable errors**
   - Add `router.inspect_occupant` with a two-second deadline.
-  - Add `router.force_terminate_occupant` with a three-second deadline.
+  - Add `router.force_terminate_occupant` with a three-second protocol window;
+    permit only the specified PID-only final classification lookup beyond it.
   - Accept no inspection params and only `confirmation_token` for termination.
   - Add all eight specified stable occupant error codes.
   - Register handlers and map internal failures to sanitized errors.
@@ -103,6 +124,8 @@ this specification package is approved.
     temporary inspection failures.
   - Discard target details whenever status leaves `unknown_occupant`.
   - Add state and action tests.
+  - Keep complete identity as the default; for Windows PID-only inspection show
+    only PID/address and never infer current-user ownership, name, or path.
   - Verification: focused Router page tests.
 
 - [x] **3.3 Add accessible destructive confirmation**
@@ -114,17 +137,23 @@ this specification package is approved.
   - On success close, refresh, report port release, and leave the router stopped.
   - On changed/expired results clear stale details and require reinspection.
   - Add English and Simplified Chinese copy and responsive danger styling.
+  - In Windows PID-only mode explicitly warn that identity, owner, start time,
+    and executable are unverified, that same port/PID is rechecked, and that PID
+    reuse and unreadable managed-router state remain risks.
   - Verification: frontend static checks, typecheck, tests, and build.
 
 ## Phase 4: Documentation and Verification
 
 - [x] **4.1 Update live requirements and paired user documentation**
-  - Replace the absolute prohibition on killing unknown occupants with the
-    explicit confirmed current-user exception.
+  - Keep complete current-user identity as the default and document the narrow
+    Windows unique exact TCP4 PID-only exception; macOS/Linux remain unchanged.
   - Preserve the rule that automatic termination, Stop, Quit, and tray actions
     never kill unknown occupants.
   - Document target details, immediate termination risk, no elevation, and
     manual fallback in English and Simplified Chinese.
+  - Document other-user SID fallback, skipped unreadable lifecycle state,
+    Windows termination denial, PID reuse, immediate owner recheck, refusal on
+    disappearance/change/ambiguity, protected PIDs, and no automatic start.
   - Update the existing desktop acceptance checklist without marking new items
     complete before evidence exists.
   - Verification: documentation claim search plus workflow and shell tests.

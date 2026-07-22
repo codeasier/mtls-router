@@ -17,6 +17,7 @@ import (
 	"sync"
 
 	"github.com/codeasier/mtls-router/internal/manager/agent/modelconfig"
+	"github.com/codeasier/mtls-router/internal/version"
 )
 
 const journalFileName = "agent-write-journal.json"
@@ -433,7 +434,7 @@ func (s *Service) Preview(ctx context.Context, selected []Kind, values ...any) (
 		if err := s.ensureSigner(); err != nil {
 			return Preview{}, err
 		}
-		claims := modelconfig.CatalogClaims{Models: []string{"model-primary", "model-sonnet"}, Agents: kindsToModelAgents(selected), Owner: "cli", RouterBaseURL: s.legacyRender.routerBaseURL, DeploymentID: "legacy-tests", ProtocolVersion: "2"}
+		claims := modelconfig.CatalogClaims{Models: []string{"model-primary", "model-sonnet"}, Agents: kindsToModelAgents(selected), Owner: "cli", RouterBaseURL: s.legacyRender.routerBaseURL, DeploymentID: "legacy-tests", ProtocolVersion: version.ManagementProtocolVersion}
 		var err error
 		catalogToken, err = s.signer.SignCatalog(claims)
 		if err != nil {
@@ -506,7 +507,7 @@ func (s *Service) verifyCatalogToken(catalogToken string) (modelconfig.CatalogCl
 	if err != nil {
 		return modelconfig.CatalogClaims{}, operationError(CodeModelCatalogStale, "model catalog token is invalid")
 	}
-	if claims.Simplify != s.simplify {
+	if claims.ProtocolVersion != version.ManagementProtocolVersion || claims.Simplify != s.simplify {
 		return modelconfig.CatalogClaims{}, operationError(CodeModelCatalogStale, "Agent model catalog is stale")
 	}
 	return claims, nil
@@ -537,7 +538,7 @@ func (s *Service) Write(ctx context.Context, request WriteRequest) (WriteResult,
 	}
 	legacyRequest := request.CatalogToken == "" && len(request.ModelConfig) == 0 && s.legacyRender != nil
 	if legacyRequest {
-		claims := modelconfig.CatalogClaims{Models: []string{"model-primary", "model-sonnet"}, Agents: kindsToModelAgents(request.Agents), Owner: "cli", RouterBaseURL: s.legacyRender.routerBaseURL, DeploymentID: "legacy-tests", ProtocolVersion: "2"}
+		claims := modelconfig.CatalogClaims{Models: []string{"model-primary", "model-sonnet"}, Agents: kindsToModelAgents(request.Agents), Owner: "cli", RouterBaseURL: s.legacyRender.routerBaseURL, DeploymentID: "legacy-tests", ProtocolVersion: version.ManagementProtocolVersion}
 		request.CatalogToken, err = s.signer.SignCatalog(claims)
 		if err != nil {
 			return WriteResult{}, err

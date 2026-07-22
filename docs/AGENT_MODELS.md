@@ -2,7 +2,7 @@
 
 [中文](zh-CN/AGENT_MODELS.md)
 
-This is the user and automation contract for management protocol v2. The Go
+This is the user and automation contract for management protocol v3. The Go
 manager is authoritative when this guide and a client-side validation differ.
 
 ## Service Contract
@@ -41,7 +41,7 @@ not a proxy capability restriction or runtime model preference.
 The Shell, PowerShell, and desktop flows all use this order:
 
 1. Detect and select Claude Code, opencode, and/or Codex.
-2. Read the API key without echo and establish a trusted protocol-v2 loopback router.
+2. Read the API key without echo and establish a trusted protocol-v3 loopback router.
 3. Call `agent.models`; only then show the common sorted catalog.
 4. Initialize each selected Agent from a valid existing section, otherwise a visible authenticated preset section, otherwise an empty section; require the user to review or complete the editable Agent-native choices. Never select the first model, apply a model-name or capability heuristic, repair an unavailable preset, or substitute another model.
 5. Render a redacted fragment for print, or preview exact file, backup, migration, ownership, and drift effects for write.
@@ -311,10 +311,10 @@ permissions, and may contain current or old API keys. Treat them as sensitive.
 Rollback restores files and sidecar together; do not remove transaction state
 or backups while recovery is unresolved.
 
-## Protocol v2 Automation
+## Protocol v3 Automation
 
 Automation must use a receipt-verified `mtls-router-manager serve`. First call
-`manager.info` and require management protocol `2`. Then call:
+`manager.info` and require management protocol `3`. Then call:
 
 1. `agent.models` with `owner`, `agents`, and transient `api_key`.
 2. `agent.render` for key-redacted managed fragments, or `agent.preview` with `agents`, `catalog_token`, and `model_config`.
@@ -340,7 +340,7 @@ turn otherwise successful discovery into a failure.
 
 The key belongs only in the two secret-bearing stdin/IPC request bodies. Never
 put it in arguments, environment variables, model config, logs, shell history,
-or temporary request files. Protocol v1 requests and mixed v1/v2 router,
+or temporary request files. Protocol v1/v2 requests and mixed v2/v3 router,
 manager, setup receipt, or desktop artifacts are rejected; update the complete
 release together.
 

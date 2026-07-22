@@ -19,10 +19,14 @@ func TestNativeInspectOwnLoopbackListener(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	identity, err := inspectNative(ctx, listener.Addr().String())
+	target, err := inspectNative(ctx, listener.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
+	if target.Mode != VerificationModeVerifiedIdentity {
+		t.Fatalf("mode = %q", target.Mode)
+	}
+	identity := target.Identity
 	if identity.Process.PID != os.Getpid() || identity.ListenAddr != listener.Addr().String() || identity.Network != "tcp4" || identity.SocketID == "" || identity.UserID == "" {
 		t.Fatalf("identity = %+v", identity)
 	}

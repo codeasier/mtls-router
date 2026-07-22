@@ -206,8 +206,9 @@ type RouterLogsResult struct {
 
 type RouterOccupantInspectionResult struct {
 	PID               int       `json:"pid"`
-	ProcessName       string    `json:"process_name"`
-	Executable        string    `json:"executable"`
+	VerificationMode  string    `json:"verification_mode"`
+	ProcessName       string    `json:"process_name,omitempty"`
+	Executable        string    `json:"executable,omitempty"`
 	ListenAddr        string    `json:"listen_addr"`
 	ConfirmationToken string    `json:"confirmation_token"`
 	ExpiresAt         time.Time `json:"expires_at"`

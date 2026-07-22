@@ -11,7 +11,7 @@ cat >"$package/$manager" <<'MANAGER'
 set -euo pipefail
 request="$(dd bs=4194304 count=1 2>/dev/null)"; method="$(printf '%s' "$request" | jq -r .method)"
 case "$method" in
-  manager.info) jq -cn '{id:"setup-secret-info",result:{version:"v2",commit:"test",build_date:"test",target:"windows/amd64",deployment_id:"fake",management_protocol_version:"2"}}' ;;
+  manager.info) jq -cn '{id:"setup-secret-info",result:{version:"v2",commit:"test",build_date:"test",target:"windows/amd64",deployment_id:"fake",management_protocol_version:"3"}}' ;;
   agent.detect) jq -cn '{id:"detect",result:{agents:[{agent:"claude",name:"Claude Code",detected:true,path:"C:\\special path\\settings.json",format:"json"}]}}' ;;
   agent.models)
     printf '%s' "$request" | jq -e '.params.owner=="cli" and .params.api_key=="ps-v2-key-canary"' >/dev/null

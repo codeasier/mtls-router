@@ -38,7 +38,9 @@ Router 页面会区分本地进程和上游健康。运行中的进程可能处�
 
 - **桌面托管 router：**应用监督一个前台子进程。只有 PID、启动标识、可执行文件标识和所有权都通过检查时，停止和退出操作才可终止它。
 - **外部 router：**只有 CLI 安装脚本管理，且记录的进程标识、`deployment_id` 和 `management_protocol_version` 都与桌面构建一致的 router 才能复用。不能只根据手工启动进程的 `/version` 响应结构信任它。
-- **未知端口占用者：**应用绝不会自动终止它，也不会切换到其他端口。如果 manager 能证明唯一且可识别的 listener 属于当前用户，Router 页面会提供显式的**强制终止占用进程**恢复操作。确认对话框会显示进程名称、PID 和完整可执行文件路径，并警告终止会立即执行且可能导致未保存数据丢失。该操作不会请求提权，不适用于其他用户、身份不明确、已变化、受保护或无法验证的进程，释放端口后也不会启动 router。如果无法检查或终止，请使用操作系统工具识别并停止或重新配置 listener，然后重试。
+- **未知端口占用者：**应用绝不会自动终止它，也不会切换到其他端口。所有平台默认都要求完整身份：只有 manager 验证当前用户所有权、进程名称、PID、启动标识、完整可执行文件路径和 listener 身份后，Router 页面才会提供**强制终止占用进程**。确认对话框会显示已验证的进程详情，并警告终止会立即执行且可能导致未保存数据丢失。macOS 和 Linux 行为不变，始终要求这种完整身份。
+- **Windows 仅 PID 例外：**无法建立完整身份时，只有 Windows TCP4 owner table 为精确的 `127.0.0.1:19099` listener 识别出唯一 PID，才可能继续提供恢复操作。面板和确认对话框只显示 PID，并明确警告身份、所有者、启动时间和可执行文件均未验证；因此，即使可读取的 SID 属于其他用户，该进程仍可能进入此降级流程。确认使用短时、一次性 token；终止前一刻，manager 必须确认同一精确端口仍由同一唯一 PID 占用，并重新确认该 PID 不是桌面应用、manager，也不是可读取桌面或 CLI 生命周期状态所标识的托管 router。如果 listener 已消失、PID 已变化，或变为重复、wildcard、格式错误或其他不明确状态，manager 会拒绝且不发送信号。无法读取的生命周期状态会被跳过，因此未被识别的托管 router 仍是风险；Windows 可能拒绝终止，而且无法消除 owner 复查与终止之间的 PID 重用风险。该操作绝不请求提权，释放端口后也绝不启动 router。
+- **人工恢复：**如果两种检查模式都不可用、你不接受该警告或终止失败，请使用操作系统工具识别并停止或重新配置 listener，然后重试。
 - **陈旧状态：**PID 或可执行文件不匹配会报告 stale，且不会发送信号。人工清理前先核实进程和状态。
 - **降级或陈旧健康：**router 进程可能仍接受本地连接，但当前无法证明上游可达。请重试健康检查并查看日志；不要把 stale 健康结果当作健康。
 
@@ -81,7 +83,7 @@ Agent 配置必须显式执行 key-before-discovery 流程：
 
 ## stdin manager 自动化
 
-自动化必须调用经安装 receipt 验证的 `mtls-router-manager serve`，要求 `manager.info` protocol `2`，使用临时 key 调用 `agent.models`，构造规范 model config，调用无 key 的 `agent.render` 或 `agent.preview`，最后使用 revision token、显式 approval 和临时 key 调用 `agent.write`。Key 不得出现在参数、导出的环境变量、model-config value、日志或临时请求文件中。Catalog token 可以有意跨 one-shot manager 进程验证。精确流程见 [protocol v2 自动化契约](AGENT_MODELS.md#protocol-v2-自动化)。
+自动化必须调用经安装 receipt 验证的 `mtls-router-manager serve`，要求 `manager.info` protocol `3`，使用临时 key 调用 `agent.models`，构造规范 model config，调用无 key 的 `agent.render` 或 `agent.preview`，最后使用 revision token、显式 approval 和临时 key 调用 `agent.write`。Key 不得出现在参数、导出的环境变量、model-config value、日志或临时请求文件中。Catalog token 可以有意跨 one-shot manager 进程验证。精确流程见 [protocol v3 自动化契约](AGENT_MODELS.md#protocol-v3-自动化)。
 
 ## 凭据模型
 

@@ -89,13 +89,21 @@ verification on the stated platform.
 - [x] An unknown process on port 19099 is reported distinctly.
 - [ ] An unknown occupant is never terminated automatically, by regular Stop,
   by Quit, by launch-at-login, or from the tray.
-- [ ] Only an inspectable current-user occupant with complete identity can be
-  offered force termination; other-user, ambiguous, changed, protected, and
-  unverifiable processes receive no signal and no elevation is requested.
-- [ ] Occupant termination requires explicit confirmation of process name, PID,
-  complete executable path, and an immediate unsaved-data-loss warning.
-- [ ] Confirmed occupant termination is immediate, revalidates complete identity
-  before signaling, and does not first send a graceful signal.
+- [ ] Complete current-user identity remains the default on every platform;
+  macOS/Linux have no PID-only exception, and Windows PID-only requires one
+  unique owner PID for the exact TCP4 endpoint.
+- [ ] Complete confirmation shows process name/PID/path; Windows PID-only shows
+  only PID/address and explicitly warns that identity, owner, start time, and
+  executable are unverified before a separate confirmation action.
+- [ ] Confirmed termination is immediate and does not first send a graceful
+  signal; complete mode revalidates full identity, while Windows PID-only
+  immediately rechecks the same exact port/PID.
+- [ ] PID-only disappearance, change, wildcard, duplicate, malformed, ambiguity,
+  desktop PID, manager PID, or readable managed-router PID is refused without a
+  signal; no elevation is requested.
+- [ ] The accepted tradeoffs are explicit: readable other-user SID may enter
+  PID-only mode, unreadable lifecycle state is skipped, Windows may deny
+  termination, and PID reuse remains possible.
 - [ ] Releasing the port does not automatically start the router, and blocked or
   failed in-app recovery provides a manual operating-system-tool fallback.
 - [x] External reuse requires complete CLI state, full process identity,
@@ -107,7 +115,8 @@ verification on the stated platform.
 - [x] Production release preflight rejects empty/default/mismatched identities;
   development defaults cannot reuse external routers.
 - [x] The desktop does not silently switch to a different port.
-- [x] An unverifiable PID or endpoint is treated as unknown/stale, not owned.
+- [x] A non-unique PID or unsupported/ambiguous endpoint is treated as
+  unknown/stale, not owned; Windows PID-only never claims ownership.
 
 ## Setup CLI Compatibility
 
@@ -149,11 +158,12 @@ verification on the stated platform.
   versions.
 - [x] The UI represents not started, starting, healthy, degraded, external,
   occupied, failed, and stopping states.
-- [ ] The occupied state shows process name and PID only for an inspectable
-  current-user occupant and offers an explicit destructive recovery action.
-- [ ] The force-termination dialog shows process name, PID, a wrapping complete
-  executable path, and the immediate data-loss warning; Cancel has initial
-  focus and sends no termination request.
+- [ ] The occupied state shows complete-mode process name/PID or Windows
+  PID-only PID/address and offers an explicit destructive recovery action only
+  for a valid inspection.
+- [ ] The complete-mode dialog shows process name, PID, wrapping complete path,
+  and data-loss warning; PID-only shows its unverified warning and no invented
+  name/path. Cancel has initial focus and sends no termination request.
 - [ ] The tray exposes no force-termination action, and the regular Stop action
   remains disabled for unknown occupants.
 - [x] Missing/invalid sidecars report reinstall required and do not download.
@@ -307,10 +317,12 @@ verification on the stated platform.
   packaging, signing, and notarization.
 - [x] Troubleshooting covers sidecar failure, unknown port occupation, stale
   state, degraded upstream, invalid Agent config, and stale preview.
-- [ ] English and Chinese live desktop and troubleshooting documentation are
-  verified to describe the narrow confirmed current-user exception, process
-  name/PID/path review, immediate data-loss risk, no elevation, no automatic
-  start, unchanged Stop/Quit/tray behavior, and manual fallback equivalently.
+- [x] English and Chinese live desktop and troubleshooting documentation are
+  verified to describe complete identity by default and the exact Windows
+  PID-only exception, including warning/confirmation, same port/PID recheck,
+  refusal and protection cases, approved residual risks, no elevation, no
+  automatic start, unchanged macOS/Linux and Stop/Quit/tray behavior, and manual
+  fallback equivalently.
 - [x] Documentation explains that embedded shared credentials are extractable
   and rotated through replacement releases.
 - [x] Documentation explains that the desktop does not retain API keys beyond
