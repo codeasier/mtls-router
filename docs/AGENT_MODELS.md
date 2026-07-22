@@ -38,7 +38,7 @@ not a proxy capability restriction or runtime model preference.
 
 ## Interactive Flow
 
-The Shell, PowerShell, and desktop flows all use this order:
+The Shell, PowerShell, and desktop merge flows all use this order:
 
 1. Detect and select Claude Code, opencode, and/or Codex.
 2. Read the API key without echo and establish a trusted protocol-v3 loopback router.
@@ -46,6 +46,8 @@ The Shell, PowerShell, and desktop flows all use this order:
 4. Initialize each selected Agent from a valid existing section, otherwise a visible authenticated preset section, otherwise an empty section; require the user to review or complete the editable Agent-native choices. Never select the first model, apply a model-name or capability heuristic, repair an unavailable preset, or substitute another model.
 5. Render a redacted fragment for print, or preview exact file, backup, migration, ownership, and drift effects for write.
 6. Re-fetch the catalog with the transient key immediately before writing, then perform one atomic multi-file transaction.
+
+The Shell and PowerShell setup commands always omit recovery modes and therefore remain merge-only. The desktop can independently select `merge` for valid Agents and `rebuild` for eligible invalid Agents in the same transaction; rebuild follows the additional contract below.
 
 Filtering occurs only after the complete response and all IDs pass validation.
 A malformed ID that contains ASCII `/` is therefore not hidden: the request
@@ -280,6 +282,26 @@ reported in `preset.unavailable_agents`, the unavailable complete preset section
 is omitted, and discovery continues with existing configuration and other valid
 preset sections. It still never causes substitution or partial preset use.
 
+## Destructive Rebuild Recovery
+
+Normal `merge` parses the existing configuration, changes only manager-owned paths, and preserves supported unrelated data. `rebuild` does not parse or merge the malformed content: after a separate preview-bound approval, it replaces the complete approved Agent file set with freshly rendered managed-only files. **Rebuild discards all unrelated settings, comments, original formatting, and valid companion-file metadata. Review and protect every backup before proceeding.**
+
+Rebuild is available only when detection finds at least one syntax-invalid file and every file in the complete managed set is otherwise safe: present targets must be readable, regular, non-linked, and writable, and each immediate parent must be an available writable directory. An unreadable, oversized, non-regular, linked, or non-writable file; an unavailable parent; an unsupported but syntactically valid structure; pending transaction recovery; or globally disabled writes blocks rebuild. Detection is advisory: preview and write repeat eligibility and exact path, format, existence, and revision checks under the transaction lock.
+
+Valid syntax is never a reason to rebuild. A valid but unsupported structure must be repaired or migrated deliberately, and a parser compatibility problem must be fixed in the parser. For example, accepted BOM-prefixed JSON and quoted TOML keys stay on the preservation-merge path; they must not be discarded as recovery input.
+
+The complete managed-only output is:
+
+- **Claude Code:** one `settings.json` root object containing only `env`. The unconditional keys are `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_MODEL`, `ANTHROPIC_CUSTOM_MODEL_OPTION`, the Haiku/Sonnet/Opus `ANTHROPIC_DEFAULT_*_MODEL` keys, `ENABLE_TOOL_SEARCH`, and `DISABLE_AUTOUPDATER`. Only selected display-name keys (`ANTHROPIC_CUSTOM_MODEL_OPTION_NAME` and the `ANTHROPIC_DEFAULT_*_MODEL_NAME` keys), Fable model/name keys, `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, `CLAUDE_CODE_MAX_OUTPUT_TOKENS`, and allowed description extras are added.
+- **opencode:** one strict JSON root object containing only `model` and `provider.mtls-router`. The provider contains exactly `npm`, `name`, `options`, and `models`; `npm` is `"@ai-sdk/openai-compatible"`, `name` is `"mtls-router"`, `options` contains only `baseURL` and `apiKey`, and `models` contains the exact selected definitions. An approved `.jsonc` path is replaced in place as strict JSON; rebuild never performs the normal sibling `opencode.json` migration.
+- **Codex:** the complete set is both `config.toml` and `auth.json`, even when only one is malformed. `config.toml` contains only `model_provider = "mtls-router"`, the selected `model`, `cli_auth_credentials_store = "file"`, selected optional model settings, and `model_providers.mtls-router` with exactly `name`, `wire_api = "responses"`, `requires_openai_auth = true`, and `base_url`. `auth.json` contains exactly `auth_mode: "apikey"` and `OPENAI_API_KEY`. A missing companion is created; every existing companion is replaced, so valid companion metadata is discarded.
+
+Preview creates no file, directory, journal, or backup. It shows redacted managed fragments, each exact affected path, whether the operation creates or replaces it, and a planned sibling backup pattern. Write requires the signed preview revision plus an exact `approve_rebuild` set; omitted modes default to merge, and missing, extra, or duplicate rebuild approvals are rejected. There is no automatic recovery, parse bypass, `force`, global overwrite, or fallback from failed merge to rebuild.
+
+Before any replacement, write creates a private sibling backup for every existing file in the approved managed set, syncs it, reopens it, and verifies byte-for-byte equality. Actual backup paths appear in a successful write result; preview shows patterns only and never backup contents. A failed operation may report only its error even when diagnostic artifacts remain. Backups can contain current or old API keys and other credentials. Keep them private and do not attach them unredacted. Never manually restore while a transaction journal or unresolved recovery exists; stop and ask the maintainer because changing a target can prevent recovery from proving its identity. After recovery is resolved, stop the owning Agent, preserve current files, verify that each original path and parent still have the expected current-user, non-link identity, and use a private same-directory temporary file plus atomic replacement rather than copying through a link. For Codex, restore each file that existed before the transaction and remove a companion only when the preview/result proves that transaction created it; otherwise stop and ask the maintainer.
+
+Any changed file, repaired syntax, new blocker, catalog change, or stale revision before replacement rejects the write and requires a fresh detection and preview. A backup failure changes no target. A later write failure rolls back every changed Agent file and manager sidecar together and retains diagnostic backups. If rollback or startup recovery cannot prove restoration, writes are disabled and rebuild remains unavailable until recovery is resolved; do not delete the journal or backups while investigating.
+
 ## Ownership, Migration, and Backups
 
 The manager records only canonical selected model sections, owned paths, target
@@ -293,8 +315,9 @@ Agent file, last-applied sidecar, journal, revision claim, backup, log, or
 diagnostic. Only the exact canonical configuration the user approves through
 the normal preview/write flow can enter Agent files and transactional state.
 
-Known manager-owned paths can be updated or removed. Unrelated settings are
-preserved. Unknown extension collisions are rejected; drift in a managed
+Known manager-owned paths can be updated or removed. Normal merge preserves
+unrelated settings; explicitly approved rebuild follows the destructive contract
+above. Unknown extension collisions are rejected; drift in a managed
 namespace requires preview-bound overwrite approval. A write rechecks Agent
 files, sidecar revision, router identity, and current model availability before
 creating any write artifact.
@@ -317,8 +340,8 @@ Automation must use a receipt-verified `mtls-router-manager serve`. First call
 `manager.info` and require management protocol `3`. Then call:
 
 1. `agent.models` with `owner`, `agents`, and transient `api_key`.
-2. `agent.render` for key-redacted managed fragments, or `agent.preview` with `agents`, `catalog_token`, and `model_config`.
-3. `agent.write` with those fields, the preview `revision_token`, both explicit approval booleans, and transient `api_key`.
+2. `agent.render` for key-redacted managed fragments, or `agent.preview` with `agents`, `catalog_token`, `model_config`, and a per-Agent `modes` map when requesting rebuild.
+3. `agent.write` with those fields, the same `modes`, the preview `revision_token`, both explicit approval booleans, an `approve_rebuild` array exactly matching rebuild-mode Agents, and transient `api_key`.
 
 `agent.models` always includes stable preset objects, including when no preset
 or no valid requested section exists:

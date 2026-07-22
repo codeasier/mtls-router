@@ -21,7 +21,7 @@ Claude deferred tool 字段以及未来开放列表 Anthropic 请求字段会原
 
 ## 交互流程
 
-Shell、PowerShell 和桌面端都使用以下顺序：
+Shell、PowerShell 和桌面端的 merge 流程都使用以下顺序：
 
 1. 检测并选择 Claude Code、opencode 和/或 Codex。
 2. 隐藏读取 API key，并建立可信的 protocol-v3 loopback router。
@@ -29,6 +29,8 @@ Shell、PowerShell 和桌面端都使用以下顺序：
 4. 每个已选 Agent 优先使用有效 existing section，其次使用可见且已认证的 preset section，否则使用 empty section；用户必须检查或补全可编辑的 Agent 原生选择。绝不选择第一个模型，不使用模型名称或能力 heuristic，不修复不可用 preset，也不替换为其他模型。
 5. Print 时渲染脱敏片段；write 时预览精确文件、备份、迁移、所有权和漂移影响。
 6. 写入前用临时 key 重新获取目录，再执行一次原子多文件事务。
+
+Shell 和 PowerShell 安装命令始终省略恢复 mode，因此只支持 merge。桌面端可在同一事务中为有效 Agent 独立选择 `merge`，并为符合条件的无效 Agent 选择 `rebuild`；重建还必须遵守下文契约。
 
 只有在完整响应和全部 ID 通过校验后才会过滤。因此，包含 ASCII `/` 的 malformed ID 不会被隐藏，请求仍以 `MODEL_RESPONSE_INVALID` 失败。如果校验成功但全部 ID 都被过滤，发现或刷新以 `MODEL_CATALOG_EMPTY` 失败。
 
@@ -130,13 +132,33 @@ Fable 所有权是有条件且基于精确路径的。启用时，manager 拥有
 
 Preset 模型不可用是唯一不导致 discovery 整体失败的情况：它会在 `preset.unavailable_agents` 中报告，省略不可用的完整 preset section，并继续提供 existing 配置和其他有效 preset section。它仍然绝不会触发替换或部分使用 preset。
 
+## 破坏性重建恢复
+
+正常 `merge` 会解析现有配置，只修改 manager-owned 路径，并保留受支持的无关数据。`rebuild` 不解析或合并 malformed 内容：经过单独且绑定预览的批准后，它会用全新渲染的纯托管文件替换完整的已批准 Agent 文件集。**重建会丢弃全部无关设置、注释、原始格式以及有效伴随文件中的元数据。继续前必须检查并保护每个备份。**
+
+只有检测发现至少一个文件语法无效，且完整托管集合中的每个文件除此之外都安全时，才能重建：现有目标必须可读、是普通非链接文件且可写，其直接父目录必须存在、可用且可写。文件不可读、超限、非普通文件、是链接或不可写，父目录不可用，结构语法有效但不受支持，存在待恢复事务，或全局禁用写入，都会阻止重建。检测结果仅供提示；preview 和 write 会在事务 lock 下重复校验资格以及精确路径、格式、存在状态和 revision。
+
+语法有效绝不是重建理由。语法有效但结构不受支持时，必须明确修复或迁移；parser 兼容性问题必须在 parser 中修复。例如，已接受的 BOM 前缀 JSON 和带引号 TOML key 应继续走保留 merge，不能作为恢复输入丢弃。
+
+完整纯托管输出如下：
+
+- **Claude Code：**一个根 object 只包含 `env` 的 `settings.json`。无条件 key 为 `ANTHROPIC_BASE_URL`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_MODEL`、`ANTHROPIC_CUSTOM_MODEL_OPTION`、Haiku/Sonnet/Opus 的 `ANTHROPIC_DEFAULT_*_MODEL` key、`ENABLE_TOOL_SEARCH` 和 `DISABLE_AUTOUPDATER`。只有实际选择时才会添加显示名称 key（`ANTHROPIC_CUSTOM_MODEL_OPTION_NAME` 和 `ANTHROPIC_DEFAULT_*_MODEL_NAME` key）、Fable model/name key、`CLAUDE_CODE_MAX_CONTEXT_TOKENS`、`CLAUDE_CODE_MAX_OUTPUT_TOKENS` 和允许的 description extra。
+- **opencode：**一个根 object 只包含 `model` 和 `provider.mtls-router` 的 strict JSON。Provider 精确只包含 `npm`、`name`、`options` 和 `models`；`npm` 为 `"@ai-sdk/openai-compatible"`，`name` 为 `"mtls-router"`，`options` 只包含 `baseURL` 和 `apiKey`，`models` 包含精确选择的 definition。已批准 `.jsonc` 路径会原地替换为 strict JSON；重建绝不会执行正常 sibling `opencode.json` 迁移。
+- **Codex：**完整集合始终同时包含 `config.toml` 和 `auth.json`，即使只有一个文件 malformed。`config.toml` 只包含 `model_provider = "mtls-router"`、所选 `model`、`cli_auth_credentials_store = "file"`、已选择的可选模型设置，以及精确包含 `name`、`wire_api = "responses"`、`requires_openai_auth = true` 和 `base_url` 的 `model_providers.mtls-router`。`auth.json` 精确只包含 `auth_mode: "apikey"` 与 `OPENAI_API_KEY`。缺失伴随文件会创建；每个现有伴随文件都会替换，因此有效伴随 metadata 会丢失。
+
+Preview 不创建文件、目录、journal 或备份。它显示脱敏托管片段、每个受影响的精确路径、创建或替换操作，以及计划的 sibling 备份 pattern。Write 要求已签名 preview revision 和精确的 `approve_rebuild` 集合；省略 mode 默认使用 merge，缺失、额外或重复的重建批准都会被拒绝。不存在自动恢复、解析绕过、`force`、全局覆盖，也不会在 merge 失败后 fallback 到 rebuild。
+
+替换前，write 会为批准托管集合中的每个现有文件创建私有 sibling 备份，执行 sync、重新打开并验证逐字节相等。实际备份路径只在成功写入结果中显示；preview 只显示 pattern，绝不显示备份内容。失败操作即使留下诊断产物，也可能只报告错误。备份可能包含当前或旧 API key 及其他凭据，必须保持私有，不能未经脱敏直接附上。存在事务 journal 或未解决恢复时绝不能手工还原；应停止操作并联系维护者，因为修改目标会导致恢复无法证明其身份。恢复问题解决后，应停止拥有文件的 Agent，保留当前文件，验证每个原路径及父目录仍是预期当前用户所有且不是链接，并通过同目录私有临时文件加原子替换恢复，不能经链接直接复制。对于 Codex，应恢复事务前存在的每个文件；只有 preview/result 能证明伴随文件由该事务新建时才能删除它，否则应停止操作并联系维护者。
+
+替换前发生文件变化、语法已修复、新增 blocker、目录变化或 revision stale，都会拒绝写入，并要求重新检测和预览。备份失败不会修改任何目标。之后的写入失败会一起回滚所有已修改 Agent 文件和 manager sidecar，并保留诊断备份。如果 rollback 或启动恢复无法证明已还原，系统会禁用写入，且在恢复问题解决前不能重建；调查期间不要删除 journal 或备份。
+
 ## 所有权、迁移与备份
 
 Manager 只在私有 `agent-transactions/last-applied-model-config.json` sidecar 中记录规范已选模型 section、owned path、target path 和 keyed revision MAC。它不存储 key、目录、渲染文件、原始响应或无关 Agent 设置。OS-backed 当前用户 lock 会串行化桌面端与 CLI 操作。
 
 注入的 preset 属于构建 metadata；仅执行 discovery 绝不会把它写入 Agent 文件、last-applied sidecar、journal、revision claim、备份、日志或诊断。只有用户通过正常 preview/write 流程批准的精确规范配置，才能进入 Agent 文件和事务状态。
 
-已知 manager-owned 路径可以更新或删除，无关设置会保留。未知 extension 冲突会被拒绝；托管 namespace 漂移必须通过绑定预览的 overwrite 批准。创建任何写入产物前，write 会重新检查 Agent 文件、sidecar revision、router identity 和当前模型可用性。
+已知 manager-owned 路径可以更新或删除。正常 merge 会保留无关设置；显式批准的 rebuild 遵守上文破坏性契约。未知 extension 冲突会被拒绝；托管 namespace 漂移必须通过绑定预览的 overwrite 批准。创建任何写入产物前，write 会重新检查 Agent 文件、sidecar revision、router identity 和当前模型可用性。
 
 精确历史 v1 signature 可以迁移：Claude 从整个 `env` 替换改为 managed-key merge；opencode 从固定模型改为选定目录子集；Codex 从 `custom` 改为 `mtls-router`，并单独批准 auth 迁移。部分匹配或已修改的历史 signature 不会被认领。迁移绝不删除或重写已有备份。
 
@@ -147,8 +169,8 @@ Manager 只在私有 `agent-transactions/last-applied-model-config.json` sidecar
 自动化必须使用 receipt-verified `mtls-router-manager serve`。先调用 `manager.info` 并要求 management protocol `3`，然后调用：
 
 1. `agent.models`，提供 `owner`、`agents` 和临时 `api_key`。
-2. `agent.render` 获取 key 脱敏托管片段；或使用 `agents`、`catalog_token`、`model_config` 调用 `agent.preview`。
-3. `agent.write`，提供上述字段、预览返回的 `revision_token`、两个显式 approval boolean 和临时 `api_key`。
+2. `agent.render` 获取 key 脱敏托管片段；或使用 `agents`、`catalog_token`、`model_config` 调用 `agent.preview`；请求 rebuild 时还必须提供每个 Agent 的 `modes` map。
+3. `agent.write`，提供上述字段、相同 `modes`、预览返回的 `revision_token`、两个显式 approval boolean、与 rebuild-mode Agent 精确一致的 `approve_rebuild` 数组和临时 `api_key`。
 
 即使没有 preset 或没有有效的已请求 section，`agent.models` 也始终包含稳定 preset object：
 
