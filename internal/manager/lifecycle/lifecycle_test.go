@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/codeasier/mtls-router/internal/background"
 	"github.com/codeasier/mtls-router/internal/manager/discovery"
 	"github.com/codeasier/mtls-router/internal/manager/process"
 	"github.com/codeasier/mtls-router/internal/manager/protocol"
@@ -268,6 +270,108 @@ func TestDesktopInspectFailureWaitsForChildAndDrainsRecentOutput(t *testing.T) {
 	case event := <-manager.UnexpectedExit():
 		t.Fatalf("startup failure reported as unexpected: %+v", event)
 	default:
+	}
+}
+
+func TestDesktopFailureCleanupDoesNotHangWhenKillAndWaitStall(t *testing.T) {
+	fixture := newFixture(t)
+	fixture.config.ForceTimeout = 20 * time.Millisecond
+	fixture.deps.Inspect = func(int) (process.Identity, error) {
+		return process.Identity{}, errors.New("inspect failed")
+	}
+	releaseWait := make(chan struct{})
+	waitDone := make(chan struct{})
+	fixture.deps.LaunchDesktop = func(_ string, _ []string, _ []string, output io.Writer) (foregroundProcess, error) {
+		_, _ = output.Write([]byte("bounded partial output"))
+		return &fakeChild{
+			pid: 101,
+			waitFunc: func() error {
+				defer close(waitDone)
+				<-releaseWait
+				return errors.New("eventually exited")
+			},
+			killFunc: func() error { return errors.New("kill failed") },
+		}, nil
+	}
+
+	manager := fixture.manager()
+	result := make(chan *Error, 1)
+	go func() {
+		_, startErr := manager.Start(context.Background(), protocol.RouterOwnerDesktop)
+		result <- startErr
+	}()
+
+	select {
+	case startErr := <-result:
+		if startErr == nil || !startErr.Launched || startErr.RecentOutput != "bounded partial output" {
+			t.Fatalf("failure metadata = %+v", startErr)
+		}
+	case <-time.After(750 * time.Millisecond):
+		close(releaseWait)
+		<-result
+		t.Fatal("cleanup remained blocked after its force timeout")
+	}
+	close(releaseWait)
+	select {
+	case <-waitDone:
+	case <-time.After(time.Second):
+		t.Fatal("fake Wait did not finish after release")
+	}
+}
+
+func TestDesktopFailureOutputIsScopedToCurrentLaunch(t *testing.T) {
+	fixture := newFixture(t)
+	fixture.config.RecentOutputBytes = 256
+	if err := os.WriteFile(fixture.config.DesktopLogPath, []byte("historical output\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fixture.deps.OpenLog = background.OpenLogFile
+	fixture.deps.Inspect = func(int) (process.Identity, error) {
+		return process.Identity{}, errors.New("inspect failed")
+	}
+	launch := 0
+	fixture.deps.LaunchDesktop = func(_ string, _ []string, _ []string, output io.Writer) (foregroundProcess, error) {
+		launch++
+		_, _ = fmt.Fprintf(output, "inherited attempt %d\n", launch)
+		direct, err := background.OpenLogFile(fixture.config.DesktopLogPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = fmt.Fprintf(direct, "direct attempt %d\n", launch)
+		_ = direct.Close()
+		wait := make(chan error, 1)
+		return &fakeChild{pid: 100 + launch, wait: wait, killFunc: func() error {
+			wait <- errors.New("killed")
+			return nil
+		}}, nil
+	}
+
+	manager := fixture.manager()
+	_, firstErr := manager.Start(context.Background(), protocol.RouterOwnerDesktop)
+	if firstErr == nil {
+		t.Fatal("first launch unexpectedly succeeded")
+	}
+	if firstErr.RecentOutput != "inherited attempt 1\ndirect attempt 1\n" {
+		t.Fatalf("first failure output = %q", firstErr.RecentOutput)
+	}
+	_, secondErr := manager.Start(context.Background(), protocol.RouterOwnerDesktop)
+	if secondErr == nil {
+		t.Fatal("second launch unexpectedly succeeded")
+	}
+	if secondErr.RecentOutput != "inherited attempt 2\ndirect attempt 2\n" {
+		t.Fatalf("second failure output = %q", secondErr.RecentOutput)
+	}
+	fullLog, err := os.ReadFile(fixture.config.DesktopLogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"historical output", "inherited attempt 1", "direct attempt 1", "inherited attempt 2", "direct attempt 2"} {
+		if !strings.Contains(string(fullLog), want) {
+			t.Fatalf("full log %q missing %q", fullLog, want)
+		}
+	}
+	if got := manager.RecentOutput(); got != string(fullLog) {
+		t.Fatalf("manager recent output = %q, want full log %q", got, fullLog)
 	}
 }
 

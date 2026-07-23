@@ -21,6 +21,7 @@ func launchForegroundCommand(executable string, args, env []string, output io.Wr
 	cmd.Stdin = nil
 	cmd.Stdout = output
 	cmd.Stderr = output
+	cmd.WaitDelay = foregroundWaitDelay
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}

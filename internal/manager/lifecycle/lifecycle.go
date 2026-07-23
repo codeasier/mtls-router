@@ -97,6 +97,8 @@ type desktopRun struct {
 	done         chan struct{}
 	err          error
 	recentOutput string
+	logBaseline  int64
+	inherited    *boundedOutput
 	intentional  bool
 }
 
@@ -238,18 +240,24 @@ func (m *Manager) startDesktop(ctx context.Context) (state.RouterState, *Error) 
 	if err != nil {
 		return state.RouterState{}, lifecycleError(protocol.CodeRouterStartFailed, "cannot open desktop log")
 	}
-	output := io.MultiWriter(logFile, m.recent)
+	logInfo, err := logFile.Stat()
+	if err != nil {
+		_ = logFile.Close()
+		return state.RouterState{}, lifecycleError(protocol.CodeRouterStartFailed, "cannot inspect desktop log")
+	}
+	inherited := newBoundedOutput(m.config.RecentOutputBytes)
+	output := io.MultiWriter(logFile, m.recent, inherited)
 	args := []string{"-listen", m.config.ListenAddr, "-log", m.config.DesktopLogPath, "-tls-min", "tls1.2", "-timeout", "10s", "-debug=false"}
 	child, err := m.deps.LaunchDesktop(m.config.RouterPath, args, background.DesktopChildEnv(m.deps.Environ()), output)
 	if err != nil {
 		_ = logFile.Close()
 		return state.RouterState{}, lifecycleError(protocol.CodeRouterStartFailed, "router launch failed")
 	}
-	run := &desktopRun{done: make(chan struct{})}
+	run := &desktopRun{done: make(chan struct{}), logBaseline: logInfo.Size(), inherited: inherited}
 	go func() {
 		run.err = child.Wait()
 		_ = logFile.Close()
-		run.recentOutput = m.RecentOutput()
+		run.recentOutput = m.recentOutputForRun(run)
 		close(run.done)
 	}()
 
@@ -562,11 +570,58 @@ func (m *Manager) cleanupFailedChild(identity process.Identity) {
 }
 
 func (m *Manager) cleanupFailedDesktopStart(child foregroundProcess, run *desktopRun, startErr *Error) *Error {
-	_ = child.Kill()
-	<-run.done
+	cleanupTimeout := m.config.ForceTimeout
+	if cleanupTimeout < 2*foregroundWaitDelay {
+		cleanupTimeout = 2 * foregroundWaitDelay
+	}
+	if killErr := child.Kill(); killErr != nil {
+		cleanupTimeout = 2 * foregroundWaitDelay
+	}
+	timer := time.NewTimer(cleanupTimeout)
+	defer timer.Stop()
+	select {
+	case <-run.done:
+		startErr.RecentOutput = run.recentOutput
+	case <-timer.C:
+		// A failed kill or broken process implementation must not hold the
+		// manager operation lock forever. Real commands normally complete via
+		// WaitDelay before this fallback is reached.
+		startErr.RecentOutput = m.recentOutputForRun(run)
+	}
 	startErr.Launched = true
-	startErr.RecentOutput = run.recentOutput
 	return startErr
+}
+
+func (m *Manager) recentOutputForRun(run *desktopRun) string {
+	inherited := run.inherited.String()
+	file, err := os.Open(m.config.DesktopLogPath)
+	if err != nil {
+		return inherited
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return inherited
+	}
+	start := run.logBaseline
+	if info.Size() < start {
+		start = 0
+	}
+	limit := int64(run.inherited.limit)
+	if info.Size()-start > limit {
+		start = info.Size() - limit
+	}
+	if _, err := file.Seek(start, io.SeekStart); err != nil {
+		return inherited
+	}
+	appended, err := io.ReadAll(file)
+	if err != nil || len(appended) == 0 {
+		return inherited
+	}
+	if len(appended) > int(limit) {
+		appended = appended[len(appended)-int(limit):]
+	}
+	return string(appended)
 }
 
 func (m *Manager) acquireLock() error {
