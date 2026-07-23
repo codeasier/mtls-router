@@ -85,9 +85,10 @@ export const zhCN = {
   "router.error.health": "健康检查失败。路由进程状态未受影响。",
   "router.error.sidecarReinstall":
     "必要的打包组件缺失或无效。请重新安装桌面应用；应用不会自动下载任何组件。",
-  "router.failureDiagnostics": "意外退出诊断",
+  "router.failureDiagnostics": "路由失败诊断",
   "router.failureLastError": "最近错误",
   "router.failureRecentLogs": "最近安全过滤日志",
+  "router.viewFullRuntimeLogs": "查看完整运行日志",
   "router.panelOverline": "进程 / 上游",
   "router.instrumentNote": "进程可用性与上游健康状态独立监测",
   "router.processStatus": "进程状态",

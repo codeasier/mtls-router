@@ -558,6 +558,12 @@ main {
   padding: 2px 0;
 }
 
+.failure-diagnostics__action {
+  min-height: 34px;
+  padding: 0 12px;
+  justify-self: start;
+}
+
 .action-row {
   display: flex;
   flex-wrap: wrap;

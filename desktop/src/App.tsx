@@ -121,6 +121,7 @@ function AppContent({ api }: { api: DesktopApi }) {
             <RouterPage
               api={api}
               onNavigateToAgents={() => setActiveSection("agents")}
+              onNavigateToLogs={() => setActiveSection("logs")}
             />
           )}
           {activeSection === "logs" && <LogsPage api={api} />}

@@ -318,9 +318,11 @@ const occupantErrorKeys = {
 export function RouterPage({
   api,
   onNavigateToAgents,
+  onNavigateToLogs,
 }: {
   api: DesktopApi;
   onNavigateToAgents: () => void;
+  onNavigateToLogs: () => void;
 }) {
   const { t } = useI18n();
   const [status, setStatus] = useState<RouterStatus | null>(null);
@@ -678,6 +680,13 @@ export function RouterPage({
                 </ol>
               </div>
             )}
+            <button
+              type="button"
+              className="text-button failure-diagnostics__action"
+              onClick={onNavigateToLogs}
+            >
+              {t("router.viewFullRuntimeLogs")}
+            </button>
           </section>
         )}
 

@@ -92,7 +92,13 @@ describe("RouterPage states", () => {
         retryRouterHealth: vi.fn().mockResolvedValue(health ?? freshHealthy),
       });
 
-      renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+      renderWithI18n(
+        <RouterPage
+          api={api}
+          onNavigateToAgents={vi.fn()}
+          onNavigateToLogs={vi.fn()}
+        />,
+      );
 
       expect(
         await screen.findByRole("heading", { name: heading }),
@@ -117,7 +123,13 @@ describe("RouterPage states", () => {
       }),
     });
 
-    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
 
     expect(await screen.findByText("结果已过期")).toBeInTheDocument();
     expect(
@@ -137,7 +149,13 @@ describe("RouterPage states", () => {
       }),
     });
 
-    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
     await act(async () => undefined);
     expect(screen.getByText("健康")).toBeInTheDocument();
 
@@ -158,7 +176,13 @@ describe("RouterPage states", () => {
         return () => undefined;
       }),
     });
-    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
     expect(await screen.findByText("路由未启动")).toBeInTheDocument();
 
     act(() =>
@@ -187,7 +211,13 @@ describe("RouterPage states", () => {
         return () => undefined;
       }),
     });
-    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
     expect(
       await screen.findByRole("heading", { name: "路由运行正常" }),
     ).toBeInTheDocument();
@@ -232,7 +262,13 @@ describe("RouterPage states", () => {
         return () => undefined;
       }),
     });
-    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
     expect(
       await screen.findByRole("heading", { name: "路由运行正常" }),
     ).toBeInTheDocument();
@@ -263,7 +299,13 @@ describe("RouterPage states", () => {
         status_error: { code: "OPERATION_TIMEOUT" },
       }),
     });
-    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
 
     expect(
       await screen.findByRole("heading", { name: "路由状态暂时不可用" }),
@@ -283,7 +325,13 @@ describe("RouterPage states", () => {
         health_error: { code: "OPERATION_TIMEOUT" },
       }),
     });
-    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
 
     expect(
       await screen.findByRole("heading", { name: "路由运行正常" }),
@@ -302,7 +350,13 @@ describe("RouterPage states", () => {
         health_error: { code: "OPERATION_TIMEOUT" },
       }),
     });
-    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
 
     expect(
       await screen.findByText(
@@ -314,7 +368,7 @@ describe("RouterPage states", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("shows only bounded sanitized unexpected-exit diagnostics", async () => {
+  it("shows only bounded sanitized router failure diagnostics with a logs action", async () => {
     const secret = "sk-routerFailureCanary123456";
     const recentLogs = Array.from(
       { length: MAX_FAILURE_LOG_LINES + 2 },
@@ -330,9 +384,16 @@ describe("RouterPage states", () => {
       }),
     });
 
-    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    const navigateToLogs = vi.fn();
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={navigateToLogs}
+      />,
+    );
 
-    expect(await screen.findByLabelText("意外退出诊断")).toBeInTheDocument();
+    expect(await screen.findByLabelText("路由失败诊断")).toBeInTheDocument();
     expect(screen.getByText(/router exited unexpectedly/)).toBeInTheDocument();
     expect(screen.getByText("safe diagnostic line 2")).toBeInTheDocument();
     expect(
@@ -344,6 +405,8 @@ describe("RouterPage states", () => {
     expect(document.body.textContent).not.toContain(secret);
     expect(document.body.textContent).not.toContain("routerFailureCanary");
     expect(document.body.textContent).toContain("[REDACTED]");
+    fireEvent.click(screen.getByRole("button", { name: "查看完整运行日志" }));
+    expect(navigateToLogs).toHaveBeenCalledOnce();
   });
 
   it.each(["SIDECAR_MISSING", "SIDECAR_INVALID"])(
@@ -355,7 +418,13 @@ describe("RouterPage states", () => {
           status_error: { code },
         }),
       });
-      renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+      renderWithI18n(
+        <RouterPage
+          api={api}
+          onNavigateToAgents={vi.fn()}
+          onNavigateToLogs={vi.fn()}
+        />,
+      );
 
       expect(await screen.findByText("桌面组件无效")).toBeInTheDocument();
       expect(screen.getByText(/应用不会自动下载任何组件/)).toBeInTheDocument();
@@ -375,7 +444,13 @@ describe("RouterPage states", () => {
       }),
     });
 
-    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
 
     expect(await screen.findByText("127.0.0.1:19999")).toBeInTheDocument();
     expect(screen.queryByText("所有者")).not.toBeInTheDocument();
@@ -397,7 +472,13 @@ describe("RouterPage actions", () => {
         listen_addr: "127.0.0.1:19099",
       });
     const api = createMockApi({ getRouterStatus });
-    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
     const start = await screen.findByRole("button", { name: "启动路由" });
 
     fireEvent.click(start);
@@ -416,7 +497,13 @@ describe("RouterPage actions", () => {
       .mockResolvedValueOnce({ state: "desktop_owned", owner: "desktop" })
       .mockResolvedValue({ state: "absent" });
     const api = createMockApi({ getRouterStatus });
-    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
     const stop = await screen.findByRole("button", { name: "停止路由" });
     await waitFor(() => expect(stop).toBeEnabled());
 
@@ -434,7 +521,13 @@ describe("RouterPage actions", () => {
       .mockResolvedValueOnce({ state: "degraded", owner: "desktop" })
       .mockResolvedValue({ state: "absent" });
     const api = createMockApi({ getRouterStatus });
-    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
 
     const stop = await screen.findByRole("button", { name: "停止路由" });
     expect(stop).toBeEnabled();
@@ -452,7 +545,13 @@ describe("RouterPage actions", () => {
         owner: "cli",
       }),
     });
-    renderWithI18n(<RouterPage api={api} onNavigateToAgents={navigate} />);
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={navigate}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
 
     expect(await screen.findByText("外部路由正在运行")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "停止路由" })).toBeDisabled();
@@ -466,7 +565,13 @@ describe("RouterPage actions", () => {
         .fn()
         .mockRejectedValue(new Error("key-shaped-canary-secret")),
     });
-    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
     fireEvent.click(await screen.findByRole("button", { name: "启动路由" }));
 
     expect(await screen.findByText(/启动失败。请查看/)).toBeInTheDocument();
@@ -484,7 +589,13 @@ describe("RouterPage actions", () => {
         return () => undefined;
       }),
     });
-    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
     fireEvent.click(await screen.findByRole("button", { name: "启动路由" }));
     expect(
       await screen.findByRole("heading", { name: "路由启动失败" }),
@@ -515,7 +626,13 @@ describe("RouterPage actions", () => {
           health: { status: "degraded", checked_at: new Date().toISOString() },
         }),
     });
-    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
     fireEvent.click(await screen.findByRole("button", { name: "启动路由" }));
 
     expect(await screen.findByText("上游连接不可用")).toBeInTheDocument();
@@ -556,7 +673,13 @@ describe("RouterPage occupant recovery", () => {
 
   it("inspects on occupied transition, shows a target, and keeps Stop disabled", async () => {
     const api = occupiedApi();
-    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
 
     expect(await screen.findByText("example-server")).toBeInTheDocument();
     expect(screen.getByText("4242")).toBeInTheDocument();
@@ -603,7 +726,13 @@ describe("RouterPage occupant recovery", () => {
       const api = occupiedApi({
         inspectRouterOccupant: vi.fn().mockResolvedValue(malformed),
       });
-      renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+      renderWithI18n(
+        <RouterPage
+          api={api}
+          onNavigateToAgents={vi.fn()}
+          onNavigateToLogs={vi.fn()}
+        />,
+      );
 
       expect(
         await screen.findByText(/无法完整验证占用进程身份/),
@@ -626,7 +755,13 @@ describe("RouterPage occupant recovery", () => {
         expires_at: expiresAt,
       }),
     });
-    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
 
     expect(
       await screen.findByRole("button", { name: "强制终止占用进程" }),
@@ -645,7 +780,13 @@ describe("RouterPage occupant recovery", () => {
       .mockRejectedValueOnce({ code })
       .mockResolvedValueOnce(inspection);
     const api = occupiedApi({ inspectRouterOccupant: inspect });
-    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
 
     expect(await screen.findByText(new RegExp(copy))).toBeInTheDocument();
     expect(
@@ -675,7 +816,13 @@ describe("RouterPage occupant recovery", () => {
           }),
       ),
     });
-    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
     expect(
       await screen.findByText("正在安全检查占用进程..."),
     ).toBeInTheDocument();
@@ -689,7 +836,13 @@ describe("RouterPage occupant recovery", () => {
 
   it("shows complete confirmation details, focuses Cancel, and cancels without a request", async () => {
     const api = occupiedApi();
-    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
     fireEvent.click(
       await screen.findByRole("button", { name: "强制终止占用进程" }),
     );
@@ -711,7 +864,13 @@ describe("RouterPage occupant recovery", () => {
     const api = occupiedApi({
       inspectRouterOccupant: vi.fn().mockResolvedValue(pidOnlyInspection),
     });
-    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
 
     const action = await screen.findByRole("button", {
       name: "强制终止占用进程",
@@ -755,7 +914,13 @@ describe("RouterPage occupant recovery", () => {
     const api = occupiedApi({
       inspectRouterOccupant: vi.fn().mockResolvedValue(pidOnlyInspection),
     });
-    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
     fireEvent.click(
       await screen.findByRole("button", { name: "强制终止占用进程" }),
     );
@@ -770,7 +935,13 @@ describe("RouterPage occupant recovery", () => {
     const api = occupiedApi({
       inspectRouterOccupant: vi.fn().mockResolvedValue(pidOnlyInspection),
     });
-    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
     fireEvent.click(
       await screen.findByRole("button", { name: "强制终止占用进程" }),
     );
@@ -789,7 +960,13 @@ describe("RouterPage occupant recovery", () => {
 
   it("closes on Escape before submit without a termination request", async () => {
     const api = occupiedApi();
-    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
     fireEvent.click(
       await screen.findByRole("button", { name: "强制终止占用进程" }),
     );
@@ -808,7 +985,13 @@ describe("RouterPage occupant recovery", () => {
         }),
     );
     const api = occupiedApi({ forceTerminateRouterOccupant: terminate });
-    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
     fireEvent.click(
       await screen.findByRole("button", { name: "强制终止占用进程" }),
     );
@@ -832,7 +1015,13 @@ describe("RouterPage occupant recovery", () => {
       .mockResolvedValueOnce({ state: "unknown_occupant" })
       .mockResolvedValue({ state: "absent" });
     const api = occupiedApi({ getRouterStatus });
-    renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
     fireEvent.click(
       await screen.findByRole("button", { name: "强制终止占用进程" }),
     );
@@ -853,7 +1042,13 @@ describe("RouterPage occupant recovery", () => {
       const api = occupiedApi({
         forceTerminateRouterOccupant: vi.fn().mockRejectedValue({ code }),
       });
-      renderWithI18n(<RouterPage api={api} onNavigateToAgents={vi.fn()} />);
+      renderWithI18n(
+        <RouterPage
+          api={api}
+          onNavigateToAgents={vi.fn()}
+          onNavigateToLogs={vi.fn()}
+        />,
+      );
       fireEvent.click(
         await screen.findByRole("button", { name: "强制终止占用进程" }),
       );
