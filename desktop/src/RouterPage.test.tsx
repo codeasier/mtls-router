@@ -405,7 +405,7 @@ describe("RouterPage states", () => {
     expect(document.body.textContent).not.toContain(secret);
     expect(document.body.textContent).not.toContain("routerFailureCanary");
     expect(document.body.textContent).toContain("[REDACTED]");
-    fireEvent.click(screen.getByRole("button", { name: "查看完整运行日志" }));
+    fireEvent.click(screen.getByRole("button", { name: "查看运行日志" }));
     expect(navigateToLogs).toHaveBeenCalledOnce();
   });
 

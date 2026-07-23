@@ -88,7 +88,7 @@ export const zhCN = {
   "router.failureDiagnostics": "路由失败诊断",
   "router.failureLastError": "最近错误",
   "router.failureRecentLogs": "最近安全过滤日志",
-  "router.viewFullRuntimeLogs": "查看完整运行日志",
+  "router.viewFullRuntimeLogs": "查看运行日志",
   "router.panelOverline": "进程 / 上游",
   "router.instrumentNote": "进程可用性与上游健康状态独立监测",
   "router.processStatus": "进程状态",

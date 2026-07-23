@@ -99,7 +99,7 @@ export const en: Record<TranslationKey, string> = {
   "router.failureDiagnostics": "Router failure diagnostics",
   "router.failureLastError": "Last error",
   "router.failureRecentLogs": "Recent safely filtered logs",
-  "router.viewFullRuntimeLogs": "View full runtime logs",
+  "router.viewFullRuntimeLogs": "View runtime logs",
   "router.panelOverline": "PROCESS / UPSTREAM",
   "router.instrumentNote":
     "Process availability and upstream health are monitored independently",

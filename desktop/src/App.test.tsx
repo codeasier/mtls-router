@@ -33,7 +33,7 @@ describe("App navigation", () => {
     render(<App api={api} />);
 
     fireEvent.click(
-      await screen.findByRole("button", { name: "查看完整运行日志" }),
+      await screen.findByRole("button", { name: "查看运行日志" }),
     );
 
     expect(
