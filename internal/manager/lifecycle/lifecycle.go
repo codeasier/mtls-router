@@ -88,6 +88,7 @@ type Manager struct {
 	operationMu sync.Mutex
 	lock        io.Closer
 	desktopRun  *desktopRun
+	cleanupRun  *desktopRun
 	recent      *boundedOutput
 	exitCh      chan UnexpectedExit
 }
@@ -97,7 +98,7 @@ type desktopRun struct {
 	done         chan struct{}
 	err          error
 	recentOutput string
-	logBaseline  int64
+	logBaseline  os.FileInfo
 	inherited    *boundedOutput
 	intentional  bool
 }
@@ -189,8 +190,12 @@ func (m *Manager) startDesktop(ctx context.Context) (state.RouterState, *Error) 
 	if !completeIdentity(m.config.ManagerIdentity) || !completeIdentity(m.config.ParentIdentity) || m.config.SessionID == "" {
 		return state.RouterState{}, lifecycleError(protocol.CodeInvalidParams, "complete session, manager, and parent identity are required")
 	}
-	if err := m.acquireLock(); err != nil {
+	pending, err := m.acquireDesktopStartLock()
+	if err != nil {
 		return state.RouterState{}, lifecycleError(protocol.CodeRouterAlreadyRunning, "desktop ownership is locked")
+	}
+	if pending {
+		return state.RouterState{}, lifecycleError(protocol.CodeRouterAlreadyRunning, "previous desktop router cleanup is pending")
 	}
 	keepLock := false
 	defer func() {
@@ -198,7 +203,6 @@ func (m *Manager) startDesktop(ctx context.Context) (state.RouterState, *Error) 
 			m.releaseLock()
 		}
 	}()
-
 	if existing, err := m.deps.ReadState(m.config.DesktopStatePath); err == nil && existing.Owner == "desktop" {
 		status, _ := m.deps.Validate(routerIdentity(existing), existing.BinaryPath)
 		if status == process.StatusGenuine {
@@ -253,7 +257,7 @@ func (m *Manager) startDesktop(ctx context.Context) (state.RouterState, *Error) 
 		_ = logFile.Close()
 		return state.RouterState{}, lifecycleError(protocol.CodeRouterStartFailed, "router launch failed")
 	}
-	run := &desktopRun{done: make(chan struct{}), logBaseline: logInfo.Size(), inherited: inherited}
+	run := &desktopRun{done: make(chan struct{}), logBaseline: logInfo, inherited: inherited}
 	go func() {
 		run.err = child.Wait()
 		_ = logFile.Close()
@@ -263,11 +267,14 @@ func (m *Manager) startDesktop(ctx context.Context) (state.RouterState, *Error) 
 
 	identity, versionInfo, healthInfo, startErr := m.waitUntilReady(ctx, child.PID(), run.done)
 	if startErr != nil {
-		return state.RouterState{}, m.cleanupFailedDesktopStart(child, run, startErr)
+		startErr, keepLock = m.cleanupFailedDesktopStart(child, run, startErr)
+		return state.RouterState{}, startErr
 	}
 	value := m.routerState("desktop", identity, versionInfo)
 	if err := m.deps.WriteState(m.config.DesktopStatePath, value); err != nil {
-		return state.RouterState{}, m.cleanupFailedDesktopStart(child, run, lifecycleError(protocol.CodeRouterStartFailed, "cannot persist verified router state"))
+		startErr, pending := m.cleanupFailedDesktopStart(child, run, lifecycleError(protocol.CodeRouterStartFailed, "cannot persist verified router state"))
+		keepLock = pending
+		return state.RouterState{}, startErr
 	}
 	run.identity = identity
 	m.mu.Lock()
@@ -275,7 +282,9 @@ func (m *Manager) startDesktop(ctx context.Context) (state.RouterState, *Error) 
 	case <-run.done:
 		m.mu.Unlock()
 		_ = m.deps.RemoveState(m.config.DesktopStatePath)
-		return state.RouterState{}, m.cleanupFailedDesktopStart(child, run, lifecycleError(protocol.CodeRouterStartFailed, "router exited before startup completed"))
+		startErr, pending := m.cleanupFailedDesktopStart(child, run, lifecycleError(protocol.CodeRouterStartFailed, "router exited before startup completed"))
+		keepLock = pending
+		return state.RouterState{}, startErr
 	default:
 	}
 	m.desktopRun = run
@@ -569,7 +578,7 @@ func (m *Manager) cleanupFailedChild(identity process.Identity) {
 	}
 }
 
-func (m *Manager) cleanupFailedDesktopStart(child foregroundProcess, run *desktopRun, startErr *Error) *Error {
+func (m *Manager) cleanupFailedDesktopStart(child foregroundProcess, run *desktopRun, startErr *Error) (*Error, bool) {
 	cleanupTimeout := m.config.ForceTimeout
 	if cleanupTimeout < 2*foregroundWaitDelay {
 		cleanupTimeout = 2 * foregroundWaitDelay
@@ -583,13 +592,23 @@ func (m *Manager) cleanupFailedDesktopStart(child foregroundProcess, run *deskto
 	case <-run.done:
 		startErr.RecentOutput = run.recentOutput
 	case <-timer.C:
+		select {
+		case <-run.done:
+			startErr.RecentOutput = run.recentOutput
+			startErr.Launched = true
+			return startErr, false
+		default:
+		}
 		// A failed kill or broken process implementation must not hold the
 		// manager operation lock forever. Real commands normally complete via
 		// WaitDelay before this fallback is reached.
 		startErr.RecentOutput = m.recentOutputForRun(run)
+		m.trackPendingCleanup(run)
+		startErr.Launched = true
+		return startErr, true
 	}
 	startErr.Launched = true
-	return startErr
+	return startErr, false
 }
 
 func (m *Manager) recentOutputForRun(run *desktopRun) string {
@@ -603,10 +622,10 @@ func (m *Manager) recentOutputForRun(run *desktopRun) string {
 	if err != nil {
 		return inherited
 	}
-	start := run.logBaseline
-	if info.Size() < start {
-		start = 0
+	if run.logBaseline == nil || !os.SameFile(run.logBaseline, info) || info.Size() < run.logBaseline.Size() {
+		return inherited
 	}
+	start := run.logBaseline.Size()
 	limit := int64(run.inherited.limit)
 	if info.Size()-start > limit {
 		start = info.Size() - limit
@@ -614,7 +633,7 @@ func (m *Manager) recentOutputForRun(run *desktopRun) string {
 	if _, err := file.Seek(start, io.SeekStart); err != nil {
 		return inherited
 	}
-	appended, err := io.ReadAll(file)
+	appended, err := readBoundedOutput(file, limit)
 	if err != nil || len(appended) == 0 {
 		return inherited
 	}
@@ -624,9 +643,59 @@ func (m *Manager) recentOutputForRun(run *desktopRun) string {
 	return string(appended)
 }
 
+func readBoundedOutput(reader io.Reader, limit int64) ([]byte, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	return io.ReadAll(io.LimitReader(reader, limit))
+}
+
+func (m *Manager) acquireDesktopStartLock() (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.cleanupRun != nil {
+		return true, nil
+	}
+	if m.lock != nil {
+		return false, nil
+	}
+	lock, err := m.deps.AcquireLock(m.config.DesktopLockPath)
+	if err != nil {
+		return false, err
+	}
+	m.lock = lock
+	return false, nil
+}
+
+func (m *Manager) trackPendingCleanup(run *desktopRun) {
+	m.mu.Lock()
+	m.cleanupRun = run
+	m.mu.Unlock()
+	go m.finishPendingCleanup(run)
+}
+
+func (m *Manager) finishPendingCleanup(run *desktopRun) {
+	<-run.done
+	m.mu.Lock()
+	if m.cleanupRun != run {
+		m.mu.Unlock()
+		return
+	}
+	m.cleanupRun = nil
+	lock := m.lock
+	m.lock = nil
+	m.mu.Unlock()
+	if lock != nil {
+		_ = lock.Close()
+	}
+}
+
 func (m *Manager) acquireLock() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.cleanupRun != nil {
+		return state.ErrLocked
+	}
 	if m.lock != nil {
 		return nil
 	}
@@ -640,6 +709,10 @@ func (m *Manager) acquireLock() error {
 
 func (m *Manager) releaseLock() {
 	m.mu.Lock()
+	if m.cleanupRun != nil {
+		m.mu.Unlock()
+		return
+	}
 	lock := m.lock
 	m.lock = nil
 	m.mu.Unlock()

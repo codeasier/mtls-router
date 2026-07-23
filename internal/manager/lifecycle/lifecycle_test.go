@@ -375,6 +375,170 @@ func TestDesktopFailureOutputIsScopedToCurrentLaunch(t *testing.T) {
 	}
 }
 
+func TestReadBoundedOutputStopsAtLimit(t *testing.T) {
+	reader := &countingInfiniteReader{}
+	output, err := readBoundedOutput(reader, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(output) != 32 {
+		t.Fatalf("output length = %d, want 32", len(output))
+	}
+	if reader.read != 32 {
+		t.Fatalf("underlying bytes read = %d, want 32", reader.read)
+	}
+}
+
+func TestRecentOutputForRunBoundsOversizedFileDelta(t *testing.T) {
+	fixture := newFixture(t)
+	fixture.config.RecentOutputBytes = 32
+	if err := os.WriteFile(fixture.config.DesktopLogPath, []byte("historical"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	baselineFile, err := os.Open(fixture.config.DesktopLogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline, err := baselineFile.Stat()
+	_ = baselineFile.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	direct, err := background.OpenLogFile(fixture.config.DesktopLogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = direct.Write([]byte(strings.Repeat("x", 1024*1024) + "current-tail"))
+	_ = direct.Close()
+	run := &desktopRun{logBaseline: baseline, inherited: newBoundedOutput(32)}
+
+	started := time.Now()
+	got := fixture.manager().recentOutputForRun(run)
+	if elapsed := time.Since(started); elapsed > 250*time.Millisecond {
+		t.Fatalf("bounded snapshot took %s", elapsed)
+	}
+	if len(got) != 32 || !strings.HasSuffix(got, "current-tail") {
+		t.Fatalf("snapshot = %q, length %d", got, len(got))
+	}
+}
+
+func TestRecentOutputForRunRejectsReplacementAndTruncation(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		mutate func(*testing.T, string)
+	}{
+		{name: "replacement", mutate: func(t *testing.T, path string) {
+			if err := os.Rename(path, path+".rotated"); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte("replacement bytes"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "truncated", mutate: func(t *testing.T, path string) {
+			if err := os.WriteFile(path, []byte("short"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fixture := newFixture(t)
+			if err := os.WriteFile(fixture.config.DesktopLogPath, []byte("long historical output"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			baselineFile, err := os.Open(fixture.config.DesktopLogPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			baseline, err := baselineFile.Stat()
+			_ = baselineFile.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			inherited := newBoundedOutput(64)
+			_, _ = inherited.Write([]byte("current inherited output"))
+			run := &desktopRun{logBaseline: baseline, inherited: inherited}
+			tt.mutate(t, fixture.config.DesktopLogPath)
+			if got := fixture.manager().recentOutputForRun(run); got != "current inherited output" {
+				t.Fatalf("snapshot = %q", got)
+			}
+		})
+	}
+}
+
+func TestPendingDesktopCleanupRetainsLockAndRejectsRestart(t *testing.T) {
+	fixture := newFixture(t)
+	fixture.config.ForceTimeout = 20 * time.Millisecond
+	fixture.deps.Inspect = func(int) (process.Identity, error) {
+		return process.Identity{}, errors.New("inspect failed")
+	}
+	lockClosed := make(chan struct{}, 2)
+	acquires := 0
+	fixture.deps.AcquireLock = func(string) (io.Closer, error) {
+		acquires++
+		return closerFunc(func() error {
+			lockClosed <- struct{}{}
+			return nil
+		}), nil
+	}
+	releaseWait := make(chan struct{})
+	waitDone := make(chan struct{})
+	launches := 0
+	fixture.deps.LaunchDesktop = func(_ string, _ []string, _ []string, output io.Writer) (foregroundProcess, error) {
+		launches++
+		if launches > 1 {
+			return nil, errors.New("later launch")
+		}
+		_, _ = output.Write([]byte("pending cleanup output"))
+		return &fakeChild{
+			pid: 101,
+			waitFunc: func() error {
+				defer close(waitDone)
+				<-releaseWait
+				return errors.New("eventually exited")
+			},
+			killFunc: func() error { return errors.New("kill failed") },
+		}, nil
+	}
+
+	manager := fixture.manager()
+	_, firstErr := manager.Start(context.Background(), protocol.RouterOwnerDesktop)
+	if firstErr == nil || firstErr.RecentOutput != "pending cleanup output" {
+		t.Fatalf("first start error = %+v", firstErr)
+	}
+	select {
+	case <-lockClosed:
+		t.Fatal("cleanup timeout released ownership lock while child was alive")
+	default:
+	}
+	_, secondErr := manager.Start(context.Background(), protocol.RouterOwnerDesktop)
+	if secondErr == nil || secondErr.Code != protocol.CodeRouterAlreadyRunning {
+		t.Fatalf("second start error = %v", secondErr)
+	}
+	if launches != 1 || acquires != 1 {
+		t.Fatalf("launches=%d lock acquisitions=%d", launches, acquires)
+	}
+
+	close(releaseWait)
+	select {
+	case <-waitDone:
+	case <-time.After(time.Second):
+		t.Fatal("pending child Wait did not finish")
+	}
+	select {
+	case <-lockClosed:
+	case <-time.After(time.Second):
+		t.Fatal("completed pending cleanup did not release ownership lock")
+	}
+	_, thirdErr := manager.Start(context.Background(), protocol.RouterOwnerDesktop)
+	if thirdErr == nil || thirdErr.Code != protocol.CodeRouterStartFailed {
+		t.Fatalf("third start error = %v", thirdErr)
+	}
+	if launches != 2 || acquires != 2 {
+		t.Fatalf("later launches=%d lock acquisitions=%d", launches, acquires)
+	}
+}
+
 func TestDegradedStartPersistsUsableChild(t *testing.T) {
 	fixture := newFixture(t)
 	fixture.deps.Verify = func(context.Context, string, int, string, string) (discovery.Version, discovery.Health, error) {
@@ -771,6 +935,18 @@ type fakeChild struct {
 	waitFunc func() error
 	killFunc func() error
 	killOnce sync.Once
+}
+
+type countingInfiniteReader struct {
+	read int
+}
+
+func (r *countingInfiniteReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 'x'
+	}
+	r.read += len(p)
+	return len(p), nil
 }
 
 func (p *fakeChild) PID() int { return p.pid }
