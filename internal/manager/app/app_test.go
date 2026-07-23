@@ -1209,6 +1209,166 @@ func TestRouterStartReclaimFailureFailsClosed(t *testing.T) {
 	}
 }
 
+func TestDesktopRouterStartLatchesLaunchedFailureAndSuccessfulRestartClearsIt(t *testing.T) {
+	recentOutput := make([]string, defaultLogLines+2)
+	for index := range recentOutput {
+		recentOutput[index] = fmt.Sprintf("startup line %d", index)
+	}
+	recentOutput = append(recentOutput,
+		"Authorization: Bearer startup-secret-canary",
+		strings.Repeat("x", maxLogLineBytes+20),
+		"safe startup ending",
+	)
+	startCalls := 0
+	lifecycleManager := &fakeLifecycle{start: func(context.Context, protocol.RouterOwner) (state.RouterState, *lifecycle.Error) {
+		startCalls++
+		if startCalls == 1 {
+			return state.RouterState{}, &lifecycle.Error{
+				Code: protocol.CodeRouterStartFailed, Err: errors.New("internal startup-secret-canary"),
+				Launched: true, RecentOutput: strings.Join(recentOutput, "\n"),
+			}
+		}
+		return state.RouterState{PID: 92, Owner: "desktop", ProcessStartedAt: "restart", ProcessExecutable: "/router"}, nil
+	}}
+	manager := newWithDependencies(Config{RouterPath: os.Args[0]}, dependencies{
+		discoverStatus: func(context.Context) discovery.Result { return discovery.Result{Classification: discovery.Absent} },
+		lifecycle:      lifecycleManager,
+	})
+
+	if _, gotErr := manager.routerStart(context.Background(), json.RawMessage(`{"owner":"desktop"}`)); gotErr == nil || gotErr.Code != protocol.CodeRouterStartFailed || gotErr.Message != "router could not be started" {
+		t.Fatalf("start error = %+v", gotErr)
+	}
+	value, gotErr := manager.routerStatus(context.Background(), json.RawMessage(`{}`))
+	if gotErr != nil {
+		t.Fatal(gotErr)
+	}
+	failed := value.(protocol.RouterStatusResult)
+	if failed.State != "start_failed" || failed.LastError != "desktop-owned router failed during startup" {
+		t.Fatalf("failed status = %+v", failed)
+	}
+	if len(failed.RecentLogs) != defaultLogLines || failed.RecentLogs[len(failed.RecentLogs)-1] != "safe startup ending" {
+		t.Fatalf("recent logs = %d, ending = %q", len(failed.RecentLogs), failed.RecentLogs[len(failed.RecentLogs)-1])
+	}
+	for _, line := range failed.RecentLogs {
+		if strings.Contains(line, "startup-secret-canary") || len(line) > maxLogLineBytes+len("[truncated]") {
+			t.Fatalf("unsafe startup log = %q", line)
+		}
+	}
+
+	if _, gotErr := manager.routerStart(context.Background(), json.RawMessage(`{"owner":"desktop"}`)); gotErr != nil {
+		t.Fatal(gotErr)
+	}
+	value, gotErr = manager.routerStatus(context.Background(), json.RawMessage(`{}`))
+	if gotErr != nil {
+		t.Fatal(gotErr)
+	}
+	cleared := value.(protocol.RouterStatusResult)
+	if cleared.State != string(discovery.Absent) || cleared.LastError != "" || len(cleared.RecentLogs) != 0 {
+		t.Fatalf("status after successful restart = %+v", cleared)
+	}
+}
+
+func TestDesktopRouterStartRetainsOriginalLaunchedFailureAcrossReclaim(t *testing.T) {
+	lifecycleManager := &fakeLifecycle{
+		start: func(context.Context, protocol.RouterOwner) (state.RouterState, *lifecycle.Error) {
+			return state.RouterState{}, &lifecycle.Error{
+				Code: protocol.CodeRouterStateStale, Err: errors.New("original detail"), Launched: true, RecentOutput: "original startup output",
+			}
+		},
+		reclaim: func() (state.RouterState, *lifecycle.Error) {
+			return state.RouterState{}, &lifecycle.Error{Code: protocol.CodeRouterAlreadyRunning, Err: errors.New("reclaim detail"), Launched: true, RecentOutput: "reclaim output"}
+		},
+	}
+	manager := newWithDependencies(Config{RouterPath: os.Args[0]}, dependencies{
+		discoverStatus: func(context.Context) discovery.Result { return discovery.Result{Classification: discovery.Stale} },
+		lifecycle:      lifecycleManager,
+	})
+
+	if _, gotErr := manager.routerStart(context.Background(), json.RawMessage(`{"owner":"desktop"}`)); gotErr == nil || gotErr.Code != protocol.CodeRouterAlreadyRunning || gotErr.Message != "router is already running" {
+		t.Fatalf("start error = %+v", gotErr)
+	}
+	value, gotErr := manager.routerStatus(context.Background(), json.RawMessage(`{}`))
+	if gotErr != nil {
+		t.Fatal(gotErr)
+	}
+	failed := value.(protocol.RouterStatusResult)
+	if fmt.Sprint(failed.RecentLogs) != fmt.Sprint([]string{"original startup output"}) {
+		t.Fatalf("recent logs = %v", failed.RecentLogs)
+	}
+}
+
+func TestDesktopRouterStartDoesNotLatchPreLaunchFailure(t *testing.T) {
+	lifecycleManager := &fakeLifecycle{start: func(context.Context, protocol.RouterOwner) (state.RouterState, *lifecycle.Error) {
+		return state.RouterState{}, &lifecycle.Error{Code: protocol.CodeRouterStartFailed, Err: errors.New("pre-launch failure"), RecentOutput: "must not latch"}
+	}}
+	manager := newWithDependencies(Config{RouterPath: os.Args[0]}, dependencies{
+		discoverStatus: func(context.Context) discovery.Result { return discovery.Result{Classification: discovery.Absent} },
+		lifecycle:      lifecycleManager,
+	})
+
+	if _, gotErr := manager.routerStart(context.Background(), json.RawMessage(`{"owner":"desktop"}`)); gotErr == nil {
+		t.Fatal("routerStart() unexpectedly succeeded")
+	}
+	value, gotErr := manager.routerStatus(context.Background(), json.RawMessage(`{}`))
+	if gotErr != nil {
+		t.Fatal(gotErr)
+	}
+	status := value.(protocol.RouterStatusResult)
+	if status.State != string(discovery.Absent) || len(status.RecentLogs) != 0 {
+		t.Fatalf("status = %+v", status)
+	}
+}
+
+func TestRouterLogsMergesOnlyDiskSuffixMemoryPrefixOverlapAndAppliesLimit(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "router.log")
+	if err := os.WriteFile(logPath, []byte("disk-only\nrepeat\nrepeat\nshared-1\nshared-2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lifecycleManager := &fakeLifecycle{recent: "shared-1\nshared-2\nrepeat\nrepeat\nmemory-only\n"}
+	manager := newWithDependencies(Config{Paths: managerpaths.Paths{DesktopLogFile: logPath}}, dependencies{
+		discoverStatus: func(context.Context) discovery.Result { return discovery.Result{Classification: discovery.Absent} },
+		lifecycle:      lifecycleManager,
+	})
+
+	value, gotErr := manager.routerLogs(context.Background(), json.RawMessage(`{"limit":6}`))
+	if gotErr != nil {
+		t.Fatal(gotErr)
+	}
+	want := []string{"repeat", "shared-1", "shared-2", "repeat", "repeat", "memory-only"}
+	if got := value.(protocol.RouterLogsResult).Lines; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("lines = %v, want %v", got, want)
+	}
+}
+
+func TestRouterLogsFallsBackToMemoryWhenDiskIsUnreadable(t *testing.T) {
+	dir := t.TempDir()
+	manager := newWithDependencies(Config{Paths: managerpaths.Paths{DesktopLogFile: dir}}, dependencies{
+		discoverStatus: func(context.Context) discovery.Result { return discovery.Result{Classification: discovery.Absent} },
+		lifecycle:      &fakeLifecycle{recent: "memory fallback"},
+	})
+
+	value, gotErr := manager.routerLogs(context.Background(), json.RawMessage(`{"limit":10}`))
+	if gotErr != nil {
+		t.Fatal(gotErr)
+	}
+	if got := value.(protocol.RouterLogsResult).Lines; fmt.Sprint(got) != fmt.Sprint([]string{"memory fallback"}) {
+		t.Fatalf("lines = %v", got)
+	}
+}
+
+func TestRouterLogsReturnsStaleWhenDiskIsUnreadableWithoutMemory(t *testing.T) {
+	dir := t.TempDir()
+	manager := newWithDependencies(Config{Paths: managerpaths.Paths{DesktopLogFile: dir}}, dependencies{
+		discoverStatus: func(context.Context) discovery.Result { return discovery.Result{Classification: discovery.Absent} },
+		lifecycle:      &fakeLifecycle{},
+	})
+
+	if _, gotErr := manager.routerLogs(context.Background(), json.RawMessage(`{"limit":10}`)); gotErr == nil || gotErr.Code != protocol.CodeRouterStateStale {
+		t.Fatalf("routerLogs() error = %+v", gotErr)
+	}
+}
+
 func TestUnexpectedDesktopExitIsSanitizedLatchedAndClearedBySuccessfulRestart(t *testing.T) {
 	exits := make(chan lifecycle.UnexpectedExit, 2)
 	failedIdentity := process.Identity{PID: 91, StartedAt: "failed-start", Executable: "/router"}
