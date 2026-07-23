@@ -1327,8 +1327,10 @@ func TestRouterLogsMergesOnlyDiskSuffixMemoryPrefixOverlapAndAppliesLimit(t *tes
 	}
 	lifecycleManager := &fakeLifecycle{recent: "shared-1\nshared-2\nrepeat\nrepeat\nmemory-only\n"}
 	manager := newWithDependencies(Config{Paths: managerpaths.Paths{DesktopLogFile: logPath}}, dependencies{
-		discoverStatus: func(context.Context) discovery.Result { return discovery.Result{Classification: discovery.Absent} },
-		lifecycle:      lifecycleManager,
+		discoverStatus: func(context.Context) discovery.Result {
+			return discovery.Result{Classification: discovery.DesktopOwned, Owner: "desktop", State: state.RouterState{LogPath: logPath}}
+		},
+		lifecycle: lifecycleManager,
 	})
 
 	value, gotErr := manager.routerLogs(context.Background(), json.RawMessage(`{"limit":6}`))
@@ -1338,6 +1340,79 @@ func TestRouterLogsMergesOnlyDiskSuffixMemoryPrefixOverlapAndAppliesLimit(t *tes
 	want := []string{"repeat", "shared-1", "shared-2", "repeat", "repeat", "memory-only"}
 	if got := value.(protocol.RouterLogsResult).Lines; fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("lines = %v, want %v", got, want)
+	}
+}
+
+func TestRouterLogsNeverMixesDesktopRecentOutputIntoTrustedCLILog(t *testing.T) {
+	dir := t.TempDir()
+	cliLogPath := filepath.Join(dir, "cli.log")
+	if err := os.WriteFile(cliLogPath, []byte("cli-old\ncli-new\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	desktopLogPath := filepath.Join(dir, "desktop.log")
+	if err := os.WriteFile(desktopLogPath, []byte("stale-desktop-disk\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lifecycleManager := &fakeLifecycle{recent: "stale-desktop-1\nstale-desktop-2\n"}
+	found := discovery.Result{
+		Classification: discovery.ExternalCompatible, Owner: "cli",
+		State: state.RouterState{Owner: "cli", LogPath: cliLogPath},
+	}
+	manager := newWithDependencies(Config{Paths: managerpaths.Paths{DesktopLogFile: desktopLogPath}}, dependencies{
+		discoverStatus: func(context.Context) discovery.Result { return found },
+		lifecycle:      lifecycleManager,
+	})
+
+	value, gotErr := manager.routerLogs(context.Background(), json.RawMessage(`{"limit":2}`))
+	if gotErr != nil {
+		t.Fatal(gotErr)
+	}
+	want := []string{"cli-old", "cli-new"}
+	if got := value.(protocol.RouterLogsResult).Lines; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("CLI lines = %v, want %v", got, want)
+	}
+
+	found.State.LogPath = dir
+	if _, gotErr := manager.routerLogs(context.Background(), json.RawMessage(`{"limit":2}`)); gotErr == nil || gotErr.Code != protocol.CodeRouterStateStale {
+		t.Fatalf("unreadable CLI log error = %+v", gotErr)
+	}
+
+	found.State.LogPath = ""
+	value, gotErr = manager.routerLogs(context.Background(), json.RawMessage(`{"limit":2}`))
+	if gotErr != nil {
+		t.Fatal(gotErr)
+	}
+	if got := value.(protocol.RouterLogsResult).Lines; len(got) != 0 {
+		t.Fatalf("missing CLI log returned desktop lines: %v", got)
+	}
+}
+
+func TestRouterLogsUsesScopedStartupFailureInsteadOfHistoricalDesktopOutput(t *testing.T) {
+	dir := t.TempDir()
+	lifecycleManager := &fakeLifecycle{
+		recent: "historical desktop output",
+		start: func(context.Context, protocol.RouterOwner) (state.RouterState, *lifecycle.Error) {
+			return state.RouterState{}, &lifecycle.Error{
+				Code: protocol.CodeRouterStartFailed, Err: errors.New("startup failed"), Launched: true,
+				RecentOutput: "scoped startup output\nAuthorization: Bearer scoped-secret",
+			}
+		},
+	}
+	manager := newWithDependencies(Config{RouterPath: os.Args[0], Paths: managerpaths.Paths{DesktopLogFile: dir}}, dependencies{
+		discoverStatus: func(context.Context) discovery.Result { return discovery.Result{Classification: discovery.Stale} },
+		lifecycle:      lifecycleManager,
+	})
+
+	if _, gotErr := manager.routerStart(context.Background(), json.RawMessage(`{"owner":"desktop"}`)); gotErr == nil {
+		t.Fatal("routerStart() unexpectedly succeeded")
+	}
+	value, gotErr := manager.routerLogs(context.Background(), json.RawMessage(`{"limit":10}`))
+	if gotErr != nil {
+		t.Fatal(gotErr)
+	}
+	want := []string{"scoped startup output", "Authorization: [REDACTED]"}
+	if got := value.(protocol.RouterLogsResult).Lines; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("failure lines = %v, want %v", got, want)
 	}
 }
 

@@ -453,11 +453,24 @@ func (a *App) routerLogs(ctx context.Context, params json.RawMessage) (any, *pro
 		request.Limit = defaultLogLines
 	}
 	found := a.deps.discoverStatus(ctx)
+	trustedExternal := trustedResult(found) && found.Owner != string(protocol.RouterOwnerDesktop)
 	path := trustedLogPath(found)
-	if path == "" {
+	if path == "" && !trustedExternal {
 		path = a.config.Paths.DesktopLogFile
 	}
-	recent := lastLines(sanitizeText(a.deps.lifecycle.RecentOutput()), request.Limit)
+	var recent []string
+	if !trustedExternal {
+		useLifecycleRecent := true
+		if found.Classification == discovery.Absent || found.Classification == discovery.Stale {
+			a.captureUnexpectedExits()
+			var failureFound bool
+			recent, failureFound = a.failureLogLines(request.Limit)
+			useLifecycleRecent = !failureFound
+		}
+		if useLifecycleRecent {
+			recent = lastLines(sanitizeText(a.deps.lifecycle.RecentOutput()), request.Limit)
+		}
+	}
 	lines, err := readLogLines(ctx, path, request.Limit)
 	if err != nil {
 		if len(recent) > 0 {
@@ -962,6 +975,19 @@ func (a *App) failedStatus() (protocol.RouterStatusResult, bool) {
 		LastError:  a.failure.lastError,
 		RecentLogs: append([]string(nil), a.failure.recentLogs...),
 	}, true
+}
+
+func (a *App) failureLogLines(limit int) ([]string, bool) {
+	a.failureMu.Lock()
+	defer a.failureMu.Unlock()
+	if a.failure == nil {
+		return nil, false
+	}
+	lines := a.failure.recentLogs
+	if len(lines) > limit {
+		lines = lines[len(lines)-limit:]
+	}
+	return append([]string(nil), lines...), true
 }
 
 func (a *App) latchStartupFailure(startErr *lifecycle.Error) {
