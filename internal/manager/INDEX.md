@@ -35,6 +35,7 @@ agent.preview             agent.write
 ## Architecture patterns
 
 - **Mostly stateless per-request**: each JSON request is handled independently; long-running state lives in `lifecycle.Manager`, `agent.Service`, and `state` files. A notable exception is `occupant.Service`, which holds an in-memory single-use confirmation token between `Inspect` and `ForceTerminate` (mutex-guarded, expires after 30 s).
+- **Desktop startup failure diagnostics**: post-launch failures terminate and wait for the owned child; lifecycle retains bounded raw output, while the app protocol exposes only sanitized, session-scoped diagnostics.
 - **Identity verification before signaling**: on Unix/macOS the verified-identity path validates PID + start-time + executable before every signal. On Windows the PID-only path re-confirms the listening PID via `InspectPIDOwner` then calls `SignalPID` directly (no start-time/executable check).
 - **API key zeroing**: `request.APIKey = ""` on explicit exit paths after successful parameter decode in `app`. Note: if `DecodeParams` itself fails (e.g. unknown fields), already-populated fields may not be zeroed.
 - **Transaction recovery**: `agent` writes use a state directory with rollback capability; `NewService()` performs recovery on startup.
