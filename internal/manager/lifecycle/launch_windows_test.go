@@ -3,14 +3,44 @@
 package lifecycle
 
 import (
+	"bytes"
 	"io"
 	"os"
+	"strings"
 	"testing"
 	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
+
+func TestLaunchForegroundCommandDrainsImmediateExitStderr(t *testing.T) {
+	const (
+		helperEnv  = "MTLS_ROUTER_LIFECYCLE_IMMEDIATE_EXIT_HELPER"
+		diagnostic = "mtls-router immediate startup failure: distinctive stderr diagnostic is complete"
+	)
+	if os.Getenv(helperEnv) == "1" {
+		_, _ = os.Stderr.WriteString(diagnostic)
+		os.Exit(23)
+	}
+
+	var output bytes.Buffer
+	child, err := launchForegroundCommand(
+		os.Args[0],
+		[]string{"-test.run=^TestLaunchForegroundCommandDrainsImmediateExitStderr$"},
+		append(os.Environ(), helperEnv+"=1"),
+		&output,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := child.Wait(); err == nil {
+		t.Fatal("helper process unexpectedly succeeded")
+	}
+	if got := output.String(); !strings.Contains(got, diagnostic) {
+		t.Fatalf("output %q does not contain complete diagnostic %q", got, diagnostic)
+	}
+}
 
 func TestDesktopCreationFlagsStartHiddenSuspendedProcessGroup(t *testing.T) {
 	flags := desktopCreationFlags()
