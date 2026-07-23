@@ -73,6 +73,21 @@ function findRuleDeclarations(value: string, selector: string) {
   throw new Error(`Missing CSS rule for selector: ${selector}`);
 }
 
+describe("application scroll boundary", () => {
+  it("keeps the header outside the vertical scroll container", () => {
+    const main = compact(findRuleDeclarations(css, "main"));
+    const content = compact(findRuleDeclarations(css, ".main-scroll"));
+
+    expect(main).toMatch(/display:\s*grid;/);
+    expect(main).toMatch(/grid-template-rows:\s*auto\s+minmax\(0,\s*1fr\);/);
+    expect(main).toMatch(/overflow:\s*hidden;/);
+    expect(main).not.toMatch(/overflow-y:\s*auto;/);
+    expect(content).toMatch(/overflow-x:\s*hidden;/);
+    expect(content).toMatch(/overflow-y:\s*auto;/);
+    expect(content).toMatch(/overscroll-behavior:\s*contain;/);
+  });
+});
+
 describe("responsive Claude role layout", () => {
   it("uses the model panel as an inline-size query container", () => {
     expect(compact(css)).toMatch(

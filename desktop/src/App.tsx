@@ -107,23 +107,26 @@ function AppContent({ api }: { api: DesktopApi }) {
           </div>
         </header>
 
-        <div className="content-intro">
-          <p>{t(`${sectionKey}.description` as TranslationKey)}</p>
-          <span aria-hidden="true">
-            {navigationItems.findIndex((item) => item.id === activeSection) + 1}
-            /4
-          </span>
-        </div>
+        <div className="main-scroll">
+          <div className="content-intro">
+            <p>{t(`${sectionKey}.description` as TranslationKey)}</p>
+            <span aria-hidden="true">
+              {navigationItems.findIndex((item) => item.id === activeSection) +
+                1}
+              /4
+            </span>
+          </div>
 
-        {activeSection === "router" && (
-          <RouterPage
-            api={api}
-            onNavigateToAgents={() => setActiveSection("agents")}
-          />
-        )}
-        {activeSection === "logs" && <LogsPage api={api} />}
-        {activeSection === "agents" && <AgentPage api={api} />}
-        {activeSection === "settings" && <SettingsPage api={api} />}
+          {activeSection === "router" && (
+            <RouterPage
+              api={api}
+              onNavigateToAgents={() => setActiveSection("agents")}
+            />
+          )}
+          {activeSection === "logs" && <LogsPage api={api} />}
+          {activeSection === "agents" && <AgentPage api={api} />}
+          {activeSection === "settings" && <SettingsPage api={api} />}
+        </div>
       </main>
     </div>
   );
