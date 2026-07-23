@@ -19,6 +19,8 @@ type commandProcess struct {
 
 func (p commandProcess) PID() int { return p.cmd.Process.Pid }
 
+func (p commandProcess) Kill() error { return p.cmd.Process.Kill() }
+
 func (p commandProcess) Wait() error {
 	err := p.cmd.Wait()
 	_ = windows.CloseHandle(p.job)

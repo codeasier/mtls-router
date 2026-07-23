@@ -23,8 +23,10 @@ import (
 )
 
 type Error struct {
-	Code protocol.ErrorCode
-	Err  error
+	Code         protocol.ErrorCode
+	Err          error
+	Launched     bool
+	RecentOutput string
 }
 
 func (e *Error) Error() string { return fmt.Sprintf("%s: %v", e.Code, e.Err) }
@@ -253,13 +255,11 @@ func (m *Manager) startDesktop(ctx context.Context) (state.RouterState, *Error) 
 
 	identity, versionInfo, healthInfo, startErr := m.waitUntilReady(ctx, child.PID(), run.done)
 	if startErr != nil {
-		m.cleanupFailedChild(identity)
-		return state.RouterState{}, startErr
+		return state.RouterState{}, m.cleanupFailedDesktopStart(child, run, startErr)
 	}
 	value := m.routerState("desktop", identity, versionInfo)
 	if err := m.deps.WriteState(m.config.DesktopStatePath, value); err != nil {
-		m.cleanupFailedChild(identity)
-		return state.RouterState{}, lifecycleError(protocol.CodeRouterStartFailed, "cannot persist verified router state")
+		return state.RouterState{}, m.cleanupFailedDesktopStart(child, run, lifecycleError(protocol.CodeRouterStartFailed, "cannot persist verified router state"))
 	}
 	run.identity = identity
 	m.mu.Lock()
@@ -267,7 +267,7 @@ func (m *Manager) startDesktop(ctx context.Context) (state.RouterState, *Error) 
 	case <-run.done:
 		m.mu.Unlock()
 		_ = m.deps.RemoveState(m.config.DesktopStatePath)
-		return state.RouterState{}, lifecycleError(protocol.CodeRouterStartFailed, "router exited before startup completed: "+run.recentOutput)
+		return state.RouterState{}, m.cleanupFailedDesktopStart(child, run, lifecycleError(protocol.CodeRouterStartFailed, "router exited before startup completed"))
 	default:
 	}
 	m.desktopRun = run
@@ -319,7 +319,7 @@ func (m *Manager) waitUntilReady(ctx context.Context, pid int, childExit <-chan 
 		if childExit != nil {
 			select {
 			case <-childExit:
-				return identity, discovery.Version{}, discovery.Health{}, lifecycleError(protocol.CodeRouterStartFailed, "router exited during startup: "+m.RecentOutput())
+				return identity, discovery.Version{}, discovery.Health{}, lifecycleError(protocol.CodeRouterStartFailed, "router exited during startup")
 			default:
 			}
 		}
@@ -559,6 +559,14 @@ func (m *Manager) cleanupFailedChild(identity process.Identity) {
 	if err == nil && status == process.StatusGenuine {
 		_ = m.deps.Signal(identity, identity.Executable, os.Kill)
 	}
+}
+
+func (m *Manager) cleanupFailedDesktopStart(child foregroundProcess, run *desktopRun, startErr *Error) *Error {
+	_ = child.Kill()
+	<-run.done
+	startErr.Launched = true
+	startErr.RecentOutput = run.recentOutput
+	return startErr
 }
 
 func (m *Manager) acquireLock() error {

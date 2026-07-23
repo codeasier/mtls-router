@@ -105,17 +105,17 @@ func TestRepeatedDesktopStartDoesNotLaunchSecondChild(t *testing.T) {
 
 func TestFailedAndTimedOutStartCleanUpWithoutWritingState(t *testing.T) {
 	for _, tt := range []struct {
-		name      string
-		verify    func(context.Context, string, int, string, string) (discovery.Version, discovery.Health, error)
-		want      protocol.ErrorCode
-		wantKills int
+		name           string
+		verify         func(context.Context, string, int, string, string) (discovery.Version, discovery.Health, error)
+		want           protocol.ErrorCode
+		wantOwnedKills int
 	}{
 		{name: "not ready", verify: func(context.Context, string, int, string, string) (discovery.Version, discovery.Health, error) {
 			return discovery.Version{}, discovery.Health{}, errors.New("not ready")
-		}, want: protocol.CodeRouterNotReady, wantKills: 1},
+		}, want: protocol.CodeRouterNotReady, wantOwnedKills: 1},
 		{name: "identity mismatch", verify: func(context.Context, string, int, string, string) (discovery.Version, discovery.Health, error) {
 			return discovery.Version{PID: 101}, discovery.Health{Status: "ok"}, nil
-		}, want: protocol.CodeRouterStateStale},
+		}, want: protocol.CodeRouterStateStale, wantOwnedKills: 1},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			fixture := newFixture(t)
@@ -129,16 +129,145 @@ func TestFailedAndTimedOutStartCleanUpWithoutWritingState(t *testing.T) {
 			if protocolErr == nil || protocolErr.Code != tt.want {
 				t.Fatalf("error = %v, want %s", protocolErr, tt.want)
 			}
+			if !protocolErr.Launched || protocolErr.RecentOutput != "owned child output" {
+				t.Fatalf("failure metadata = %+v", protocolErr)
+			}
+			if strings.Contains(protocolErr.Error(), protocolErr.RecentOutput) {
+				t.Fatalf("generic error contains raw output: %q", protocolErr.Error())
+			}
 			if fixture.writes != 0 {
 				t.Fatalf("state writes = %d", fixture.writes)
 			}
-			if fixture.killSignals != tt.wantKills {
-				t.Fatalf("cleanup kill signals = %d, want %d", fixture.killSignals, tt.wantKills)
+			if fixture.ownedChildKills != tt.wantOwnedKills {
+				t.Fatalf("owned child kills = %d, want %d", fixture.ownedChildKills, tt.wantOwnedKills)
+			}
+			if fixture.killSignals != 0 {
+				t.Fatalf("identity-based cleanup kill signals = %d", fixture.killSignals)
 			}
 			if !fixture.lockClosed {
 				t.Fatal("failed start retained ownership lock")
 			}
 		})
+	}
+}
+
+func TestDesktopStateWriteFailureDrainsOwnedChild(t *testing.T) {
+	fixture := newFixture(t)
+	fixture.deps.WriteState = func(string, state.RouterState) error {
+		fixture.writes++
+		return errors.New("write failed")
+	}
+	_, startErr := fixture.manager().Start(context.Background(), protocol.RouterOwnerDesktop)
+	if startErr == nil || startErr.Code != protocol.CodeRouterStartFailed {
+		t.Fatalf("error = %v", startErr)
+	}
+	if !startErr.Launched || startErr.RecentOutput != "owned child output" {
+		t.Fatalf("failure metadata = %+v", startErr)
+	}
+	if got := startErr.Error(); got != "ROUTER_START_FAILED: cannot persist verified router state" {
+		t.Fatalf("generic error text = %q", got)
+	}
+	if fixture.writes != 1 || fixture.managerState.PID != 0 {
+		t.Fatalf("writes=%d persisted state=%+v", fixture.writes, fixture.managerState)
+	}
+	if fixture.ownedChildKills != 1 || !fixture.lockClosed {
+		t.Fatalf("owned child kills=%d lock closed=%t", fixture.ownedChildKills, fixture.lockClosed)
+	}
+}
+
+func TestDesktopLaunchFailureRemainsUnmarked(t *testing.T) {
+	fixture := newFixture(t)
+	fixture.deps.LaunchDesktop = func(string, []string, []string, io.Writer) (foregroundProcess, error) {
+		return nil, errors.New("launch failed")
+	}
+	_, startErr := fixture.manager().Start(context.Background(), protocol.RouterOwnerDesktop)
+	if startErr == nil || startErr.Code != protocol.CodeRouterStartFailed {
+		t.Fatalf("error = %v", startErr)
+	}
+	if startErr.Launched || startErr.RecentOutput != "" {
+		t.Fatalf("pre-launch failure metadata = %+v", startErr)
+	}
+	if got := startErr.Error(); got != "ROUTER_START_FAILED: router launch failed" {
+		t.Fatalf("generic error text = %q", got)
+	}
+	if !fixture.lockClosed {
+		t.Fatal("failed launch retained ownership lock")
+	}
+}
+
+func TestDesktopInspectFailureWaitsForChildAndDrainsRecentOutput(t *testing.T) {
+	fixture := newFixture(t)
+	fixture.config.RecentOutputBytes = 64
+	fixture.deps.Inspect = func(int) (process.Identity, error) {
+		return process.Identity{}, errors.New("inspect failed")
+	}
+	outputWritten := make(chan struct{})
+	releaseWait := make(chan struct{})
+	terminated := make(chan struct{})
+	fixture.deps.LaunchDesktop = func(_ string, _ []string, _ []string, output io.Writer) (foregroundProcess, error) {
+		return &fakeChild{
+			pid: 101,
+			waitFunc: func() error {
+				<-terminated
+				_, _ = output.Write([]byte("complete startup failure output"))
+				close(outputWritten)
+				<-releaseWait
+				return errors.New("startup failed")
+			},
+			killFunc: func() error {
+				close(terminated)
+				return nil
+			},
+		}, nil
+	}
+
+	manager := fixture.manager()
+	result := make(chan *Error, 1)
+	go func() {
+		_, startErr := manager.Start(context.Background(), protocol.RouterOwnerDesktop)
+		result <- startErr
+	}()
+
+	select {
+	case <-outputWritten:
+	case <-time.After(time.Second):
+		t.Fatal("owned child was not terminated")
+	}
+	select {
+	case startErr := <-result:
+		t.Fatalf("Start returned before child Wait completed: %v", startErr)
+	default:
+	}
+	close(releaseWait)
+
+	var startErr *Error
+	select {
+	case startErr = <-result:
+	case <-time.After(time.Second):
+		t.Fatal("Start did not return after child Wait completed")
+	}
+	if startErr == nil || startErr.Code != protocol.CodeRouterStartFailed {
+		t.Fatalf("error = %v", startErr)
+	}
+	if !startErr.Launched {
+		t.Fatal("post-launch failure was not marked launched")
+	}
+	if startErr.RecentOutput != "complete startup failure output" {
+		t.Fatalf("recent output = %q", startErr.RecentOutput)
+	}
+	if got := startErr.Error(); got != "ROUTER_START_FAILED: cannot inspect launched router" {
+		t.Fatalf("generic error text = %q", got)
+	}
+	if fixture.writes != 0 {
+		t.Fatalf("state writes = %d", fixture.writes)
+	}
+	if !fixture.lockClosed {
+		t.Fatal("failed start retained ownership lock")
+	}
+	select {
+	case event := <-manager.UnexpectedExit():
+		t.Fatalf("startup failure reported as unexpected: %+v", event)
+	default:
 	}
 }
 
@@ -433,6 +562,7 @@ type fixture struct {
 	managerState                  state.RouterState
 	cliState                      state.RouterState
 	writes, signals, killSignals  int
+	ownedChildKills               int
 	desktopLaunches               int
 	removed, lockHeld, lockClosed bool
 	validate                      func(process.Identity, string) (process.Status, error)
@@ -467,9 +597,15 @@ func newFixture(t *testing.T) *fixture {
 			}
 			return nil
 		},
-		LaunchDesktop: func(string, []string, []string, io.Writer) (foregroundProcess, error) {
+		LaunchDesktop: func(_ string, _ []string, _ []string, output io.Writer) (foregroundProcess, error) {
 			f.desktopLaunches++
-			return &fakeChild{pid: 101, wait: make(chan error)}, nil
+			_, _ = output.Write([]byte("owned child output"))
+			wait := make(chan error, 1)
+			return &fakeChild{pid: 101, wait: wait, killFunc: func() error {
+				f.ownedChildKills++
+				wait <- errors.New("killed")
+				return nil
+			}}, nil
 		},
 		LaunchDetached: func(string, []string, string) (int, error) { return 202, nil },
 		ReadState: func(path string) (state.RouterState, error) {
@@ -526,12 +662,31 @@ func (f *fixture) ownState() {
 }
 
 type fakeChild struct {
-	pid  int
-	wait chan error
+	pid      int
+	wait     chan error
+	waitFunc func() error
+	killFunc func() error
+	killOnce sync.Once
 }
 
-func (p *fakeChild) PID() int    { return p.pid }
-func (p *fakeChild) Wait() error { return <-p.wait }
+func (p *fakeChild) PID() int { return p.pid }
+func (p *fakeChild) Wait() error {
+	if p.waitFunc != nil {
+		return p.waitFunc()
+	}
+	return <-p.wait
+}
+func (p *fakeChild) Kill() error {
+	if p.killFunc != nil {
+		return p.killFunc()
+	}
+	p.killOnce.Do(func() {
+		if p.wait != nil {
+			p.wait <- errors.New("killed")
+		}
+	})
+	return nil
+}
 
 type closerFunc func() error
 

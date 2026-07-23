@@ -6,6 +6,7 @@ import (
 
 type foregroundProcess interface {
 	PID() int
+	Kill() error
 	Wait() error
 }
 
