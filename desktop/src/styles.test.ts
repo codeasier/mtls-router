@@ -130,6 +130,50 @@ describe("responsive Claude role layout", () => {
   });
 });
 
+describe("model configuration typography", () => {
+  it("keeps configuration labels and supporting text readable", () => {
+    for (const selector of [
+      ".config-workbench label",
+      ".config-workbench legend",
+      ".config-workbench small",
+      ".config-workbench .option-field > span",
+      ".config-workbench .catalog-model code",
+      ".config-workbench .validation-path",
+    ]) {
+      const declarations = compact(findRuleDeclarations(css, selector));
+      expect(declarations).toMatch(/font-size:\s*12px;/);
+      expect(declarations).toMatch(/line-height:\s*1\.5;/);
+    }
+  });
+
+  it("uses readable text and height for configuration controls", () => {
+    for (const selector of [
+      ".config-workbench .control-button",
+      ".config-workbench .text-button",
+      '.config-workbench input:not([type="checkbox"]):not([type="radio"]):not([type="file"])',
+      ".config-workbench select",
+      ".config-workbench textarea",
+    ]) {
+      const declarations = compact(findRuleDeclarations(css, selector));
+      expect(declarations).toMatch(/font-size:\s*14px;/);
+      expect(declarations).toMatch(/line-height:\s*1\.4;/);
+    }
+  });
+
+  it("gives single-line configuration controls enough height", () => {
+    for (const selector of [
+      ".config-workbench .control-button",
+      ".config-workbench .text-button",
+      '.config-workbench input:not([type="checkbox"]):not([type="radio"]):not([type="file"])',
+      ".config-workbench select",
+    ]) {
+      expect(compact(findRuleDeclarations(css, selector))).toMatch(
+        /min-height:\s*42px;/,
+      );
+    }
+  });
+});
+
 describe("responsive rebuild flow", () => {
   it("stacks preview and result content before the narrow layout", () => {
     const medium = compact(extractMediaBlock(css, 800));

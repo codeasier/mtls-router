@@ -2232,6 +2232,37 @@ main {
   background: var(--warning-soft);
 }
 
+.config-workbench label,
+.config-workbench legend,
+.config-workbench summary,
+.config-workbench small,
+.config-workbench .overline,
+.config-workbench .source-note,
+.config-workbench .drift-note,
+.config-workbench .validation-path,
+.config-workbench .catalog-search > span,
+.config-workbench .option-field > span,
+.config-workbench .advanced-editor label > span,
+.config-workbench .catalog-model code {
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.config-workbench .control-button,
+.config-workbench .text-button,
+.config-workbench
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+.config-workbench select {
+  min-height: 42px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.config-workbench textarea {
+  font-size: 14px;
+  line-height: 1.4;
+}
+
 .fragment-card {
   padding: 15px;
   border-bottom: 1px solid var(--line);
