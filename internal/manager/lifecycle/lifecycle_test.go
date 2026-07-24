@@ -273,21 +273,21 @@ func TestDesktopInspectFailureWaitsForChildAndDrainsRecentOutput(t *testing.T) {
 	}
 }
 
-func TestDesktopFailureCleanupDoesNotHangWhenKillAndWaitStall(t *testing.T) {
+func TestDesktopFailureCleanupWaitsAfterKillFailureAndCapturesFinalTail(t *testing.T) {
 	fixture := newFixture(t)
-	fixture.config.ForceTimeout = 20 * time.Millisecond
+	fixture.config.RecentOutputBytes = 64
 	fixture.deps.Inspect = func(int) (process.Identity, error) {
 		return process.Identity{}, errors.New("inspect failed")
 	}
 	releaseWait := make(chan struct{})
-	waitDone := make(chan struct{})
+	waitStarted := make(chan struct{})
 	fixture.deps.LaunchDesktop = func(_ string, _ []string, _ []string, output io.Writer) (foregroundProcess, error) {
-		_, _ = output.Write([]byte("bounded partial output"))
 		return &fakeChild{
 			pid: 101,
 			waitFunc: func() error {
-				defer close(waitDone)
+				close(waitStarted)
 				<-releaseWait
+				_, _ = output.Write([]byte("final drained tail"))
 				return errors.New("eventually exited")
 			},
 			killFunc: func() error { return errors.New("kill failed") },
@@ -302,20 +302,23 @@ func TestDesktopFailureCleanupDoesNotHangWhenKillAndWaitStall(t *testing.T) {
 	}()
 
 	select {
+	case <-waitStarted:
+	case <-time.After(time.Second):
+		t.Fatal("child Wait did not start")
+	}
+	select {
 	case startErr := <-result:
-		if startErr == nil || !startErr.Launched || startErr.RecentOutput != "bounded partial output" {
-			t.Fatalf("failure metadata = %+v", startErr)
-		}
-	case <-time.After(750 * time.Millisecond):
-		close(releaseWait)
-		<-result
-		t.Fatal("cleanup remained blocked after its force timeout")
+		t.Fatalf("Start returned before child Wait completed: %+v", startErr)
+	case <-time.After(2 * foregroundWaitDelay):
 	}
 	close(releaseWait)
 	select {
-	case <-waitDone:
+	case startErr := <-result:
+		if startErr == nil || !startErr.Launched || startErr.RecentOutput != "final drained tail" {
+			t.Fatalf("failure metadata = %+v", startErr)
+		}
 	case <-time.After(time.Second):
-		t.Fatal("fake Wait did not finish after release")
+		t.Fatal("Start did not return after child Wait completed")
 	}
 }
 
@@ -463,79 +466,6 @@ func TestRecentOutputForRunRejectsReplacementAndTruncation(t *testing.T) {
 				t.Fatalf("snapshot = %q", got)
 			}
 		})
-	}
-}
-
-func TestPendingDesktopCleanupRetainsLockAndRejectsRestart(t *testing.T) {
-	fixture := newFixture(t)
-	fixture.config.ForceTimeout = 20 * time.Millisecond
-	fixture.deps.Inspect = func(int) (process.Identity, error) {
-		return process.Identity{}, errors.New("inspect failed")
-	}
-	lockClosed := make(chan struct{}, 2)
-	acquires := 0
-	fixture.deps.AcquireLock = func(string) (io.Closer, error) {
-		acquires++
-		return closerFunc(func() error {
-			lockClosed <- struct{}{}
-			return nil
-		}), nil
-	}
-	releaseWait := make(chan struct{})
-	waitDone := make(chan struct{})
-	launches := 0
-	fixture.deps.LaunchDesktop = func(_ string, _ []string, _ []string, output io.Writer) (foregroundProcess, error) {
-		launches++
-		if launches > 1 {
-			return nil, errors.New("later launch")
-		}
-		_, _ = output.Write([]byte("pending cleanup output"))
-		return &fakeChild{
-			pid: 101,
-			waitFunc: func() error {
-				defer close(waitDone)
-				<-releaseWait
-				return errors.New("eventually exited")
-			},
-			killFunc: func() error { return errors.New("kill failed") },
-		}, nil
-	}
-
-	manager := fixture.manager()
-	_, firstErr := manager.Start(context.Background(), protocol.RouterOwnerDesktop)
-	if firstErr == nil || firstErr.RecentOutput != "pending cleanup output" {
-		t.Fatalf("first start error = %+v", firstErr)
-	}
-	select {
-	case <-lockClosed:
-		t.Fatal("cleanup timeout released ownership lock while child was alive")
-	default:
-	}
-	_, secondErr := manager.Start(context.Background(), protocol.RouterOwnerDesktop)
-	if secondErr == nil || secondErr.Code != protocol.CodeRouterAlreadyRunning {
-		t.Fatalf("second start error = %v", secondErr)
-	}
-	if launches != 1 || acquires != 1 {
-		t.Fatalf("launches=%d lock acquisitions=%d", launches, acquires)
-	}
-
-	close(releaseWait)
-	select {
-	case <-waitDone:
-	case <-time.After(time.Second):
-		t.Fatal("pending child Wait did not finish")
-	}
-	select {
-	case <-lockClosed:
-	case <-time.After(time.Second):
-		t.Fatal("completed pending cleanup did not release ownership lock")
-	}
-	_, thirdErr := manager.Start(context.Background(), protocol.RouterOwnerDesktop)
-	if thirdErr == nil || thirdErr.Code != protocol.CodeRouterStartFailed {
-		t.Fatalf("third start error = %v", thirdErr)
-	}
-	if launches != 2 || acquires != 2 {
-		t.Fatalf("later launches=%d lock acquisitions=%d", launches, acquires)
 	}
 }
 

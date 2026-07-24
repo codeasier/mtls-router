@@ -1071,6 +1071,7 @@ func TestDesktopRouterStartReclaimsAfterOwnedOrStaleNormalStart(t *testing.T) {
 				discoverStatus: func(context.Context) discovery.Result { return found },
 				lifecycle:      lifecycleManager,
 			})
+			manager.failure = &routerFailure{identity: process.Identity{PID: 91}}
 			input := strings.NewReader("{\"id\":\"start\",\"method\":\"router.start\",\"params\":{\"owner\":\"desktop\"}}\n{\"id\":\"status\",\"method\":\"router.status\"}\n")
 			var output bytes.Buffer
 			if err := manager.Serve(context.Background(), input, &output); err != nil {
@@ -1078,6 +1079,9 @@ func TestDesktopRouterStartReclaimsAfterOwnedOrStaleNormalStart(t *testing.T) {
 			}
 			if startCalls != 1 || reclaimCalls != 1 {
 				t.Fatalf("start calls = %d, reclaim calls = %d", startCalls, reclaimCalls)
+			}
+			if manager.failure != nil {
+				t.Fatal("successful reclaim retained prior failure")
 			}
 			lines := strings.Split(strings.TrimSpace(output.String()), "\n")
 			if len(lines) != 2 {
@@ -1254,6 +1258,9 @@ func TestDesktopRouterStartLatchesLaunchedFailureAndSuccessfulRestartClearsIt(t 
 			t.Fatalf("unsafe startup log = %q", line)
 		}
 	}
+	manager.failureMu.Lock()
+	manager.failure.identity = process.Identity{PID: 92, StartedAt: "restart", Executable: "/router"}
+	manager.failureMu.Unlock()
 
 	if _, gotErr := manager.routerStart(context.Background(), json.RawMessage(`{"owner":"desktop"}`)); gotErr != nil {
 		t.Fatal(gotErr)
@@ -1419,6 +1426,26 @@ func TestRouterLogsUsesScopedStartupFailureInsteadOfHistoricalDesktopOutput(t *t
 func TestRouterLogsFallsBackToMemoryWhenDiskIsUnreadable(t *testing.T) {
 	dir := t.TempDir()
 	manager := newWithDependencies(Config{Paths: managerpaths.Paths{DesktopLogFile: dir}}, dependencies{
+		discoverStatus: func(context.Context) discovery.Result { return discovery.Result{Classification: discovery.Absent} },
+		lifecycle:      &fakeLifecycle{recent: "memory fallback"},
+	})
+
+	value, gotErr := manager.routerLogs(context.Background(), json.RawMessage(`{"limit":10}`))
+	if gotErr != nil {
+		t.Fatal(gotErr)
+	}
+	if got := value.(protocol.RouterLogsResult).Lines; fmt.Sprint(got) != fmt.Sprint([]string{"memory fallback"}) {
+		t.Fatalf("lines = %v", got)
+	}
+}
+
+func TestRouterLogsFallsBackToMemoryWhenDiskIsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "router.log")
+	if err := os.WriteFile(logPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manager := newWithDependencies(Config{Paths: managerpaths.Paths{DesktopLogFile: logPath}}, dependencies{
 		discoverStatus: func(context.Context) discovery.Result { return discovery.Result{Classification: discovery.Absent} },
 		lifecycle:      &fakeLifecycle{recent: "memory fallback"},
 	})

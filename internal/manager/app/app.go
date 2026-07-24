@@ -950,11 +950,7 @@ func (a *App) captureUnexpectedExits() {
 				a.failureMu.Unlock()
 				continue
 			}
-			a.failure = &routerFailure{
-				identity:   event.Identity,
-				lastError:  "desktop-owned router exited unexpectedly",
-				recentLogs: lastLines(sanitizeText(event.RecentOutput), defaultLogLines),
-			}
+			a.failure = newRouterFailure(event.Identity, "desktop-owned router exited unexpectedly", event.RecentOutput)
 			a.active = process.Identity{}
 			a.failureMu.Unlock()
 		default:
@@ -993,11 +989,16 @@ func (a *App) failureLogLines(limit int) ([]string, bool) {
 func (a *App) latchStartupFailure(startErr *lifecycle.Error) {
 	a.failureMu.Lock()
 	defer a.failureMu.Unlock()
-	a.failure = &routerFailure{
-		lastError:  "desktop-owned router failed during startup",
-		recentLogs: lastLines(sanitizeText(startErr.RecentOutput), defaultLogLines),
-	}
+	a.failure = newRouterFailure(process.Identity{}, "desktop-owned router failed during startup", startErr.RecentOutput)
 	a.active = process.Identity{}
+}
+
+func newRouterFailure(identity process.Identity, lastError, recentOutput string) *routerFailure {
+	return &routerFailure{
+		identity:   identity,
+		lastError:  lastError,
+		recentLogs: lastLines(sanitizeText(recentOutput), defaultLogLines),
+	}
 }
 
 func (a *App) clearFailureAfterStart(value state.RouterState) {
@@ -1006,9 +1007,7 @@ func (a *App) clearFailureAfterStart(value state.RouterState) {
 	defer a.failureMu.Unlock()
 	started := process.Identity{PID: value.PID, StartedAt: value.ProcessStartedAt, Executable: value.ProcessExecutable}
 	a.active = started
-	if a.failure != nil && a.failure.identity != started {
-		a.failure = nil
-	}
+	a.failure = nil
 }
 
 func discoveryError(found discovery.Result, requireHealth bool) *protocol.Error {
