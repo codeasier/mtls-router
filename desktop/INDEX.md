@@ -16,35 +16,35 @@ React UI ──Tauri invoke──▶ Rust commands.rs ──stdin/stdout JSON─
 
 ## 前端（src/）
 
-| 文件                                | 职责                                                                                                                                       |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| 文件                                | 职责                                                                                                              |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | `ipc.ts`                            | `DesktopApi` 接口 + `createDesktopApi()` —— 所有 Tauri 命令的类型化包装；`sanitizeSensitiveText()` 用于客户端脱敏 |
-| `App.tsx`                           | 根布局：侧边栏导航（Router/Agents/Logs/Settings）+ 区块渲染                                                                 |
-| `RouterPage.tsx`                    | router 状态、start/stop、health、占用者检查/终止                                                                         |
-| `AgentPage.tsx`                     | Agent 检测、模型发现、配置预览/写入流程                                                                                |
-| `LogsPage.tsx`                      | 有界的、安全过滤的 router 日志，手动刷新                                                                                   |
-| `SettingsPage.tsx`                  | 自启动、诊断、卸载准备、语言                                                                                           |
-| `model.ts`                          | 共享类型（`SectionId`、`navigationItems`）                                                                                              |
-| `i18n.tsx`                          | I18n context provider，含 `zh-CN` 与 `en` locale                                                                                        |
-| `locales/zh-CN.ts`、`locales/en.ts` | 翻译字典                                                                                                                   |
+| `App.tsx`                           | 根布局：侧边栏导航（Router/Agents/Logs/Settings）+ 区块渲染                                                       |
+| `RouterPage.tsx`                    | router 状态、start/stop、health、占用者检查/终止                                                                  |
+| `AgentPage.tsx`                     | Agent 检测、模型发现、配置预览/写入流程                                                                           |
+| `LogsPage.tsx`                      | 有界的、安全过滤的 router 日志，手动刷新                                                                          |
+| `SettingsPage.tsx`                  | 自启动、诊断、卸载准备、语言                                                                                      |
+| `model.ts`                          | 共享类型（`SectionId`、`navigationItems`）                                                                        |
+| `i18n.tsx`                          | I18n context provider，含 `zh-CN` 与 `en` locale                                                                  |
+| `locales/zh-CN.ts`、`locales/en.ts` | 翻译字典                                                                                                          |
 
 ## 后端（src-tauri/src/）
 
-| 文件                  | 职责                                                                                                                                                                        |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `lib.rs`              | 应用入口：插件注册、setup（sidecar 校验、manager spawn、调度器启动、托盘）、invoke handler 注册                                               |
-| `commands.rs`         | 所有 `#[tauri::command]` handler；`AppState`（manager client、调度器、路径、model flow）；`ModelFlow` 含 `Zeroizing<String>` API key                                  |
-| `manager.rs`          | `ManagerClient` + `TauriTransportFactory` —— spawn manager 子进程、发送 JSON 请求、读取响应；`validate_handshake()`                                              |
-| `scheduler.rs`        | `PollScheduler` —— 周期性 router 状态/健康轮询；emit `router-poll-snapshot` 事件；可见性感知间隔                                                     |
+| 文件                  | 职责                                                                                                                                              |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lib.rs`              | 应用入口：插件注册、setup（sidecar 校验、manager spawn、调度器启动、托盘）、invoke handler 注册                                                   |
+| `commands.rs`         | 所有 `#[tauri::command]` handler；`AppState`（manager client、调度器、路径、model flow）；`ModelFlow` 含 `Zeroizing<String>` API key              |
+| `manager.rs`          | `ManagerClient` + `TauriTransportFactory` —— spawn manager 子进程、发送 JSON 请求、读取响应；`validate_handshake()`                               |
+| `scheduler.rs`        | `PollScheduler` —— 周期性 router 状态/健康轮询；emit `router-poll-snapshot` 事件；可见性感知间隔                                                  |
 | `sidecar.rs`          | `SidecarPaths::resolve()` —— 在 app 二进制旁定位 `mtls-router[.exe]` 与 `mtls-router-manager[.exe]`（运行时纯名字）；校验 SHA-256 + 原生架构/格式 |
-| `tray.rs`             | 系统托盘图标/菜单；状态感知标签；窗口显示/隐藏                                                                                                                |
-| `orchestration.rs`    | `first_launch()` —— sidecar 有效且无 router 运行时自动启动 router                                                                                          |
-| `model_config.rs`     | model config 导入/导出 JSON 校验                                                                                                                                  |
-| `paths.rs`            | 桌面数据目录解析（委托给 `MTLS_ROUTER_DESKTOP_DATA_DIR` 或 OS 默认）                                                                               |
-| `process_identity.rs` | `current()` —— 捕获 PID + 启动时间 + 可执行文件用于父身份 flag                                                                                              |
-| `autostart.rs`        | 登录启动插件包装；首次启动默认启用                                                                                                             |
-| `types.rs`            | 镜像 manager 协议结果的 serde 类型                                                                                                                              |
-| `error.rs`            | `CommandError` —— 将 manager 协议错误映射为用户可见字符串                                                                                                        |
+| `tray.rs`             | 系统托盘图标/菜单；状态感知标签；窗口显示/隐藏                                                                                                    |
+| `orchestration.rs`    | `first_launch()` —— sidecar 有效且无 router 运行时自动启动 router                                                                                 |
+| `model_config.rs`     | model config 导入/导出 JSON 校验                                                                                                                  |
+| `paths.rs`            | 桌面数据目录解析（委托给 `MTLS_ROUTER_DESKTOP_DATA_DIR` 或 OS 默认）                                                                              |
+| `process_identity.rs` | `current()` —— 捕获 PID + 启动时间 + 可执行文件用于父身份 flag                                                                                    |
+| `autostart.rs`        | 登录启动插件包装；首次启动默认启用                                                                                                                |
+| `types.rs`            | 镜像 manager 协议结果的 serde 类型                                                                                                                |
+| `error.rs`            | `CommandError` —— 将 manager 协议错误映射为用户可见字符串                                                                                         |
 
 ## 安全约束
 

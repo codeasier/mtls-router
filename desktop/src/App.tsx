@@ -30,9 +30,50 @@ const shortNavigationKeys: Record<SectionId, TranslationKey> = {
   settings: "nav.settingsShort",
 };
 
+const SIDEBAR_COLLAPSED_STORAGE_KEY = "mtls-router.sidebar.collapsed";
+
+function readSidebarCollapsed() {
+  try {
+    return window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeSidebarCollapsed(collapsed: boolean) {
+  try {
+    window.localStorage.setItem(
+      SIDEBAR_COLLAPSED_STORAGE_KEY,
+      collapsed ? "1" : "0",
+    );
+  } catch {
+    // Storage can be unavailable (private mode, disabled storage). In that
+    // case the sidebar still collapses for the current session only.
+  }
+}
+
+function CollapseIcon({ collapsed }: { collapsed: boolean }) {
+  return (
+    <svg
+      aria-hidden="true"
+      className="sidebar-collapse__icon"
+      viewBox="0 0 16 16"
+      focusable="false"
+    >
+      {collapsed ? (
+        <path d="M6 3.5 10.5 8 6 12.5" fill="none" strokeLinecap="round" />
+      ) : (
+        <path d="M10 3.5 5.5 8 10 12.5" fill="none" strokeLinecap="round" />
+      )}
+    </svg>
+  );
+}
+
 function AppContent({ api }: { api: DesktopApi }) {
   const { t } = useI18n();
   const [activeSection, setActiveSection] = useState<SectionId>("router");
+  const [sidebarCollapsed, setSidebarCollapsed] =
+    useState(readSidebarCollapsed);
   const sectionKey = sectionKeys[activeSection];
 
   useEffect(() => {
@@ -46,8 +87,19 @@ function AppContent({ api }: { api: DesktopApi }) {
       document.removeEventListener("visibilitychange", synchronizeVisibility);
   }, [api]);
 
+  function toggleSidebar() {
+    setSidebarCollapsed((current) => {
+      const next = !current;
+      writeSidebarCollapsed(next);
+      return next;
+    });
+  }
+
   return (
-    <div className="app-frame">
+    <div
+      className="app-frame"
+      data-sidebar={sidebarCollapsed ? "collapsed" : "expanded"}
+    >
       <aside className="sidebar">
         <a
           className="brand"
@@ -57,7 +109,7 @@ function AppContent({ api }: { api: DesktopApi }) {
           <span className="brand-mark" aria-hidden="true">
             CR
           </span>
-          <span>
+          <span className="brand-copy">
             <strong>CodeasierRouter</strong>
             <small>{t("app.controlDesk")}</small>
           </span>
@@ -87,8 +139,26 @@ function AppContent({ api }: { api: DesktopApi }) {
         </nav>
 
         <div className="sidebar-foot">
+          <button
+            type="button"
+            className="sidebar-collapse"
+            aria-expanded={!sidebarCollapsed}
+            aria-label={
+              sidebarCollapsed
+                ? t("app.sidebarExpand")
+                : t("app.sidebarCollapse")
+            }
+            onClick={toggleSidebar}
+          >
+            <CollapseIcon collapsed={sidebarCollapsed} />
+            <span className="sidebar-collapse__label">
+              {sidebarCollapsed
+                ? t("app.sidebarExpandShort")
+                : t("app.sidebarCollapse")}
+            </span>
+          </button>
           <span className="connection-light" aria-hidden="true" />
-          <div>
+          <div className="sidebar-foot__status">
             <strong>{t("app.localMode")}</strong>
             <small>{t("app.safeControlPlane")}</small>
           </div>

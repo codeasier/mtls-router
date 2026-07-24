@@ -6,6 +6,9 @@ export const en: Record<TranslationKey, string> = {
   "app.localMode": "Local mode",
   "app.safeControlPlane": "Safe control plane",
   "app.controlDesk": "CONTROL DESK",
+  "app.sidebarCollapse": "Collapse sidebar",
+  "app.sidebarExpand": "Expand sidebar",
+  "app.sidebarExpandShort": "Expand",
   "app.ui": "UI",
   "app.phase": "Phase 4.2",
   "nav.router": "Router control",
@@ -23,7 +26,7 @@ export const en: Record<TranslationKey, string> = {
   "section.agents.eyebrow": "AGENT / CONFIGURATION",
   "section.agents.title": "Agent configuration",
   "section.agents.description":
-    "Detect and configure Claude Code, opencode, and Codex.",
+    "Detect and configure Claude Code, OpenCode, and Codex.",
   "section.logs.eyebrow": "SYSTEM / EVENT STREAM",
   "section.logs.title": "Runtime logs",
   "section.logs.description":
@@ -38,7 +41,7 @@ export const en: Record<TranslationKey, string> = {
     "This area preserves stable navigation without performing reads, writes, or process operations.",
   "placeholder.waiting": "Pending a later task",
   "placeholder.claude": "Claude Code",
-  "placeholder.opencode": "opencode",
+  "placeholder.opencode": "OpenCode",
   "placeholder.codex": "Codex",
   "router.state.notStarted.title": "Router is stopped",
   "router.state.notStarted.signal": "Stopped",
@@ -347,7 +350,7 @@ export const en: Record<TranslationKey, string> = {
   "agents.source.preset": "recommended preset",
   "agents.presetUnavailable":
     "The recommended {agent} preset is unavailable because these models are not in the current catalog: {models}",
-  "agents.opencodeModels": "Selected opencode models",
+  "agents.opencodeModels": "Selected OpenCode models",
   "agents.primaryModel": "Primary model",
   "agents.roleModel": "{role} model",
   "agents.activeModel": "Active model",
