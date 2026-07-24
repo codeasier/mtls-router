@@ -1,22 +1,22 @@
 # internal/config
 
-Flag/env/default configuration loading and validation for the mtls-router binary.
+mtls-router 二进制的 flag/env/default 配置加载与校验。
 
-## Files
+## 文件
 
-| File | Role |
+| 文件 | 职责 |
 |------|------|
-| `config.go` | `Config` struct, `Load(defaults, args)`, `Validate()`, `applyEnv()` |
+| `config.go` | `Config` 结构体、`Load(defaults, args)`、`Validate()`、`applyEnv()` |
 
-## Precedence
+## 优先级
 
 ```
 flag > env (MTLS_*) > build-time default > hardcoded default
 ```
 
-## Exported fields
+## 导出字段
 
-| Field | Env | Flag | Default |
+| 字段 | Env | Flag | 默认值 |
 |-------|-----|------|---------|
 | `ListenAddr` | `MTLS_LISTEN_ADDR` | `-listen` | `127.0.0.1:19099` |
 | `UpstreamURL` | `MTLS_UPSTREAM_URL` | `-upstream` | build-time `upstreamURL` |
@@ -26,11 +26,11 @@ flag > env (MTLS_*) > build-time default > hardcoded default
 | `Backend` | `MTLS_BACKEND` | `-backend` | `false` |
 | `LogPath` | `MTLS_LOG` | `-log` | `""` |
 
-## Validation rules
+## 校验规则
 
-- `UpstreamURL` must be non-empty, parseable, scheme `https`, non-empty host.
-- `TLSMin` must be `tls1.2` or `tls1.3` (validated via `internal/tlspolicy`).
+- `UpstreamURL` 必须非空、可解析、scheme 为 `https`、host 非空。
+- `TLSMin` 必须为 `tls1.2` 或 `tls1.3`（经 `internal/tlspolicy` 校验）。
 
-## Dependencies
+## 依赖
 
-- `internal/tlspolicy` — TLS version string validation
+- `internal/tlspolicy` —— TLS 版本字符串校验

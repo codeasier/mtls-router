@@ -1,31 +1,31 @@
 # internal/version
 
-Link-time build metadata variables and accessors.
+链接期构建元数据变量与访问器。
 
-## Files
+## 文件
 
-| File | Role |
+| 文件 | 职责 |
 |------|------|
-| `version.go` | `Version`, `Commit`, `BuildDate`, `DeploymentID` vars; `ManagementProtocolVersion` const; `Info()`, `InfoJSON()` |
+| `version.go` | `Version`、`Commit`、`BuildDate`、`DeploymentID` 变量；`ManagementProtocolVersion` 常量；`Info()`、`InfoJSON()` |
 
-## Link-time variables
+## 链接期变量
 
-Set via `-ldflags -X github.com/codeasier/mtls-router/internal/version.*`:
+通过 `-ldflags -X github.com/codeasier/mtls-router/internal/version.*` 设置：
 
-| Variable | Default | Description |
+| 变量 | 默认值 | 说明 |
 |----------|---------|-------------|
-| `Version` | `"dev"` | Semantic version / git tag |
-| `Commit` | `"unknown"` | Short git SHA |
-| `BuildDate` | `"unknown"` | UTC ISO-8601 build timestamp |
-| `DeploymentID` | `"dev"` | Service environment identifier |
+| `Version` | `"dev"` | 语义版本 / git tag |
+| `Commit` | `"unknown"` | 短 git SHA |
+| `BuildDate` | `"unknown"` | UTC ISO-8601 构建时间戳 |
+| `DeploymentID` | `"dev"` | 服务环境标识 |
 
-## Constants
+## 常量
 
-- `ManagementProtocolVersion = "3"` — code-owned, cannot be overridden at link time.
+- `ManagementProtocolVersion = "3"` —— 代码所有，不可在链接期覆盖。
 
-## Injection sites
+## 注入点
 
-- `scripts/build.sh` (local)
-- `Dockerfile` (container)
-- `.github/workflows/release.yml` (release)
-- `desktop/scripts/build-sidecars.sh` (desktop sidecars)
+- `scripts/build.sh`（本地）
+- `Dockerfile`（容器）
+- `.github/workflows/release.yml`（发布）
+- `desktop/scripts/build-sidecars.sh`（桌面 sidecar）

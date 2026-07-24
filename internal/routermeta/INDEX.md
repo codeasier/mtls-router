@@ -1,26 +1,26 @@
 # internal/routermeta
 
-Management HTTP handlers for `/version` and `/health` endpoints on the router listener.
+router 监听器上 `/version` 与 `/health` 端点的管理 HTTP handler。
 
-## Files
+## 文件
 
-| File | Role |
+| 文件 | 职责 |
 |------|------|
-| `handlers.go` | `VersionHandler(InfoProvider)`, `HealthHandler(health.ProbeFunc)` — both return `http.Handler` |
+| `handlers.go` | `VersionHandler(InfoProvider)`、`HealthHandler(health.ProbeFunc)` —— 均返回 `http.Handler` |
 
-## Behavior
+## 行为
 
-- **`/version`**: GET-only, `no-store` JSON with version/commit/build_date/deployment_id/management_protocol_version/pid/started_at. Build identity fields cannot be overridden by the InfoProvider.
-- **`/health`**: GET-only, always HTTP 200. Body is `{"status":"ok","upstream":"reachable"}` or `{"status":"degraded","upstream":"unreachable","error":"..."}`.
-- Non-GET methods receive 405 with `Allow: GET`.
+- **`/version`**：仅 GET，`no-store` JSON，含 version/commit/build_date/deployment_id/management_protocol_version/pid/started_at。构建身份字段不可被 InfoProvider 覆盖。
+- **`/health`**：仅 GET，始终 HTTP 200。body 为 `{"status":"ok","upstream":"reachable"}` 或 `{"status":"degraded","upstream":"unreachable","error":"..."}`。
+- 非 GET 方法返回 405 并带 `Allow: GET`。
 
-## Key invariants
+## 关键不变量
 
-- These endpoints must be registered before `/` on the mux so they take precedence over the proxy route.
-- `/health` must NEVER return a non-200 HTTP status — setup scripts use "connection refused = not started, 200 = started".
-- `/version` exposes precise build metadata — never expose publicly.
+- 这些端点必须先于 `/` 在 mux 上注册，以确保优先于代理路由。
+- `/health` 绝不可返回非 200 的 HTTP 状态 —— setup 脚本依赖「connection refused = 未启动，200 = 已启动」。
+- `/version` 暴露精确构建元数据 —— 绝不公开暴露。
 
-## Dependencies
+## 依赖
 
-- `internal/health` — `ProbeFunc` type
-- `internal/version` — `Info()` for build metadata
+- `internal/health` —— `ProbeFunc` 类型
+- `internal/version` —— `Info()` 提供构建元数据

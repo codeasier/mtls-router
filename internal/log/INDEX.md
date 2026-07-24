@@ -1,19 +1,19 @@
-# internal/log (package mlog)
+# internal/log（包名 mlog）
 
-Access log response recorder and structured logging middleware.
+访问日志响应记录器与结构化日志中间件。
 
-## Files
+## 文件
 
-| File | Role |
+| 文件 | 职责 |
 |------|------|
-| `log.go` | `ResponseRecorder` (wraps `http.ResponseWriter`, captures status/bytes); `AccessLog(logger, req, rec, start)` |
+| `log.go` | `ResponseRecorder`（包装 `http.ResponseWriter`，捕获 status/bytes）；`AccessLog(logger, req, rec, start)` |
 
-## Behavior
+## 行为
 
-- `ResponseRecorder` implements `http.ResponseWriter` + `Unwrap()` for `http.ResponseController` compatibility.
-- `AccessLog` emits `slog.Info("access", ...)` with method/path/status/bytes/latency.
-- Request bodies are intentionally never logged.
+- `ResponseRecorder` 实现 `http.ResponseWriter` + `Unwrap()`，兼容 `http.ResponseController`。
+- `AccessLog` 发出 `slog.Info("access", ...)`，含 method/path/status/bytes/latency。
+- 请求体刻意绝不记录。
 
-## Usage
+## 用法
 
-Applied as middleware in `main.go:withAccessLog` wrapping the reverse proxy handler only (not `/version` or `/health`).
+作为中间件在 `main.go:withAccessLog` 中应用，仅包装反向代理 handler（不包装 `/version` 或 `/health`）。
