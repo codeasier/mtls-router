@@ -2,6 +2,23 @@
 
 [中文](zh-CN/CHANGELOG.md)
 
+## v0.2.1 - 2026-07-24
+
+This patch release improves desktop readability and scrolling while preserving bounded, sanitized diagnostics when a desktop-owned router fails during startup.
+
+### Fixed
+
+- Increased Agent configuration label, hint, model identifier, and control sizing for better readability.
+- Kept the desktop tab header fixed while constraining scrolling to the content pane across desktop and mobile layouts.
+- Preserved bounded, sanitized output from failed router startups, including immediate Windows exits and inherited-handle cases, and exposed the diagnostics through router status and runtime logs without mixing external CLI router output.
+
+### Tests
+
+- Added desktop regression coverage for configuration typography, control sizing, scroll ownership, and failure-log navigation.
+- Expanded manager lifecycle and app coverage for startup output draining, cleanup, sanitization, log merging, and Windows immediate-exit behavior.
+
+---
+
 ## v0.2.0 - 2026-07-23
 
 This release introduces authenticated, catalog-driven Agent configuration across the manager, setup scripts, and desktop app, with immutable build presets, explicit recovery workflows, and fail-closed handling of model availability, authorization, and sensitive configuration state.
