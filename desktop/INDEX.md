@@ -1,8 +1,8 @@
 # desktop
 
-Tauri 2 desktop application (CodeasierRouter): React frontend + Rust backend that manages mtls-router via the manager sidecar.
+Tauri 2 桌面应用（CodeasierRouter）：React 前端 + Rust 后端，通过 manager sidecar 管理 mtls-router。
 
-## Architecture
+## 架构
 
 ```
 React UI ──Tauri invoke──▶ Rust commands.rs ──stdin/stdout JSON──▶ mtls-router-manager serve
@@ -10,62 +10,62 @@ React UI ──Tauri invoke──▶ Rust commands.rs ──stdin/stdout JSON─
                               scheduler.rs ──poll──▶ manager ──emit──▶ "router-poll-snapshot" event ──▶ React
 ```
 
-The desktop app never communicates with the router directly. It spawns `mtls-router-manager serve` as a long-lived child process with `--desktop-session`, `--parent-pid/start/executable` flags.
+桌面应用绝不直接与 router 通信。它以长驻子进程方式拉起 `mtls-router-manager serve`，带 `--desktop-session`、`--parent-pid/start/executable` flag。
 
-- **Startup failure diagnostics**: post-launch failures terminate and wait for the owned child; lifecycle retains bounded raw output, while the app protocol exposes only sanitized, session-scoped diagnostics.
+- **启动失败诊断**：启动后失败会终止并等待自有子进程；lifecycle 保留有界的原始输出，而 app 协议仅暴露脱敏的、会话作用域诊断。
 
-## Frontend (src/)
+## 前端（src/）
 
-| File                                | Role                                                                                                                                       |
+| 文件                                | 职责                                                                                                                                       |
 | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ipc.ts`                            | `DesktopApi` interface + `createDesktopApi()` — typed wrappers for all Tauri commands; `sanitizeSensitiveText()` for client-side redaction |
-| `App.tsx`                           | Root layout: sidebar nav (Router/Agents/Logs/Settings) + section rendering                                                                 |
-| `RouterPage.tsx`                    | Router status, start/stop, health, occupant inspection/termination                                                                         |
-| `AgentPage.tsx`                     | Agent detection, model discovery, config preview/write flow                                                                                |
-| `LogsPage.tsx`                      | Bounded, safely filtered router logs with manual refresh                                                                                   |
-| `SettingsPage.tsx`                  | Autostart, diagnostics, uninstall prep, language                                                                                           |
-| `model.ts`                          | Shared types (`SectionId`, `navigationItems`)                                                                                              |
-| `i18n.tsx`                          | I18n context provider with `zh-CN` and `en` locales                                                                                        |
-| `locales/zh-CN.ts`, `locales/en.ts` | Translation dictionaries                                                                                                                   |
+| `ipc.ts`                            | `DesktopApi` 接口 + `createDesktopApi()` —— 所有 Tauri 命令的类型化包装；`sanitizeSensitiveText()` 用于客户端脱敏 |
+| `App.tsx`                           | 根布局：侧边栏导航（Router/Agents/Logs/Settings）+ 区块渲染                                                                 |
+| `RouterPage.tsx`                    | router 状态、start/stop、health、占用者检查/终止                                                                         |
+| `AgentPage.tsx`                     | Agent 检测、模型发现、配置预览/写入流程                                                                                |
+| `LogsPage.tsx`                      | 有界的、安全过滤的 router 日志，手动刷新                                                                                   |
+| `SettingsPage.tsx`                  | 自启动、诊断、卸载准备、语言                                                                                           |
+| `model.ts`                          | 共享类型（`SectionId`、`navigationItems`）                                                                                              |
+| `i18n.tsx`                          | I18n context provider，含 `zh-CN` 与 `en` locale                                                                                        |
+| `locales/zh-CN.ts`、`locales/en.ts` | 翻译字典                                                                                                                   |
 
-## Backend (src-tauri/src/)
+## 后端（src-tauri/src/）
 
-| File                  | Role                                                                                                                                                                        |
+| 文件                  | 职责                                                                                                                                                                        |
 | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `lib.rs`              | App entry: plugin registration, setup (sidecar validation, manager spawn, scheduler start, tray), invoke handler registration                                               |
-| `commands.rs`         | All `#[tauri::command]` handlers; `AppState` (manager client, scheduler, paths, model flows); `ModelFlow` with `Zeroizing<String>` API key                                  |
-| `manager.rs`          | `ManagerClient` + `TauriTransportFactory` — spawns manager child, sends JSON requests, reads responses; `validate_handshake()`                                              |
-| `scheduler.rs`        | `PollScheduler` — periodic router status/health polling; emits `router-poll-snapshot` events; visibility-aware interval                                                     |
-| `sidecar.rs`          | `SidecarPaths::resolve()` — locates `mtls-router[.exe]` and `mtls-router-manager[.exe]` beside the app binary (plain runtime names); validates SHA-256 + native arch/format |
-| `tray.rs`             | System tray icon/menu; status-aware labels; window show/hide                                                                                                                |
-| `orchestration.rs`    | `first_launch()` — auto-starts router if sidecar is valid and no router is running                                                                                          |
-| `model_config.rs`     | Model config import/export JSON validation                                                                                                                                  |
-| `paths.rs`            | Desktop data directory resolution (delegates to `MTLS_ROUTER_DESKTOP_DATA_DIR` or OS default)                                                                               |
-| `process_identity.rs` | `current()` — captures PID + start time + executable for parent identity flags                                                                                              |
-| `autostart.rs`        | Launch-at-login plugin wrapper; default-enabled on first launch                                                                                                             |
-| `types.rs`            | Serde types mirroring manager protocol results                                                                                                                              |
-| `error.rs`            | `CommandError` — maps manager protocol errors to user-facing strings                                                                                                        |
+| `lib.rs`              | 应用入口：插件注册、setup（sidecar 校验、manager spawn、调度器启动、托盘）、invoke handler 注册                                               |
+| `commands.rs`         | 所有 `#[tauri::command]` handler；`AppState`（manager client、调度器、路径、model flow）；`ModelFlow` 含 `Zeroizing<String>` API key                                  |
+| `manager.rs`          | `ManagerClient` + `TauriTransportFactory` —— spawn manager 子进程、发送 JSON 请求、读取响应；`validate_handshake()`                                              |
+| `scheduler.rs`        | `PollScheduler` —— 周期性 router 状态/健康轮询；emit `router-poll-snapshot` 事件；可见性感知间隔                                                     |
+| `sidecar.rs`          | `SidecarPaths::resolve()` —— 在 app 二进制旁定位 `mtls-router[.exe]` 与 `mtls-router-manager[.exe]`（运行时纯名字）；校验 SHA-256 + 原生架构/格式 |
+| `tray.rs`             | 系统托盘图标/菜单；状态感知标签；窗口显示/隐藏                                                                                                                |
+| `orchestration.rs`    | `first_launch()` —— sidecar 有效且无 router 运行时自动启动 router                                                                                          |
+| `model_config.rs`     | model config 导入/导出 JSON 校验                                                                                                                                  |
+| `paths.rs`            | 桌面数据目录解析（委托给 `MTLS_ROUTER_DESKTOP_DATA_DIR` 或 OS 默认）                                                                               |
+| `process_identity.rs` | `current()` —— 捕获 PID + 启动时间 + 可执行文件用于父身份 flag                                                                                              |
+| `autostart.rs`        | 登录启动插件包装；首次启动默认启用                                                                                                             |
+| `types.rs`            | 镜像 manager 协议结果的 serde 类型                                                                                                                              |
+| `error.rs`            | `CommandError` —— 将 manager 协议错误映射为用户可见字符串                                                                                                        |
 
-## Security constraints
+## 安全约束
 
-- Webview capabilities: only `core:default` — no shell/fs/http/opener permissions (enforced by test in `lib.rs`).
-- API keys stored in `Zeroizing<String>` — memory is zeroed on drop.
-- CSP: `default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost; style-src 'self' 'unsafe-inline'`.
-- Manager handshake validated on startup: version, protocol version, deployment ID.
+- webview 能力：仅 `core:default` —— 无 shell/fs/http/opener 权限（由 `lib.rs` 中的测试强制保证）。
+- API key 存于 `Zeroizing<String>` —— 内存 drop 时清零。
+- CSP：`default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost; style-src 'self' 'unsafe-inline'`。
+- manager 握手在启动时校验：version、protocol version、deployment ID。
 
-## Build
+## 构建
 
 ```bash
-npm run sidecars:build    # builds Go router + manager for host target into src-tauri/binaries/
-npm exec tauri -- build   # full Tauri build (requires sidecars present)
+npm run sidecars:build    # 为 host target 构建 Go router + manager 到 src-tauri/binaries/
+npm exec tauri -- build   # 完整 Tauri 构建（需 sidecar 已就位）
 ```
 
-Sidecar naming: build inputs in `src-tauri/binaries/` use target-triple names (`mtls-router-<target-triple>`, e.g. `mtls-router-aarch64-apple-darwin`); after Tauri packaging the installed binaries use plain names (`mtls-router`, `mtls-router-manager`, with `.exe` on Windows).
+sidecar 命名：`src-tauri/binaries/` 下的构建输入使用 target-triple 名（`mtls-router-<target-triple>`，如 `mtls-router-aarch64-apple-darwin`）；Tauri 打包后安装的二进制使用纯名字（`mtls-router`、`mtls-router-manager`，Windows 带 `.exe`）。
 
-## Testing
+## 测试
 
 ```bash
-npm test                  # vitest (frontend unit tests, jsdom)
-npm run rust:test         # cargo test (Rust backend tests)
-npm run verify            # full: eslint + prettier + tsc + vitest + vite build + cargo fmt + cargo test
+npm test                  # vitest（前端单测，jsdom）
+npm run rust:test         # cargo test（Rust 后端测试）
+npm run verify            # 全套：eslint + prettier + tsc + vitest + vite build + cargo fmt + cargo test
 ```

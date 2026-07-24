@@ -1,25 +1,25 @@
 # internal/background
 
-Detached child process management and bounded log file handling for `-backend` mode.
+分离子进程管理与 `-backend` 模式下的有界日志文件处理。
 
-## Files
+## 文件
 
-| File | Role |
+| 文件 | 职责 |
 |------|------|
-| `args.go` | `ChildArgs(args, logPath)` — strips `-backend`, ensures `-log` is present; `DefaultLogPath(exePath)` |
-| `background.go` | `OpenLogFile`, `OpenBoundedLogWriter(path, maxBytes)` — append-only log with 4MB auto-truncate |
-| `background_unix.go` | `Start(exePath, args, logPath)` — unix fork/exec detached child (setsid) |
-| `background_windows.go` | `Start(...)` — windows CREATE_NEW_PROCESS_GROUP detached child |
-| `env.go` | `ChildEnv(env)` — removes `MTLS_BACKEND`; `DesktopChildEnv(env)` — removes all `MTLS_*` vars |
+| `args.go` | `ChildArgs(args, logPath)` —— 剥离 `-backend`，确保存在 `-log`；`DefaultLogPath(exePath)` |
+| `background.go` | `OpenLogFile`、`OpenBoundedLogWriter(path, maxBytes)` —— append-only 日志，超 4MB 自动截断 |
+| `background_unix.go` | `Start(exePath, args, logPath)` —— unix fork/exec 分离子进程（setsid） |
+| `background_windows.go` | `Start(...)` —— windows CREATE_NEW_PROCESS_GROUP 分离子进程 |
+| `env.go` | `ChildEnv(env)` —— 移除 `MTLS_BACKEND`；`DesktopChildEnv(env)` —— 移除所有 `MTLS_*` 变量 |
 
-## Key invariants
+## 关键不变量
 
-- `ChildArgs` must remove `-backend`/`--backend` to prevent infinite re-fork.
-- `DesktopChildEnv` strips ALL `MTLS_*` environment variables — desktop launches use explicit flags only.
-- `boundedLogWriter` truncates the file (no rename) when size exceeds `DefaultMaxLogBytes` (4MB).
-- Log file permissions are `0600`.
+- `ChildArgs` 必须移除 `-backend`/`--backend`，以防无限重复 fork。
+- `DesktopChildEnv` 会剥离全部 `MTLS_*` 环境变量 —— 桌面启动只使用显式 flag。
+- `boundedLogWriter` 在文件大小超过 `DefaultMaxLogBytes`（4MB）时截断文件（不 rename）。
+- 日志文件权限为 `0600`。
 
-## Consumers
+## 消费者
 
-- `main.go:startBackend` — CLI background mode
-- `internal/manager/lifecycle` — desktop router child process launch
+- `main.go:startBackend` —— CLI 后台模式
+- `internal/manager/lifecycle` —— 桌面 router 子进程启动
