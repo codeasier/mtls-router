@@ -1,10 +1,13 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 import { createMockApi } from "./test/api";
 
 describe("App navigation", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
   it("opens the production Router page and navigates from its Agent action", async () => {
     render(<App api={createMockApi()} />);
 
@@ -69,5 +72,34 @@ describe("App navigation", () => {
 
     expect(vi.mocked(api.setWindowVisibility)).toHaveBeenLastCalledWith(false);
     expect(api.destroyAgentModelFlow).not.toHaveBeenCalled();
+  });
+
+  it("collapses the sidebar to icons and persists the preference", async () => {
+    const { container, unmount } = render(<App api={createMockApi()} />);
+    const frame = container.querySelector(".app-frame");
+    expect(frame).toHaveAttribute("data-sidebar", "expanded");
+
+    fireEvent.click(screen.getByRole("button", { name: "收起侧栏" }));
+
+    expect(frame).toHaveAttribute("data-sidebar", "collapsed");
+    expect(window.localStorage.getItem("mtls-router.sidebar.collapsed")).toBe(
+      "1",
+    );
+    unmount();
+
+    const remounted = render(<App api={createMockApi()} />);
+    expect(remounted.container.querySelector(".app-frame")).toHaveAttribute(
+      "data-sidebar",
+      "collapsed",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "展开侧栏" }));
+    expect(remounted.container.querySelector(".app-frame")).toHaveAttribute(
+      "data-sidebar",
+      "expanded",
+    );
+    expect(window.localStorage.getItem("mtls-router.sidebar.collapsed")).toBe(
+      "0",
+    );
   });
 });

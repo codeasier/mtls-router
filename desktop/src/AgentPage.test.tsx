@@ -230,7 +230,7 @@ async function reachRebuildPreview(
   render(<AgentPage api={api} />);
   fireEvent.click(
     await screen.findByRole("button", {
-      name: /备份并重建 opencode|Back up and rebuild opencode/,
+      name: /备份并重建 OpenCode|Back up and rebuild OpenCode/,
     }),
   );
   fireEvent.click(
@@ -463,7 +463,7 @@ describe("Agent model workbench", () => {
       name: /选择 Claude Code|Select Claude Code/,
     });
     const opencode = screen.getByRole("checkbox", {
-      name: /选择 opencode|Select opencode/,
+      name: /选择 OpenCode|Select OpenCode/,
     });
     const codex = screen.getByRole("checkbox", {
       name: /选择 Codex|Select Codex/,
@@ -479,7 +479,7 @@ describe("Agent model workbench", () => {
     ).not.toBeInTheDocument();
 
     const rebuild = screen.getByRole("button", {
-      name: /备份并重建 opencode|Back up and rebuild opencode/,
+      name: /备份并重建 OpenCode|Back up and rebuild OpenCode/,
     });
     fireEvent.click(rebuild);
     expect(rebuild).toHaveAttribute("aria-pressed", "true");
@@ -548,7 +548,7 @@ describe("Agent model workbench", () => {
       }),
     ).toBeDisabled();
     expect(
-      screen.getByRole("checkbox", { name: /选择 opencode|Select opencode/ }),
+      screen.getByRole("checkbox", { name: /选择 OpenCode|Select OpenCode/ }),
     ).toBeDisabled();
     expect(screen.getByText(/未检测到|Not detected/)).toBeVisible();
     expect(screen.getByText(/不可写|Not writable/)).toBeVisible();
@@ -616,7 +616,7 @@ describe("Agent model workbench", () => {
     fireEvent.click(
       screen.getAllByText(/高级受限 extra|Advanced constrained extra/)[1],
     );
-    const editor = screen.getByLabelText(/opencode extra JSON/);
+    const editor = screen.getByLabelText(/OpenCode extra JSON/);
     fireEvent.change(editor, { target: { value: '{"api-key":"forbidden"}' } });
     expect(await screen.findByText(/protected_path/)).toBeInTheDocument();
     expect(editor).toHaveAttribute("aria-invalid", "true");
@@ -1274,7 +1274,7 @@ describe("Agent model workbench", () => {
     const cancel = screen.getByRole("button", { name: /^取消$|^Cancel$/ });
     expect(dialog).toHaveAttribute("aria-modal", "true");
     expect(cancel).toHaveFocus();
-    expect(dialog).toHaveTextContent("opencode");
+    expect(dialog).toHaveTextContent("OpenCode");
     expect(dialog).not.toHaveTextContent("Claude Code");
     const confirm = screen.getByRole("button", {
       name: /^备份并重建$|^Back up and rebuild$/,

@@ -38,11 +38,55 @@ type Stage =
 const agentOrder: AgentId[] = ["claude", "opencode", "codex"];
 const agentNames: Record<AgentId, string> = {
   claude: "Claude Code",
-  opencode: "opencode",
+  opencode: "OpenCode",
   codex: "Codex",
 };
 type SelectedModes = Partial<Record<AgentId, AgentMode>>;
 const roleNames = ["haiku", "sonnet", "opus"] as const;
+
+function AgentLogo({ agent }: { agent: AgentId }) {
+  if (agent === "claude") {
+    return (
+      <svg
+        aria-hidden="true"
+        className="agent-logo agent-logo--claude"
+        viewBox="0 0 48 48"
+        focusable="false"
+      >
+        <path d="M24 6c2.8 6.6 4.6 9.9 11.2 12.7C28.6 21.4 26.8 24.7 24 31.3 21.2 24.7 19.4 21.4 12.8 18.7 19.4 15.9 21.2 12.6 24 6Z" />
+        <path d="M35.5 27.5c1.4 3.3 2.3 4.9 5.6 6.3-3.3 1.4-4.2 3-5.6 6.3-1.4-3.3-2.3-4.9-5.6-6.3 3.3-1.4 4.2-3 5.6-6.3Z" />
+      </svg>
+    );
+  }
+  if (agent === "opencode") {
+    return (
+      <svg
+        aria-hidden="true"
+        className="agent-logo agent-logo--opencode"
+        viewBox="0 0 48 48"
+        focusable="false"
+      >
+        <path d="M18 12 8 24l10 12" fill="none" strokeWidth="3.4" />
+        <path d="m30 12 10 12-10 12" fill="none" strokeWidth="3.4" />
+      </svg>
+    );
+  }
+  return (
+    <svg
+      aria-hidden="true"
+      className="agent-logo agent-logo--codex"
+      viewBox="0 0 48 48"
+      focusable="false"
+    >
+      <path
+        d="M24 5 41 14.5v19L24 43 7 33.5v-19L24 5Z"
+        fill="none"
+        strokeWidth="2.6"
+      />
+      <path d="M24 15.5 32 20v8l-8 4.5L16 28v-8l8-4.5Z" />
+    </svg>
+  );
+}
 
 function isAgentId(value: unknown): value is AgentId {
   return agentOrder.some((agent) => agent === value);
@@ -1093,16 +1137,19 @@ export function AgentPage({ api }: { api: DesktopApi }) {
                   className={`agent-card${mode ? " is-selected" : ""}`}
                   key={id}
                 >
-                  <h3>{agentNames[id]}</h3>
+                  <div className="agent-card__head">
+                    <AgentLogo agent={id} />
+                    <h3>{agentNames[id]}</h3>
+                    <span className="agent-state">
+                      {detectionState(agent, t)}
+                    </span>
+                  </div>
                   <p
                     className="agent-card__config-path"
                     title={agent ? safe(agent.path) : undefined}
                   >
                     {agent ? safe(agent.path) : t("agents.noResult")}
                   </p>
-                  <span className="agent-state">
-                    {detectionState(agent, t)}
-                  </span>
                   <p className="agent-card__guidance">
                     {detectionGuidance(agent, t)}
                   </p>
@@ -1391,7 +1438,7 @@ export function AgentPage({ api }: { api: DesktopApi }) {
             )}
             {selected.includes("opencode") && config.opencode && (
               <section className="model-agent-panel">
-                <h3>opencode</h3>
+                <h3>OpenCode</h3>
                 <div
                   className="catalog-list"
                   role="group"
