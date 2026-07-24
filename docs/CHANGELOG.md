@@ -4,7 +4,15 @@
 
 ## v0.2.1 - 2026-07-24
 
-This patch release improves desktop readability and scrolling while preserving bounded, sanitized diagnostics when a desktop-owned router fails during startup.
+This release refines desktop navigation and Agent presentation, improves readability and scrolling, and preserves bounded, sanitized diagnostics when a desktop-owned router fails during startup.
+
+### Added
+
+- Added a collapsible desktop sidebar with a persisted preference while keeping every section accessible from the compact icon rail.
+
+### Changed
+
+- Compacted Agent selection cards, added official Claude Code, OpenCode, and Codex logos, and standardized the user-visible `OpenCode` name without changing internal identifiers or configuration paths.
 
 ### Fixed
 
@@ -14,7 +22,7 @@ This patch release improves desktop readability and scrolling while preserving b
 
 ### Tests
 
-- Added desktop regression coverage for configuration typography, control sizing, scroll ownership, and failure-log navigation.
+- Added desktop regression coverage for sidebar collapse and persistence, configuration typography, control sizing, scroll ownership, and failure-log navigation.
 - Expanded manager lifecycle and app coverage for startup output draining, cleanup, sanitization, log merging, and Windows immediate-exit behavior.
 
 ---
