@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os/exec"
+	"sync"
 	"syscall"
 	"unsafe"
 
@@ -13,16 +14,40 @@ import (
 )
 
 type commandProcess struct {
-	cmd *exec.Cmd
-	job windows.Handle
+	cmd   *exec.Cmd
+	jobMu sync.Mutex
+	job   windows.Handle
 }
 
-func (p commandProcess) PID() int { return p.cmd.Process.Pid }
+func (p *commandProcess) PID() int { return p.cmd.Process.Pid }
 
-func (p commandProcess) Wait() error {
+func (p *commandProcess) Kill() error {
+	job := p.takeJob()
+	if job == 0 {
+		return p.cmd.Process.Kill()
+	}
+	terminateErr := windows.TerminateJobObject(job, 1)
+	closeErr := windows.CloseHandle(job)
+	if terminateErr == nil || closeErr == nil {
+		return nil
+	}
+	return errors.Join(terminateErr, closeErr, p.cmd.Process.Kill())
+}
+
+func (p *commandProcess) Wait() error {
 	err := p.cmd.Wait()
-	_ = windows.CloseHandle(p.job)
+	if job := p.takeJob(); job != 0 {
+		_ = windows.CloseHandle(job)
+	}
 	return err
+}
+
+func (p *commandProcess) takeJob() windows.Handle {
+	p.jobMu.Lock()
+	defer p.jobMu.Unlock()
+	job := p.job
+	p.job = 0
+	return job
 }
 
 func desktopCreationFlags() uint32 {
@@ -58,6 +83,7 @@ func launchForegroundCommand(executable string, args, env []string, output io.Wr
 	cmd.Stdin = nil
 	cmd.Stdout = output
 	cmd.Stderr = output
+	cmd.WaitDelay = foregroundWaitDelay
 	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: desktopCreationFlags(), HideWindow: true}
 	if err := cmd.Start(); err != nil {
 		_ = windows.CloseHandle(job)
@@ -78,7 +104,7 @@ func launchForegroundCommand(executable string, args, env []string, output io.Wr
 		_ = windows.CloseHandle(job)
 		return nil, err
 	}
-	return commandProcess{cmd: cmd, job: job}, nil
+	return &commandProcess{cmd: cmd, job: job}, nil
 }
 
 func resumeProcess(pid uint32) error {

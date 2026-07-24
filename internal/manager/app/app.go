@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -117,12 +118,13 @@ type App struct {
 	deps      dependencies
 	server    *protocol.Server
 	failureMu sync.Mutex
-	failure   *unexpectedExitFailure
+	failure   *routerFailure
 	active    process.Identity
 }
 
-type unexpectedExitFailure struct {
+type routerFailure struct {
 	identity   process.Identity
+	lastError  string
 	recentLogs []string
 }
 
@@ -372,12 +374,16 @@ func (a *App) routerStart(ctx context.Context, params json.RawMessage) (any, *pr
 	a.captureUnexpectedExits()
 	value, operationErr := a.deps.lifecycle.Start(ctx, request.Owner)
 	if operationErr != nil {
+		startErr := operationErr
 		if request.Owner == protocol.RouterOwnerDesktop && (operationErr.Code == protocol.CodeRouterAlreadyRunning || operationErr.Code == protocol.CodeRouterStateStale) {
 			value, operationErr = a.deps.lifecycle.Reclaim()
 			if operationErr == nil {
 				a.clearFailureAfterStart(value)
 				return statusFromState(value), nil
 			}
+		}
+		if request.Owner == protocol.RouterOwnerDesktop && startErr.Launched {
+			a.latchStartupFailure(startErr)
 		}
 		return nil, mapLifecycleError(operationErr)
 	}
@@ -447,18 +453,35 @@ func (a *App) routerLogs(ctx context.Context, params json.RawMessage) (any, *pro
 		request.Limit = defaultLogLines
 	}
 	found := a.deps.discoverStatus(ctx)
+	trustedExternal := trustedResult(found) && found.Owner != string(protocol.RouterOwnerDesktop)
 	path := trustedLogPath(found)
-	if path == "" {
+	if path == "" && !trustedExternal {
 		path = a.config.Paths.DesktopLogFile
 	}
+	var recent []string
+	if !trustedExternal {
+		useLifecycleRecent := true
+		if found.Classification == discovery.Absent || found.Classification == discovery.Stale {
+			a.captureUnexpectedExits()
+			var failureFound bool
+			recent, failureFound = a.failureLogLines(request.Limit)
+			useLifecycleRecent = !failureFound
+		}
+		if useLifecycleRecent {
+			recent = lastLines(sanitizeText(a.deps.lifecycle.RecentOutput()), request.Limit)
+		}
+	}
 	lines, err := readLogLines(ctx, path, request.Limit)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, &protocol.Error{Code: protocol.CodeRouterStateStale, Message: "router log is unavailable"}
+	if err != nil {
+		if len(recent) > 0 {
+			return protocol.RouterLogsResult{Lines: recent}, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, &protocol.Error{Code: protocol.CodeRouterStateStale, Message: "router log is unavailable"}
+		}
+		return protocol.RouterLogsResult{Lines: []string{}}, nil
 	}
-	if len(lines) == 0 {
-		recent := sanitizeText(a.deps.lifecycle.RecentOutput())
-		lines = lastLines(recent, request.Limit)
-	}
+	lines = mergeLogLines(lines, recent, request.Limit)
 	return protocol.RouterLogsResult{Lines: lines}, nil
 }
 
@@ -927,10 +950,7 @@ func (a *App) captureUnexpectedExits() {
 				a.failureMu.Unlock()
 				continue
 			}
-			a.failure = &unexpectedExitFailure{
-				identity:   event.Identity,
-				recentLogs: lastLines(sanitizeText(event.RecentOutput), defaultLogLines),
-			}
+			a.failure = newRouterFailure(event.Identity, "desktop-owned router exited unexpectedly", event.RecentOutput)
 			a.active = process.Identity{}
 			a.failureMu.Unlock()
 		default:
@@ -948,9 +968,37 @@ func (a *App) failedStatus() (protocol.RouterStatusResult, bool) {
 	return protocol.RouterStatusResult{
 		State:      "start_failed",
 		Owner:      string(protocol.RouterOwnerDesktop),
-		LastError:  "desktop-owned router exited unexpectedly",
+		LastError:  a.failure.lastError,
 		RecentLogs: append([]string(nil), a.failure.recentLogs...),
 	}, true
+}
+
+func (a *App) failureLogLines(limit int) ([]string, bool) {
+	a.failureMu.Lock()
+	defer a.failureMu.Unlock()
+	if a.failure == nil {
+		return nil, false
+	}
+	lines := a.failure.recentLogs
+	if len(lines) > limit {
+		lines = lines[len(lines)-limit:]
+	}
+	return append([]string(nil), lines...), true
+}
+
+func (a *App) latchStartupFailure(startErr *lifecycle.Error) {
+	a.failureMu.Lock()
+	defer a.failureMu.Unlock()
+	a.failure = newRouterFailure(process.Identity{}, "desktop-owned router failed during startup", startErr.RecentOutput)
+	a.active = process.Identity{}
+}
+
+func newRouterFailure(identity process.Identity, lastError, recentOutput string) *routerFailure {
+	return &routerFailure{
+		identity:   identity,
+		lastError:  lastError,
+		recentLogs: lastLines(sanitizeText(recentOutput), defaultLogLines),
+	}
 }
 
 func (a *App) clearFailureAfterStart(value state.RouterState) {
@@ -959,9 +1007,7 @@ func (a *App) clearFailureAfterStart(value state.RouterState) {
 	defer a.failureMu.Unlock()
 	started := process.Identity{PID: value.PID, StartedAt: value.ProcessStartedAt, Executable: value.ProcessExecutable}
 	a.active = started
-	if a.failure != nil && a.failure.identity != started {
-		a.failure = nil
-	}
+	a.failure = nil
 }
 
 func discoveryError(found discovery.Result, requireHealth bool) *protocol.Error {
@@ -1143,6 +1189,21 @@ func lastLines(value string, limit int) []string {
 		lines[i] = boundText(lines[i], maxLogLineBytes)
 	}
 	return lines
+}
+
+func mergeLogLines(disk, recent []string, limit int) []string {
+	overlap := 0
+	for size := min(len(disk), len(recent)); size > 0; size-- {
+		if slices.Equal(disk[len(disk)-size:], recent[:size]) {
+			overlap = size
+			break
+		}
+	}
+	merged := append(append([]string(nil), disk...), recent[overlap:]...)
+	if len(merged) > limit {
+		merged = merged[len(merged)-limit:]
+	}
+	return merged
 }
 
 var (

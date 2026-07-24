@@ -96,9 +96,10 @@ export const en: Record<TranslationKey, string> = {
     "Health check failed. Router process state was not affected.",
   "router.error.sidecarReinstall":
     "A required packaged component is missing or invalid. Reinstall the desktop application; no component will be downloaded automatically.",
-  "router.failureDiagnostics": "Unexpected-exit diagnostics",
+  "router.failureDiagnostics": "Router failure diagnostics",
   "router.failureLastError": "Last error",
   "router.failureRecentLogs": "Recent safely filtered logs",
+  "router.viewFullRuntimeLogs": "View runtime logs",
   "router.panelOverline": "PROCESS / UPSTREAM",
   "router.instrumentNote":
     "Process availability and upstream health are monitored independently",

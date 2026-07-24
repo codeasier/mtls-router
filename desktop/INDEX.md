@@ -12,6 +12,8 @@ React UI ──Tauri invoke──▶ Rust commands.rs ──stdin/stdout JSON─
 
 The desktop app never communicates with the router directly. It spawns `mtls-router-manager serve` as a long-lived child process with `--desktop-session`, `--parent-pid/start/executable` flags.
 
+- **Startup failure diagnostics**: post-launch failures terminate and wait for the owned child; lifecycle retains bounded raw output, while the app protocol exposes only sanitized, session-scoped diagnostics.
+
 ## Frontend (src/)
 
 | File                                | Role                                                                                                                                       |
@@ -20,7 +22,7 @@ The desktop app never communicates with the router directly. It spawns `mtls-rou
 | `App.tsx`                           | Root layout: sidebar nav (Router/Agents/Logs/Settings) + section rendering                                                                 |
 | `RouterPage.tsx`                    | Router status, start/stop, health, occupant inspection/termination                                                                         |
 | `AgentPage.tsx`                     | Agent detection, model discovery, config preview/write flow                                                                                |
-| `LogsPage.tsx`                      | Router log viewer with auto-refresh                                                                                                        |
+| `LogsPage.tsx`                      | Bounded, safely filtered router logs with manual refresh                                                                                   |
 | `SettingsPage.tsx`                  | Autostart, diagnostics, uninstall prep, language                                                                                           |
 | `model.ts`                          | Shared types (`SectionId`, `navigationItems`)                                                                                              |
 | `i18n.tsx`                          | I18n context provider with `zh-CN` and `en` locales                                                                                        |

@@ -3,14 +3,48 @@
 package lifecycle
 
 import (
+	"bytes"
 	"io"
 	"os"
+	"strings"
 	"testing"
 	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
+
+func TestLaunchForegroundCommandDrainsImmediateExitStderr(t *testing.T) {
+	const (
+		helperEnv  = "MTLS_ROUTER_LIFECYCLE_IMMEDIATE_EXIT_HELPER"
+		diagnostic = "mtls-router immediate startup failure: distinctive stderr diagnostic is complete"
+	)
+	if os.Getenv(helperEnv) == "1" {
+		_, _ = os.Stderr.WriteString(diagnostic)
+		os.Exit(23)
+	}
+
+	var output bytes.Buffer
+	child, err := launchForegroundCommand(
+		os.Args[0],
+		[]string{"-test.run=^TestLaunchForegroundCommandDrainsImmediateExitStderr$"},
+		append(os.Environ(), helperEnv+"=1"),
+		&output,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	process := child.(*commandProcess)
+	if process.cmd.WaitDelay != foregroundWaitDelay {
+		t.Fatalf("WaitDelay = %s, want %s", process.cmd.WaitDelay, foregroundWaitDelay)
+	}
+	if err := process.Wait(); err == nil {
+		t.Fatal("helper process unexpectedly succeeded")
+	}
+	if got := output.String(); !strings.Contains(got, diagnostic) {
+		t.Fatalf("output %q does not contain complete diagnostic %q", got, diagnostic)
+	}
+}
 
 func TestDesktopCreationFlagsStartHiddenSuspendedProcessGroup(t *testing.T) {
 	flags := desktopCreationFlags()
@@ -43,28 +77,27 @@ func TestKillOnCloseJobIsConfigured(t *testing.T) {
 	}
 }
 
-func TestClosingDesktopJobTerminatesRouter(t *testing.T) {
+func TestDesktopKillTerminatesRouterJob(t *testing.T) {
 	if os.Getenv("MTLS_ROUTER_LIFECYCLE_HELPER") == "1" {
 		select {}
 	}
 
 	child, err := launchForegroundCommand(
 		os.Args[0],
-		[]string{"-test.run=TestClosingDesktopJobTerminatesRouter"},
+		[]string{"-test.run=TestDesktopKillTerminatesRouterJob"},
 		append(os.Environ(), "MTLS_ROUTER_LIFECYCLE_HELPER=1"),
 		io.Discard,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	process := child.(commandProcess)
-	if err := windows.CloseHandle(process.job); err != nil {
+	process := child.(*commandProcess)
+	if err := process.Kill(); err != nil {
 		t.Fatal(err)
 	}
-	process.job = 0
 
 	done := make(chan error, 1)
-	go func() { done <- process.cmd.Wait() }()
+	go func() { done <- process.Wait() }()
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):

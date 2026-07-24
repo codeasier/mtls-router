@@ -19,6 +19,31 @@ describe("App navigation", () => {
     expect(await screen.findAllByText("未返回检测结果")).toHaveLength(3);
   });
 
+  it("opens runtime logs from startup failure diagnostics", async () => {
+    const api = createMockApi({
+      getRouterStatus: vi.fn().mockResolvedValue({
+        state: "start_failed",
+        last_error: "router startup failed",
+        recent_logs: ["startup diagnostic"],
+      }),
+      getRouterLogs: vi.fn().mockResolvedValue({
+        lines: ["full runtime log line"],
+      }),
+    });
+    render(<App api={api} />);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "查看运行日志" }),
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "运行日志" }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText("full runtime log line"),
+    ).toBeInTheDocument();
+  });
+
   it("keeps Settings available after Agent navigation is integrated", async () => {
     const api = createMockApi();
     render(<App api={api} />);
