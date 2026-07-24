@@ -1400,34 +1400,22 @@ main {
   height: 38px;
   padding: 7px;
   border-radius: 11px;
+  fill: currentColor;
 }
 
 .agent-logo--claude {
-  color: #c17c54;
-  background: #f5e7dc;
-  fill: currentColor;
+  color: #d97757;
+  background: #f6ebe3;
 }
 
 .agent-logo--opencode {
-  color: #4b5563;
-  background: #e7eaee;
-  stroke: currentColor;
-  fill: none;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  color: #211e1e;
+  background: #eeeae4;
 }
 
 .agent-logo--codex {
-  color: #39705a;
-  background: #e2ede7;
-  stroke: currentColor;
-  fill: none;
-  stroke-linejoin: round;
-}
-
-.agent-logo--codex path:last-child {
-  fill: currentColor;
-  stroke: none;
+  color: #302a25;
+  background: #eae4dc;
 }
 
 .agent-card__topline,
