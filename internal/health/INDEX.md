@@ -1,22 +1,22 @@
 # internal/health
 
-Upstream mTLS reachability probing at startup and on-demand via `/health`.
+启动期与按需（经 `/health`）的 upstream mTLS 可达性探针。
 
-## Files
+## 文件
 
-| File | Role |
+| 文件 | 职责 |
 |------|------|
-| `probe.go` | `Prober` struct with `NewProber(ProbeOptions)`, `Probe()`, `Close()`; one-shot `Probe(opts)`; `ProbeFunc` type |
+| `probe.go` | `Prober` 结构体，含 `NewProber(ProbeOptions)`、`Probe()`、`Close()`；一次性 `Probe(opts)`；`ProbeFunc` 类型 |
 
-## Behavior
+## 行为
 
-- `NewProber` builds a dedicated `http.Client` with mTLS transport (same cert/key/CA as the proxy).
-- `Probe()` sends GET to the upstream URL with a timeout; status >= 500 is a failure.
-- Startup: probe failure → process exits non-zero (never accepts traffic with broken upstream).
-- Runtime `/health`: probe failure → HTTP 200 with `{"status":"degraded"}` (never fails at HTTP layer).
-- `ProbeFunc` is `func() error` — used by `routermeta.HealthHandler` and test stubs.
+- `NewProber` 构建专用 `http.Client`，使用 mTLS transport（与代理相同的 cert/key/CA）。
+- `Probe()` 带超时向上游 URL 发 GET；status >= 500 视为失败。
+- 启动期：探针失败 → 进程非零退出（绝不在 upstream 异常时接收流量）。
+- 运行期 `/health`：探针失败 → HTTP 200 + `{"status":"degraded"}`（绝不在 HTTP 层失败）。
+- `ProbeFunc` 即 `func() error` —— 供 `routermeta.HealthHandler` 与测试桩使用。
 
-## Dependencies
+## 依赖
 
-- `internal/certs` — PEM → TLS certificate
-- `internal/tlspolicy` — TLS min version
+- `internal/certs` —— PEM → TLS 证书
+- `internal/tlspolicy` —— TLS 最低版本

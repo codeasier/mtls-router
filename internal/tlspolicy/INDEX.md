@@ -1,23 +1,23 @@
 # internal/tlspolicy
 
-TLS minimum version string parsing.
+TLS 最低版本字符串解析。
 
-## Files
+## 文件
 
-| File | Role |
+| 文件 | 职责 |
 |------|------|
 | `minversion.go` | `MinVersion(version string)` → `(uint16, error)` |
 
-## Mapping
+## 映射
 
-| Input | Output |
+| 输入 | 输出 |
 |-------|--------|
-| `""` or `"tls1.2"` | `tls.VersionTLS12` |
+| `""` 或 `"tls1.2"` | `tls.VersionTLS12` |
 | `"tls1.3"` | `tls.VersionTLS13` |
-| anything else | error |
+| 其他 | error |
 
-## Consumers
+## 消费者
 
-- `internal/config` — flag validation
-- `internal/proxy/transport.go` — transport construction
-- `internal/health/probe.go` — prober construction
+- `internal/config` —— flag 校验
+- `internal/proxy/transport.go` —— transport 构造
+- `internal/health/probe.go` —— prober 构造
