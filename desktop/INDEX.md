@@ -12,7 +12,7 @@ React UI ──Tauri invoke──▶ Rust commands.rs ──stdin/stdout JSON─
 
 桌面应用绝不直接与 router 通信。它以长驻子进程方式拉起 `mtls-router-manager serve`，带 `--desktop-session`、`--parent-pid/start/executable` flag。
 
-- **启动失败诊断**：启动后失败会终止并等待自有子进程；lifecycle 保留有界的原始输出，而 app 协议仅暴露脱敏的、会话作用域诊断。
+- **启动失败诊断**：预启动失败按稳定阶段和可选数值 OS 错误码生成安全诊断；启动后失败会终止并等待自有子进程。lifecycle 保留有界的原始输出，而 app 协议仅暴露脱敏的、会话作用域诊断。
 
 ## 前端（src/）
 

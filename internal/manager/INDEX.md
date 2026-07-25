@@ -35,7 +35,7 @@ agent.preview             agent.write
 ## 架构模式
 
 - **基本按请求无状态**：每个 JSON 请求独立处理；长生命周期状态位于 `lifecycle.Manager`、`agent.Service` 与 `state` 文件。一个例外是 `occupant.Service`，它在 `Inspect` 与 `ForceTerminate` 之间持有内存中一次性确认 token（互斥锁保护，30 秒后过期）。
-- **桌面启动失败诊断**：启动后失败会终止并等待自有子进程；lifecycle 保留有界的原始输出，而 app 协议仅暴露脱敏的、会话作用域诊断。
+- **桌面启动失败诊断**：预启动失败按稳定阶段和可选数值 OS 错误码生成安全诊断；启动后失败会终止并等待自有子进程。lifecycle 保留有界的原始输出，而 app 协议仅暴露脱敏的、会话作用域诊断。
 - **信号前身份校验**：Unix/macOS 上经校验的身份路径在每次信号前校验 PID + 启动时间 + 可执行文件。Windows 上 PID-only 路径先经 `InspectPIDOwner` 重新确认监听 PID，再直接调用 `SignalPID`（不做启动时间/可执行文件检查）。
 - **API key 清零**：`app` 中成功参数 decode 后，在显式退出路径上将 `request.APIKey = ""`。注意：若 `DecodeParams` 本身失败（如未知字段），已填充的字段可能未被清零。
 - **事务恢复**：`agent` 写入使用带回滚能力的状态目录；`NewService()` 在启动时执行恢复。
