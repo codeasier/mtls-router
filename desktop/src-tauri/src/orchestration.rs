@@ -17,18 +17,29 @@ pub async fn start(manager: &ManagerClient, scheduler: &PollScheduler) -> Result
             Ok(status)
         }
         Err(error) if error.code == "ROUTER_DEGRADED" => {
-            let status: RouterStatus = manager.call("router.status", json!({})).await?;
-            if status.available() {
-                scheduler.set_status(status.clone()).await;
-                Ok(status)
-            } else {
-                scheduler.set_status_error(&error).await;
-                scheduler.request_refresh();
-                Err(error)
+            match manager
+                .call::<RouterStatus>("router.status", json!({}))
+                .await
+            {
+                Ok(status) if status.available() => {
+                    scheduler.set_status(status.clone()).await;
+                    Ok(status)
+                }
+                _ => {
+                    scheduler.set_status_error(&error).await;
+                    scheduler.request_refresh();
+                    Err(error)
+                }
             }
         }
         Err(error) => {
-            scheduler.set_status_error(&error).await;
+            match manager
+                .call::<RouterStatus>("router.status", json!({}))
+                .await
+            {
+                Ok(status) => scheduler.set_status(status).await,
+                Err(_) => scheduler.set_status_error(&error).await,
+            }
             scheduler.request_refresh();
             Err(error)
         }
@@ -95,7 +106,7 @@ mod tests {
         calls: Arc<Mutex<Vec<String>>>,
         sender: mpsc::Sender<TransportEvent>,
         initial: &'static str,
-        degraded_start: bool,
+        start_error: Option<&'static str>,
     }
 
     impl TransportChild for Child {
@@ -108,10 +119,10 @@ mod tests {
             } else {
                 self.initial
             };
-            if self.degraded_start && method == "router.start" {
+            if let ("router.start", Some(code)) = (method.as_str(), self.start_error) {
                 let response = serde_json::to_vec(&json!({
                     "id": request["id"],
-                    "error": { "code": "ROUTER_DEGRADED", "message": "upstream unavailable" }
+                    "error": { "code": code, "message": "router start rejected" }
                 }))
                 .unwrap();
                 self.sender
@@ -149,7 +160,7 @@ mod tests {
     struct Factory {
         calls: Arc<Mutex<Vec<String>>>,
         initial: &'static str,
-        degraded_start: bool,
+        start_error: Option<&'static str>,
     }
 
     impl TransportFactory for Factory {
@@ -160,7 +171,7 @@ mod tests {
                     calls: self.calls.clone(),
                     sender,
                     initial: self.initial,
-                    degraded_start: self.degraded_start,
+                    start_error: self.start_error,
                 }),
                 events,
             })
@@ -179,7 +190,7 @@ mod tests {
             let manager = ManagerClient::new(Arc::new(Factory {
                 calls: calls.clone(),
                 initial: "absent",
-                degraded_start: false,
+                start_error: None,
             }));
             let scheduler = PollScheduler::new(manager.clone());
             let status = first_launch(&manager, &scheduler).await.unwrap();
@@ -210,7 +221,7 @@ mod tests {
                 let manager = ManagerClient::new(Arc::new(Factory {
                     calls: calls.clone(),
                     initial: state,
-                    degraded_start: false,
+                    start_error: None,
                 }));
                 let scheduler = PollScheduler::new(manager.clone());
                 first_launch(&manager, &scheduler).await.unwrap();
@@ -226,7 +237,7 @@ mod tests {
             let manager = ManagerClient::new(Arc::new(Factory {
                 calls: calls.clone(),
                 initial: "degraded",
-                degraded_start: true,
+                start_error: Some("ROUTER_DEGRADED"),
             }));
             let scheduler = PollScheduler::new(manager.clone());
 
@@ -243,13 +254,43 @@ mod tests {
     }
 
     #[test]
+    fn failed_start_reconciles_latched_status() {
+        runtime().block_on(async {
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            let manager = ManagerClient::new(Arc::new(Factory {
+                calls: calls.clone(),
+                initial: "start_failed",
+                start_error: Some("ROUTER_START_FAILED"),
+            }));
+            let scheduler = PollScheduler::new(manager.clone());
+
+            let error = start(&manager, &scheduler).await.unwrap_err();
+
+            assert_eq!(error.code, "ROUTER_START_FAILED");
+            assert_eq!(
+                &calls.lock().unwrap()[1..],
+                ["router.start", "router.status"]
+            );
+            assert_eq!(
+                scheduler
+                    .snapshot()
+                    .await
+                    .status
+                    .as_ref()
+                    .map(|status| status.state.as_str()),
+                Some("start_failed")
+            );
+        });
+    }
+
+    #[test]
     fn force_termination_reconciles_status_without_starting_router() {
         runtime().block_on(async {
             let calls = Arc::new(Mutex::new(Vec::new()));
             let manager = ManagerClient::new(Arc::new(Factory {
                 calls: calls.clone(),
                 initial: "absent",
-                degraded_start: false,
+                start_error: None,
             }));
             let scheduler = PollScheduler::new(manager.clone());
 

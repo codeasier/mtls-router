@@ -4,13 +4,16 @@ package lifecycle
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 	"unsafe"
 
+	"github.com/codeasier/mtls-router/internal/manager/protocol"
 	"golang.org/x/sys/windows"
 )
 
@@ -52,6 +55,21 @@ func TestDesktopCreationFlagsStartHiddenSuspendedProcessGroup(t *testing.T) {
 		if flags&want == 0 {
 			t.Fatalf("desktop creation flags %#x missing %#x", flags, want)
 		}
+	}
+}
+
+func TestStartupErrorKeepsWindowsSystemCodeNumeric(t *testing.T) {
+	startErr := startupError(
+		StartupStageProcessLaunch,
+		protocol.CodeRouterStartFailed,
+		"router launch failed",
+		fmt.Errorf("CreateProcess secret path: %w", syscall.Errno(windows.ERROR_ACCESS_DENIED)),
+	)
+	if startErr.OSErrorCode != uint64(windows.ERROR_ACCESS_DENIED) {
+		t.Fatalf("OS error code = %d", startErr.OSErrorCode)
+	}
+	if strings.Contains(startErr.Error(), "CreateProcess") || strings.Contains(startErr.Error(), "secret") {
+		t.Fatalf("startup error exposed raw text: %q", startErr.Error())
 	}
 }
 

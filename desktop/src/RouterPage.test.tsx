@@ -580,6 +580,41 @@ describe("RouterPage actions", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("reconciles a rejected start immediately", async () => {
+    const diagnostic =
+      "stage=process_launch code=ROUTER_START_FAILED os_error=5";
+    const api = createMockApi({
+      startRouter: vi.fn().mockRejectedValue({ code: "ROUTER_START_FAILED" }),
+      getPollSnapshot: vi
+        .fn()
+        .mockResolvedValueOnce({ revision: 1, status: { state: "absent" } })
+        .mockResolvedValue({
+          revision: 2,
+          status: {
+            state: "start_failed",
+            owner: "desktop",
+            last_error: diagnostic,
+            recent_logs: [diagnostic],
+          },
+        }),
+    });
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "启动路由" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "路由启动失败" }),
+    ).toBeInTheDocument();
+    expect(await screen.findAllByText(diagnostic)).not.toHaveLength(0);
+    expect(api.getPollSnapshot).toHaveBeenCalledTimes(2);
+  });
+
   it("preserves a real start failure across a transient status error", async () => {
     let observer: ((snapshot: PollSnapshot) => void) | undefined;
     const api = createMockApi({

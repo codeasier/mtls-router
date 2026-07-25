@@ -1304,9 +1304,14 @@ func TestDesktopRouterStartRetainsOriginalLaunchedFailureAcrossReclaim(t *testin
 	}
 }
 
-func TestDesktopRouterStartDoesNotLatchPreLaunchFailure(t *testing.T) {
+func TestDesktopRouterStartLatchesSafePreLaunchDiagnostic(t *testing.T) {
 	lifecycleManager := &fakeLifecycle{start: func(context.Context, protocol.RouterOwner) (state.RouterState, *lifecycle.Error) {
-		return state.RouterState{}, &lifecycle.Error{Code: protocol.CodeRouterStartFailed, Err: errors.New("pre-launch failure"), RecentOutput: "must not latch"}
+		return state.RouterState{}, &lifecycle.Error{
+			Code:        protocol.CodeRouterStartFailed,
+			Err:         errors.New(`CreateProcess C:\secret\router.exe: access denied canary`),
+			Stage:       lifecycle.StartupStageProcessLaunch,
+			OSErrorCode: 5,
+		}
 	}}
 	manager := newWithDependencies(Config{RouterPath: os.Args[0]}, dependencies{
 		discoverStatus: func(context.Context) discovery.Result { return discovery.Result{Classification: discovery.Absent} },
@@ -1321,8 +1326,40 @@ func TestDesktopRouterStartDoesNotLatchPreLaunchFailure(t *testing.T) {
 		t.Fatal(gotErr)
 	}
 	status := value.(protocol.RouterStatusResult)
-	if status.State != string(discovery.Absent) || len(status.RecentLogs) != 0 {
+	want := "stage=process_launch code=ROUTER_START_FAILED os_error=5"
+	if status.State != "start_failed" || status.LastError != want || fmt.Sprint(status.RecentLogs) != fmt.Sprint([]string{want}) {
 		t.Fatalf("status = %+v", status)
+	}
+	value, gotErr = manager.routerLogs(context.Background(), json.RawMessage(`{"limit":10}`))
+	if gotErr != nil {
+		t.Fatal(gotErr)
+	}
+	logs := value.(protocol.RouterLogsResult).Lines
+	if fmt.Sprint(logs) != fmt.Sprint(status.RecentLogs) {
+		t.Fatalf("logs = %v, status logs = %v", logs, status.RecentLogs)
+	}
+	serialized := fmt.Sprintf("%+v %v", status, logs)
+	for _, unsafe := range []string{"secret", "router.exe", "access denied", "canary"} {
+		if strings.Contains(serialized, unsafe) {
+			t.Fatalf("diagnostic exposed %q: %s", unsafe, serialized)
+		}
+	}
+}
+
+func TestStartupDiagnosticOmitsMissingOSErrorCode(t *testing.T) {
+	got := startupDiagnostic(&lifecycle.Error{
+		Code:  protocol.CodeRouterStartFailed,
+		Stage: lifecycle.StartupStageLogOpen,
+	})
+	if got != "stage=log_open code=ROUTER_START_FAILED" {
+		t.Fatalf("diagnostic = %q", got)
+	}
+	got = startupDiagnostic(&lifecycle.Error{
+		Code:  protocol.CodeRouterStartFailed,
+		Stage: lifecycle.StartupStage(`C:\secret\canary`),
+	})
+	if got != "stage=unknown code=ROUTER_START_FAILED" {
+		t.Fatalf("unknown-stage diagnostic = %q", got)
 	}
 }
 

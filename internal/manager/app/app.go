@@ -382,7 +382,7 @@ func (a *App) routerStart(ctx context.Context, params json.RawMessage) (any, *pr
 				return statusFromState(value), nil
 			}
 		}
-		if request.Owner == protocol.RouterOwnerDesktop && startErr.Launched {
+		if request.Owner == protocol.RouterOwnerDesktop && (startErr.Launched || startErr.Stage != "") {
 			a.latchStartupFailure(startErr)
 		}
 		return nil, mapLifecycleError(operationErr)
@@ -989,8 +989,26 @@ func (a *App) failureLogLines(limit int) ([]string, bool) {
 func (a *App) latchStartupFailure(startErr *lifecycle.Error) {
 	a.failureMu.Lock()
 	defer a.failureMu.Unlock()
-	a.failure = newRouterFailure(process.Identity{}, "desktop-owned router failed during startup", startErr.RecentOutput)
+	if startErr.Stage != "" {
+		diagnostic := startupDiagnostic(startErr)
+		a.failure = &routerFailure{lastError: diagnostic, recentLogs: []string{diagnostic}}
+	} else {
+		a.failure = newRouterFailure(process.Identity{}, "desktop-owned router failed during startup", startErr.RecentOutput)
+	}
 	a.active = process.Identity{}
+}
+
+func startupDiagnostic(startErr *lifecycle.Error) string {
+	stage := "unknown"
+	switch startErr.Stage {
+	case lifecycle.StartupStageLogDirectory, lifecycle.StartupStageLogOpen, lifecycle.StartupStageProcessLaunch:
+		stage = string(startErr.Stage)
+	}
+	diagnostic := fmt.Sprintf("stage=%s code=%s", stage, startErr.Code)
+	if startErr.OSErrorCode != 0 {
+		diagnostic += fmt.Sprintf(" os_error=%d", startErr.OSErrorCode)
+	}
+	return diagnostic
 }
 
 func newRouterFailure(identity process.Identity, lastError, recentOutput string) *routerFailure {

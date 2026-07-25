@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/codeasier/mtls-router/internal/background"
@@ -22,11 +23,21 @@ import (
 	"github.com/codeasier/mtls-router/internal/version"
 )
 
+type StartupStage string
+
+const (
+	StartupStageLogDirectory  StartupStage = "log_directory"
+	StartupStageLogOpen       StartupStage = "log_open"
+	StartupStageProcessLaunch StartupStage = "process_launch"
+)
+
 type Error struct {
 	Code         protocol.ErrorCode
 	Err          error
 	Launched     bool
 	RecentOutput string
+	Stage        StartupStage
+	OSErrorCode  uint64
 }
 
 func (e *Error) Error() string { return fmt.Sprintf("%s: %v", e.Code, e.Err) }
@@ -230,19 +241,19 @@ func (m *Manager) startDesktop(ctx context.Context) (state.RouterState, *Error) 
 	}
 
 	if err := os.MkdirAll(filepath.Dir(m.config.DesktopLogPath), 0o700); err != nil {
-		return state.RouterState{}, lifecycleError(protocol.CodeRouterStartFailed, "cannot create desktop log directory")
+		return state.RouterState{}, startupError(StartupStageLogDirectory, protocol.CodeRouterStartFailed, "cannot create desktop log directory", err)
 	}
 	if err := os.Chmod(filepath.Dir(m.config.DesktopLogPath), 0o700); err != nil {
-		return state.RouterState{}, lifecycleError(protocol.CodeRouterStartFailed, "cannot restrict desktop log directory")
+		return state.RouterState{}, startupError(StartupStageLogDirectory, protocol.CodeRouterStartFailed, "cannot restrict desktop log directory", err)
 	}
 	logFile, err := m.deps.OpenLog(m.config.DesktopLogPath)
 	if err != nil {
-		return state.RouterState{}, lifecycleError(protocol.CodeRouterStartFailed, "cannot open desktop log")
+		return state.RouterState{}, startupError(StartupStageLogOpen, protocol.CodeRouterStartFailed, "cannot open desktop log", err)
 	}
 	logInfo, err := logFile.Stat()
 	if err != nil {
 		_ = logFile.Close()
-		return state.RouterState{}, lifecycleError(protocol.CodeRouterStartFailed, "cannot inspect desktop log")
+		return state.RouterState{}, startupError(StartupStageLogOpen, protocol.CodeRouterStartFailed, "cannot inspect desktop log", err)
 	}
 	inherited := newBoundedOutput(m.config.RecentOutputBytes)
 	output := io.MultiWriter(logFile, m.recent, inherited)
@@ -250,7 +261,7 @@ func (m *Manager) startDesktop(ctx context.Context) (state.RouterState, *Error) 
 	child, err := m.deps.LaunchDesktop(m.config.RouterPath, args, background.DesktopChildEnv(m.deps.Environ()), output)
 	if err != nil {
 		_ = logFile.Close()
-		return state.RouterState{}, lifecycleError(protocol.CodeRouterStartFailed, "router launch failed")
+		return state.RouterState{}, startupError(StartupStageProcessLaunch, protocol.CodeRouterStartFailed, "router launch failed", err)
 	}
 	run := &desktopRun{done: make(chan struct{}), logBaseline: logInfo, inherited: inherited}
 	go func() {
@@ -687,6 +698,15 @@ func sleepContext(ctx context.Context, delay time.Duration) error {
 
 func lifecycleError(code protocol.ErrorCode, message string) *Error {
 	return &Error{Code: code, Err: errors.New(message)}
+}
+func startupError(stage StartupStage, code protocol.ErrorCode, message string, cause error) *Error {
+	result := lifecycleError(code, message)
+	result.Stage = stage
+	var errno syscall.Errno
+	if errors.As(cause, &errno) {
+		result.OSErrorCode = uint64(errno)
+	}
+	return result
 }
 func completeIdentity(value process.Identity) bool {
 	return value.PID > 0 && value.StartedAt != "" && value.Executable != ""

@@ -533,16 +533,18 @@ export function RouterPage({
       setOperation(null);
     } catch (error) {
       setOperation(null);
-      if (errorCode(error) === "ROUTER_DEGRADED") {
-        try {
-          const refreshed = await refreshSnapshot();
-          if (isAvailable(refreshed.status ?? null)) {
-            setActionFailed(false);
-            return;
-          }
-        } catch {
-          // Use the safe action error below.
-        }
+      let refreshed: PollSnapshot | null = null;
+      try {
+        refreshed = await refreshSnapshot();
+      } catch {
+        // Use the safe action error below.
+      }
+      if (
+        errorCode(error) === "ROUTER_DEGRADED" &&
+        isAvailable(refreshed?.status ?? null)
+      ) {
+        setActionFailed(false);
+        return;
       }
       if (sidecarError(errorCode(error))) {
         setReinstallRequired(true);
