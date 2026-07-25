@@ -87,6 +87,40 @@ func TestCLIStartUsesDetachedLaunchAndPersistsOnlyAfterVerification(t *testing.T
 	}
 }
 
+func TestStartScopesDiscoveryToRequestedOwner(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		owner protocol.RouterOwner
+		want  protocol.ErrorCode
+	}{
+		{name: "desktop ignores cross-owner stale", owner: protocol.RouterOwnerDesktop},
+		{name: "CLI retains same-owner stale", owner: protocol.RouterOwnerCLI, want: protocol.CodeRouterAlreadyRunning},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fixture := newFixture(t)
+			var seen protocol.RouterOwner
+			fixture.deps.Discover = func(_ context.Context, owner protocol.RouterOwner) discovery.Result {
+				seen = owner
+				if owner == protocol.RouterOwnerDesktop {
+					return discovery.Result{Classification: discovery.Absent}
+				}
+				return discovery.Result{Classification: discovery.Stale}
+			}
+
+			_, startErr := fixture.manager().Start(context.Background(), tt.owner)
+			if seen != tt.owner {
+				t.Fatalf("discovery owner = %q, want %q", seen, tt.owner)
+			}
+			if tt.want == "" && startErr != nil {
+				t.Fatal(startErr)
+			}
+			if tt.want != "" && (startErr == nil || startErr.Code != tt.want) {
+				t.Fatalf("start error = %v, want %s", startErr, tt.want)
+			}
+		})
+	}
+}
+
 func TestRepeatedDesktopStartDoesNotLaunchSecondChild(t *testing.T) {
 	fixture := newFixture(t)
 	fixture.managerState = fixture.desktopState(101)
@@ -823,7 +857,7 @@ func newFixture(t *testing.T) *fixture {
 	f.discovered = discovery.Result{Classification: discovery.Absent}
 	f.validate = func(process.Identity, string) (process.Status, error) { return process.StatusGenuine, nil }
 	f.deps = Dependencies{
-		Discover: func(context.Context) discovery.Result { return f.discovered },
+		Discover: func(context.Context, protocol.RouterOwner) discovery.Result { return f.discovered },
 		Inspect: func(pid int) (process.Identity, error) {
 			return process.Identity{PID: pid, StartedAt: "router-start", Executable: "/router"}, nil
 		},

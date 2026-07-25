@@ -31,6 +31,13 @@ const (
 	UnknownOccupant    Classification = "unknown_occupant"
 )
 
+type StartupOwner string
+
+const (
+	StartupOwnerDesktop StartupOwner = "desktop"
+	StartupOwnerCLI     StartupOwner = "cli"
+)
+
 type Version struct {
 	Version                   string `json:"version"`
 	PID                       int    `json:"pid"`
@@ -106,14 +113,18 @@ func New(config Config) *Discoverer {
 }
 
 func (d *Discoverer) Discover(ctx context.Context) Result {
-	return d.discover(ctx, true)
+	return d.discover(ctx, true, "")
 }
 
 func (d *Discoverer) DiscoverStatus(ctx context.Context) Result {
-	return d.discover(ctx, false)
+	return d.discover(ctx, false, "")
 }
 
-func (d *Discoverer) discover(ctx context.Context, includeHealth bool) Result {
+func (d *Discoverer) DiscoverStatusForOwner(ctx context.Context, owner StartupOwner) Result {
+	return d.discover(ctx, false, owner)
+}
+
+func (d *Discoverer) discover(ctx context.Context, includeHealth bool, owner StartupOwner) Result {
 	result := Result{Classification: UnknownOccupant, ListenAddr: d.config.BaseURL}
 	desktop, desktopErr := d.read(d.config.DesktopStatePath)
 	cli, cliErr := d.read(d.config.CLIStatePath)
@@ -129,7 +140,10 @@ func (d *Discoverer) discover(ctx context.Context, includeHealth bool) Result {
 		desktopStatus := d.validate(desktop, desktopErr)
 		desktopManagerStatus := d.validateManager(desktop, desktopErr)
 		cliStatus := d.validate(cli, cliErr)
-		if staleState(desktopStatus) || (desktopStatus == process.StatusGenuine && desktopManagerStatus != process.StatusGenuine) || staleState(cliStatus) {
+		desktopStale := staleState(desktopStatus) ||
+			(desktopStatus == process.StatusGenuine && desktopManagerStatus != process.StatusGenuine)
+		cliStale := staleState(cliStatus)
+		if desktopStale || (cliStale && owner != StartupOwnerDesktop) {
 			result.Classification = Stale
 		} else if desktopStatus == process.StatusGenuine && desktopManagerStatus == process.StatusGenuine && completeDesktop(desktop) && stateMetadataMatches(desktop, d.config) {
 			result.Classification = Degraded
@@ -153,7 +167,7 @@ func (d *Discoverer) discover(ctx context.Context, includeHealth bool) Result {
 	desktopStatus := d.validate(desktop, desktopErr)
 	desktopManagerStatus := d.validateManager(desktop, desktopErr)
 	cliStatus := d.validate(cli, cliErr)
-	matched, owner := d.matchState(result.Version, desktop, desktopStatus, desktopManagerStatus, cli, cliStatus)
+	matched, matchedOwner := d.matchState(result.Version, desktop, desktopStatus, desktopManagerStatus, cli, cliStatus)
 	if matched == nil {
 		if stateCorrelates(result.Version, desktop, desktopStatus, d.config) || (desktopStatus == process.StatusGenuine && desktopManagerStatus != process.StatusGenuine && endpointCorrelates(result.Version, desktop, d.config)) || stateCorrelates(result.Version, cli, cliStatus, d.config) {
 			result.Classification = Stale
@@ -161,7 +175,7 @@ func (d *Discoverer) discover(ctx context.Context, includeHealth bool) Result {
 		return result
 	}
 	result.State = *matched
-	result.Owner = owner
+	result.Owner = matchedOwner
 	if includeHealth {
 		healthErr := d.getJSON(ctx, "/health", &result.Health, d.config.HealthRequestTimeout)
 		if healthErr != nil || result.Health.Status != "ok" {
@@ -169,7 +183,7 @@ func (d *Discoverer) discover(ctx context.Context, includeHealth bool) Result {
 			return result
 		}
 	}
-	if owner == "desktop" {
+	if matchedOwner == "desktop" {
 		result.Classification = DesktopOwned
 	} else {
 		result.Classification = ExternalCompatible
