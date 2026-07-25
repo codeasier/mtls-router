@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/codeasier/mtls-router/internal/manager/process"
+	"github.com/codeasier/mtls-router/internal/manager/protocol"
 	"github.com/codeasier/mtls-router/internal/manager/state"
 	"github.com/codeasier/mtls-router/internal/version"
 )
@@ -106,14 +107,18 @@ func New(config Config) *Discoverer {
 }
 
 func (d *Discoverer) Discover(ctx context.Context) Result {
-	return d.discover(ctx, true)
+	return d.discover(ctx, true, false)
 }
 
 func (d *Discoverer) DiscoverStatus(ctx context.Context) Result {
-	return d.discover(ctx, false)
+	return d.discover(ctx, false, false)
 }
 
-func (d *Discoverer) discover(ctx context.Context, includeHealth bool) Result {
+func (d *Discoverer) DiscoverStartupStatus(ctx context.Context, owner protocol.RouterOwner) Result {
+	return d.discover(ctx, false, owner == protocol.RouterOwnerDesktop)
+}
+
+func (d *Discoverer) discover(ctx context.Context, includeHealth, ignoreStaleCLI bool) Result {
 	result := Result{Classification: UnknownOccupant, ListenAddr: d.config.BaseURL}
 	desktop, desktopErr := d.read(d.config.DesktopStatePath)
 	cli, cliErr := d.read(d.config.CLIStatePath)
@@ -129,7 +134,10 @@ func (d *Discoverer) discover(ctx context.Context, includeHealth bool) Result {
 		desktopStatus := d.validate(desktop, desktopErr)
 		desktopManagerStatus := d.validateManager(desktop, desktopErr)
 		cliStatus := d.validate(cli, cliErr)
-		if staleState(desktopStatus) || (desktopStatus == process.StatusGenuine && desktopManagerStatus != process.StatusGenuine) || staleState(cliStatus) {
+		desktopStale := staleState(desktopStatus) ||
+			(desktopStatus == process.StatusGenuine && desktopManagerStatus != process.StatusGenuine)
+		cliStale := staleState(cliStatus)
+		if desktopStale || (cliStale && !ignoreStaleCLI) {
 			result.Classification = Stale
 		} else if desktopStatus == process.StatusGenuine && desktopManagerStatus == process.StatusGenuine && completeDesktop(desktop) && stateMetadataMatches(desktop, d.config) {
 			result.Classification = Degraded
@@ -144,6 +152,8 @@ func (d *Discoverer) discover(ctx context.Context, includeHealth bool) Result {
 		}
 		return result
 	}
+	// A live listener must always pass endpoint and process correlation; only an
+	// unoccupied port permits desktop startup to ignore another owner's stale state.
 	_ = conn.Close()
 
 	versionErr := d.getJSON(ctx, "/version", &result.Version, d.config.RequestTimeout)
@@ -153,7 +163,7 @@ func (d *Discoverer) discover(ctx context.Context, includeHealth bool) Result {
 	desktopStatus := d.validate(desktop, desktopErr)
 	desktopManagerStatus := d.validateManager(desktop, desktopErr)
 	cliStatus := d.validate(cli, cliErr)
-	matched, owner := d.matchState(result.Version, desktop, desktopStatus, desktopManagerStatus, cli, cliStatus)
+	matched, matchedOwner := d.matchState(result.Version, desktop, desktopStatus, desktopManagerStatus, cli, cliStatus)
 	if matched == nil {
 		if stateCorrelates(result.Version, desktop, desktopStatus, d.config) || (desktopStatus == process.StatusGenuine && desktopManagerStatus != process.StatusGenuine && endpointCorrelates(result.Version, desktop, d.config)) || stateCorrelates(result.Version, cli, cliStatus, d.config) {
 			result.Classification = Stale
@@ -161,7 +171,7 @@ func (d *Discoverer) discover(ctx context.Context, includeHealth bool) Result {
 		return result
 	}
 	result.State = *matched
-	result.Owner = owner
+	result.Owner = matchedOwner
 	if includeHealth {
 		healthErr := d.getJSON(ctx, "/health", &result.Health, d.config.HealthRequestTimeout)
 		if healthErr != nil || result.Health.Status != "ok" {
@@ -169,7 +179,7 @@ func (d *Discoverer) discover(ctx context.Context, includeHealth bool) Result {
 			return result
 		}
 	}
-	if owner == "desktop" {
+	if matchedOwner == "desktop" {
 		result.Classification = DesktopOwned
 	} else {
 		result.Classification = ExternalCompatible

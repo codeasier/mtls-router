@@ -74,7 +74,7 @@ type Config struct {
 }
 
 type Dependencies struct {
-	Discover       func(context.Context) discovery.Result
+	Discover       func(context.Context, protocol.RouterOwner) discovery.Result
 	Inspect        func(int) (process.Identity, error)
 	Validate       func(process.Identity, string) (process.Status, error)
 	Signal         func(process.Identity, string, os.Signal) error
@@ -220,7 +220,7 @@ func (m *Manager) startDesktop(ctx context.Context) (state.RouterState, *Error) 
 		}
 	}
 	if m.deps.Discover != nil {
-		found := m.deps.Discover(ctx)
+		found := m.deps.Discover(ctx, protocol.RouterOwnerDesktop)
 		switch found.Classification {
 		case discovery.ExternalCompatible:
 			m.releaseLock()
@@ -300,7 +300,7 @@ func (m *Manager) startDesktop(ctx context.Context) (state.RouterState, *Error) 
 
 func (m *Manager) startCLI(ctx context.Context) (state.RouterState, *Error) {
 	if m.deps.Discover != nil {
-		found := m.deps.Discover(ctx)
+		found := m.deps.Discover(ctx, protocol.RouterOwnerCLI)
 		if found.Classification != discovery.Absent {
 			return state.RouterState{}, lifecycleError(protocol.CodeRouterAlreadyRunning, "router endpoint is already in use")
 		}

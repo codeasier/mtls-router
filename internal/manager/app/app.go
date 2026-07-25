@@ -206,7 +206,7 @@ func New(config Config, simplify bool) (*App, error) {
 		ManagerIdentity:   config.ManagerIdentity,
 		ParentIdentity:    config.ParentIdentity,
 		RecentOutputBytes: maxLogReadBytes,
-	}, lifecycle.Dependencies{Discover: discoverer.DiscoverStatus})
+	}, lifecycle.Dependencies{Discover: discoverer.DiscoverStartupStatus})
 	occupantManager := occupant.New(occupant.Config{
 		ListenAddr: config.ListenAddr, DesktopPID: config.ParentIdentity.PID, ManagerIdentity: config.ManagerIdentity,
 		IsProtected: func(candidate occupant.Identity) bool {
