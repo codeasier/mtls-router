@@ -584,9 +584,7 @@ describe("RouterPage actions", () => {
     const diagnostic =
       "stage=process_launch code=ROUTER_START_FAILED os_error=5";
     const api = createMockApi({
-      startRouter: vi
-        .fn()
-        .mockRejectedValue({ code: "ROUTER_START_FAILED" }),
+      startRouter: vi.fn().mockRejectedValue({ code: "ROUTER_START_FAILED" }),
       getPollSnapshot: vi
         .fn()
         .mockResolvedValueOnce({ revision: 1, status: { state: "absent" } })
