@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/codeasier/mtls-router/internal/manager/process"
+	"github.com/codeasier/mtls-router/internal/manager/protocol"
 	"github.com/codeasier/mtls-router/internal/manager/state"
 )
 
@@ -252,10 +253,10 @@ func TestDesktopStartIgnoresOnlyStaleCLIStateWithoutListener(t *testing.T) {
 	if got := d.DiscoverStatus(context.Background()); got.Classification != Stale {
 		t.Fatalf("generic classification = %q, want stale", got.Classification)
 	}
-	if got := d.DiscoverStatusForOwner(context.Background(), StartupOwnerDesktop); got.Classification != Absent {
+	if got := d.DiscoverStartupStatus(context.Background(), protocol.RouterOwnerDesktop); got.Classification != Absent {
 		t.Fatalf("desktop classification = %q, want absent", got.Classification)
 	}
-	if got := d.DiscoverStatusForOwner(context.Background(), StartupOwnerCLI); got.Classification != Stale {
+	if got := d.DiscoverStartupStatus(context.Background(), protocol.RouterOwnerCLI); got.Classification != Stale {
 		t.Fatalf("CLI classification = %q, want stale", got.Classification)
 	}
 }
@@ -294,7 +295,7 @@ func TestDesktopStartRemainsBlockedByCurrentState(t *testing.T) {
 				},
 			})
 
-			got := d.DiscoverStatusForOwner(context.Background(), StartupOwnerDesktop)
+			got := d.DiscoverStartupStatus(context.Background(), protocol.RouterOwnerDesktop)
 			if got.Classification != tt.want || got.Owner != tt.wantOwner {
 				t.Fatalf("result = %+v, want classification %q owner %q", got, tt.want, tt.wantOwner)
 			}
@@ -320,8 +321,36 @@ func TestDesktopStartDoesNotIgnoreCorrelatedStaleCLIStateWithListener(t *testing
 		},
 	})
 
-	if got := d.DiscoverStatusForOwner(context.Background(), StartupOwnerDesktop); got.Classification != Stale {
+	if got := d.DiscoverStartupStatus(context.Background(), protocol.RouterOwnerDesktop); got.Classification != Stale {
 		t.Fatalf("listener-present classification = %q, want stale", got.Classification)
+	}
+}
+
+func TestGenericStatusPrefersRunningDesktopOverStaleCLIState(t *testing.T) {
+	server := routerServer(t, 73, "prod-a", "1", "ok")
+	desktop := completeState("desktop", 73, "prod-a")
+	desktop.ListenAddr = server.URL
+	cli := completeState("cli", 99, "prod-a")
+	cli.ListenAddr = server.URL
+	d := New(Config{
+		BaseURL: server.URL, DesktopStatePath: "desktop", CLIStatePath: "cli",
+		DeploymentID: "prod-a", ManagementProtocolVersion: "1",
+		ReadState: func(path string) (state.RouterState, error) {
+			if path == "desktop" {
+				return desktop, nil
+			}
+			return cli, nil
+		},
+		ValidateProcess: func(identity process.Identity, _ string) (process.Status, error) {
+			if identity.PID == cli.PID {
+				return process.StatusStale, nil
+			}
+			return process.StatusGenuine, nil
+		},
+	})
+
+	if got := d.DiscoverStatus(context.Background()); got.Classification != DesktopOwned || got.Owner != "desktop" {
+		t.Fatalf("post-start status = %+v, want desktop_owned", got)
 	}
 }
 

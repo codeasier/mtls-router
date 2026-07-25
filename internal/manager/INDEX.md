@@ -9,7 +9,7 @@ mtls-router 的控制面：路由生命周期管理、Agent 配置、端口冲�
 | `app` | 协议会话装配；将全部 15 个方法映射到服务；强制 API key 清零 | `App`、`New(Config, simplify)`、`Serve(ctx, input, output)` |
 | `protocol` | JSON 请求/响应类型、方法常量、错误码、按方法超时 | `Request`、`Response`、`Error`、`Method*`、`Code*`、`Deadlines()` |
 | `lifecycle` | router 进程 spawn/stop/reclaim；桌面前台 + CLI 分离模式；父进程监控；异常退出检测 | `Manager`、`Start(ctx, owner)`、`Stop(ctx)`、`Reclaim()`、`MonitorParent(ctx)` |
-| `discovery` | 通过关联 HTTP `/version` + `/health` 与持久状态文件及 OS 进程身份来分类 router 状态 | `Discoverer`、`Discover(ctx)`、`DiscoverStatus(ctx)`、`Classification` 常量 |
+| `discovery` | 通过关联 HTTP `/version` + `/health` 与持久状态文件及 OS 进程身份来分类 router 状态 | `Discoverer`、`Discover(ctx)`、`DiscoverStatus(ctx)`、`DiscoverStartupStatus(ctx, owner)`、`Classification` 常量 |
 | `agent` | Agent 检测、配置渲染（Claude JSON / opencode JSON / Codex TOML + JSON auth）、带备份/回滚的事务性写入、模型发现 | `Service`、`Detect()`、`Render()`、`Write()`、`PreviewRequest()`、`DiscoverModels()` |
 | `agent/modelconfig` | 无 key 的规范化 model config schema v1：decode、merge、canonical 序列化、token 签名 | `Config`、`Version`、`Decode()`、`DecodeStructural()`、`Canonical()`、`DeepMerge()`、`MaxConfigSize` |
 | `trustedrouter` | 经 router `/v1/models` 的鉴权模型目录发现；写入前重新校验绑定 | `Coordinator`、`Fetch(ctx, owner, apiKey)`、`Revalidate(ctx, owner, apiKey, binding)` |

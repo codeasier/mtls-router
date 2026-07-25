@@ -206,9 +206,7 @@ func New(config Config, simplify bool) (*App, error) {
 		ManagerIdentity:   config.ManagerIdentity,
 		ParentIdentity:    config.ParentIdentity,
 		RecentOutputBytes: maxLogReadBytes,
-	}, lifecycle.Dependencies{Discover: func(ctx context.Context, owner protocol.RouterOwner) discovery.Result {
-		return discoverer.DiscoverStatusForOwner(ctx, discovery.StartupOwner(owner))
-	}})
+	}, lifecycle.Dependencies{Discover: discoverer.DiscoverStartupStatus})
 	occupantManager := occupant.New(occupant.Config{
 		ListenAddr: config.ListenAddr, DesktopPID: config.ParentIdentity.PID, ManagerIdentity: config.ManagerIdentity,
 		IsProtected: func(candidate occupant.Identity) bool {
