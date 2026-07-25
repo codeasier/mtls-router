@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -180,20 +181,61 @@ func TestDesktopStateWriteFailureDrainsOwnedChild(t *testing.T) {
 func TestDesktopLaunchFailureRemainsUnmarked(t *testing.T) {
 	fixture := newFixture(t)
 	fixture.deps.LaunchDesktop = func(string, []string, []string, io.Writer) (foregroundProcess, error) {
-		return nil, errors.New("launch failed")
+		return nil, fmt.Errorf("launch failed: %w", syscall.Errno(5))
 	}
 	_, startErr := fixture.manager().Start(context.Background(), protocol.RouterOwnerDesktop)
 	if startErr == nil || startErr.Code != protocol.CodeRouterStartFailed {
 		t.Fatalf("error = %v", startErr)
 	}
+	if startErr.Stage != StartupStageProcessLaunch || startErr.OSErrorCode != 5 {
+		t.Fatalf("pre-launch stage metadata = %+v", startErr)
+	}
 	if startErr.Launched || startErr.RecentOutput != "" {
-		t.Fatalf("pre-launch failure metadata = %+v", startErr)
+		t.Fatalf("pre-launch output metadata = %+v", startErr)
 	}
 	if got := startErr.Error(); got != "ROUTER_START_FAILED: router launch failed" {
 		t.Fatalf("generic error text = %q", got)
 	}
 	if !fixture.lockClosed {
 		t.Fatal("failed launch retained ownership lock")
+	}
+}
+
+func TestStartupErrorUsesClosedStageAndNumericErrno(t *testing.T) {
+	for _, stage := range []StartupStage{
+		StartupStageLogDirectory,
+		StartupStageLogOpen,
+		StartupStageProcessLaunch,
+	} {
+		t.Run(string(stage), func(t *testing.T) {
+			got := startupError(stage, protocol.CodeRouterStartFailed, "safe message", fmt.Errorf("wrapped: %w", syscall.Errno(5)))
+			if got.Stage != stage || got.OSErrorCode != 5 {
+				t.Fatalf("startupError(%q) = %+v", stage, got)
+			}
+			if got.Err.Error() != "safe message" || strings.Contains(got.Error(), "wrapped") {
+				t.Fatalf("startup error exposed cause: %q", got.Error())
+			}
+		})
+	}
+
+	got := startupError(StartupStageLogOpen, protocol.CodeRouterStartFailed, "safe message", errors.New("no errno"))
+	if got.OSErrorCode != 0 {
+		t.Fatalf("plain error code = %d", got.OSErrorCode)
+	}
+}
+
+func TestDesktopLogOpenFailureHasStableStage(t *testing.T) {
+	fixture := newFixture(t)
+	fixture.deps.OpenLog = func(string) (*os.File, error) {
+		return nil, &os.PathError{Op: "open", Path: "/secret/router.log", Err: syscall.Errno(13)}
+	}
+
+	_, startErr := fixture.manager().Start(context.Background(), protocol.RouterOwnerDesktop)
+	if startErr == nil || startErr.Stage != StartupStageLogOpen || startErr.OSErrorCode != 13 {
+		t.Fatalf("log open failure = %+v", startErr)
+	}
+	if strings.Contains(startErr.Error(), "/secret") {
+		t.Fatalf("log open failure exposed path: %q", startErr.Error())
 	}
 }
 
