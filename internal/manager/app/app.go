@@ -799,7 +799,16 @@ func agentAPIURL(base string) (string, error) {
 }
 
 func mapPreview(value agent.Preview) protocol.AgentPreviewResult {
-	result := protocol.AgentPreviewResult{RevisionToken: value.RevisionToken, ModelConfig: value.ModelConfig, ManagedConfigDrift: value.ManagedConfigDrift, RequiresCodexAuthApproval: value.RequiresCodexAuthApproval}
+	result := protocol.AgentPreviewResult{
+		RevisionToken:             value.RevisionToken,
+		ModelConfig:               value.ModelConfig,
+		Fragments:                 []protocol.AgentFragment{},
+		Files:                     []protocol.AgentFileEffect{},
+		ManagedConfigDrift:        value.ManagedConfigDrift,
+		DriftedAgents:             []string{},
+		ManagedCollisions:         []protocol.ManagedCollision{},
+		RequiresCodexAuthApproval: value.RequiresCodexAuthApproval,
+	}
 	for _, fragment := range value.Fragments {
 		result.Fragments = append(result.Fragments, protocol.AgentFragment{Agent: string(fragment.Agent), Role: fragment.Role, Path: fragment.Path, Format: string(fragment.Format), Content: fragment.Content})
 	}
