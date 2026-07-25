@@ -199,6 +199,22 @@ func TestAgentPreviewMapsModesWarningsAndSidecarBackupPlan(t *testing.T) {
 	}
 }
 
+func TestMapPreviewEncodesEmptyCollectionsAsArrays(t *testing.T) {
+	encoded, err := json.Marshal(mapPreview(agent.Preview{ModelConfig: json.RawMessage(`{"version":1}`)}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"fragments", "files", "drifted_agents", "managed_collisions"} {
+		if got := string(result[field]); got != "[]" {
+			t.Errorf("%s = %s, want []", field, got)
+		}
+	}
+}
+
 func TestAgentRenderRejectsModesAndStrictRecoveryOverrides(t *testing.T) {
 	manager := newWithDependencies(Config{}, dependencies{agent: &fakeAgent{render: func(context.Context, []agent.Kind, string, json.RawMessage) (agent.RenderResult, error) {
 		return agent.RenderResult{}, nil
