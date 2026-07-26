@@ -74,8 +74,8 @@ func TestServiceInspectRecoveryActions(t *testing.T) {
 	differentUserTarget.BlockReason = RecoveryReasonDifferentUser
 	protectedTarget := verified
 	protectedTarget.BlockReason = RecoveryReasonProtectedProcess
-	unavailableTarget := pidOnly
-	unavailableTarget.BlockReason = RecoveryReasonIdentityUnavailable
+	scmQueryUnavailableTarget := pidOnly
+	scmQueryUnavailableTarget.BlockReason = RecoveryReasonIdentityUnavailable
 	serviceFor := func(target Target) *Service {
 		return New(Config{ListenAddr: identity.ListenAddr}, Dependencies{
 			Discover: func(context.Context) discovery.Result {
@@ -102,7 +102,7 @@ func TestServiceInspectRecoveryActions(t *testing.T) {
 		{name: "permission denied", target: permissionTarget, wantAction: RecoveryActionManualStopRequired, wantReason: RecoveryReasonInsufficientPrivilege},
 		{name: "different user", target: differentUserTarget, wantAction: RecoveryActionManualStopRequired, wantReason: RecoveryReasonDifferentUser},
 		{name: "protected", target: protectedTarget, wantAction: RecoveryActionUnavailable, wantReason: RecoveryReasonProtectedProcess, wantMetadata: true},
-		{name: "identity unavailable", target: unavailableTarget, wantAction: RecoveryActionUnavailable, wantReason: RecoveryReasonIdentityUnavailable},
+		{name: "SCM query unavailable", target: scmQueryUnavailableTarget, wantAction: RecoveryActionUnavailable, wantReason: RecoveryReasonIdentityUnavailable},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

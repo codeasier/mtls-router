@@ -140,11 +140,11 @@ export const en: Record<TranslationKey, string> = {
   "router.occupant.reason.serviceManaged":
     "A system service manages this process. Stop every listed service through its supervisor before retrying.",
   "router.occupant.reason.insufficientPrivilege":
-    "The current privilege level cannot terminate this process. Exit it normally from the same privilege context or use the system process manager. Do not run the desktop app as administrator or root.",
+    "Terminate access was denied by the current privilege level or OS protection such as Windows PPL; the app cannot reliably distinguish these cases. Exit the process normally from its owning context or use the system process manager. Do not run the desktop app as administrator or root.",
   "router.occupant.reason.differentUser":
     "This process belongs to another user. Ask that user or an administrator to stop it; the desktop app will not elevate.",
   "router.occupant.reason.protectedProcess":
-    "This protected process cannot be terminated through port recovery. Resolve its owning application or lifecycle manager instead.",
+    "This target is protected by a known application lifecycle and cannot be terminated through port recovery. Resolve its owning application or lifecycle manager instead.",
   "router.occupant.reason.identityUnavailable":
     "The process identity cannot be verified reliably, so destructive recovery is unavailable.",
   "router.occupant.supervisor.windows":

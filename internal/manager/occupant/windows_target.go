@@ -42,11 +42,13 @@ func inspectWindowsTarget(ctx context.Context, listenAddr string, deps windowsTa
 		return Target{}, ErrIdentityUnavailable
 	}
 	degraded := Target{Mode: VerificationModeWindowsPIDOnly, PID: pid, ListenAddr: listenAddr}
-	// SCM enumeration is advisory because inaccessible services may be omitted;
-	// the session check prevents unsafe authorization without inferring ownership.
-	services, _ := deps.servicesForPID(pid)
+	services, servicesErr := deps.servicesForPID(pid)
 	if ctx.Err() != nil {
 		return Target{}, ErrIdentityUnavailable
+	}
+	if servicesErr != nil {
+		degraded.BlockReason = RecoveryReasonIdentityUnavailable
+		return degraded, nil
 	}
 	if len(services) > 0 {
 		identifiers, ok := normalizeSupervisorIdentifiers(services)

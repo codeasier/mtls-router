@@ -22,9 +22,9 @@ const (
 )
 
 type windowsSCMDependencies struct {
-	open      func() (windows.Handle, error)
-	enumerate func(windows.Handle, []byte) (uint32, uint32, error)
-	close     func(windows.Handle) error
+	open        func() (windows.Handle, error)
+	enumerate   func(windows.Handle, []byte) (uint32, uint32, error)
+	closeHandle func(windows.Handle) error
 }
 
 func inspectNative(ctx context.Context, listenAddr string) (Target, error) {
@@ -71,7 +71,7 @@ func servicesForPIDNative(pid int) ([]string, error) {
 			err := windows.EnumServicesStatusEx(handle, windows.SC_ENUM_PROCESS_INFO, windows.SERVICE_WIN32, windows.SERVICE_STATE_ALL, data, uint32(len(buffer)), &needed, &returned, nil, nil)
 			return needed, returned, err
 		},
-		close: windows.CloseServiceHandle,
+		closeHandle: windows.CloseServiceHandle,
 	})
 }
 
@@ -84,7 +84,7 @@ func servicesForPIDWithDependencies(pid int, deps windowsSCMDependencies) (names
 		return nil, err
 	}
 	defer func() {
-		if closeErr := deps.close(handle); err == nil && closeErr != nil {
+		if closeErr := deps.closeHandle(handle); err == nil && closeErr != nil {
 			err = closeErr
 		}
 	}()
@@ -145,11 +145,11 @@ func windowsUTF16StringInBuffer(buffer []byte, value *uint16) (string, bool) {
 	offset := int(address - base)
 	encoded := make([]uint16, 0)
 	for offset+2 <= len(buffer) {
-		value := binary.LittleEndian.Uint16(buffer[offset : offset+2])
-		if value == 0 {
+		codeUnit := binary.LittleEndian.Uint16(buffer[offset : offset+2])
+		if codeUnit == 0 {
 			return string(utf16.Decode(encoded)), true
 		}
-		encoded = append(encoded, value)
+		encoded = append(encoded, codeUnit)
 		offset += 2
 	}
 	return "", false

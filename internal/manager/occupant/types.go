@@ -79,9 +79,8 @@ const (
 type SupervisorScope string
 
 const (
-	SupervisorScopeUser    SupervisorScope = "user"
-	SupervisorScopeSystem  SupervisorScope = "system"
-	SupervisorScopeUnknown SupervisorScope = "unknown"
+	SupervisorScopeUser   SupervisorScope = "user"
+	SupervisorScopeSystem SupervisorScope = "system"
 )
 
 type Recovery struct {

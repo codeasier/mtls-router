@@ -205,7 +205,7 @@ func TestServicesForPIDWithDependenciesFailsClosed(t *testing.T) {
 		enumerate: func(windows.Handle, []byte) (uint32, uint32, error) {
 			return windowsSCMBufferLimit + 1, 0, syscall.ERROR_MORE_DATA
 		},
-		close: func(windows.Handle) error { closed = true; return nil },
+		closeHandle: func(windows.Handle) error { closed = true; return nil },
 	}); !errors.Is(err, ErrIdentityUnavailable) || !closed {
 		t.Fatalf("oversized result error = %v closed = %t", err, closed)
 	}

@@ -916,7 +916,7 @@ describe("RouterPage occupant recovery", () => {
           reason: "insufficient_privilege",
         },
       },
-      "当前权限不足",
+      "Windows PPL",
     ],
     [
       {
@@ -939,7 +939,7 @@ describe("RouterPage occupant recovery", () => {
         listen_addr: "127.0.0.1:19099",
         recovery: { action: "unavailable", reason: "protected_process" },
       },
-      "受保护",
+      "应用生命周期保护",
     ],
     [
       {

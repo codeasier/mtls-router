@@ -59,7 +59,7 @@ func TestInspectWindowsTargetClassifiesServiceOwnerAndPrivilege(t *testing.T) {
 	}{
 		{name: "shared service", services: []string{"Beta", "Alpha", "Beta"}, processSID: "S-1-5-18", currentSID: "S-1-5-21-1", wantReason: RecoveryReasonServiceManaged, wantMode: VerificationModeWindowsPIDOnly, wantSupervisor: []string{"Alpha", "Beta"}},
 		{name: "oversized service metadata", services: oversizedServices, wantReason: RecoveryReasonServiceManaged, wantMode: VerificationModeWindowsPIDOnly},
-		{name: "SCM unavailable continues in user session", servicesErr: readErr, sessionID: 2, processSID: "S-1-5-21-1", currentSID: "S-1-5-21-1", wantMode: VerificationModeVerifiedIdentity, wantSessionCalls: 1, wantSIDCalls: 2, wantProcessCalls: 1, wantPreflights: 1},
+		{name: "SCM unavailable blocks recovery", servicesErr: readErr, sessionID: 2, processSID: "S-1-5-21-1", currentSID: "S-1-5-21-1", wantReason: RecoveryReasonIdentityUnavailable, wantMode: VerificationModeWindowsPIDOnly},
 		{name: "Session 0 without service names", sessionID: 0, wantReason: RecoveryReasonIdentityUnavailable, wantMode: VerificationModeWindowsPIDOnly, wantSessionCalls: 1},
 		{name: "session unavailable", sessionErr: readErr, wantReason: RecoveryReasonIdentityUnavailable, wantMode: VerificationModeWindowsPIDOnly, wantSessionCalls: 1},
 		{name: "other SID", sessionID: 1, processSID: "S-1-5-21-2", currentSID: "S-1-5-21-1", wantReason: RecoveryReasonDifferentUser, wantMode: VerificationModeWindowsPIDOnly, wantSessionCalls: 1, wantSIDCalls: 2},

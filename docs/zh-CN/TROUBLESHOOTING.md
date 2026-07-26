@@ -32,7 +32,7 @@ Workflow 会构建六个原生桌面包，并在匹配的目标 runner 上检查
 
 1. 使用可信安装包中的 `./setup.sh router status` 或 `.\setup.ps1 router status` 检查是否有 CLI 管理的 router。
 2. 如果桌面应用报告兼容外部 router，复用属于预期行为；桌面应用不会拥有或停止它。
-3. 阅读结构化诊断。`force_terminate` 表示目标可在显式确认后终止；`manual_stop_required` 表示 service、权限不足或其他用户必须在应用外处理；`unavailable` 表示目标受保护或无法安全建立身份。阻断诊断不包含确认 token。
+3. 阅读结构化诊断。`force_terminate` 表示目标可在显式确认后终止；`manual_stop_required` 表示 service、权限不足或其他用户必须在应用外处理。`insufficient_privilege` 包括 Windows PPL 等操作系统保护拒绝终止访问的情况；访问被拒绝并不能可靠识别 PPL。`unavailable` 表示生命周期已知的目标为 `protected_process`，或无法安全建立身份。阻断诊断不包含确认 token。
 4. 所有平台默认只有在完整 listener 身份和当前用户进程所有权通过验证后，Router 页面才会提供**强制终止占用进程**。请核对进程名称和 PID，再在确认对话框中核对完整可执行文件路径。macOS 和 Linux 没有仅 PID 例外。
 5. Windows 会把可读取的不同 SID 拒绝为 `different_user`，绝不降级为仅 PID。SID 或完整进程身份不可用时可以考虑仅 PID，但前提是 TCP4 owner table 为精确 listener 找到唯一 PID、已排除桌面/manager/托管 router 等受保护目标，并且无副作用的终止权限预检成功。此视图只显示 PID，因为身份、所有者、启动时间和可执行文件仍未验证。除非接受这些残余风险，否则请选择取消。
 6. 如果识别出 Windows Service 或 Linux systemd service，请使用界面显示的有界标识和人工引导。Windows 示例使用 `services.msc` 或 `sc.exe stop`；用户 service 使用 `systemctl --user stop`；系统 service 使用 `sudo systemctl stop`。复制的 Windows 命令经过安全引用，但仅适用于管理员 PowerShell，不能粘贴到 `cmd.exe`。应用只渲染和复制这些文本：绝不执行命令、控制 SCM/systemd 或请求提权。权限或用户阻断必须在进程所属身份和权限上下文中处理；不要以 administrator 或 root 运行桌面应用。

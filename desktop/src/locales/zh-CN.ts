@@ -128,11 +128,11 @@ export const zhCN = {
   "router.occupant.reason.serviceManaged":
     "该进程由系统服务管理。请通过对应管理器停止列出的全部服务后重试。",
   "router.occupant.reason.insufficientPrivilege":
-    "当前权限不足，无法终止该进程。请从相同权限上下文正常退出，或使用系统进程管理工具；不要以管理员或 root 身份运行桌面应用。",
+    "当前权限级别或 Windows PPL 等操作系统保护拒绝了终止访问；应用无法可靠区分这些情况。请从进程所属上下文正常退出，或使用系统进程管理工具；不要以管理员或 root 身份运行桌面应用。",
   "router.occupant.reason.differentUser":
     "该进程属于其他用户。请让对应用户或管理员停止它；桌面应用不会提权。",
   "router.occupant.reason.protectedProcess":
-    "该进程受保护，不能通过端口恢复终止。请改为处理所属应用或生命周期管理器。",
+    "该目标已知受应用生命周期保护，不能通过端口恢复终止。请改为处理所属应用或生命周期管理器。",
   "router.occupant.reason.identityUnavailable":
     "无法可靠验证进程身份，因此不能使用破坏性恢复。",
   "router.occupant.supervisor.windows":

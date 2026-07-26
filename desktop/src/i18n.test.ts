@@ -20,6 +20,23 @@ describe("localization resources", () => {
     },
   );
 
+  it("describes OS protection without claiming reliable PPL detection", () => {
+    expect(en["router.occupant.reason.insufficientPrivilege"]).toMatch(/PPL/);
+    expect(en["router.occupant.reason.insufficientPrivilege"]).toMatch(
+      /cannot reliably distinguish/,
+    );
+    expect(zhCN["router.occupant.reason.insufficientPrivilege"]).toMatch(/PPL/);
+    expect(zhCN["router.occupant.reason.insufficientPrivilege"]).toMatch(
+      /无法可靠区分/,
+    );
+    expect(en["router.occupant.reason.protectedProcess"]).toMatch(
+      /known application lifecycle/,
+    );
+    expect(zhCN["router.occupant.reason.protectedProcess"]).toMatch(
+      /应用生命周期/,
+    );
+  });
+
   it("falls back to Chinese when the active catalog is missing a key", () => {
     expect(
       resolveTranslation("en", "sample.key", {
