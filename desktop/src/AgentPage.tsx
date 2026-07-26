@@ -655,7 +655,6 @@ export function AgentPage({ api }: { api: DesktopApi }) {
   const [detection, setDetection] = useState<AgentDetection | null>(null);
   const [selectedModes, setSelectedModes] = useState<SelectedModes>({});
   const [stage, setStage] = useState<Stage>("select");
-  const [key, setKey] = useState("");
   const [discovery, setDiscovery] = useState<AgentModelsResult | null>(null);
   const [config, setConfig] = useState<ModelConfig>({ version: 1 });
   const [sources, setSources] = useState<Record<AgentId, InitializationSource>>(
@@ -702,7 +701,6 @@ export function AgentPage({ api }: { api: DesktopApi }) {
   }
   function clearFlowState(target: Stage) {
     flowRef.current = "";
-    setKey("");
     setDiscovery(null);
     setConfig({ version: 1 });
     setSources({ claude: "empty", opencode: "empty", codex: "empty" });
@@ -808,7 +806,6 @@ export function AgentPage({ api }: { api: DesktopApi }) {
   }
   async function startOver(target: Stage = "select") {
     await destroyFlow();
-    setKey("");
     setDiscovery(null);
     setPreview(null);
     setResult(null);
@@ -818,14 +815,12 @@ export function AgentPage({ api }: { api: DesktopApi }) {
   }
   async function discover(event: React.FormEvent) {
     event.preventDefault();
-    if (!key || !selected.length) return;
-    const transient = key;
-    setKey("");
+    if (!selected.length) return;
     setBusy(true);
     setMessage("");
     setStage("discover");
     try {
-      const value = await api.discoverModels(selected, transient);
+      const value = await api.discoverModels(selected);
       flowRef.current = value.flow_id;
       setDiscovery(value);
       const initialized = initializeAgentConfig(
@@ -837,9 +832,10 @@ export function AgentPage({ api }: { api: DesktopApi }) {
       setSources(initialized.sources);
       setStage("configure");
     } catch (error) {
+      const code = errorCode(error);
       setMessage(
         t(
-          errorCode(error) === "MODEL_AUTH_FAILED"
+          code === "MODEL_AUTH_FAILED"
             ? "agents.error.auth"
             : "agents.error.discovery",
         ),
@@ -1198,18 +1194,8 @@ export function AgentPage({ api }: { api: DesktopApi }) {
           <p className="overline">{t("agents.stage.credential")}</p>
           <h3>{t("agents.credentialHeading")}</h3>
           <p>{t("agents.credentialNote")}</p>
-          <label className="key-field">
-            <span>{t("agents.apiKey")}</span>
-            <input
-              type="password"
-              autoComplete="off"
-              spellCheck={false}
-              value={key}
-              onChange={(event) => setKey(event.target.value)}
-            />
-          </label>
           <div className="action-row">
-            <button className="control-button" disabled={!key || busy}>
+            <button className="control-button" disabled={busy}>
               {t("agents.discover")}
             </button>
             <button

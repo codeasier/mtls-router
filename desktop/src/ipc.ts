@@ -24,6 +24,9 @@ export const COMMANDS = {
   agentFlowDestroy: "agent_model_flow_destroy",
   agentModelConfigImport: "agent_model_config_import",
   agentModelConfigExport: "agent_model_config_export",
+  credentialGet: "get_credential",
+  credentialSave: "save_credential",
+  credentialDelete: "delete_credential",
   autostartGet: "autostart_get",
   autostartSet: "autostart_set",
   nativeLanguageSet: "set_native_language",
@@ -411,7 +414,14 @@ export interface Diagnostics {
 export interface DesktopPaths {
   data_dir: string;
   log_file: string;
+  credentials_path: string;
   can_prepare_for_uninstall: boolean;
+}
+
+export interface CredentialSummary {
+  present: boolean;
+  fingerprint: string;
+  saved_at: string | null;
 }
 
 export type AgentId = "claude" | "opencode" | "codex";
@@ -656,7 +666,7 @@ export interface DesktopApi {
   collectDiagnostics(): Promise<Diagnostics>;
   openLogLocation(): Promise<void>;
   detectAgents(): Promise<AgentDetection>;
-  discoverModels(agents: AgentId[], apiKey: string): Promise<AgentModelsResult>;
+  discoverModels(agents: AgentId[]): Promise<AgentModelsResult>;
   renderAgentConfig(
     agents: AgentId[],
     flowId: string,
@@ -691,6 +701,9 @@ export interface DesktopApi {
     agents: AgentId[],
     flowId: string,
   ): Promise<string>;
+  getCredential(): Promise<CredentialSummary>;
+  saveCredential(apiKey: string): Promise<CredentialSummary>;
+  deleteCredential(): Promise<CredentialSummary>;
   getAutostart(): Promise<boolean>;
   setAutostart(enabled: boolean): Promise<boolean>;
   setNativeLanguage(language: NativeLanguage): Promise<void>;
@@ -765,8 +778,8 @@ export function createDesktopApi(
     },
     openLogLocation: () => invoke(COMMANDS.openLogLocation),
     detectAgents: () => invoke(COMMANDS.agentDetect),
-    discoverModels: (agents, apiKey) =>
-      invoke(COMMANDS.agentModels, { request: { agents, api_key: apiKey } }),
+    discoverModels: (agents) =>
+      invoke(COMMANDS.agentModels, { request: { agents } }),
     renderAgentConfig: (agents, flowId, catalogToken, modelConfig) =>
       invoke(COMMANDS.agentRender, {
         request: {
@@ -814,6 +827,9 @@ export function createDesktopApi(
       invoke(COMMANDS.agentModelConfigImport, { content, agents, flowId }),
     exportAgentModelConfig: (modelConfig, agents, flowId) =>
       invoke(COMMANDS.agentModelConfigExport, { modelConfig, agents, flowId }),
+    getCredential: () => invoke(COMMANDS.credentialGet),
+    saveCredential: (apiKey) => invoke(COMMANDS.credentialSave, { apiKey }),
+    deleteCredential: () => invoke(COMMANDS.credentialDelete),
     getAutostart: () => invoke(COMMANDS.autostartGet),
     setAutostart: (enabled) => invoke(COMMANDS.autostartSet, { enabled }),
     setNativeLanguage: (language) =>

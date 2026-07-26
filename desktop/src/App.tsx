@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { AgentPage } from "./AgentPage";
+import { ApiKeysPage } from "./ApiKeysPage";
 import { I18nProvider, useI18n } from "./i18n";
 import { desktopApi, type DesktopApi } from "./ipc";
 import { LogsPage } from "./LogsPage";
@@ -12,6 +13,7 @@ import { SettingsPage } from "./SettingsPage";
 const sectionKeys: Record<SectionId, string> = {
   router: "section.router",
   agents: "section.agents",
+  "api-keys": "section.apiKeys",
   logs: "section.logs",
   settings: "section.settings",
 };
@@ -19,6 +21,7 @@ const sectionKeys: Record<SectionId, string> = {
 const navigationKeys: Record<SectionId, TranslationKey> = {
   router: "nav.router",
   agents: "nav.agents",
+  "api-keys": "nav.apiKeys",
   logs: "nav.logs",
   settings: "nav.settings",
 };
@@ -26,6 +29,7 @@ const navigationKeys: Record<SectionId, TranslationKey> = {
 const shortNavigationKeys: Record<SectionId, TranslationKey> = {
   router: "nav.routerShort",
   agents: "nav.agentsShort",
+  "api-keys": "nav.apiKeysShort",
   logs: "nav.logsShort",
   settings: "nav.settingsShort",
 };
@@ -183,7 +187,7 @@ function AppContent({ api }: { api: DesktopApi }) {
             <span aria-hidden="true">
               {navigationItems.findIndex((item) => item.id === activeSection) +
                 1}
-              /4
+              /5
             </span>
           </div>
 
@@ -196,6 +200,7 @@ function AppContent({ api }: { api: DesktopApi }) {
           )}
           {activeSection === "logs" && <LogsPage api={api} />}
           {activeSection === "agents" && <AgentPage api={api} />}
+          {activeSection === "api-keys" && <ApiKeysPage api={api} />}
           {activeSection === "settings" && <SettingsPage api={api} />}
         </div>
       </main>

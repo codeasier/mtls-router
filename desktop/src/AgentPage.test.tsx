@@ -182,7 +182,9 @@ async function reachCredential(
   render(<AgentPage api={api} />);
   await screen.findByText("/safe/claude");
   fireEvent.click(
-    screen.getByRole("button", { name: /继续输入凭据|Continue to credential/ }),
+    screen.getByRole("button", {
+      name: /继续发现模型|Continue to model discovery/,
+    }),
   );
   return api;
 }
@@ -194,9 +196,6 @@ async function reachConfigure() {
   });
   await reachCredential(api);
   const secret = "fixture-secret-never-in-dom-after-submit";
-  fireEvent.change(screen.getByLabelText(/API (?:key|密钥)/), {
-    target: { value: secret },
-  });
   fireEvent.click(
     screen.getByRole("button", { name: /发现模型|Discover models/ }),
   );
@@ -234,11 +233,10 @@ async function reachRebuildPreview(
     }),
   );
   fireEvent.click(
-    screen.getByRole("button", { name: /继续输入凭据|Continue to credential/ }),
+    screen.getByRole("button", {
+      name: /继续发现模型|Continue to model discovery/,
+    }),
   );
-  fireEvent.change(screen.getByLabelText(/API (?:key|密钥)/), {
-    target: { value: "sk-ui-canary-secret" },
-  });
   fireEvent.click(
     screen.getByRole("button", { name: /发现模型|Discover models/ }),
   );
@@ -375,9 +373,6 @@ describe("Agent model workbench", () => {
       }),
     });
     await reachCredential(api);
-    fireEvent.change(screen.getByLabelText(/API (?:key|密钥)/), {
-      target: { value: "layout-secret" },
-    });
     fireEvent.click(
       screen.getByRole("button", { name: /发现模型|Discover models/ }),
     );
@@ -490,17 +485,13 @@ describe("Agent model workbench", () => {
 
     fireEvent.click(
       screen.getByRole("button", {
-        name: /继续输入凭据|Continue to credential/,
+        name: /继续发现模型|Continue to model discovery/,
       }),
     );
-    fireEvent.change(screen.getByLabelText(/API (?:key|密钥)/), {
-      target: { value: "recovery-selection-secret" },
-    });
     fireEvent.click(
       screen.getByRole("button", { name: /发现模型|Discover models/ }),
     );
     await screen.findByText(/共同模型目录|Common model catalog/);
-    expect(screen.queryByDisplayValue("recovery-selection-secret")).toBeNull();
     fireEvent.click(
       screen.getByRole("button", {
         name: /生成写入预览|Generate write preview/,
@@ -508,10 +499,7 @@ describe("Agent model workbench", () => {
     );
 
     await waitFor(() => expect(api.previewAgents).toHaveBeenCalledTimes(1));
-    expect(api.discoverModels).toHaveBeenCalledWith(
-      ["claude", "opencode"],
-      "recovery-selection-secret",
-    );
+    expect(api.discoverModels).toHaveBeenCalledWith(["claude", "opencode"]);
     expect(api.previewAgents).toHaveBeenCalledWith(
       ["claude", "opencode"],
       discovery.flow_id,
@@ -565,12 +553,13 @@ describe("Agent model workbench", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("does not auto-select models and clears the credential immediately on discovery submit", async () => {
+  it("does not auto-select models and never renders the saved credential", async () => {
     const { api, secret } = await reachConfigure();
-    expect(api.discoverModels).toHaveBeenCalledWith(
-      ["claude", "opencode", "codex"],
-      secret,
-    );
+    expect(api.discoverModels).toHaveBeenCalledWith([
+      "claude",
+      "opencode",
+      "codex",
+    ]);
     expect(document.body.textContent).not.toContain(secret);
     expect(screen.getByLabelText(/^主模型$|^Primary model$/)).toHaveValue("");
     expect(screen.getByLabelText(/活动模型|Active model/)).toHaveValue("");
@@ -656,9 +645,6 @@ describe("Agent model workbench", () => {
       }),
     });
     await reachCredential(api);
-    fireEvent.change(screen.getByLabelText(/API (?:key|密钥)/), {
-      target: { value: "preset-secret" },
-    });
     fireEvent.click(
       screen.getByRole("button", { name: /发现模型|Discover models/ }),
     );
@@ -732,9 +718,6 @@ describe("Agent model workbench", () => {
       }),
     });
     await reachCredential(api);
-    fireEvent.change(screen.getByLabelText(/API (?:key|密钥)/), {
-      target: { value: "variant-test-secret" },
-    });
     fireEvent.click(
       screen.getByRole("button", { name: /发现模型|Discover models/ }),
     );
@@ -938,9 +921,6 @@ describe("Agent model workbench", () => {
       importAgentModelConfig: vi.fn().mockResolvedValue(imported),
     });
     await reachCredential(api);
-    fireEvent.change(screen.getByLabelText(/API (?:key|密钥)/), {
-      target: { value: "import-secret" },
-    });
     fireEvent.click(
       screen.getByRole("button", { name: /发现模型|Discover models/ }),
     );
@@ -1018,9 +998,6 @@ describe("Agent model workbench", () => {
       importAgentModelConfig: vi.fn().mockResolvedValue(imported),
     });
     await reachCredential(api);
-    fireEvent.change(screen.getByLabelText(/API (?:key|密钥)/), {
-      target: { value: "variant-import-secret" },
-    });
     fireEvent.click(
       screen.getByRole("button", { name: /发现模型|Discover models/ }),
     );
@@ -1099,9 +1076,6 @@ describe("Agent model workbench", () => {
         .mockResolvedValueOnce(inherited),
     });
     await reachCredential(api);
-    fireEvent.change(screen.getByLabelText(/API (?:key|密钥)/), {
-      target: { value: "fable-import-secret" },
-    });
     fireEvent.click(
       screen.getByRole("button", { name: /发现模型|Discover models/ }),
     );
@@ -1193,9 +1167,6 @@ describe("Agent model workbench", () => {
         .mockResolvedValue({ transaction_id: "tx", agents: [] }),
     });
     await reachCredential(api);
-    fireEvent.change(screen.getByLabelText(/API (?:key|密钥)/), {
-      target: { value: "normalized-write-secret" },
-    });
     fireEvent.click(
       screen.getByRole("button", { name: /发现模型|Discover models/ }),
     );
@@ -1661,9 +1632,6 @@ describe("Agent model workbench", () => {
       }),
     });
     await reachCredential(api);
-    fireEvent.change(screen.getByLabelText(/API (?:key|密钥)/), {
-      target: { value: "prefill-secret" },
-    });
     fireEvent.click(
       screen.getByRole("button", { name: /发现模型|Discover models/ }),
     );
@@ -1709,12 +1677,9 @@ describe("Agent model workbench", () => {
     await screen.findByText("/safe/claude");
     fireEvent.click(
       screen.getByRole("button", {
-        name: /继续输入凭据|Continue to credential/,
+        name: /继续发现模型|Continue to model discovery/,
       }),
     );
-    fireEvent.change(screen.getByLabelText(/API (?:key|密钥)/), {
-      target: { value: "rerender-secret" },
-    });
     fireEvent.click(
       screen.getByRole("button", { name: /发现模型|Discover models/ }),
     );
@@ -1749,7 +1714,11 @@ describe("Agent model workbench", () => {
         name: /生成写入预览|Generate write preview/,
       }),
     );
-    expect(await screen.findByLabelText(/API (?:key|密钥)/)).toHaveValue("");
+    expect(
+      await screen.findByText(
+        /使用已保存的密钥发现模型|Discover models with the saved key/,
+      ),
+    ).toBeVisible();
   });
 
   it("shows a readable validation reason without exposing backend messages", async () => {
@@ -1834,34 +1803,37 @@ describe("Agent model workbench", () => {
         name: /生成写入预览|Generate write preview/,
       }),
     );
-    expect(await screen.findByLabelText(/API (?:key|密钥)/)).toHaveValue("");
+    expect(
+      await screen.findByText(
+        /使用已保存的密钥发现模型|Discover models with the saved key/,
+      ),
+    ).toBeVisible();
     expect(screen.getByText(/模型发现会话已失效/)).toBeInTheDocument();
   });
 
   it.each([
+    "CREDENTIAL_NOT_FOUND",
     "MODEL_AUTH_FAILED",
     "MODEL_DISCOVERY_FAILED",
     "MODEL_CATALOG_EMPTY",
-  ])(
-    "returns %s discovery failure to an empty credential stage",
-    async (code) => {
-      const secret = `transition-secret-${code}`;
-      const api = createMockApi({
-        detectAgents: vi.fn().mockResolvedValue(detection),
-        discoverModels: vi.fn().mockRejectedValue({ code, message: secret }),
-      });
-      await reachCredential(api);
-      fireEvent.change(screen.getByLabelText(/API (?:key|密钥)/), {
-        target: { value: secret },
-      });
-      fireEvent.click(
-        screen.getByRole("button", { name: /发现模型|Discover models/ }),
-      );
-      expect(await screen.findByLabelText(/API (?:key|密钥)/)).toHaveValue("");
-      expect(document.body.textContent).not.toContain(secret);
-      expect(localStorage.length).toBe(0);
-    },
-  );
+  ])("returns %s discovery failure to the credential stage", async (code) => {
+    const secret = `transition-secret-${code}`;
+    const api = createMockApi({
+      detectAgents: vi.fn().mockResolvedValue(detection),
+      discoverModels: vi.fn().mockRejectedValue({ code, message: secret }),
+    });
+    await reachCredential(api);
+    fireEvent.click(
+      screen.getByRole("button", { name: /发现模型|Discover models/ }),
+    );
+    expect(
+      await screen.findByText(
+        /使用已保存的密钥发现模型|Discover models with the saved key/,
+      ),
+    ).toBeVisible();
+    expect(document.body.textContent).not.toContain(secret);
+    expect(localStorage.length).toBe(0);
+  });
 
   it.each([
     ["PREVIEW_STALE", "configure"],
@@ -1884,9 +1856,6 @@ describe("Agent model workbench", () => {
           .mockRejectedValue({ code, message: `write-secret-${code}` }),
       });
       await reachCredential(api);
-      fireEvent.change(screen.getByLabelText(/API (?:key|密钥)/), {
-        target: { value: "terminal-write-secret" },
-      });
       fireEvent.click(
         screen.getByRole("button", { name: /发现模型|Discover models/ }),
       );
@@ -1904,9 +1873,11 @@ describe("Agent model workbench", () => {
         }),
       );
       if (target === "credential") {
-        expect(await screen.findByLabelText(/API (?:key|密钥)/)).toHaveValue(
-          "",
-        );
+        expect(
+          await screen.findByText(
+            /使用已保存的密钥发现模型|Discover models with the saved key/,
+          ),
+        ).toBeVisible();
         expect(api.destroyAgentModelFlow).toHaveBeenCalledWith(
           discovery.flow_id,
         );

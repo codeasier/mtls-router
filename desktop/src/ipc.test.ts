@@ -367,13 +367,12 @@ describe("typed desktop API", () => {
     );
   });
 
-  it("uses focused v2 Agent commands and never sends a key at write", async () => {
+  it("uses focused v2 Agent commands without accepting a key", async () => {
     const invoke = vi.fn().mockResolvedValue({ agents: [] });
     const api = createDesktopApi(invoke as InvokeFn);
-    const transientKey = "fixture-sensitive-value";
 
     await api.detectAgents();
-    await api.discoverModels(["claude"], transientKey);
+    await api.discoverModels(["claude"]);
     const modelConfig = {
       version: 1 as const,
       claude: {
@@ -400,7 +399,7 @@ describe("typed desktop API", () => {
 
     expect(invoke).toHaveBeenNthCalledWith(1, COMMANDS.agentDetect);
     expect(invoke).toHaveBeenNthCalledWith(2, COMMANDS.agentModels, {
-      request: { agents: ["claude"], api_key: transientKey },
+      request: { agents: ["claude"] },
     });
     expect(invoke).toHaveBeenNthCalledWith(3, COMMANDS.agentPreview, {
       request: {
@@ -432,8 +431,28 @@ describe("typed desktop API", () => {
       },
     });
     expect(invoke.mock.calls[4][1]).not.toHaveProperty("request.modes");
-    expect(JSON.stringify(invoke.mock.calls.slice(2))).not.toContain(
-      transientKey,
+    expect(JSON.stringify(invoke.mock.calls)).not.toContain("api_key");
+  });
+
+  it("exposes credential management without a credential readback API", async () => {
+    const invoke = vi.fn().mockResolvedValue({
+      present: true,
+      fingerprint: "ABCD",
+      saved_at: "2026-07-26T00:00:00Z",
+    });
+    const api = createDesktopApi(invoke as InvokeFn);
+
+    await api.getCredential();
+    await api.saveCredential("fixture-secret");
+    await api.deleteCredential();
+
+    expect(invoke).toHaveBeenNthCalledWith(1, COMMANDS.credentialGet);
+    expect(invoke).toHaveBeenNthCalledWith(2, COMMANDS.credentialSave, {
+      apiKey: "fixture-secret",
+    });
+    expect(invoke).toHaveBeenNthCalledWith(3, COMMANDS.credentialDelete);
+    expect("useCredential" in (api as unknown as Record<string, unknown>)).toBe(
+      false,
     );
   });
 
@@ -459,6 +478,7 @@ describe("typed desktop API", () => {
       .mockResolvedValueOnce({
         data_dir: "/safe/app-data",
         log_file: "/safe/app-data/mtls-router.log",
+        credentials_path: "/safe/app-data/credentials.json",
         can_prepare_for_uninstall: true,
       })
       .mockResolvedValueOnce(undefined);

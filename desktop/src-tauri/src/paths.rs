@@ -15,6 +15,10 @@ pub fn resolve() -> Result<DesktopPaths> {
             .join("mtls-router.log")
             .to_string_lossy()
             .into_owned(),
+        credentials_path: data_dir
+            .join("credentials.json")
+            .to_string_lossy()
+            .into_owned(),
         data_dir: data_dir.to_string_lossy().into_owned(),
         can_prepare_for_uninstall: !cfg!(windows),
     })

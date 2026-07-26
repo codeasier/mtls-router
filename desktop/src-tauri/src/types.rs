@@ -1015,10 +1015,18 @@ pub struct AgentWriteStatus {
     pub error_code: String,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct CredentialSummary {
+    pub present: bool,
+    pub fingerprint: String,
+    pub saved_at: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct DesktopPaths {
     pub data_dir: String,
     pub log_file: String,
+    pub credentials_path: String,
     pub can_prepare_for_uninstall: bool,
 }
 

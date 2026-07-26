@@ -15,6 +15,8 @@ export const en: Record<TranslationKey, string> = {
   "nav.routerShort": "Router",
   "nav.agents": "Agent configuration",
   "nav.agentsShort": "Agents",
+  "nav.apiKeys": "API key",
+  "nav.apiKeysShort": "Key",
   "nav.logs": "Runtime logs",
   "nav.logsShort": "Logs",
   "nav.settings": "Settings",
@@ -27,6 +29,10 @@ export const en: Record<TranslationKey, string> = {
   "section.agents.title": "Agent configuration",
   "section.agents.description":
     "Detect and configure Claude Code, OpenCode, and Codex.",
+  "section.apiKeys.eyebrow": "CREDENTIAL / LOCAL STORE",
+  "section.apiKeys.title": "API key",
+  "section.apiKeys.description":
+    "Keep the single access credential used for model discovery and Agent configuration writes.",
   "section.logs.eyebrow": "SYSTEM / EVENT STREAM",
   "section.logs.title": "Runtime logs",
   "section.logs.description":
@@ -228,6 +234,40 @@ export const en: Record<TranslationKey, string> = {
   "settings.prepareAction": "Prepare and exit",
   "settings.prepareConfirm":
     "This will remove current-user autostart and exit CodeasierRouter. Continue?",
+  "apikey.overline": "ONE PERSON / ONE DEVICE / ONE KEY",
+  "apikey.heading": "Access credential",
+  "apikey.status.saved": "Configured",
+  "apikey.status.absent": "Not configured",
+  "apikey.status.loading": "Reading credential status",
+  "apikey.status.note":
+    "The desktop interface reads only this summary. It cannot read the saved key back.",
+  "apikey.fingerprint": "Fingerprint",
+  "apikey.savedAt": "Saved at",
+  "apikey.label": "API key",
+  "apikey.input.placeholder": "Paste a new API key",
+  "apikey.show": "Show",
+  "apikey.hide": "Hide",
+  "apikey.save": "Save key",
+  "apikey.replace": "Replace key",
+  "apikey.delete": "Delete saved key",
+  "apikey.saving": "Saving...",
+  "apikey.deleting": "Deleting...",
+  "apikey.explainer.usage.heading": "Where it is used",
+  "apikey.explainer.usage.agentFiles":
+    "Writing credential configuration for Claude Code, OpenCode, and Codex.",
+  "apikey.explainer.usage.catalog":
+    "Fetching the available model catalog through the local router.",
+  "apikey.explainer.storage.heading": "Where it is stored",
+  "apikey.explainer.storage.note":
+    "Unix file permissions are fixed at 0600. Windows uses the current-user data directory access controls.",
+  "apikey.path.loading": "Reading storage location...",
+  "apikey.error.length": "The key must be non-empty and no larger than 16 KiB.",
+  "apikey.error.io":
+    "The credential file could not be read or written. Try again.",
+  "apikey.error.invalid": "The credential file is corrupt. Save the key again.",
+  "apikey.error.lock":
+    "Another credential operation is active. Try again shortly.",
+  "apikey.error.load": "The credential status could not be loaded. Try again.",
   "agents.operation.create": "Create",
   "agents.operation.replace": "Replace",
   "agents.operation.preserve": "Preserve unmanaged configuration",
@@ -314,7 +354,7 @@ export const en: Record<TranslationKey, string> = {
   "agents.error.preview.unknown":
     "Unable to generate a preview. No files were changed. Refresh detection and retry ({code}).",
   "agents.error.write":
-    "Write failed and the key input was cleared. The transaction did not complete; review the result and retry.",
+    "Write failed. The transaction did not complete; review the result and retry with the saved credential.",
   "agents.error.previewStale":
     "Files changed after preview. Detection was refreshed; select the Agents and review a new preview.",
   "agents.error.backupFailed":
@@ -333,20 +373,21 @@ export const en: Record<TranslationKey, string> = {
   "agents.stage.preview": "Preview",
   "agents.stage.write": "Write",
   "agents.stage.result": "Result",
-  "agents.continue": "Continue to credential",
-  "agents.credentialHeading": "Discover models available to this key",
+  "agents.continue": "Continue to model discovery",
+  "agents.credentialHeading": "Discover models with the saved key",
   "agents.credentialNote":
-    "The key is required before catalog discovery, clears from the page on submit, and remains only in a non-replayable Rust memory flow until write.",
+    "Model discovery and configuration writes load the key temporarily from the desktop credential store. The page cannot read its plaintext value back.",
   "agents.discover": "Discover models",
   "agents.discovering":
     "Discovering models through the trusted local router...",
-  "agents.error.auth": "The model service rejected this key. Enter it again.",
+  "agents.error.auth":
+    "The model service rejected the saved key. Replace it in API key management.",
   "agents.error.discovery":
-    "Model discovery failed. The key was not retained; check the router and upstream, then retry.",
+    "Model discovery failed. Check the router and upstream, then retry.",
   "agents.error.catalogStale":
-    "The catalog expired or a selected model disappeared. Enter the key and discover again.",
+    "The catalog expired or a selected model disappeared. Discover models again with the saved key.",
   "agents.error.flowExpired":
-    "The model-discovery session expired. Enter the key and discover again.",
+    "The model-discovery session expired. Discover models again with the saved key.",
   "agents.error.config": "Model configuration is invalid: {detail}",
   "agents.error.config.catalogModel":
     "A selected model is not in the current catalog. Refresh discovery and select it again.",
@@ -459,17 +500,16 @@ export const en: Record<TranslationKey, string> = {
   "agents.fileCount": "{count} files",
   "agents.approvalBoundary": "APPROVAL BOUNDARY",
   "agents.reviewScope": "Review change scope",
-  "agents.oneTimeCredential": "One-time credential",
+  "agents.oneTimeCredential": "Saved credential",
   "agents.reviewNote":
-    "The API key input appears only after confirmation. No files have been changed yet.",
+    "The saved API key is loaded only for the approved write. No files have been changed yet.",
   "agents.reviewSensitiveBackup": "Sensitive backups",
   "agents.reviewBackup":
     "Existing-file backups may contain old keys. Protect them like the original configuration.",
   "agents.approve": "I reviewed and approve",
   "agents.cancelDetection": "Cancel and return to detection",
   "agents.keyNote":
-    "The key is used only for this controlled write request; the page does not save, reveal, or log it.",
-  "agents.apiKey": "API key",
+    "The saved key is loaded only for this controlled write request; the page does not reveal or log it.",
   "agents.executing": "Executing transaction...",
   "agents.write": "Write selected Agents",
   "agents.rebuildConfirm.overline": "DESTRUCTIVE CONFIRMATION",
@@ -478,11 +518,11 @@ export const en: Record<TranslationKey, string> = {
     "Only these Agents will be approved for destructive rebuild:",
   "agents.rebuildConfirm.cancel": "Cancel",
   "agents.rebuildConfirm.confirm": "Back up and rebuild",
-  "agents.cancelKey": "Cancel and clear key",
+  "agents.cancelKey": "Cancel write",
   "agents.transactionComplete": "TRANSACTION COMPLETE",
   "agents.resultHeading": "Agent configuration result",
   "agents.resultNote":
-    "The key input was cleared. These paths come from the manager transaction result.",
+    "These paths come from the manager transaction result; no credential value is displayed.",
   "agents.success": "Success",
   "agents.failure": "Failed",
   "agents.rolledBack": "This change was rolled back",

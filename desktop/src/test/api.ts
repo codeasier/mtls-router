@@ -80,6 +80,21 @@ export function createMockApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
     exportAgentModelConfig: vi
       .fn()
       .mockImplementation(async (config) => JSON.stringify(config, null, 2)),
+    getCredential: vi.fn().mockResolvedValue({
+      present: true,
+      fingerprint: "ABCD",
+      saved_at: "2026-07-26T00:00:00Z",
+    }),
+    saveCredential: vi.fn().mockResolvedValue({
+      present: true,
+      fingerprint: "ABCD",
+      saved_at: "2026-07-26T00:00:00Z",
+    }),
+    deleteCredential: vi.fn().mockResolvedValue({
+      present: false,
+      fingerprint: "",
+      saved_at: null,
+    }),
     getAutostart: vi.fn().mockResolvedValue(true),
     setAutostart: vi
       .fn()
@@ -88,6 +103,7 @@ export function createMockApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
     getDesktopPaths: vi.fn().mockResolvedValue({
       data_dir: "/safe/app-data",
       log_file: "/safe/app-data/mtls-router.log",
+      credentials_path: "/safe/app-data/credentials.json",
       can_prepare_for_uninstall: true,
     }),
     prepareForUninstall: vi.fn().mockResolvedValue(undefined),
