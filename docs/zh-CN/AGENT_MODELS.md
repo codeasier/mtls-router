@@ -2,7 +2,7 @@
 
 [English](../AGENT_MODELS.md)
 
-本文是 management protocol v3 的用户与自动化契约。如果本文与客户端本地校验不一致，以 Go manager 为准。
+本文是 management protocol v4 的用户与自动化契约。如果本文与客户端本地校验不一致，以 Go manager 为准。
 
 ## 服务契约
 
@@ -24,7 +24,7 @@ Claude deferred tool 字段以及未来开放列表 Anthropic 请求字段会原
 Shell、PowerShell 和桌面端的 merge 流程都使用以下顺序：
 
 1. 检测并选择 Claude Code、opencode 和/或 Codex。
-2. 隐藏读取 API key，并建立可信的 protocol-v3 loopback router。
+2. 隐藏读取 API key，并建立可信的 protocol-v4 loopback router。
 3. 调用 `agent.models`，然后才显示共同的已排序目录。
 4. 每个已选 Agent 优先使用有效 existing section，其次使用可见且已认证的 preset section，否则使用 empty section；用户必须检查或补全可编辑的 Agent 原生选择。绝不选择第一个模型，不使用模型名称或能力 heuristic，不修复不可用 preset，也不替换为其他模型。
 5. Print 时渲染脱敏片段；write 时预览精确文件、备份、迁移、所有权和漂移影响。
@@ -164,9 +164,9 @@ Manager 只在私有 `agent-transactions/last-applied-model-config.json` sidecar
 
 已有文件与 sidecar 在同一个 journaled transaction 中备份和修改。适用时备份保留在源文件旁，使用私有权限，并可能包含当前或旧 API key，必须按敏感数据处理。Rollback 会一起恢复文件与 sidecar；恢复未解决时不要删除事务状态或备份。
 
-## Protocol v3 自动化
+## Protocol v4 自动化
 
-自动化必须使用 receipt-verified `mtls-router-manager serve`。先调用 `manager.info` 并要求 management protocol `3`，然后调用：
+自动化必须使用 receipt-verified `mtls-router-manager serve`。先调用 `manager.info` 并要求 management protocol `4`，然后调用：
 
 1. `agent.models`，提供 `owner`、`agents` 和临时 `api_key`。
 2. `agent.render` 获取 key 脱敏托管片段；或使用 `agents`、`catalog_token`、`model_config` 调用 `agent.preview`；请求 rebuild 时还必须提供每个 Agent 的 `modes` map。
@@ -185,6 +185,6 @@ Manager 只在私有 `agent-transactions/last-applied-model-config.json` sidecar
 
 `model_config` 是仅包含完整有效已请求 section 的 versioned 规范文档。不可用 entry 为 `{"code":"MODEL_NOT_AVAILABLE","models":["missing-base-id"]}`。两个字段始终为 object，绝不会是 `null` 或省略；该 metadata 不含 key，也不会让本来成功的 discovery 变为失败。
 
-Key 只能出现在两次 secret-bearing stdin/IPC 请求体中。不得放入参数、环境变量、model config、日志、shell history 或临时请求文件。Protocol v1/v2 请求以及混合 v2/v3 router、manager、setup receipt 或 desktop artifact 都会被拒绝；必须整体更新同一 release。
+Key 只能出现在两次 secret-bearing stdin/IPC 请求体中。不得放入参数、环境变量、model config、日志、shell history 或临时请求文件。Protocol v1-v3 请求以及混合 v3/v4 router、manager、setup receipt 或 desktop artifact 都会被拒绝；必须整体更新同一 release。
 
 精确请求/结果 schema 和稳定错误由仓库内 canonical JSON Schema 与 manager protocol type 定义。测试使用的 Agent revision 与 source digest 记录在 [`internal/manager/agent/testdata/compatibility.json`](../../internal/manager/agent/testdata/compatibility.json)。

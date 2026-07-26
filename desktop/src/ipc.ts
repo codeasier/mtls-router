@@ -9,6 +9,7 @@ export const COMMANDS = {
   routerStop: "router_stop",
   routerInspectOccupant: "router_inspect_occupant",
   routerForceTerminateOccupant: "router_force_terminate_occupant",
+  routerCancelReleaseObservation: "router_cancel_release_observation",
   routerHealth: "router_health",
   pollSnapshot: "poll_snapshot",
   routerLogs: "router_logs",
@@ -61,23 +62,318 @@ export interface RouterHealth {
 interface OccupantInspectionBase {
   pid: number;
   listen_addr: string;
-  confirmation_token: string;
-  expires_at: string;
 }
 
-export type OccupantInspection = OccupantInspectionBase &
-  (
-    | {
-        verification_mode: "verified_identity";
-        process_name: string;
-        executable: string;
-      }
-    | {
-        verification_mode: "windows_pid_only";
-        process_name?: never;
-        executable?: never;
-      }
+type VerifiedOccupantIdentity<Recovery> =
+  | {
+      verification_mode: "verified_identity";
+      process_name: string;
+      executable: string;
+    }
+  | (Recovery extends {
+      recovery: {
+        action: "manual_stop_required";
+        reason: "different_user";
+      };
+    }
+      ? {
+          verification_mode: "verified_identity";
+          process_name?: never;
+          executable?: never;
+        }
+      : never);
+
+type OccupantIdentity<Recovery> =
+  | VerifiedOccupantIdentity<Recovery>
+  | {
+      verification_mode: "windows_pid_only";
+      process_name?: never;
+      executable?: never;
+    };
+
+export type OccupantSupervisor =
+  | {
+      kind: "windows_service";
+      scope: "system";
+      identifiers: string[];
+    }
+  | {
+      kind: "systemd_user";
+      scope: "user";
+      identifiers: string[];
+    }
+  | {
+      kind: "systemd_system";
+      scope: "system";
+      identifiers: string[];
+    };
+
+type OccupantRecovery =
+  | {
+      recovery: { action: "force_terminate" };
+      supervisor?: never;
+      confirmation_token: string;
+      expires_at: string;
+    }
+  | {
+      recovery: {
+        action: "manual_stop_required";
+        reason: "service_managed";
+      };
+      supervisor?: OccupantSupervisor;
+      confirmation_token?: never;
+      expires_at?: never;
+    }
+  | {
+      recovery: {
+        action: "manual_stop_required";
+        reason: "insufficient_privilege";
+      };
+      supervisor?: never;
+      confirmation_token?: never;
+      expires_at?: never;
+    }
+  | {
+      recovery: {
+        action: "manual_stop_required";
+        reason: "different_user";
+      };
+      supervisor?: never;
+      confirmation_token?: never;
+      expires_at?: never;
+    }
+  | {
+      recovery: {
+        action: "unavailable";
+        reason: "protected_process" | "identity_unavailable";
+      };
+      supervisor?: never;
+      confirmation_token?: never;
+      expires_at?: never;
+    };
+
+type OccupantInspectionVariant<Recovery> = Recovery extends OccupantRecovery
+  ? OccupantInspectionBase & OccupantIdentity<Recovery> & Recovery
+  : never;
+
+export type OccupantInspection = OccupantInspectionVariant<OccupantRecovery>;
+
+export interface OccupantTerminationResult {
+  termination: "process_terminated";
+  port_state: "released";
+}
+
+function exactKeys(value: Record<string, unknown>, allowed: readonly string[]) {
+  const keys = Object.keys(value);
+  return (
+    keys.length === allowed.length && keys.every((key) => allowed.includes(key))
   );
+}
+
+function validManagerTimestamp(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const match =
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):([0-5]\d)(?:\.\d+)?(?:Z|([+-])(\d{2}):(\d{2}))$/.exec(
+      value,
+    );
+  if (!match) return false;
+  const [, year, month, day, hour, minute, , , offsetHour, offsetMinute] =
+    match;
+  const numericYear = Number(year);
+  const numericMonth = Number(month);
+  const daysInMonth = [
+    31,
+    numericYear % 4 === 0 &&
+    (numericYear % 100 !== 0 || numericYear % 400 === 0)
+      ? 29
+      : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ];
+  return (
+    numericMonth >= 1 &&
+    numericMonth <= 12 &&
+    Number(day) >= 1 &&
+    Number(day) <= daysInMonth[numericMonth - 1] &&
+    Number(hour) <= 23 &&
+    Number(minute) <= 59 &&
+    (offsetHour === undefined ||
+      (Number(offsetHour) <= 23 && Number(offsetMinute) <= 59))
+  );
+}
+
+function validUtf8(value: string): boolean {
+  return !/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(
+    value,
+  );
+}
+
+function compareUtf8(left: string, right: string): number {
+  const leftBytes = new TextEncoder().encode(left);
+  const rightBytes = new TextEncoder().encode(right);
+  const length = Math.min(leftBytes.length, rightBytes.length);
+  for (let index = 0; index < length; index += 1) {
+    if (leftBytes[index] !== rightBytes[index])
+      return leftBytes[index] - rightBytes[index];
+  }
+  return leftBytes.length - rightBytes.length;
+}
+
+function validWindowsServiceName(value: string): boolean {
+  return (
+    value.trim() !== "" &&
+    !/\p{Cc}/u.test(value) &&
+    !["/", "\\", ",", '"'].some((character) => value.includes(character))
+  );
+}
+
+function validSystemdServiceName(value: string): boolean {
+  if (
+    new TextEncoder().encode(value).length > 255 ||
+    !value.endsWith(".service")
+  )
+    return false;
+  const stem = value.slice(0, -".service".length);
+  return (
+    stem !== "" &&
+    !stem.startsWith("@") &&
+    (stem.match(/@/g)?.length ?? 0) <= 1 &&
+    /^(?:[A-Za-z0-9:_.@-]|\\x[0-9A-Fa-f]{2})+$/.test(stem)
+  );
+}
+
+function validOccupantSupervisor(value: unknown): value is OccupantSupervisor {
+  if (!value || typeof value !== "object") return false;
+  const supervisor = value as Record<string, unknown>;
+  if (!exactKeys(supervisor, ["kind", "scope", "identifiers"])) return false;
+  if (!Array.isArray(supervisor.identifiers)) return false;
+  const identifiers = supervisor.identifiers;
+  if (identifiers.length === 0 || identifiers.length > 16) return false;
+  for (let index = 0; index < identifiers.length; index += 1) {
+    const identifier = identifiers[index];
+    if (
+      typeof identifier !== "string" ||
+      identifier === "" ||
+      !validUtf8(identifier) ||
+      new TextEncoder().encode(identifier).length > 256 ||
+      (index > 0 && compareUtf8(identifiers[index - 1], identifier) >= 0)
+    ) {
+      return false;
+    }
+    if (
+      supervisor.kind === "windows_service"
+        ? !validWindowsServiceName(identifier)
+        : !validSystemdServiceName(identifier)
+    ) {
+      return false;
+    }
+  }
+  const kindAndScopeMatch =
+    (supervisor.kind === "windows_service" && supervisor.scope === "system") ||
+    (supervisor.kind === "systemd_user" && supervisor.scope === "user") ||
+    (supervisor.kind === "systemd_system" && supervisor.scope === "system");
+  return (
+    kindAndScopeMatch &&
+    new TextEncoder().encode(JSON.stringify(supervisor)).length <= 4 * 1024
+  );
+}
+
+export function validOccupantInspection(
+  value: unknown,
+): value is OccupantInspection {
+  if (!value || typeof value !== "object") return false;
+  const inspection = value as Record<string, unknown>;
+  if (
+    !Number.isInteger(inspection.pid) ||
+    (inspection.pid as number) <= 0 ||
+    (inspection.pid as number) > 0xffffffff ||
+    inspection.listen_addr !== "127.0.0.1:19099"
+  ) {
+    return false;
+  }
+
+  if (!inspection.recovery || typeof inspection.recovery !== "object")
+    return false;
+  const recovery = inspection.recovery as Record<string, unknown>;
+  const identityKeys: string[] = [];
+  if (inspection.verification_mode === "verified_identity") {
+    const hasProcessName = Object.hasOwn(inspection, "process_name");
+    const hasExecutable = Object.hasOwn(inspection, "executable");
+    if (hasProcessName !== hasExecutable) return false;
+    if (hasProcessName) {
+      if (
+        typeof inspection.process_name !== "string" ||
+        inspection.process_name.trim() === "" ||
+        typeof inspection.executable !== "string" ||
+        inspection.executable.trim() === ""
+      ) {
+        return false;
+      }
+      identityKeys.push("process_name", "executable");
+    } else if (
+      recovery.action !== "manual_stop_required" ||
+      recovery.reason !== "different_user"
+    ) {
+      return false;
+    }
+  } else if (inspection.verification_mode !== "windows_pid_only") {
+    return false;
+  }
+
+  const baseKeys = [
+    "pid",
+    "verification_mode",
+    ...identityKeys,
+    "listen_addr",
+    "recovery",
+  ];
+  if (recovery.action === "force_terminate") {
+    return (
+      exactKeys(recovery, ["action"]) &&
+      exactKeys(inspection, [
+        ...baseKeys,
+        "confirmation_token",
+        "expires_at",
+      ]) &&
+      typeof inspection.confirmation_token === "string" &&
+      inspection.confirmation_token.trim() !== "" &&
+      validManagerTimestamp(inspection.expires_at)
+    );
+  }
+  if (recovery.action === "manual_stop_required") {
+    const reason = recovery.reason;
+    if (
+      !exactKeys(recovery, ["action", "reason"]) ||
+      !["service_managed", "insufficient_privilege", "different_user"].includes(
+        reason as string,
+      )
+    ) {
+      return false;
+    }
+    if (reason !== "service_managed") return exactKeys(inspection, baseKeys);
+    return (
+      exactKeys(inspection, baseKeys) ||
+      (exactKeys(inspection, [...baseKeys, "supervisor"]) &&
+        validOccupantSupervisor(inspection.supervisor))
+    );
+  }
+  return (
+    recovery.action === "unavailable" &&
+    exactKeys(recovery, ["action", "reason"]) &&
+    ["protected_process", "identity_unavailable"].includes(
+      recovery.reason as string,
+    ) &&
+    exactKeys(inspection, baseKeys)
+  );
+}
 
 export interface PollError {
   code: string;
@@ -90,6 +386,11 @@ export interface PollSnapshot {
   health_stale?: boolean;
   status_error?: PollError;
   health_error?: PollError;
+  release_observation?: ReleaseObservation;
+}
+
+export interface ReleaseObservation {
+  state: "observing" | "released" | "reoccupied";
 }
 
 export interface ComponentVersions {
@@ -347,7 +648,8 @@ export interface DesktopApi {
   inspectRouterOccupant(): Promise<OccupantInspection>;
   forceTerminateRouterOccupant(
     confirmationToken: string,
-  ): Promise<RouterStatus>;
+  ): Promise<OccupantTerminationResult>;
+  cancelRouterReleaseObservation(): Promise<void>;
   retryRouterHealth(): Promise<RouterHealth>;
   getComponentVersions(): Promise<ComponentVersions>;
   getRouterLogs(limit?: number): Promise<RouterLogs>;
@@ -446,6 +748,8 @@ export function createDesktopApi(
       invoke(COMMANDS.routerForceTerminateOccupant, {
         request: { confirmation_token: confirmationToken },
       }),
+    cancelRouterReleaseObservation: () =>
+      invoke(COMMANDS.routerCancelReleaseObservation),
     retryRouterHealth: () => invoke(COMMANDS.routerHealth),
     getComponentVersions: () => invoke(COMMANDS.componentVersions),
     getRouterLogs: async (limit = MAX_LOG_LINES) => {

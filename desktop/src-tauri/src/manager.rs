@@ -8,7 +8,10 @@ use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use std::{
     collections::VecDeque,
-    sync::{Arc, Mutex as StdMutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex as StdMutex,
+    },
     time::Duration,
 };
 use tauri::AppHandle;
@@ -131,14 +134,21 @@ impl TransportFactory for TauriTransportFactory {
 struct Call {
     method: &'static str,
     params: Value,
-    response: oneshot::Sender<Result<Value>>,
+    expected_session_epoch: Option<u64>,
+    response: oneshot::Sender<Result<ManagerReply>>,
     activity: Option<ActivityGuard>,
+}
+
+struct ManagerReply {
+    value: Value,
+    session_epoch: u64,
 }
 
 #[derive(Clone)]
 pub struct ManagerClient {
     sender: mpsc::Sender<Call>,
     activity: Arc<ActivityState>,
+    session_epoch: Arc<AtomicU64>,
     startup_error: Option<CommandError>,
 }
 
@@ -176,10 +186,12 @@ impl ManagerClient {
             current: StdMutex::new(ManagerActivity::default()),
             updates,
         });
-        tauri::async_runtime::spawn(run_actor(factory, receiver));
+        let session_epoch = Arc::new(AtomicU64::new(0));
+        tauri::async_runtime::spawn(run_actor(factory, receiver, session_epoch.clone()));
         Self {
             sender,
             activity,
+            session_epoch,
             startup_error: None,
         }
     }
@@ -194,6 +206,7 @@ impl ManagerClient {
         Self {
             sender,
             activity,
+            session_epoch: Arc::new(AtomicU64::new(0)),
             startup_error: Some(error),
         }
     }
@@ -208,6 +221,15 @@ impl ManagerClient {
 
     pub(crate) fn subscribe_activity(&self) -> watch::Receiver<ManagerActivity> {
         self.activity.updates.subscribe()
+    }
+
+    pub(crate) fn session_epoch(&self) -> u64 {
+        self.session_epoch.load(Ordering::Acquire)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn invalidate_session_for_test(&self) {
+        self.session_epoch.fetch_add(1, Ordering::AcqRel);
     }
 
     fn begin_activity(&self) -> ActivityGuard {
@@ -235,12 +257,58 @@ impl ManagerClient {
             .send(Call {
                 method,
                 params,
+                expected_session_epoch: None,
+                response,
+                activity: Some(self.begin_activity()),
+            })
+            .await
+            .map_err(|_| CommandError::manager_failed())?;
+        receive(result).await.map(|(value, _)| value)
+    }
+
+    pub(crate) async fn call_with_session_epoch<T: DeserializeOwned>(
+        &self,
+        method: &'static str,
+        params: Value,
+    ) -> Result<(T, u64)> {
+        if let Some(error) = &self.startup_error {
+            return Err(error.clone());
+        }
+        let (response, result) = oneshot::channel();
+        self.sender
+            .send(Call {
+                method,
+                params,
+                expected_session_epoch: None,
                 response,
                 activity: Some(self.begin_activity()),
             })
             .await
             .map_err(|_| CommandError::manager_failed())?;
         receive(result).await
+    }
+
+    pub(crate) async fn call_for_session<T: DeserializeOwned>(
+        &self,
+        method: &'static str,
+        params: Value,
+        expected_session_epoch: u64,
+    ) -> Result<T> {
+        if let Some(error) = &self.startup_error {
+            return Err(error.clone());
+        }
+        let (response, result) = oneshot::channel();
+        self.sender
+            .send(Call {
+                method,
+                params,
+                expected_session_epoch: Some(expected_session_epoch),
+                response,
+                activity: Some(self.begin_activity()),
+            })
+            .await
+            .map_err(|_| CommandError::manager_failed())?;
+        receive(result).await.map(|(value, _)| value)
     }
 
     pub(crate) async fn poll<T: DeserializeOwned>(
@@ -261,6 +329,37 @@ impl ManagerClient {
             self.sender.try_send(Call {
                 method,
                 params,
+                expected_session_epoch: None,
+                response,
+                activity: None,
+            })
+        };
+        match queued {
+            Ok(()) => Some(receive(result).await.map(|(value, _)| value)),
+            Err(mpsc::error::TrySendError::Full(_)) => None,
+            Err(mpsc::error::TrySendError::Closed(_)) => Some(Err(CommandError::manager_failed())),
+        }
+    }
+
+    pub(crate) async fn poll_with_session_epoch<T: DeserializeOwned>(
+        &self,
+        method: &'static str,
+        params: Value,
+        generation: u64,
+    ) -> Option<Result<(T, u64)>> {
+        if let Some(error) = &self.startup_error {
+            return Some(Err(error.clone()));
+        }
+        let (response, result) = oneshot::channel();
+        let queued = {
+            let activity = self.activity.current.lock().unwrap();
+            if activity.active > 0 || activity.generation != generation {
+                return None;
+            }
+            self.sender.try_send(Call {
+                method,
+                params,
+                expected_session_epoch: None,
                 response,
                 activity: None,
             })
@@ -273,13 +372,20 @@ impl ManagerClient {
     }
 }
 
-async fn receive<T: DeserializeOwned>(result: oneshot::Receiver<Result<Value>>) -> Result<T> {
-    let value = result.await.map_err(|_| CommandError::manager_failed())??;
-    serde_json::from_value(value)
-        .map_err(|_| CommandError::new("INVALID_RESPONSE", "manager returned an invalid result"))
+async fn receive<T: DeserializeOwned>(
+    result: oneshot::Receiver<Result<ManagerReply>>,
+) -> Result<(T, u64)> {
+    let reply = result.await.map_err(|_| CommandError::manager_failed())??;
+    let value = serde_json::from_value(reply.value)
+        .map_err(|_| CommandError::new("INVALID_RESPONSE", "manager returned an invalid result"))?;
+    Ok((value, reply.session_epoch))
 }
 
-async fn run_actor(factory: Arc<dyn TransportFactory>, mut calls: mpsc::Receiver<Call>) {
+async fn run_actor(
+    factory: Arc<dyn TransportFactory>,
+    mut calls: mpsc::Receiver<Call>,
+    session_epoch: Arc<AtomicU64>,
+) {
     let (mut session, mut failure) = match start_and_handshake(factory.as_ref()).await {
         Ok(session) => (Some(session), None),
         Err(error) => (None, Some(error)),
@@ -287,6 +393,18 @@ async fn run_actor(factory: Arc<dyn TransportFactory>, mut calls: mpsc::Receiver
     let mut request_id = 1_u64;
     let mut recovery_used = false;
     while let Some(mut call) = calls.recv().await {
+        if call
+            .expected_session_epoch
+            .is_some_and(|expected| expected != session_epoch.load(Ordering::Acquire))
+        {
+            clear_json(&mut call.params);
+            let _ = call.response.send(Err(CommandError::new(
+                "OCCUPANT_CHANGED",
+                "port occupant changed; inspect again",
+            )));
+            drop(call.activity.take());
+            continue;
+        }
         let sensitive = matches!(
             call.method,
             "agent.models" | "agent.write" | FORCE_TERMINATE_OCCUPANT
@@ -307,6 +425,7 @@ async fn run_actor(factory: Arc<dyn TransportFactory>, mut calls: mpsc::Receiver
         let result = if result.as_ref().is_err_and(|error| error.recoverable) && !recovery_used {
             recovery_used = true;
             if let Some(active) = session.take() {
+                session_epoch.fetch_add(1, Ordering::AcqRel);
                 active.child.kill();
             }
             match recover(factory.as_ref(), &mut request_id).await {
@@ -337,7 +456,10 @@ async fn run_actor(factory: Arc<dyn TransportFactory>, mut calls: mpsc::Receiver
         } else {
             result
         };
-        let _ = call.response.send(result);
+        let _ = call.response.send(result.map(|value| ManagerReply {
+            value,
+            session_epoch: session_epoch.load(Ordering::Acquire),
+        }));
         drop(call.activity.take());
     }
     if let Some(active) = session {
@@ -507,7 +629,8 @@ fn watchdog(method: &str) -> Result<Duration> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::{atomic::AtomicUsize, Mutex, OnceLock};
+    use tokio::sync::Semaphore;
 
     struct FakeChild {
         writes: Arc<Mutex<Vec<Value>>>,
@@ -646,6 +769,63 @@ mod tests {
         }
     }
 
+    struct QueuedRecoveryChild {
+        replacement: bool,
+        writes: Arc<Mutex<Vec<Value>>>,
+        responder: mpsc::Sender<TransportEvent>,
+        blocked: Arc<Semaphore>,
+        release: Arc<Semaphore>,
+    }
+
+    impl TransportChild for QueuedRecoveryChild {
+        fn write(&mut self, bytes: &[u8]) -> Result<()> {
+            let request: Value = serde_json::from_slice(bytes).unwrap();
+            self.writes.lock().unwrap().push(request.clone());
+            let method = request["method"].as_str().unwrap().to_owned();
+            let replacement = self.replacement;
+            let responder = self.responder.clone();
+            let blocked = self.blocked.clone();
+            let release = self.release.clone();
+            tauri::async_runtime::spawn(async move {
+                let event = if !replacement && method == "router.logs" {
+                    blocked.add_permits(1);
+                    release.acquire().await.unwrap().forget();
+                    TransportEvent::Terminated
+                } else {
+                    response(request["id"].clone(), method, Behavior::Valid, false)
+                };
+                responder.send(event).await.unwrap();
+            });
+            Ok(())
+        }
+
+        fn kill(self: Box<Self>) {}
+    }
+
+    struct QueuedRecoveryFactory {
+        spawns: AtomicUsize,
+        writes: Arc<Mutex<Vec<Value>>>,
+        blocked: Arc<Semaphore>,
+        release: Arc<Semaphore>,
+    }
+
+    impl TransportFactory for QueuedRecoveryFactory {
+        fn spawn(&self) -> Result<TransportSession> {
+            let replacement = self.spawns.fetch_add(1, Ordering::AcqRel) > 0;
+            let (responder, events) = mpsc::channel(8);
+            Ok(TransportSession {
+                child: Box::new(QueuedRecoveryChild {
+                    replacement,
+                    writes: self.writes.clone(),
+                    responder,
+                    blocked: self.blocked.clone(),
+                    release: self.release.clone(),
+                }),
+                events,
+            })
+        }
+    }
+
     fn runtime() -> &'static tokio::runtime::Runtime {
         static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
         RUNTIME.get_or_init(|| tokio::runtime::Runtime::new().unwrap())
@@ -704,11 +884,13 @@ mod tests {
         runtime().block_on(async {
             for behavior in [Behavior::Malformed, Behavior::Terminated] {
                 let (client, _) = client(vec![behavior, Behavior::Valid]);
+                assert_eq!(client.session_epoch(), 0);
                 let value: Value = client
                     .call("router.logs", json!({ "limit": 1 }))
                     .await
                     .unwrap();
                 assert_eq!(value["lines"][0], "safe");
+                assert_eq!(client.session_epoch(), 1);
             }
         });
     }
@@ -846,6 +1028,59 @@ mod tests {
     }
 
     #[test]
+    fn queued_fenced_force_is_rejected_after_prior_call_recovers_session() {
+        runtime().block_on(async {
+            let writes = Arc::new(Mutex::new(Vec::new()));
+            let blocked = Arc::new(Semaphore::new(0));
+            let release = Arc::new(Semaphore::new(0));
+            let client = ManagerClient::new(Arc::new(QueuedRecoveryFactory {
+                spawns: AtomicUsize::new(0),
+                writes: writes.clone(),
+                blocked: blocked.clone(),
+                release: release.clone(),
+            }));
+            let first = {
+                let client = client.clone();
+                tauri::async_runtime::spawn(async move {
+                    client
+                        .call::<Value>("router.logs", json!({ "limit": 1 }))
+                        .await
+                })
+            };
+            blocked.acquire().await.unwrap().forget();
+            let force = {
+                let client = client.clone();
+                tauri::async_runtime::spawn(async move {
+                    client
+                        .call_for_session::<Value>(
+                            FORCE_TERMINATE_OCCUPANT,
+                            json!({ "confirmation_token": "must-not-be-sent" }),
+                            0,
+                        )
+                        .await
+                })
+            };
+            while client.activity().active < 2 {
+                tokio::task::yield_now().await;
+            }
+            release.add_permits(1);
+
+            assert!(first.await.unwrap().is_ok());
+            let error = force.await.unwrap().unwrap_err();
+            assert_eq!(error.code, "OCCUPANT_CHANGED");
+            assert_eq!(error.message, "port occupant changed; inspect again");
+            assert_eq!(client.session_epoch(), 1);
+            let writes = writes.lock().unwrap();
+            assert!(writes
+                .iter()
+                .all(|request| request["method"] != FORCE_TERMINATE_OCCUPANT));
+            assert!(!serde_json::to_string(&*writes)
+                .unwrap()
+                .contains("must-not-be-sent"));
+        });
+    }
+
+    #[test]
     fn failed_recovery_preserves_sidecar_error_and_disables_the_client() {
         runtime().block_on(async {
             let (client, writes) = client(vec![Behavior::Terminated, Behavior::InvalidHandshake]);
@@ -857,6 +1092,7 @@ mod tests {
                     .code,
                 "SIDECAR_INVALID"
             );
+            assert_eq!(client.session_epoch(), 1);
             assert_eq!(
                 client
                     .call::<Value>(ROUTER_START, json!({ "owner": "desktop" }))
@@ -865,6 +1101,7 @@ mod tests {
                     .code,
                 "SIDECAR_INVALID"
             );
+            assert_eq!(client.session_epoch(), 1);
             let writes = writes.lock().unwrap();
             assert_eq!(
                 writes
@@ -896,6 +1133,7 @@ mod tests {
                 };
                 let value: Value = client.call(method, params).await.unwrap();
                 assert_eq!(value["state"], "desktop_owned");
+                assert_eq!(client.session_epoch(), 1);
 
                 let methods: Vec<String> = writes
                     .lock()

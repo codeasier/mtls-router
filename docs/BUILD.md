@@ -70,7 +70,7 @@ encoded or decoded content.
 
 `mtls-router-manager` has one command, `serve`. It reads one line-delimited JSON request at a time from stdin, processes requests sequentially, writes only protocol responses to stdout, and exits cleanly on stdin EOF. Diagnostics belong on stderr or in logs. Never add API keys to manager arguments or environment variables.
 
-Agent configuration uses management protocol v3. Release tests validate generated Claude JSON, opencode JSON, and Codex TOML/auth output through repository parser and snapshot coverage. The exact current stable Agent/schema inputs used by those tests, including source URL, revision, digest, and retrieval date, are pinned in [`internal/manager/agent/testdata/compatibility.json`](../internal/manager/agent/testdata/compatibility.json). Updating a pin requires reviewing the upstream schema, updating renderer/schema tests where necessary, and keeping English/Chinese Agent documentation aligned.
+Agent configuration uses management protocol v4. Release tests validate generated Claude JSON, opencode JSON, and Codex TOML/auth output through repository parser and snapshot coverage. The exact current stable Agent/schema inputs used by those tests, including source URL, revision, digest, and retrieval date, are pinned in [`internal/manager/agent/testdata/compatibility.json`](../internal/manager/agent/testdata/compatibility.json). Updating a pin requires reviewing the upstream schema, updating renderer/schema tests where necessary, and keeping English/Chinese Agent documentation aligned.
 
 ## Local placeholder router
 
@@ -104,7 +104,7 @@ Link these shared metadata variables into both the router and manager:
 - `github.com/codeasier/mtls-router/internal/version.BuildDate`
 - `github.com/codeasier/mtls-router/internal/version.DeploymentID`
 
-`internal/version.ManagementProtocolVersion` is the code-owned protocol ID and is currently `3`; it is not an `-X` linker variable. `DeploymentID` is a non-sensitive identifier for the fixed service environment. A production build must use the same non-empty, non-`dev`, non-`unknown` deployment ID and protocol ID in router, manager, and desktop. External-router reuse is intentionally disabled for default development identities.
+`internal/version.ManagementProtocolVersion` is the code-owned protocol ID and is currently `4`; it is not an `-X` linker variable. `DeploymentID` is a non-sensitive identifier for the fixed service environment. A production build must use the same non-empty, non-`dev`, non-`unknown` deployment ID and protocol ID in router, manager, and desktop. External-router reuse is intentionally disabled for default development identities.
 
 Example router build:
 
@@ -180,7 +180,7 @@ managers.
 For a local native development launch:
 
 ```bash
-DEPLOYMENT_ID=dev VERSION=dev MANAGEMENT_PROTOCOL_VERSION=3 npm run tauri -- dev
+DEPLOYMENT_ID=dev VERSION=dev MANAGEMENT_PROTOCOL_VERSION=4 npm run tauri -- dev
 ```
 
 For a native bundle build, set release metadata explicitly:
@@ -188,7 +188,7 @@ For a native bundle build, set release metadata explicitly:
 ```bash
 DEPLOYMENT_ID=production-service \
 VERSION=v0.2.0 \
-MANAGEMENT_PROTOCOL_VERSION=3 \
+MANAGEMENT_PROTOCOL_VERSION=4 \
 npm run tauri -- build --target aarch64-apple-darwin
 ```
 
@@ -217,7 +217,7 @@ That automated inspection does not install or launch the packaged application. B
 2. Inspect package contents for exactly one architecture-compatible manager and router sidecar and no raw PEM/key files.
 3. Confirm executable permissions on macOS/Linux and current-user installation/launch without elevation.
 4. Recompute and compare packaged sidecar SHA-256 values with the values embedded in the desktop build.
-5. Run `manager.info` and router `/version`; require matching version, non-default deployment ID, and management protocol `3` across desktop, manager, router, setup metadata, and release artifact metadata. Reject every mixed v2/v3 combination before key-bearing Agent requests.
+5. Run `manager.info` and router `/version`; require matching version, non-default deployment ID, and management protocol `4` across desktop, manager, router, setup metadata, and release artifact metadata. Reject every mixed protocol combination before key-bearing Agent requests.
 6. Verify Windows signature status or macOS code signature, notarization, and stapling with native platform tools; explicitly record absent status.
 7. Install and launch, validate first launch, second-instance activation, sidecar failure behavior, tray/close/quit, default autostart, external reuse, unknown port conflict, Agent preview/write/rollback, logs, and uninstall preparation/cleanup.
 8. Confirm Windows uninstall removes current-user autostart. Confirm macOS/Linux **Prepare for uninstall** removes autostart and exits before deletion.
@@ -226,13 +226,51 @@ That automated inspection does not install or launch the packaged application. B
 
 Do not publish if any target lacks package-inspection, signing-status, and successful install/launch evidence. Workflow configuration, an uploaded artifact, a local Tauri build, and package inspection alone are not launch evidence.
 
+## Native port-recovery acceptance
+
+The CI and release target runners execute `go test ./internal/manager/occupant -count=1` natively on Windows, macOS, and Linux. The Windows helper is a child of the test process under the same account and integrity level; it proves same-privilege native inspection, non-destructive terminate-access preflight, exact helper termination, and port release only. It is not cross-privilege, other-user, Service, PPL, root, restricted-procfs, systemd, or launchd proof. CI must not elevate itself or create platform services for these tests.
+
+Retain the following manual evidence from controlled, disposable hosts before release. Record the inspection JSON with confirmation tokens redacted, the rendered action, and the final status or observation. A blocked inspection must omit both `confirmation_token` and `expires_at`; a forceable inspection must include both.
+
+### Windows manual matrix
+
+| Case | Controlled setup | Required evidence |
+| --- | --- | --- |
+| Same-account high integrity | Bind the port from a process launched elevated under the desktop user's account; run the desktop normally. | `manual_stop_required` / `insufficient_privilege`, no token or force action; stopping it from the matching high-integrity context releases the port. |
+| Other user | Bind from a second local account in an interactive session. | `manual_stop_required` / `different_user`, no token, no PID-only downgrade, and no disclosed process metadata. |
+| One Service | Run one disposable Windows Service whose service process owns the listener. | `manual_stop_required` / `service_managed`, `windows_service` / `system`, the exact service name, no token, and a safely quoted `sc.exe` command for manual use in Administrator PowerShell only, not `cmd.exe`. |
+| Shared service host | Host two disposable Services in the exact listener process. | All service names are sorted and shown; no token or process-force action is offered, and guidance stops Services rather than the shared host PID. |
+| Unreadable SID or process identity | Use an approved disposable same-session fixture that withholds the SID or complete process identity while retaining an exact unique listener PID and terminate access. | `windows_pid_only`, token and expiry present only after terminate-access preflight; a known different SID instead remains `manual_stop_required` / `different_user`. Success proves the termination request succeeded and the original listener PID disappeared from the port, not independent full-process exit. |
+| SCM auto recovery | Configure delayed SCM recovery for the disposable listener Service, then terminate it from an authorized external test console. | The Service is blocked before termination; after SCM restarts it, the conflict appears again with the same Service diagnostic. Do not count this externally induced restart as app release-observation proof because the app correctly issued no force token. |
+| PPL or System | Use an approved disposable protected-process fixture, or a System-owned listener, without weakening host protections. | No token or force action. Accept `insufficient_privilege` when terminate-access preflight is denied; accept `identity_unavailable` or `protected_process` when another identity/protection boundary blocks recovery. Record which boundary produced the result. |
+
+### Linux manual matrix
+
+| Case | Controlled setup | Required evidence |
+| --- | --- | --- |
+| User service | Bind from a disposable `systemd --user` `.service`. | `manual_stop_required` / `service_managed`, `systemd_user` / `user`, exact unit name, no token, and user-service stop guidance. |
+| System service | Bind from a disposable system `.service`. | `manual_stop_required` / `service_managed`, `systemd_system` / `system`, exact unit name, no token, and system-service stop guidance. |
+| `Restart=on-failure` | Add a delayed restart policy to the disposable unit and kill it from an authorized external console. | The unit is blocked before the kill and the conflict returns after restart with the same unit diagnostic. This external kill is not app release-observation proof because a classified unit is never forceable. |
+| Root owner | Bind from an ordinary root-owned process that is not the managed router. | `manual_stop_required` / `different_user`, no token or force action. |
+| Restricted procfs | Mount or configure a disposable environment so listener identity files are unreadable to the desktop user. | `unavailable` / `identity_unavailable`, no token, and no partial identity is treated as forceable. |
+| Custom slice | Place a system unit below valid custom `.slice` ancestors, such as `codeasier.slice/router.slice`. | The exact `.service` is still classified as `systemd_system`; valid custom slice ancestry does not hide supervision. |
+| Delegated service cgroup | Move a child below the owning `.service` cgroup while retaining valid delegated descendants. | The owning unit is still classified with the correct user/system scope; delegated children do not become ordinary forceable processes. |
+
+### macOS manual matrix
+
+| Case | Controlled setup | Required evidence |
+| --- | --- | --- |
+| Current user | Bind from an ordinary current-user process with no supervisor. | `force_terminate`, token and expiry present, verified original process identity absent and initial release, followed by `released` after sampled checks over about 10 seconds detect no reoccupation. |
+| Other user | Bind from a second local account. | `manual_stop_required` / `different_user`, no token or force action, and no disclosed process metadata. |
+| launchd `KeepAlive` | Bind from a disposable current-user launch agent configured for delayed restart. | The ordinary same-user process is forceable without a guessed launchd label; after verified process absence and initial release, a replacement PID seen by a sampled check produces `reoccupied` during the observation window. |
+
 ## Release workflow
 
 The current `.github/workflows/release.yml` builds router and manager binaries for all six Go targets and creates six platform archives containing the exact router/manager pair and setup script. In parallel, six native runners build and inspect Windows x86_64/arm64 NSIS installers, macOS Intel/Apple Silicon DMGs, and Linux x86_64/arm64 AppImages. A manual dispatch is validation-only and may select one paired CLI/desktop target plus an optional HTTPS upstream override. A version tag always ignores validation overrides, waits for all 12 build jobs, verifies the six desktop package checksums, assembles one `SHA256SUMS`, and publishes and mirrors the CLI and desktop assets plus six signing-status files.
 
 Production CLI and desktop sidecars require repository secrets `CLIENT_CERT_PEM`, `CLIENT_KEY_PEM`, and `UPSTREAM_CA_PEM`, plus variables `UPSTREAM_URL` and a non-default `DEPLOYMENT_ID`. Optional repository variable `AGENT_MODEL_PRESET_BASE64` supplies the same preset to every standalone manager and desktop manager sidecar; empty is valid and means no preset. Release preflight validates a configured value through the manager loader before matrix builds without printing its contents. Optional repository variable `SIMPLIFY` follows the normalization rules above and defaults to `True` when unset or empty. It is normalized before matrix fan-out and propagated to every standalone and desktop manager as the same canonical value; the desktop build script may idempotently validate and normalize it again. Router builds never receive either manager-only value. Optional platform credentials select the signed/notarized release branches described above.
 
-Each CLI and desktop matrix producer emits code-owned protocol metadata. `scripts/package-release.sh` requires exactly one metadata file per producer and requires every file to declare schema `1` and management protocol `3` before it assembles archives. This preflight is shared by normal and recovery publication, so a valid but mixed v2/v3 artifact set is not publishable.
+Each CLI and desktop matrix producer emits code-owned protocol metadata. `scripts/package-release.sh` requires exactly one metadata file per producer and requires every file to declare schema `1` and management protocol `4` before it assembles archives. This preflight is shared by normal and recovery publication, so a valid but mixed-protocol artifact set is not publishable.
 
 Set release inputs with `gh`:
 

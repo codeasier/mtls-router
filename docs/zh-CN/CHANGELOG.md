@@ -4,26 +4,32 @@
 
 ## v0.2.1 - 2026-07-24
 
-本次发布优化桌面端导航与 Agent 展示，改进可读性和滚动行为，并在桌面端所属 router 启动失败时保留有界且经过脱敏的诊断信息。
+本次发布优化桌面端导航与 Agent 展示，改进可读性和滚动行为，保留有界启动诊断，并新增采用 protocol-v4 诊断的 supervisor 感知端口冲突恢复。
 
 ### 新增
 
 - 新增可折叠桌面端侧栏并持久化用户偏好，同时确保紧凑图标栏仍可访问全部功能区。
+- 新增结构化端口占用恢复 action/reason、带有界 Windows Service/Linux systemd 标识的人工停止引导，以及在约 10 秒内定期采样并报告是否检测到重新占用的桌面端观察。
 
 ### 变更
 
 - 压缩 Agent 选择卡片，新增 Claude Code、OpenCode 和 Codex 官方 Logo，并统一面向用户的 `OpenCode` 名称，不改变内部标识符或配置路径。
+- 将匹配的 router、manager、setup、release metadata 和桌面端管理契约推进到 protocol v4；仍拒绝混合 generation。
 
 ### 修复
 
 - 增大 Agent 配置标签、提示、模型标识符和控件的尺寸，提升可读性。
 - 在桌面和移动布局中保持桌面端 tab header 固定，并将滚动限制在内容区域。
 - 保留 router 启动失败时有界且经过脱敏的输出，包括 Windows 立即退出和继承 handle 的场景；通过 router 状态和运行日志提供诊断信息，同时避免混入外部 CLI router 的输出。
+- Windows 已知其他用户 SID 时不再降级为仅 PID 恢复；SID 或完整进程身份不可读后，只有终止权限预检成功才允许仅 PID，并分别报告权限、终止和端口释放超时错误。
+- 保持 supervisor 恢复不执行命令且不提权：复制的 Windows 命令只按管理员 PowerShell 安全引用，SCM/systemd 只提供人工引导，macOS 绝不猜测 launchd label。
+- 按模式限定恢复证据：完整身份模式证明进程不存在且端口首次释放；Windows 仅 PID 模式证明终止请求成功且原 listener PID 消失，采样观察只报告未检测到重新占用，不代表连续稳定。
 
 ### 测试
 
 - 新增桌面端回归覆盖，验证侧栏折叠及偏好持久化、配置文字、控件尺寸、滚动归属和失败日志导航。
 - 扩展 manager lifecycle 和 app 测试，覆盖启动输出排空、清理、脱敏、日志合并和 Windows 立即退出行为。
+- 新增原生和跨平台覆盖，验证结构化占用诊断、supervisor 分类、权限预检、分模式终止证据、采样释放观察、重新占用、稳定错误和 protocol-v4 产物一致性。
 
 ---
 

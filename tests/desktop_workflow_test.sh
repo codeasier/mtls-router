@@ -52,19 +52,19 @@ contains "$CI" 'sudo apt-get install -y libappindicator3-dev librsvg2-dev libweb
 contains "$RELEASE" 'sudo apt-get install -y libappindicator3-dev librsvg2-dev libwebkit2gtk-4.1-dev xdg-utils'
 contains "$CI" 'npm exec tauri -- build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --no-sign --ci'
 contains "$CI" './desktop/scripts/verify-package.sh ${{ matrix.target }}'
-for metadata in 'VERSION: 0.1.0' 'DEPLOYMENT_ID: dev' "MANAGEMENT_PROTOCOL_VERSION: '3'"; do
+for metadata in 'VERSION: 0.1.0' 'DEPLOYMENT_ID: dev' "MANAGEMENT_PROTOCOL_VERSION: '4'"; do
   contains "$CI" "$metadata"
 done
-contains "$RELEASE" "MANAGEMENT_PROTOCOL_VERSION: '3'"
+contains "$RELEASE" "MANAGEMENT_PROTOCOL_VERSION: '4'"
 contains "$RELEASE" "printf 'VERSION=%s\\n' \"\$version\" >>\"\$GITHUB_ENV\""
 contains "$ROOT/desktop/scripts/verify-package.sh" '"$packaged_desktop" --verify-manager-handshake'
 contains "$ROOT/desktop/src-tauri/src/main.rs" '"--verify-manager-handshake"'
 contains "$ROOT/desktop/src-tauri/src/main.rs" 'verify_manager_handshake()'
-contains "$ROOT/desktop/scripts/build-sidecars.sh" 'management_protocol_version="${MANAGEMENT_PROTOCOL_VERSION:-3}"'
+contains "$ROOT/desktop/scripts/build-sidecars.sh" 'management_protocol_version="${MANAGEMENT_PROTOCOL_VERSION:-4}"'
 contains "$ROOT/desktop/scripts/build-sidecars.sh" 'node -p "require('\''./package.json'\'').version"'
 contains "$ROOT/desktop/scripts/verify-package.sh" 'node -p "require('\''./package.json'\'').version"'
 contains "$PREPARE" 'const root = process.cwd();'
-contains "$ROOT/desktop/scripts/verify-package.sh" 'expected_protocol="${MANAGEMENT_PROTOCOL_VERSION:-3}"'
+contains "$ROOT/desktop/scripts/verify-package.sh" 'expected_protocol="${MANAGEMENT_PROTOCOL_VERSION:-4}"'
 contains "$ROOT/desktop/scripts/verify-package.sh" 'desktop PE subsystem is not IMAGE_SUBSYSTEM_WINDOWS_GUI'
 contains "$ROOT/desktop/src-tauri/build.rs" 'BinaryFormat::Pe'
 contains "$ROOT/desktop/src-tauri/src/sidecar.rs" 'BinaryFormat::Pe'
@@ -473,17 +473,18 @@ assert_exact_lines 'Rust matrix rows (os|runner)' \
   'macOS|macos-15' \
   'Windows|windows-2025'
 
-windows_occupant_block="$(workflow_step "$CI" 'Run Windows native occupant tests')"
-[[ "$windows_occupant_block" == *"if: runner.os == 'Windows'"* ]] || \
-  fail 'native occupant tests must run only on Windows'
-[[ "$windows_occupant_block" == *'run: go test ./internal/manager/occupant -count=1'* ]] || \
-  fail 'Windows native occupant step must run the uncached occupant package tests'
+native_occupant_block="$(workflow_step "$CI" 'Run native occupant tests')"
+[[ "$native_occupant_block" == *'run: go test ./internal/manager/occupant -count=1'* ]] || \
+  fail 'native occupant step must run the uncached occupant package tests'
+if [[ "$native_occupant_block" == *'if:'* ]]; then
+  fail 'native occupant tests must run on every Rust matrix runner'
+fi
 setup_go_line="$(printf '%s\n' "$ci_rust_block" | awk '/uses: actions\/setup-go@/{print NR; exit}')"
-windows_occupant_line="$(printf '%s\n' "$ci_rust_block" | awk '/name: Run Windows native occupant tests/{print NR; exit}')"
+native_occupant_line="$(printf '%s\n' "$ci_rust_block" | awk '/name: Run native occupant tests/{print NR; exit}')"
 rust_test_line="$(printf '%s\n' "$ci_rust_block" | awk '/name: Run Rust tests/{print NR; exit}')"
-[[ -n "$setup_go_line" && -n "$windows_occupant_line" && -n "$rust_test_line" && \
-  "$setup_go_line" -lt "$windows_occupant_line" && "$windows_occupant_line" -lt "$rust_test_line" ]] || \
-  fail 'Windows native occupant tests must run after setup-go and before Rust tests'
+[[ -n "$setup_go_line" && -n "$native_occupant_line" && -n "$rust_test_line" && \
+  "$setup_go_line" -lt "$native_occupant_line" && "$native_occupant_line" -lt "$rust_test_line" ]] || \
+  fail 'native occupant tests must run after setup-go and before Rust tests'
 
 assert_exact_lines 'CI package matrix rows (runner|target|bundles)' \
   "$(matrix_rows "$ci_package_block" runner target bundles)" \
@@ -517,6 +518,14 @@ done
 [[ "$release_desktop_block" == *'needs: prepare'* ]] || fail 'release desktop build must depend on matrix preparation'
 [[ "$release_desktop_block" == *'matrix: ${{ fromJSON(needs.prepare.outputs.desktop-matrix) }}'* ]] || \
   fail 'release desktop build must consume the prepared matrix'
+release_native_occupant_block="$(workflow_step "$RELEASE" 'Run native occupant tests')"
+[[ "$release_desktop_block" == *'name: Run native occupant tests'* ]] || \
+  fail 'native occupant tests must belong to the release desktop target matrix'
+[[ "$release_native_occupant_block" == *'run: go test ./internal/manager/occupant -count=1'* ]] || \
+  fail 'release desktop runners must run the uncached native occupant package tests'
+if [[ "$release_native_occupant_block" == *'if:'* ]]; then
+  fail 'release native occupant tests must run on every selected desktop target runner'
+fi
 [[ "$release_prepare_block" == *'simplify: ${{ steps.simplify.outputs.simplify }}'* ]] || \
   fail 'release prepare must expose normalized SIMPLIFY'
 [[ "$(grep -Fxc '      simplify: ${{ steps.simplify.outputs.simplify }}' "$RELEASE")" -eq 1 ]] || \
@@ -552,14 +561,14 @@ assert_npm_job frontend "$ci_frontend_block"
 assert_npm_job desktop-package "$ci_package_block"
 assert_npm_job release-desktop "$release_desktop_block"
 
-for metadata in 'VERSION: 0.1.0' 'DEPLOYMENT_ID: dev' "MANAGEMENT_PROTOCOL_VERSION: '3'"; do
+for metadata in 'VERSION: 0.1.0' 'DEPLOYMENT_ID: dev' "MANAGEMENT_PROTOCOL_VERSION: '4'"; do
   [[ "$ci_package_block" == *"$metadata"* ]] || fail "desktop-package job missing inherited $metadata"
 done
 if [[ "$(printf '%s' "$ci_package_block" | grep -Fc 'VERSION: 0.1.0')" -ne 1 ]]; then
   fail 'CI desktop VERSION must be defined once at package job scope'
 fi
 
-for metadata in 'DEPLOYMENT_ID: ${{ vars.DEPLOYMENT_ID }}' "MANAGEMENT_PROTOCOL_VERSION: '3'"; do
+for metadata in 'DEPLOYMENT_ID: ${{ vars.DEPLOYMENT_ID }}' "MANAGEMENT_PROTOCOL_VERSION: '4'"; do
   [[ "$release_desktop_block" == *"$metadata"* ]] || fail "release desktop job missing inherited $metadata"
 done
 [[ "$release_desktop_block" == *"printf 'VERSION=%s\\n' \"\$version\" >>\"\$GITHUB_ENV\""* ]] || \

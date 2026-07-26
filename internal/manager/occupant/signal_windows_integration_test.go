@@ -18,7 +18,7 @@ import (
 
 const windowsSignalHelperEnv = "MTLS_ROUTER_WINDOWS_SIGNAL_HELPER"
 
-func TestWindowsNativeSignalReleasesHelperListener(t *testing.T) {
+func TestWindowsNativePreflightAndSignalReleaseHelperListener(t *testing.T) {
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -91,6 +91,20 @@ func TestWindowsNativeSignalReleasesHelperListener(t *testing.T) {
 		t.Fatalf("helper address %s never accepted a connection: %v", address, err)
 	}
 	cancelProbe()
+	if err := preflightTerminatePIDNative(cmd.Process.Pid); err != nil {
+		t.Fatalf("preflight helper PID %d: %v", cmd.Process.Pid, err)
+	}
+	connection, err := net.DialTimeout("tcp4", address, 200*time.Millisecond)
+	if err != nil {
+		t.Fatalf("preflight changed helper listener %s: %v", address, err)
+	}
+	_ = connection.Close()
+	select {
+	case err := <-wait:
+		exited = true
+		t.Fatalf("preflight terminated helper PID %d: %v", cmd.Process.Pid, err)
+	default:
+	}
 
 	if err := signalPIDNative(cmd.Process.Pid); err != nil {
 		t.Fatalf("terminate helper PID %d: %v", cmd.Process.Pid, err)

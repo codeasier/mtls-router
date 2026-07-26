@@ -38,7 +38,7 @@ func TestTrustedRouterHelperProcess(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/version":
-			_ = json.NewEncoder(w).Encode(map[string]any{"version": "fixture", "pid": os.Getpid(), "deployment_id": "deployment-test", "management_protocol_version": "3"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"version": "fixture", "pid": os.Getpid(), "deployment_id": "deployment-test", "management_protocol_version": "4"})
 		case "/health":
 			_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 		case "/v1/models":
@@ -424,7 +424,7 @@ func startTrustedRouter(t *testing.T, dataDir, catalogMode string) (string, stri
 	if err := state.Write(filepath.Join(cliDir, "setup-state.json"), state.RouterState{
 		PID: router.Process.Pid, Owner: "cli", ListenAddr: "http://" + authority,
 		BinaryPath: identity.Executable, ProcessStartedAt: identity.StartedAt, ProcessExecutable: identity.Executable,
-		RouterVersion: "fixture", DeploymentID: "deployment-test", ManagementProtocolVersion: "3",
+		RouterVersion: "fixture", DeploymentID: "deployment-test", ManagementProtocolVersion: "4",
 	}); err != nil {
 		t.Fatal(err)
 	}

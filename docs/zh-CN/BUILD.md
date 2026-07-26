@@ -58,7 +58,7 @@ Manager 可从 `AGENT_MODEL_PRESET_BASE64` 接收一份可选构建期 Agent mod
 
 `mtls-router-manager` 只有一个命令 `serve`。它从 stdin 逐行读取 JSON 请求，串行处理，只把协议响应写到 stdout，并在 stdin EOF 时正常退出。诊断应写 stderr 或日志。绝不能把 API key 加入 manager 参数或环境变量。
 
-Agent 配置使用 management protocol v3。Release 测试通过仓库 parser 与 snapshot 覆盖验证生成的 Claude JSON、opencode JSON 和 Codex TOML/auth 输出。测试使用的精确 current stable Agent/schema 输入，包括 source URL、revision、digest 和 retrieval date，固定在 [`internal/manager/agent/testdata/compatibility.json`](../../internal/manager/agent/testdata/compatibility.json)。更新 pin 时必须审查上游 schema，按需更新 renderer/schema 测试，并保持中英文 Agent 文档一致。
+Agent 配置使用 management protocol v4。Release 测试通过仓库 parser 与 snapshot 覆盖验证生成的 Claude JSON、opencode JSON 和 Codex TOML/auth 输出。测试使用的精确 current stable Agent/schema 输入，包括 source URL、revision、digest 和 retrieval date，固定在 [`internal/manager/agent/testdata/compatibility.json`](../../internal/manager/agent/testdata/compatibility.json)。更新 pin 时必须审查上游 schema，按需更新 renderer/schema 测试，并保持中英文 Agent 文档一致。
 
 ## 本地占位 router
 
@@ -92,7 +92,7 @@ Router 不在运行时读取证书。以下仅 router 使用的值通过 linker 
 - `github.com/codeasier/mtls-router/internal/version.BuildDate`
 - `github.com/codeasier/mtls-router/internal/version.DeploymentID`
 
-`internal/version.ManagementProtocolVersion` 是代码内 protocol ID，当前为 `3`，不是可用 `-X` 注入的 linker 变量。`DeploymentID` 是固定服务环境的非敏感标识。生产构建必须让 router、manager 和 desktop 使用相同的非空、非 `dev`、非 `unknown` deployment ID 和 protocol ID。默认开发身份会有意禁用外部 router 复用。
+`internal/version.ManagementProtocolVersion` 是代码内 protocol ID，当前为 `4`，不是可用 `-X` 注入的 linker 变量。`DeploymentID` 是固定服务环境的非敏感标识。生产构建必须让 router、manager 和 desktop 使用相同的非空、非 `dev`、非 `unknown` deployment ID 和 protocol ID。默认开发身份会有意禁用外部 router 复用。
 
 Router 构建示例：
 
@@ -164,7 +164,7 @@ src-tauri/binaries/mtls-router-<target-triple>[.exe]
 本机开发启动：
 
 ```bash
-DEPLOYMENT_ID=dev VERSION=dev MANAGEMENT_PROTOCOL_VERSION=3 npm run tauri -- dev
+DEPLOYMENT_ID=dev VERSION=dev MANAGEMENT_PROTOCOL_VERSION=4 npm run tauri -- dev
 ```
 
 本机 bundle 构建需要显式设置 release 元数据：
@@ -172,7 +172,7 @@ DEPLOYMENT_ID=dev VERSION=dev MANAGEMENT_PROTOCOL_VERSION=3 npm run tauri -- dev
 ```bash
 DEPLOYMENT_ID=production-service \
 VERSION=v0.2.0 \
-MANAGEMENT_PROTOCOL_VERSION=3 \
+MANAGEMENT_PROTOCOL_VERSION=4 \
 npm run tauri -- build --target aarch64-apple-darwin
 ```
 
@@ -201,7 +201,7 @@ Release workflow 实现了有条件的平台签名和状态验证：
 2. 检查包内容，确保只有一组架构兼容的 manager/router sidecar，且不存在原始 PEM/key 文件。
 3. 确认 macOS/Linux 执行权限，并验证无需提权的当前用户安装/启动。
 4. 重新计算打包 sidecar SHA-256，并与桌面构建内嵌值比较。
-5. 运行 `manager.info` 和 router `/version`；要求 desktop、manager、router、setup metadata 和 release artifact metadata 的版本、非默认 deployment ID 及 management protocol `3` 一致。在任何 key-bearing Agent 请求前拒绝全部混合 v2/v3 组合。
+5. 运行 `manager.info` 和 router `/version`；要求 desktop、manager、router、setup metadata 和 release artifact metadata 的版本、非默认 deployment ID 及 management protocol `4` 一致。在任何 key-bearing Agent 请求前拒绝全部 protocol 混合组合。
 6. 使用平台原生工具验证 Windows 签名，或 macOS code signature、notarization 和 stapling；状态缺失时必须明确记录。
 7. 安装并启动，验证首次启动、第二实例激活、sidecar 失败、托盘/关闭/退出、默认 autostart、外部复用、未知端口冲突、Agent 预览/写入/回滚、日志以及卸载准备/清理。
 8. 确认 Windows 卸载移除当前用户 autostart。确认 macOS/Linux **准备卸载**在删除前移除 autostart 并退出。
@@ -210,13 +210,51 @@ Release workflow 实现了有条件的平台签名和状态验证：
 
 任何目标缺少包检查、签名状态和成功安装/启动证据时都不能发布。Workflow 配置、已上传 artifact、本地 Tauri 构建和包检查本身都不属于启动证据。
 
+## 原生端口恢复验收
+
+CI 和 release target runner 会在 Windows、macOS、Linux 上原生执行 `go test ./internal/manager/occupant -count=1`。Windows helper 是测试进程在相同账号、相同完整性级别下创建的子进程；它只能证明同权限原生检查、无副作用的终止权限预检、精确终止 helper 和释放端口。它不能证明跨权限、其他用户、Service、PPL、root、受限 procfs、systemd 或 launchd 行为。CI 不得为了这些测试提升权限或创建平台服务。
+
+发布前必须从受控、可销毁的主机保留下列人工证据。记录已抹除 confirmation token 的 inspection JSON、页面显示的操作，以及最终状态或观察结果。阻断 inspection 必须同时省略 `confirmation_token` 和 `expires_at`；可强制终止的 inspection 必须同时包含两者。
+
+### Windows 人工矩阵
+
+| 场景 | 受控设置 | 必需证据 |
+| --- | --- | --- |
+| 同账号高完整性 | 用桌面用户账号提升权限后启动进程并占用端口；桌面应用保持普通权限。 | `manual_stop_required` / `insufficient_privilege`，无 token 或强制操作；从匹配的高完整性上下文停止后端口释放。 |
+| 其他用户 | 在交互会话中用第二个本地账号占用端口。 | `manual_stop_required` / `different_user`，无 token，不降级为 PID-only，且不泄露进程元数据。 |
+| 单个 Service | 运行一个可销毁的 Windows Service，并由其 service process 持有 listener。 | `manual_stop_required` / `service_managed`、`windows_service` / `system`、精确 service name、无 token，并显示经过安全引用且仅供管理员 PowerShell 人工使用的 `sc.exe` 命令；不能用于 `cmd.exe`。 |
+| 共享 service host | 让两个可销毁的 Service 共享持有 listener 的同一进程。 | 全部 service name 排序后显示；不提供 token 或按进程强制终止，指引停止 Service 而不是共享 host PID。 |
+| SID 或进程身份不可读 | 使用获批的可销毁同 session fixture，在保留精确唯一 listener PID 和 terminate access 的同时隐藏 SID 或完整进程身份。 | 只有终止权限预检成功后才返回带 token 和 expiry 的 `windows_pid_only`；已知不同 SID 仍必须返回 `manual_stop_required` / `different_user`。成功只证明终止请求成功且原 listener PID 已从端口消失，不独立证明进程完全退出。 |
+| SCM 自动恢复 | 为可销毁的 listener Service 配置延迟 SCM recovery，再从有权限的外部测试终端终止它。 | 终止前 Service 已被阻断；SCM 重启后冲突再次出现，并保持同一 Service 诊断。由于应用正确地没有签发 force token，不得把此外部触发的重启记作应用 release observation 证据。 |
+| PPL 或 System | 使用获批的可销毁 protected-process fixture，或 System 持有的 listener，且不得削弱主机保护。 | 不提供 token 或强制操作。终止权限预检被拒绝时接受 `insufficient_privilege`；其他身份/保护边界阻断恢复时接受 `identity_unavailable` 或 `protected_process`。记录实际产生结果的权限边界。 |
+
+### Linux 人工矩阵
+
+| 场景 | 受控设置 | 必需证据 |
+| --- | --- | --- |
+| 用户 service | 从可销毁的 `systemd --user` `.service` 占用端口。 | `manual_stop_required` / `service_managed`、`systemd_user` / `user`、精确 unit name、无 token，并显示 user service 停止引导。 |
+| 系统 service | 从可销毁的系统 `.service` 占用端口。 | `manual_stop_required` / `service_managed`、`systemd_system` / `system`、精确 unit name、无 token，并显示 system service 停止引导。 |
+| `Restart=on-failure` | 为可销毁 unit 添加延迟 restart policy，并从有权限的外部终端终止它。 | kill 前 unit 已被阻断，restart 后冲突以同一 unit 诊断返回。由于已分类 unit 绝不可强制终止，此外部 kill 不是应用 release observation 证据。 |
+| root owner | 从不属于托管 router 的普通 root 进程占用端口。 | `manual_stop_required` / `different_user`，无 token 或强制操作。 |
+| 受限 procfs | 在可销毁环境中 mount 或配置 procfs，使桌面用户无法读取 listener 身份文件。 | `unavailable` / `identity_unavailable`，无 token，且不把部分身份当作可强制终止目标。 |
+| 自定义 slice | 把系统 unit 放在合法的自定义 `.slice` 祖先下，例如 `codeasier.slice/router.slice`。 | 精确 `.service` 仍归类为 `systemd_system`；合法自定义 slice 祖先不会隐藏 supervisor。 |
+| delegated service cgroup | 在保留合法 delegated descendants 的情况下，把子进程放到所属 `.service` cgroup 之下。 | 仍能按正确 user/system scope 识别所属 unit；delegated child 不会变成普通可强制终止进程。 |
+
+### macOS 人工矩阵
+
+| 场景 | 受控设置 | 必需证据 |
+| --- | --- | --- |
+| 当前用户 | 从无 supervisor 的普通当前用户进程占用端口。 | `force_terminate`，token 与 expiry 同时存在，已验证原进程身份不存在且端口首次释放；约 10 秒采样检查未检测到重新占用后为 `released`。 |
+| 其他用户 | 从第二个本地账号占用端口。 | `manual_stop_required` / `different_user`，无 token 或强制操作，且不泄露进程元数据。 |
+| launchd `KeepAlive` | 从配置了延迟 restart 的可销毁当前用户 launch agent 占用端口。 | 不猜测 launchd label，普通同用户进程可强制终止；确认进程身份不存在并首次释放后，采样检查发现 replacement PID 时在观察窗口内产生 `reoccupied`。 |
+
 ## Release workflow
 
 当前 `.github/workflows/release.yml` 为六个 Go 目标构建 router 和 manager，并创建六个平台压缩包；每个包包含精确 router/manager 二进制对和安装脚本。同时，六个原生 runner 会构建并检查 Windows x86_64/arm64 NSIS 安装器、macOS Intel/Apple Silicon DMG，以及 Linux x86_64/arm64 AppImage。手工 dispatch 只用于验证，可以选择一组配套 CLI/desktop 目标及可选 HTTPS upstream override。版本 tag 始终忽略验证 override，等待全部 12 个构建 job，验证六个桌面包 checksum，汇总一个 `SHA256SUMS`，然后发布并镜像 CLI、桌面 asset 和六个签名状态文件。
 
 生产 CLI 和桌面 sidecar 需要 repository secrets `CLIENT_CERT_PEM`、`CLIENT_KEY_PEM`、`UPSTREAM_CA_PEM`，以及 variables `UPSTREAM_URL` 和非默认 `DEPLOYMENT_ID`。可选 repository variable `AGENT_MODEL_PRESET_BASE64` 会向每个 standalone manager 和 desktop manager sidecar 提供相同 preset；空值有效并表示无 preset。Release preflight 会在 matrix build 前通过 manager loader 校验已配置的值，且不打印其内容。可选 repository variable `SIMPLIFY` 遵循上述规范化规则，未设置或为空时默认为 `True`。它会在 matrix fan-out 前规范化，并以同一个规范值传给所有 standalone 和 desktop manager；desktop 构建脚本可以再次执行幂等校验和规范化。Router build 绝不会收到这两个仅供 manager 使用的值。可选平台凭据会选择上文所述的签名/notarization release 分支。
 
-每个 CLI 和 desktop matrix producer 都会生成 code-owned protocol metadata。`scripts/package-release.sh` 在组装 archive 前要求每个 producer 恰好一个 metadata 文件，并要求全部文件声明 schema `1` 与 management protocol `3`。正常发布和恢复发布共用此 preflight，因此有效但混合 v2/v3 的 artifact set 无法发布。
+每个 CLI 和 desktop matrix producer 都会生成 code-owned protocol metadata。`scripts/package-release.sh` 在组装 archive 前要求每个 producer 恰好一个 metadata 文件，并要求全部文件声明 schema `1` 与 management protocol `4`。正常发布和恢复发布共用此 preflight，因此有效但 protocol 混合的 artifact set 无法发布。
 
 使用 `gh` 设置 release 输入：
 

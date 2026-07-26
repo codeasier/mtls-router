@@ -496,10 +496,20 @@ func (a *App) routerInspectOccupant(ctx context.Context, params json.RawMessage)
 	if err != nil {
 		return nil, mapOccupantError(err)
 	}
-	return protocol.RouterOccupantInspectionResult{
+	result := protocol.RouterOccupantInspectionResult{
 		PID: inspection.PID, VerificationMode: string(inspection.VerificationMode), ProcessName: inspection.ProcessName, Executable: inspection.Executable,
-		ListenAddr: inspection.ListenAddr, ConfirmationToken: inspection.ConfirmationToken, ExpiresAt: inspection.ExpiresAt,
-	}, nil
+		ListenAddr: inspection.ListenAddr,
+		Recovery: protocol.RouterOccupantRecovery{
+			Action: string(inspection.Recovery.Action), Reason: string(inspection.Recovery.Reason),
+		},
+		ConfirmationToken: inspection.ConfirmationToken, ExpiresAt: inspection.ExpiresAt,
+	}
+	if inspection.Supervisor != nil {
+		result.Supervisor = &protocol.RouterOccupantSupervisor{
+			Kind: string(inspection.Supervisor.Kind), Scope: string(inspection.Supervisor.Scope), Identifiers: inspection.Supervisor.Identifiers,
+		}
+	}
+	return result, nil
 }
 
 func protectedStatePID(paths ...string) func(int) bool {
@@ -533,7 +543,7 @@ func (a *App) routerForceTerminateOccupant(ctx context.Context, params json.RawM
 	if err != nil {
 		return nil, mapOccupantError(err)
 	}
-	return protocol.RouterOccupantTerminationResult{State: result.State}, nil
+	return protocol.RouterOccupantTerminationResult{Termination: result.Termination, PortState: result.PortState}, nil
 }
 
 func (a *App) agentDetect(ctx context.Context, params json.RawMessage) (any, *protocol.Error) {
@@ -1128,6 +1138,7 @@ func mapOccupantError(err error) *protocol.Error {
 		{occupant.ErrIdentityUnavailable, protocol.CodeOccupantIdentityUnavailable, "port occupant identity is unavailable"},
 		{occupant.ErrChanged, protocol.CodeOccupantChanged, "port occupant changed"},
 		{occupant.ErrProtected, protocol.CodeOccupantProtected, "port occupant is protected"},
+		{occupant.ErrPermissionDenied, protocol.CodeOccupantPermissionDenied, "permission to terminate port occupant was denied"},
 		{occupant.ErrTerminationFailed, protocol.CodeOccupantTerminationFailed, "port occupant could not be terminated"},
 		{occupant.ErrPortReleaseTimeout, protocol.CodePortReleaseTimeout, "router port was not released"},
 		{occupant.ErrConfirmationExpired, protocol.CodeConfirmationExpired, "occupant confirmation expired"},

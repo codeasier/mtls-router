@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"syscall"
+	"unicode/utf16"
 	"unsafe"
 
 	"github.com/codeasier/mtls-router/internal/manager/process"
@@ -15,11 +16,22 @@ import (
 
 var getExtendedTCPTable = windows.NewLazySystemDLL("iphlpapi.dll").NewProc("GetExtendedTcpTable")
 
-const windowsTCPRowOwnerPIDSize = 24
+const (
+	windowsTCPRowOwnerPIDSize = 24
+	windowsSCMBufferLimit     = 1024 * 1024
+)
+
+type windowsSCMDependencies struct {
+	open        func() (windows.Handle, error)
+	enumerate   func(windows.Handle, []byte) (uint32, uint32, error)
+	closeHandle func(windows.Handle) error
+}
 
 func inspectNative(ctx context.Context, listenAddr string) (Target, error) {
 	return inspectWindowsTarget(ctx, listenAddr, windowsTargetDependencies{
-		inspectPIDOwner: inspectPIDOwnerNative,
+		inspectPIDOwner:  inspectPIDOwnerNative,
+		servicesForPID:   servicesForPIDNative,
+		processSessionID: processSessionIDNative,
 		processSID: func(pid int) (string, error) {
 			windowsPID, err := windowsPID(pid)
 			if err != nil {
@@ -27,9 +39,120 @@ func inspectNative(ctx context.Context, listenAddr string) (Target, error) {
 			}
 			return processSID(windowsPID)
 		},
-		currentSID:     currentUserNative,
-		inspectProcess: process.Inspect,
+		currentSID:         currentUserNative,
+		inspectProcess:     process.Inspect,
+		preflightTerminate: preflightTerminatePIDNative,
 	})
+}
+
+func processSessionIDNative(pid int) (uint32, error) {
+	windowsPID, err := windowsPID(pid)
+	if err != nil {
+		return 0, err
+	}
+	var sessionID uint32
+	if err := windows.ProcessIdToSessionId(windowsPID, &sessionID); err != nil {
+		return 0, mapWindowsProcessError(err)
+	}
+	return sessionID, nil
+}
+
+func servicesForPIDNative(pid int) ([]string, error) {
+	return servicesForPIDWithDependencies(pid, windowsSCMDependencies{
+		open: func() (windows.Handle, error) {
+			return windows.OpenSCManager(nil, nil, windows.SC_MANAGER_ENUMERATE_SERVICE)
+		},
+		enumerate: func(handle windows.Handle, buffer []byte) (uint32, uint32, error) {
+			var data *byte
+			if len(buffer) > 0 {
+				data = &buffer[0]
+			}
+			var needed, returned uint32
+			err := windows.EnumServicesStatusEx(handle, windows.SC_ENUM_PROCESS_INFO, windows.SERVICE_WIN32, windows.SERVICE_STATE_ALL, data, uint32(len(buffer)), &needed, &returned, nil, nil)
+			return needed, returned, err
+		},
+		closeHandle: windows.CloseServiceHandle,
+	})
+}
+
+func servicesForPIDWithDependencies(pid int, deps windowsSCMDependencies) (names []string, err error) {
+	if _, err := windowsPID(pid); err != nil {
+		return nil, err
+	}
+	handle, err := deps.open()
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := deps.closeHandle(handle); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
+
+	var buffer []byte
+	for attempts := 0; attempts < 3; attempts++ {
+		needed, returned, enumerateErr := deps.enumerate(handle, buffer)
+		if enumerateErr == nil {
+			return decodeWindowsServicesForPID(buffer, returned, pid)
+		}
+		if !errors.Is(enumerateErr, syscall.ERROR_MORE_DATA) || needed <= uint32(len(buffer)) || needed > windowsSCMBufferLimit {
+			if errors.Is(enumerateErr, syscall.ERROR_MORE_DATA) {
+				return nil, ErrIdentityUnavailable
+			}
+			return nil, enumerateErr
+		}
+		buffer = make([]byte, needed)
+	}
+	return nil, ErrIdentityUnavailable
+}
+
+func decodeWindowsServicesForPID(buffer []byte, count uint32, pid int) ([]string, error) {
+	wantedPID, err := windowsPID(pid)
+	if err != nil {
+		return nil, err
+	}
+	if count == 0 {
+		return nil, nil
+	}
+	rowSize := uint64(unsafe.Sizeof(windows.ENUM_SERVICE_STATUS_PROCESS{}))
+	if len(buffer) == 0 || uint64(count) > uint64(len(buffer))/rowSize {
+		return nil, ErrIdentityUnavailable
+	}
+	rows := unsafe.Slice((*windows.ENUM_SERVICE_STATUS_PROCESS)(unsafe.Pointer(&buffer[0])), int(count))
+	names := make([]string, 0)
+	for _, row := range rows {
+		if row.ServiceStatusProcess.ProcessId == 0 || row.ServiceStatusProcess.ProcessId != wantedPID {
+			continue
+		}
+		name, ok := windowsUTF16StringInBuffer(buffer, row.ServiceName)
+		if !ok || name == "" {
+			return nil, ErrIdentityUnavailable
+		}
+		names = append(names, name)
+	}
+	return names, nil
+}
+
+func windowsUTF16StringInBuffer(buffer []byte, value *uint16) (string, bool) {
+	if len(buffer) < 2 || value == nil {
+		return "", false
+	}
+	base := uintptr(unsafe.Pointer(&buffer[0]))
+	address := uintptr(unsafe.Pointer(value))
+	if address < base || address-base >= uintptr(len(buffer)) || (address-base)%2 != 0 {
+		return "", false
+	}
+	offset := int(address - base)
+	encoded := make([]uint16, 0)
+	for offset+2 <= len(buffer) {
+		codeUnit := binary.LittleEndian.Uint16(buffer[offset : offset+2])
+		if codeUnit == 0 {
+			return string(utf16.Decode(encoded)), true
+		}
+		encoded = append(encoded, codeUnit)
+		offset += 2
+	}
+	return "", false
 }
 
 func inspectPIDOwnerNative(ctx context.Context, listenAddr string) (int, error) {
@@ -107,24 +230,39 @@ func selectTCP4ListenerOwner(buffer []byte, ip []byte, port int) (uint32, error)
 
 func supportsPIDOnlyNative() bool { return true }
 
+func preflightTerminatePIDNative(pid int) error {
+	windowsPID, err := windowsPID(pid)
+	if err != nil {
+		return err
+	}
+	handle, err := windows.OpenProcess(windows.PROCESS_TERMINATE, false, windowsPID)
+	if err != nil {
+		return mapWindowsProcessError(err)
+	}
+	return mapWindowsProcessError(windows.CloseHandle(handle))
+}
+
 func signalPIDNative(pid int) error {
 	windowsPID, err := windowsPID(pid)
 	if err != nil {
 		return err
 	}
 	handle, err := windows.OpenProcess(windows.PROCESS_TERMINATE, false, windowsPID)
+	if err != nil {
+		return mapWindowsProcessError(err)
+	}
+	defer windows.CloseHandle(handle)
+	return mapWindowsProcessError(windows.TerminateProcess(handle, 1))
+}
+
+func mapWindowsProcessError(err error) error {
+	if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+		return ErrPermissionDenied
+	}
 	if errors.Is(err, windows.ERROR_INVALID_PARAMETER) {
 		return process.ErrNotFound
 	}
-	if err != nil {
-		return err
-	}
-	defer windows.CloseHandle(handle)
-	if err := windows.TerminateProcess(handle, 1); errors.Is(err, windows.ERROR_INVALID_PARAMETER) {
-		return process.ErrNotFound
-	} else {
-		return err
-	}
+	return err
 }
 
 func processSID(pid uint32) (string, error) {

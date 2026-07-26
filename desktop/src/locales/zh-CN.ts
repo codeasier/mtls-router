@@ -117,8 +117,43 @@ export const zhCN = {
     "该进程受桌面生命周期保护，不能通过端口恢复操作终止。",
   "router.occupant.error.changed":
     "端口占用进程已变化或确认已过期。请重新检查后再确认。",
+  "router.occupant.error.permissionDenied":
+    "终止权限被拒绝。请在进程原有权限上下文中停止它，然后重新检查。",
+  "router.occupant.error.terminationFailed":
+    "终止请求未能结束进程。应用没有尝试启动路由。",
+  "router.occupant.error.releaseTimeout":
+    "进程状态已变化，但未能确认端口已释放。请先检查当前占用进程。",
   "router.occupant.error.temporary":
     "暂时无法检查占用进程。未发送任何终止请求。",
+  "router.occupant.reason.serviceManaged":
+    "该进程由系统服务管理。请通过对应管理器停止列出的全部服务后重试。",
+  "router.occupant.reason.insufficientPrivilege":
+    "当前权限级别或 Windows PPL 等操作系统保护拒绝了终止访问；应用无法可靠区分这些情况。请从进程所属上下文正常退出，或使用系统进程管理工具；不要以管理员或 root 身份运行桌面应用。",
+  "router.occupant.reason.differentUser":
+    "该进程属于其他用户。请让对应用户或管理员停止它；桌面应用不会提权。",
+  "router.occupant.reason.protectedProcess":
+    "该目标已知受应用生命周期保护，不能通过端口恢复终止。请改为处理所属应用或生命周期管理器。",
+  "router.occupant.reason.identityUnavailable":
+    "无法可靠验证进程身份，因此不能使用破坏性恢复。",
+  "router.occupant.supervisor.windows":
+    "请打开 services.msc，或在管理员 PowerShell 中分别运行显示的 sc.exe 命令。共享宿主中的每个 Windows Service 都需要停止。",
+  "router.occupant.supervisor.systemdUser":
+    "请从同一登录会话停止已识别的用户服务。",
+  "router.occupant.supervisor.systemdSystem":
+    "请从具有相应权限的终端停止已识别的系统服务。",
+  "router.occupant.supervisor.generic":
+    "请在系统服务管理器中停止该服务，然后重新检查。应用没有推测管理器标识。",
+  "router.occupant.copyCommand": "复制命令",
+  "router.occupant.commandCopied": "命令已复制",
+  "router.occupant.commandCopyFailed": "无法复制命令",
+  "router.occupant.observation.observing": "正在确认端口保持释放",
+  "router.occupant.observation.released": "端口保持释放",
+  "router.occupant.observation.reoccupied": "替代进程或监管器重新占用端口",
+  "router.occupant.observation.termination-ineffective":
+    "终止请求未能结束原占用进程",
+  "router.occupant.observation.replacement": "替代进程已重新占用端口",
+  "router.occupant.observation.supervisorGuidance":
+    "如果进程由监管器重新启动，请先识别并停止对应的服务控制管理器（SCM）服务、systemd unit 或 launchd job，再重试。应用不会猜测监管器标识。",
   "router.occupant.dialogOverline": "不可撤销操作",
   "router.occupant.dialogTitle": "确认强制终止占用进程",
   "router.occupant.warning":
@@ -128,8 +163,6 @@ export const zhCN = {
   "router.occupant.cancel": "取消",
   "router.occupant.confirm": "强制终止",
   "router.occupant.terminating": "正在终止...",
-  "router.occupant.released":
-    "端口已释放。路由仍保持停止，选择“启动路由”后才会启动。",
   "router.desktop": "桌面应用",
   "router.manager": "管理器",
   "router.router": "路由",

@@ -1,6 +1,8 @@
+use crate::port_recovery::ReleaseObservation;
 use chrono::DateTime;
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 use serde_json::Value;
+use std::fmt;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct PollError {
@@ -21,6 +23,7 @@ pub struct PollSnapshot {
     pub health_stale: bool,
     pub status_error: Option<PollError>,
     pub health_error: Option<PollError>,
+    pub release_observation: Option<ReleaseObservation>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -89,6 +92,88 @@ pub enum OccupantVerificationMode {
     WindowsPidOnly,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecoveryAction {
+    ForceTerminate,
+    ManualStopRequired,
+    Unavailable,
+}
+
+impl fmt::Display for RecoveryAction {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::ForceTerminate => "force_terminate",
+            Self::ManualStopRequired => "manual_stop_required",
+            Self::Unavailable => "unavailable",
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecoveryReason {
+    ServiceManaged,
+    InsufficientPrivilege,
+    DifferentUser,
+    ProtectedProcess,
+    IdentityUnavailable,
+}
+
+impl fmt::Display for RecoveryReason {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::ServiceManaged => "service_managed",
+            Self::InsufficientPrivilege => "insufficient_privilege",
+            Self::DifferentUser => "different_user",
+            Self::ProtectedProcess => "protected_process",
+            Self::IdentityUnavailable => "identity_unavailable",
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SupervisorKind {
+    WindowsService,
+    SystemdUser,
+    SystemdSystem,
+}
+
+impl fmt::Display for SupervisorKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::WindowsService => "windows_service",
+            Self::SystemdUser => "systemd_user",
+            Self::SystemdSystem => "systemd_system",
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SupervisorScope {
+    User,
+    System,
+    Unknown,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OccupantRecovery {
+    pub action: RecoveryAction,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<RecoveryReason>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OccupantSupervisor {
+    pub kind: SupervisorKind,
+    pub scope: SupervisorScope,
+    pub identifiers: Vec<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct OccupantInspection {
     pub pid: u32,
@@ -98,8 +183,32 @@ pub struct OccupantInspection {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub executable: Option<String>,
     pub listen_addr: String,
-    pub confirmation_token: String,
-    pub expires_at: String,
+    pub recovery: OccupantRecovery,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supervisor: Option<OccupantSupervisor>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confirmation_token: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OccupantTermination {
+    ProcessTerminated,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OccupantPortState {
+    Released,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OccupantTerminationResult {
+    pub termination: OccupantTermination,
+    pub port_state: OccupantPortState,
 }
 
 fn is_manager_rfc3339(value: &str) -> bool {
@@ -147,6 +256,86 @@ fn is_manager_rfc3339(value: &str) -> bool {
     }
 }
 
+fn valid_windows_service_name(identifier: &str) -> bool {
+    !identifier.trim().is_empty()
+        && !identifier
+            .chars()
+            .any(|character| character.is_control() || matches!(character, '/' | '\\' | ',' | '"'))
+}
+
+fn valid_systemd_service_unit(identifier: &str) -> bool {
+    const SUFFIX: &str = ".service";
+    if identifier.len() > 255 || !identifier.ends_with(SUFFIX) {
+        return false;
+    }
+    let stem = &identifier[..identifier.len() - SUFFIX.len()];
+    if stem.is_empty() {
+        return false;
+    }
+
+    let bytes = stem.as_bytes();
+    let mut index = 0;
+    let mut at_count = 0;
+    while index < bytes.len() {
+        let character = bytes[index];
+        if character.is_ascii_alphanumeric() || matches!(character, b':' | b'_' | b'.' | b'-') {
+            index += 1;
+            continue;
+        }
+        if character == b'@' {
+            if index == 0 || at_count == 1 {
+                return false;
+            }
+            at_count += 1;
+            index += 1;
+            continue;
+        }
+        if character != b'\\'
+            || bytes.get(index + 1) != Some(&b'x')
+            || !bytes.get(index + 2).is_some_and(u8::is_ascii_hexdigit)
+            || !bytes.get(index + 3).is_some_and(u8::is_ascii_hexdigit)
+        {
+            return false;
+        }
+        index += 4;
+    }
+    true
+}
+
+fn valid_supervisor(supervisor: &OccupantSupervisor) -> bool {
+    if supervisor.identifiers.is_empty() || supervisor.identifiers.len() > 16 {
+        return false;
+    }
+    if !matches!(
+        (supervisor.kind, supervisor.scope),
+        (SupervisorKind::WindowsService, SupervisorScope::System)
+            | (SupervisorKind::SystemdUser, SupervisorScope::User)
+            | (SupervisorKind::SystemdSystem, SupervisorScope::System)
+    ) {
+        return false;
+    }
+
+    for (index, identifier) in supervisor.identifiers.iter().enumerate() {
+        if identifier.is_empty()
+            || identifier.len() > 256
+            || index > 0 && supervisor.identifiers[index - 1] >= *identifier
+        {
+            return false;
+        }
+        let valid_identifier = match supervisor.kind {
+            SupervisorKind::WindowsService => valid_windows_service_name(identifier),
+            SupervisorKind::SystemdUser | SupervisorKind::SystemdSystem => {
+                valid_systemd_service_unit(identifier)
+            }
+        };
+        if !valid_identifier {
+            return false;
+        }
+    }
+
+    serde_json::to_vec(supervisor).is_ok_and(|encoded| encoded.len() <= 4 * 1024)
+}
+
 impl<'de> Deserialize<'de> for OccupantInspection {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -160,8 +349,10 @@ impl<'de> Deserialize<'de> for OccupantInspection {
             process_name: Option<String>,
             executable: Option<String>,
             listen_addr: String,
-            confirmation_token: String,
-            expires_at: String,
+            recovery: OccupantRecovery,
+            supervisor: Option<OccupantSupervisor>,
+            confirmation_token: Option<String>,
+            expires_at: Option<String>,
         }
 
         let value = serde_json::Value::deserialize(deserializer)?;
@@ -170,6 +361,13 @@ impl<'de> Deserialize<'de> for OccupantInspection {
             .ok_or_else(|| D::Error::custom("occupant inspection must be an object"))?;
         let has_process_name = object.contains_key("process_name");
         let has_executable = object.contains_key("executable");
+        let has_supervisor = object.contains_key("supervisor");
+        let has_confirmation_token = object.contains_key("confirmation_token");
+        let has_expires_at = object.contains_key("expires_at");
+        let recovery_has_reason = object
+            .get("recovery")
+            .and_then(Value::as_object)
+            .is_some_and(|recovery| recovery.contains_key("reason"));
         let wire: WireInspection = serde_json::from_value(value).map_err(D::Error::custom)?;
 
         if wire.pid == 0 {
@@ -180,26 +378,39 @@ impl<'de> Deserialize<'de> for OccupantInspection {
                 "occupant inspection listen address must match the fixed endpoint",
             ));
         }
-        if wire.confirmation_token.trim().is_empty() {
-            return Err(D::Error::custom(
-                "occupant inspection confirmation token must not be blank",
-            ));
-        }
-        if !is_manager_rfc3339(&wire.expires_at)
-            || DateTime::parse_from_rfc3339(&wire.expires_at).is_err()
-        {
-            return Err(D::Error::custom(
-                "occupant inspection expiry must be RFC3339",
-            ));
-        }
-
+        let forceable = match (wire.recovery.action, wire.recovery.reason) {
+            (RecoveryAction::ForceTerminate, None) if !recovery_has_reason => true,
+            (
+                RecoveryAction::ManualStopRequired,
+                Some(
+                    RecoveryReason::ServiceManaged
+                    | RecoveryReason::InsufficientPrivilege
+                    | RecoveryReason::DifferentUser,
+                ),
+            ) if recovery_has_reason => false,
+            (
+                RecoveryAction::Unavailable,
+                Some(RecoveryReason::ProtectedProcess | RecoveryReason::IdentityUnavailable),
+            ) if recovery_has_reason => false,
+            _ => {
+                return Err(D::Error::custom(
+                    "occupant inspection recovery action and reason are inconsistent",
+                ));
+            }
+        };
         match wire.verification_mode {
             OccupantVerificationMode::VerifiedIdentity => {
-                if !matches!(wire.process_name.as_deref(), Some(value) if !value.trim().is_empty())
-                    || !matches!(wire.executable.as_deref(), Some(value) if !value.trim().is_empty())
-                {
+                let has_complete_metadata = has_process_name
+                    && has_executable
+                    && matches!(wire.process_name.as_deref(), Some(value) if !value.trim().is_empty())
+                    && matches!(wire.executable.as_deref(), Some(value) if !value.trim().is_empty());
+                let may_redact_metadata = !has_process_name
+                    && !has_executable
+                    && wire.recovery.action == RecoveryAction::ManualStopRequired
+                    && wire.recovery.reason == Some(RecoveryReason::DifferentUser);
+                if !has_complete_metadata && !may_redact_metadata {
                     return Err(D::Error::custom(
-                        "verified identity requires process name and executable",
+                        "verified identity requires both process fields unless redacted for a different user",
                     ));
                 }
             }
@@ -212,12 +423,55 @@ impl<'de> Deserialize<'de> for OccupantInspection {
             }
         }
 
+        if forceable {
+            let token = wire.confirmation_token.as_deref().ok_or_else(|| {
+                D::Error::custom("forceable occupant inspection requires a confirmation token")
+            })?;
+            let expires_at = wire.expires_at.as_deref().ok_or_else(|| {
+                D::Error::custom("forceable occupant inspection requires an expiry")
+            })?;
+            if !has_confirmation_token || token.trim().is_empty() {
+                return Err(D::Error::custom(
+                    "occupant inspection confirmation token must not be blank",
+                ));
+            }
+            if !has_expires_at
+                || !is_manager_rfc3339(expires_at)
+                || DateTime::parse_from_rfc3339(expires_at).is_err()
+            {
+                return Err(D::Error::custom(
+                    "occupant inspection expiry must be RFC3339",
+                ));
+            }
+        } else if has_confirmation_token || has_expires_at {
+            return Err(D::Error::custom(
+                "blocked occupant inspection cannot include confirmation fields",
+            ));
+        }
+
+        if has_supervisor && wire.supervisor.is_none() {
+            return Err(D::Error::custom(
+                "occupant inspection supervisor must be an object",
+            ));
+        }
+        if let Some(supervisor) = wire.supervisor.as_ref() {
+            if wire.recovery.reason != Some(RecoveryReason::ServiceManaged)
+                || !valid_supervisor(supervisor)
+            {
+                return Err(D::Error::custom(
+                    "occupant inspection supervisor metadata is invalid",
+                ));
+            }
+        }
+
         Ok(Self {
             pid: wire.pid,
             verification_mode: wire.verification_mode,
             process_name: wire.process_name,
             executable: wire.executable,
             listen_addr: wire.listen_addr,
+            recovery: wire.recovery,
+            supervisor: wire.supervisor,
             confirmation_token: wire.confirmation_token,
             expires_at: wire.expires_at,
         })
@@ -226,8 +480,52 @@ impl<'de> Deserialize<'de> for OccupantInspection {
 
 #[cfg(test)]
 mod occupant_inspection_tests {
-    use super::{OccupantInspection, OccupantVerificationMode};
+    use super::{
+        OccupantInspection, OccupantTerminationResult, OccupantVerificationMode, RecoveryAction,
+        RecoveryReason, SupervisorKind,
+    };
     use serde_json::json;
+
+    fn forceable() -> serde_json::Value {
+        json!({
+            "pid": 7,
+            "verification_mode": "windows_pid_only",
+            "listen_addr": "127.0.0.1:19099",
+            "recovery": {"action": "force_terminate"},
+            "confirmation_token": "token",
+            "expires_at": "2026-07-25T00:00:30Z"
+        })
+    }
+
+    fn blocked(action: &str, reason: &str) -> serde_json::Value {
+        json!({
+            "pid": 8,
+            "verification_mode": "windows_pid_only",
+            "listen_addr": "127.0.0.1:19099",
+            "recovery": {"action": action, "reason": reason}
+        })
+    }
+
+    #[test]
+    fn deserializes_every_valid_recovery_pair() {
+        let cases = [
+            ("force_terminate", None),
+            ("manual_stop_required", Some("service_managed")),
+            ("manual_stop_required", Some("insufficient_privilege")),
+            ("manual_stop_required", Some("different_user")),
+            ("unavailable", Some("protected_process")),
+            ("unavailable", Some("identity_unavailable")),
+        ];
+        for (action, reason) in cases {
+            let shape = if let Some(reason) = reason {
+                blocked(action, reason)
+            } else {
+                forceable()
+            };
+            let inspection: OccupantInspection = serde_json::from_value(shape).unwrap();
+            assert_eq!(inspection.recovery.action.to_string(), action);
+        }
+    }
 
     #[test]
     fn deserializes_verified_identity_shape() {
@@ -237,6 +535,7 @@ mod occupant_inspection_tests {
             "process_name": "example-server",
             "executable": "C:\\example-server.exe",
             "listen_addr": "127.0.0.1:19099",
+            "recovery": {"action": "force_terminate"},
             "confirmation_token": "verified-token",
             "expires_at": "2026-07-22T12:00:30Z"
         });
@@ -255,14 +554,26 @@ mod occupant_inspection_tests {
     }
 
     #[test]
+    fn deserializes_service_supervisors_with_exact_kind_scope_pairs() {
+        let cases = [
+            ("windows_service", "system", "Router Service"),
+            ("systemd_user", "user", r"demo\x2dworker@blue.service"),
+            ("systemd_system", "system", "demo.service"),
+        ];
+        for (kind, scope, identifier) in cases {
+            let mut shape = blocked("manual_stop_required", "service_managed");
+            shape.as_object_mut().unwrap().insert(
+                "supervisor".to_owned(),
+                json!({"kind": kind, "scope": scope, "identifiers": [identifier]}),
+            );
+            let inspection: OccupantInspection = serde_json::from_value(shape).unwrap();
+            assert_eq!(inspection.supervisor.unwrap().identifiers, [identifier]);
+        }
+    }
+
+    #[test]
     fn deserializes_windows_pid_only_shape_without_metadata() {
-        let shape = json!({
-            "pid": 4242,
-            "verification_mode": "windows_pid_only",
-            "listen_addr": "127.0.0.1:19099",
-            "confirmation_token": "pid-only-token",
-            "expires_at": "2026-07-22T12:00:30Z"
-        });
+        let shape = forceable();
         let inspection: OccupantInspection = serde_json::from_value(shape.clone()).unwrap();
 
         assert_eq!(
@@ -276,37 +587,36 @@ mod occupant_inspection_tests {
 
     #[test]
     fn rejects_unknown_verification_mode() {
-        let result = serde_json::from_value::<OccupantInspection>(json!({
-            "pid": 4242,
-            "verification_mode": "unknown",
-            "listen_addr": "127.0.0.1:19099",
-            "confirmation_token": "token",
-            "expires_at": "2026-07-22T12:00:30Z"
-        }));
-
-        assert!(result.is_err());
+        let mut shape = forceable();
+        shape["verification_mode"] = json!("unknown");
+        assert!(serde_json::from_value::<OccupantInspection>(shape).is_err());
     }
 
     #[test]
-    fn rejects_unknown_fields() {
-        let result = serde_json::from_value::<OccupantInspection>(json!({
-            "pid": 4242,
-            "verification_mode": "verified_identity",
-            "process_name": "example-server",
-            "executable": "C:\\example-server.exe",
-            "process_owner": "example-user",
-            "listen_addr": "127.0.0.1:19099",
-            "confirmation_token": "token",
-            "expires_at": "2026-07-22T12:00:30Z"
-        }));
+    fn rejects_unknown_fields_at_every_protocol_level() {
+        let mut top = forceable();
+        top["extra"] = json!(true);
+        let mut recovery = forceable();
+        recovery["recovery"]["extra"] = json!(true);
+        let mut supervisor = blocked("manual_stop_required", "service_managed");
+        supervisor["supervisor"] = json!({
+            "kind": "windows_service", "scope": "system", "identifiers": ["Svc"], "extra": true
+        });
+        let termination = json!({
+            "termination": "process_terminated", "port_state": "released", "extra": true
+        });
 
-        assert!(result.is_err());
+        for shape in [top, recovery, supervisor] {
+            assert!(serde_json::from_value::<OccupantInspection>(shape).is_err());
+        }
+        assert!(serde_json::from_value::<OccupantTerminationResult>(termination).is_err());
     }
 
     #[test]
-    fn rejects_invalid_base_fields() {
+    fn rejects_invalid_base_and_metadata_fields() {
         for invalid_field in [
             json!({"pid": 0}),
+            json!({"pid": 4_294_967_296_u64}),
             json!({"listen_addr": "127.0.0.1:19100"}),
             json!({"listen_addr": " "}),
             json!({"confirmation_token": " "}),
@@ -320,6 +630,7 @@ mod occupant_inspection_tests {
                 "pid": 4242,
                 "verification_mode": "windows_pid_only",
                 "listen_addr": "127.0.0.1:19099",
+                "recovery": {"action": "force_terminate"},
                 "confirmation_token": "token",
                 "expires_at": "2026-07-22T12:00:30+08:00"
             });
@@ -338,20 +649,16 @@ mod occupant_inspection_tests {
     #[test]
     fn accepts_manager_timestamp_forms() {
         for expires_at in ["2026-07-22T12:00:30Z", "2026-07-22T20:00:30+08:00"] {
-            let result = serde_json::from_value::<OccupantInspection>(json!({
-                "pid": 4242,
-                "verification_mode": "windows_pid_only",
-                "listen_addr": "127.0.0.1:19099",
-                "confirmation_token": "token",
-                "expires_at": expires_at
-            }));
+            let mut shape = forceable();
+            shape["expires_at"] = json!(expires_at);
+            let result = serde_json::from_value::<OccupantInspection>(shape);
 
             assert!(result.is_ok(), "expected {expires_at} to be accepted");
         }
     }
 
     #[test]
-    fn rejects_verified_identity_without_nonempty_metadata() {
+    fn rejects_invalid_verified_identity_metadata() {
         for metadata in [
             json!({"executable": "C:\\example-server.exe"}),
             json!({"process_name": "example-server"}),
@@ -362,6 +669,7 @@ mod occupant_inspection_tests {
                 "pid": 4242,
                 "verification_mode": "verified_identity",
                 "listen_addr": "127.0.0.1:19099",
+                "recovery": {"action": "force_terminate"},
                 "confirmation_token": "token",
                 "expires_at": "2026-07-22T12:00:30Z"
             });
@@ -374,6 +682,43 @@ mod occupant_inspection_tests {
             );
 
             assert!(serde_json::from_value::<OccupantInspection>(shape).is_err());
+        }
+
+        for mut shape in [
+            forceable(),
+            blocked("manual_stop_required", "service_managed"),
+            blocked("manual_stop_required", "insufficient_privilege"),
+            blocked("unavailable", "protected_process"),
+            blocked("unavailable", "identity_unavailable"),
+        ] {
+            shape["verification_mode"] = json!("verified_identity");
+            assert!(serde_json::from_value::<OccupantInspection>(shape).is_err());
+        }
+    }
+
+    #[test]
+    fn accepts_redacted_verified_identity_only_for_different_user() {
+        let mut shape = blocked("manual_stop_required", "different_user");
+        shape["verification_mode"] = json!("verified_identity");
+        let inspection: OccupantInspection = serde_json::from_value(shape.clone()).unwrap();
+
+        assert_eq!(inspection.process_name, None);
+        assert_eq!(inspection.executable, None);
+        assert_eq!(serde_json::to_value(inspection).unwrap(), shape);
+
+        for metadata in [
+            json!({"process_name": "example-server"}),
+            json!({"executable": "C:\\example-server.exe"}),
+        ] {
+            let mut partial = shape.clone();
+            partial.as_object_mut().unwrap().extend(
+                metadata
+                    .as_object()
+                    .unwrap()
+                    .iter()
+                    .map(|(key, value)| (key.clone(), value.clone())),
+            );
+            assert!(serde_json::from_value::<OccupantInspection>(partial).is_err());
         }
     }
 
@@ -388,6 +733,7 @@ mod occupant_inspection_tests {
                 "pid": 4242,
                 "verification_mode": "windows_pid_only",
                 "listen_addr": "127.0.0.1:19099",
+                "recovery": {"action": "force_terminate"},
                 "confirmation_token": "token",
                 "expires_at": "2026-07-22T12:00:30Z"
             });
@@ -401,6 +747,126 @@ mod occupant_inspection_tests {
 
             assert!(serde_json::from_value::<OccupantInspection>(shape).is_err());
         }
+    }
+
+    #[test]
+    fn rejects_invalid_recovery_matrix_and_token_presence() {
+        let invalid = [
+            json!({"action": "force_terminate", "reason": "different_user"}),
+            json!({"action": "manual_stop_required"}),
+            json!({"action": "manual_stop_required", "reason": "protected_process"}),
+            json!({"action": "unavailable", "reason": "service_managed"}),
+            json!({"action": "unknown"}),
+            json!({"action": "unavailable", "reason": "unknown"}),
+        ];
+        for recovery in invalid {
+            let mut shape = blocked("unavailable", "identity_unavailable");
+            shape["recovery"] = recovery;
+            assert!(serde_json::from_value::<OccupantInspection>(shape).is_err());
+        }
+
+        for field in ["confirmation_token", "expires_at"] {
+            let mut shape = forceable();
+            shape.as_object_mut().unwrap().remove(field);
+            assert!(serde_json::from_value::<OccupantInspection>(shape).is_err());
+        }
+        for value in [json!(null), json!("token")] {
+            let mut shape = blocked("manual_stop_required", "different_user");
+            shape["confirmation_token"] = value;
+            assert!(serde_json::from_value::<OccupantInspection>(shape).is_err());
+        }
+        let mut shape = blocked("unavailable", "identity_unavailable");
+        shape["expires_at"] = json!("2026-07-25T00:00:30Z");
+        assert!(serde_json::from_value::<OccupantInspection>(shape).is_err());
+    }
+
+    #[test]
+    fn rejects_invalid_supervisor_shape_and_bounds() {
+        let seventeen: Vec<String> = (0..17).map(|index| format!("Svc{index:02}")).collect();
+        let over_limit: Vec<String> = (0..16)
+            .map(|index| format!("{index:02}{}", "x".repeat(254)))
+            .collect();
+        let invalid = [
+            json!({"kind": "windows_service", "scope": "user", "identifiers": ["Svc"]}),
+            json!({"kind": "systemd_user", "scope": "system", "identifiers": ["a.service"]}),
+            json!({"kind": "systemd_system", "scope": "unknown", "identifiers": ["a.service"]}),
+            json!({"kind": "unknown", "scope": "system", "identifiers": ["Svc"]}),
+            json!({"kind": "windows_service", "scope": "system", "identifiers": []}),
+            json!({"kind": "windows_service", "scope": "system", "identifiers": seventeen}),
+            json!({"kind": "windows_service", "scope": "system", "identifiers": ["Beta", "Alpha"]}),
+            json!({"kind": "windows_service", "scope": "system", "identifiers": ["Alpha", "Alpha"]}),
+            json!({"kind": "windows_service", "scope": "system", "identifiers": ["é".repeat(129)]}),
+            json!({"kind": "windows_service", "scope": "system", "identifiers": over_limit}),
+        ];
+        for supervisor in invalid {
+            let mut shape = blocked("manual_stop_required", "service_managed");
+            shape["supervisor"] = supervisor;
+            assert!(serde_json::from_value::<OccupantInspection>(shape).is_err());
+        }
+
+        let mut shape = blocked("manual_stop_required", "different_user");
+        shape["supervisor"] =
+            json!({"kind": "windows_service", "scope": "system", "identifiers": ["Svc"]});
+        assert!(serde_json::from_value::<OccupantInspection>(shape).is_err());
+    }
+
+    #[test]
+    fn rejects_unsafe_windows_and_noncanonical_systemd_identifiers() {
+        for identifier in [
+            " ",
+            "Svc/name",
+            r"Svc\name",
+            "Svc,name",
+            "Svc\"name",
+            "Svc\nname",
+        ] {
+            let mut shape = blocked("manual_stop_required", "service_managed");
+            shape["supervisor"] =
+                json!({"kind": "windows_service", "scope": "system", "identifiers": [identifier]});
+            assert!(serde_json::from_value::<OccupantInspection>(shape).is_err());
+        }
+        for identifier in [
+            "@demo.service",
+            "a@b@c.service",
+            r"demo\q20.service",
+            r"demo\x2.service",
+            "demo scope.service",
+            &("x".repeat(248) + ".service"),
+        ] {
+            let mut shape = blocked("manual_stop_required", "service_managed");
+            shape["supervisor"] =
+                json!({"kind": "systemd_system", "scope": "system", "identifiers": [identifier]});
+            assert!(serde_json::from_value::<OccupantInspection>(shape).is_err());
+        }
+    }
+
+    #[test]
+    fn termination_accepts_only_exact_success_values() {
+        let valid = json!({"termination": "process_terminated", "port_state": "released"});
+        let result: OccupantTerminationResult = serde_json::from_value(valid.clone()).unwrap();
+        assert_eq!(serde_json::to_value(result).unwrap(), valid);
+        for invalid in [
+            json!({"termination": "terminated", "port_state": "released"}),
+            json!({"termination": "process_terminated", "port_state": "occupied"}),
+        ] {
+            assert!(serde_json::from_value::<OccupantTerminationResult>(invalid).is_err());
+        }
+    }
+
+    #[test]
+    fn public_enums_are_closed() {
+        assert_eq!(
+            RecoveryAction::ForceTerminate.to_string(),
+            "force_terminate"
+        );
+        assert_eq!(
+            RecoveryReason::ServiceManaged.to_string(),
+            "service_managed"
+        );
+        assert_eq!(
+            SupervisorKind::WindowsService.to_string(),
+            "windows_service"
+        );
     }
 }
 

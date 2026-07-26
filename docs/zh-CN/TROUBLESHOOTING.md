@@ -32,13 +32,15 @@ Workflow 会构建六个原生桌面包，并在匹配的目标 runner 上检查
 
 1. 使用可信安装包中的 `./setup.sh router status` 或 `.\setup.ps1 router status` 检查是否有 CLI 管理的 router。
 2. 如果桌面应用报告兼容外部 router，复用属于预期行为；桌面应用不会拥有或停止它。
-3. 所有平台默认只有在完整身份和当前用户所有权通过验证后，Router 页面才会提供**强制终止占用进程**。请先核对进程名称和 PID，再在确认对话框中核对完整可执行文件路径。macOS 和 Linux 没有此规则的例外。
-4. 仅在 Windows 上，如果 TCP4 owner table 为精确的 `127.0.0.1:19099` listener 找到唯一 PID，但无法获得完整身份，页面可能改为显示**未验证**的仅 PID 目标。此视图只显示 PID，不能证明身份、所有者、启动时间或可执行文件；即使可读取的 SID 属于其他用户，该进程也可能进入此流程。除非接受这种降级保证，否则请选择取消。
-5. 强制终止会立即执行，不会先尝试优雅停止，并且可能导致未保存数据丢失。两种模式都要求使用短时、一次性 token 进行显式确认，且都不会请求 administrator 或 root 提权。
-6. 对于完整身份模式，manager 会在发送信号前一刻重新验证完整 listener 和进程身份。对于 Windows 仅 PID 恢复，manager 会立即复查同一精确端口仍由同一唯一 PID 占用，并确认该 PID 不是桌面应用、manager，也不是可读取桌面或 CLI 生命周期状态中的托管 router。如果 listener 已消失、PID 已变化，或变为重复、wildcard、格式错误或其他不明确状态，manager 会拒绝且不发送信号。
-7. Windows 仅 PID 恢复会跳过无法读取的生命周期状态，因此托管 router 可能未被识别为受保护进程。Windows 可能拒绝终止，最终 owner 检查与终止之间也仍可能发生 PID 重用。等待端口释放时，listener 消失表示成功；listener 变化或身份不明确会报告错误，且不会向替代进程发送信号。
-8. 成功后端口会释放，但 router 保持停止。准备好后请手工选择启动 router；登录时启动不会在此恢复流程中自动启动它。
-9. 如果无法检查、你不接受仅 PID 警告或终止失败，请使用操作系统工具识别 listener，并在独立确认所有权和身份后停止或重新配置它，然后在 Router 页面重试。
+3. 阅读结构化诊断。`force_terminate` 表示目标可在显式确认后终止；`manual_stop_required` 表示 service、权限不足或其他用户必须在应用外处理。`insufficient_privilege` 包括 Windows PPL 等操作系统保护拒绝终止访问的情况；访问被拒绝并不能可靠识别 PPL。`unavailable` 表示生命周期已知的目标为 `protected_process`，或无法安全建立身份。阻断诊断不包含确认 token。
+4. 所有平台默认只有在完整 listener 身份和当前用户进程所有权通过验证后，Router 页面才会提供**强制终止占用进程**。请核对进程名称和 PID，再在确认对话框中核对完整可执行文件路径。macOS 和 Linux 没有仅 PID 例外。
+5. Windows 会把可读取的不同 SID 拒绝为 `different_user`，绝不降级为仅 PID。SID 或完整进程身份不可用时可以考虑仅 PID，但前提是 TCP4 owner table 为精确 listener 找到唯一 PID、已排除桌面/manager/托管 router 等受保护目标，并且无副作用的终止权限预检成功。此视图只显示 PID，因为身份、所有者、启动时间和可执行文件仍未验证。除非接受这些残余风险，否则请选择取消。
+6. 如果识别出 Windows Service 或 Linux systemd service，请使用界面显示的有界标识和人工引导。Windows 示例使用 `services.msc` 或 `sc.exe stop`；用户 service 使用 `systemctl --user stop`；系统 service 使用 `sudo systemctl stop`。复制的 Windows 命令经过安全引用，但仅适用于管理员 PowerShell，不能粘贴到 `cmd.exe`。应用只渲染和复制这些文本：绝不执行命令、控制 SCM/systemd 或请求提权。权限或用户阻断必须在进程所属身份和权限上下文中处理；不要以 administrator 或 root 运行桌面应用。
+7. macOS 不推断 launchd label。经过验证的普通同用户进程可能允许终止；如果它再次出现，请先使用活动监视器或 `launchctl` 识别负责的 job，再人工停止。
+8. 强制终止会立即执行，不会先尝试优雅停止，并可能导致未保存数据丢失。发送信号前一刻，完整身份模式会重新验证全部身份；Windows 仅 PID 模式会重复精确 owner 和保护检查并重新取得终止权限。listener 消失、变化、重复、wildcard、格式错误、不明确或此时无权访问都会被拒绝且不发送信号。无法读取的 Windows 生命周期状态和 PID 重用仍是仅 PID 的残余风险。
+9. Manager 成功会精确返回 `termination: process_terminated` 和 `port_state: released`，但证据取决于 verification mode。完整身份模式证明已确认的进程身份变为不存在且端口曾被观察到释放；Windows 仅 PID 模式证明终止请求成功，并且原 listener PID 已从精确端口消失，但不独立证明该进程完全结束。桌面端随后在约 10 秒内定期采样状态。Released 结果表示采样检查发现端口已释放且未检测到重新占用，不是连续观察或稳定释放证明；采样发现新占用者时会报告重新占用并再次检查。主动启动 router 会取消观察。
+10. `OCCUPANT_PERMISSION_DENIED` 表示确认阶段失去或无法取得终止权限；`OCCUPANT_TERMINATION_FAILED` 表示已尝试终止，但原进程没有按要求退出；`PORT_RELEASE_TIMEOUT` 表示 manager 未能在短同步窗口内证明端口释放。出现任一错误后都应重新检查；系统不会终止替代进程。
+11. 如果检查或恢复不可用、你不接受警告或引导，或终止失败，请用操作系统工具独立识别并停止或重新配置 listener，再从 Router 页面重试。
 
 手工启动的 router 会被有意视为未知，除非完整 CLI setup 状态能够证明其进程身份以及 deployment/protocol 兼容性。
 

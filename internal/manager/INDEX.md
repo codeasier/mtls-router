@@ -1,6 +1,6 @@
 # internal/manager
 
-mtls-router 的控制面：路由生命周期管理、Agent 配置、端口冲突解决。通过 stdin/stdout 上的换行分隔 JSON 通信（协议 v3）。
+mtls-router 的控制面：路由生命周期管理、Agent 配置、端口冲突解决。通过 stdin/stdout 上的换行分隔 JSON 通信（management protocol v4）。
 
 ## 子包
 
@@ -13,7 +13,7 @@ mtls-router 的控制面：路由生命周期管理、Agent 配置、端口冲�
 | `agent` | Agent 检测、配置渲染（Claude JSON / opencode JSON / Codex TOML + JSON auth）、带备份/回滚的事务性写入、模型发现 | `Service`、`Detect()`、`Render()`、`Write()`、`PreviewRequest()`、`DiscoverModels()` |
 | `agent/modelconfig` | 无 key 的规范化 model config schema v1：decode、merge、canonical 序列化、token 签名 | `Config`、`Version`、`Decode()`、`DecodeStructural()`、`Canonical()`、`DeepMerge()`、`MaxConfigSize` |
 | `trustedrouter` | 经 router `/v1/models` 的鉴权模型目录发现；写入前重新校验绑定 | `Coordinator`、`Fetch(ctx, owner, apiKey)`、`Revalidate(ctx, owner, apiKey, binding)` |
-| `occupant` | 端口占用者身份检查（Linux `/proc`、macOS `SYS_PROC_INFO`、Windows `GetExtendedTcpTable`）与带一次性确认 token 的受保护强制终止 | `Service`、`Inspect(ctx)`、`ForceTerminate(ctx, token)` |
+| `occupant` | 端口占用者结构化诊断（Linux `/proc` + systemd cgroup、macOS `SYS_PROC_INFO`、Windows TCP owner table + SCM/SID/access preflight）与带一次性确认 token 的精确强制终止 | `Service`、`Inspect(ctx)`、`ForceTerminate(ctx, token)` |
 | `state` | router 进程身份的原子化 JSON 状态文件读写；文件锁 | `RouterState`、`Read(path)`、`Write(path, value)`、`AcquireLock(path)` |
 | `process` | PID + 启动时间 + 可执行文件三元身份校验；安全信号 | `Identity`、`Inspect(pid)`、`Validate(expected, binaryPath)`、`Signal(expected, binaryPath, sig)` |
 | `preset` | 加载构建期注入的不可变 Agent model preset（base64，经 `-ldflags -X`） | `Load()` → `*modelconfig.Config` |
@@ -36,7 +36,8 @@ agent.preview             agent.write
 
 - **基本按请求无状态**：每个 JSON 请求独立处理；长生命周期状态位于 `lifecycle.Manager`、`agent.Service` 与 `state` 文件。一个例外是 `occupant.Service`，它在 `Inspect` 与 `ForceTerminate` 之间持有内存中一次性确认 token（互斥锁保护，30 秒后过期）。
 - **桌面启动失败诊断**：预启动失败按稳定阶段和可选数值 OS 错误码生成安全诊断；启动后失败会终止并等待自有子进程。lifecycle 保留有界的原始输出，而 app 协议仅暴露脱敏的、会话作用域诊断。
-- **信号前身份校验**：Unix/macOS 上经校验的身份路径在每次信号前校验 PID + 启动时间 + 可执行文件。Windows 上 PID-only 路径先经 `InspectPIDOwner` 重新确认监听 PID，再直接调用 `SignalPID`（不做启动时间/可执行文件检查）。
+- **结构化占用恢复**：inspection 用稳定 `force_terminate` / `manual_stop_required` / `unavailable` action 与 reason 表达可执行和阻断结果；只有 `force_terminate` 签发 token。Windows 已知不同 SID 直接拒绝；SID 或完整进程身份不可读时，只有无副作用终止权限预检成功才允许 PID-only。可靠识别的 Windows Service 或 systemd unit 只返回人工 supervisor 引导，manager 不执行停止命令也不提权；复制的 Windows 命令仅按管理员 PowerShell 安全引用，不适用于 `cmd.exe`；macOS 不猜测 launchd label。
+- **信号与释放边界**：Unix/macOS 完整身份路径在信号前重验 PID + 启动时间 + 可执行文件；Windows PID-only 在信号前重验精确 listener owner、保护状态和终止权限。完整身份成功证明已验证进程身份不存在且端口首次释放；PID-only 成功只证明终止请求成功且原 listener PID 从端口消失，不独立证明进程完全结束。桌面端另行在约 10 秒内定期采样；`released` 只表示采样未检测到重新占用。
 - **API key 清零**：`app` 中成功参数 decode 后，在显式退出路径上将 `request.APIKey = ""`。注意：若 `DecodeParams` 本身失败（如未知字段），已填充的字段可能未被清零。
 - **事务恢复**：`agent` 写入使用带回滚能力的状态目录；`NewService()` 在启动时执行恢复。
 - **discovery 分类**：按端口可达性、状态文件有效性、进程身份、健康结果分支判断决定 —— 非固定线性优先级。端口不可达时，先检查 stale 状态再判定 degraded。

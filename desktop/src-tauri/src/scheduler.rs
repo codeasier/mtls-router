@@ -1,6 +1,7 @@
 use crate::{
     error::CommandError,
     manager::ManagerClient,
+    port_recovery::PortRecovery,
     types::{PollError, PollSnapshot, RouterHealth, RouterStatus},
 };
 use serde_json::json;
@@ -33,6 +34,7 @@ impl PollDeadlines {
 pub struct PollScheduler {
     manager: ManagerClient,
     snapshot: Arc<RwLock<PollSnapshot>>,
+    port_recovery: Arc<RwLock<PortRecovery>>,
     visible: Arc<AtomicBool>,
     status_generation: Arc<AtomicU64>,
     health_generation: Arc<AtomicU64>,
@@ -54,6 +56,7 @@ impl PollScheduler {
         Self {
             manager,
             snapshot: Arc::new(RwLock::new(PollSnapshot::default())),
+            port_recovery: Arc::new(RwLock::new(PortRecovery::default())),
             visible: Arc::new(AtomicBool::new(true)),
             status_generation: Arc::new(AtomicU64::new(0)),
             health_generation: Arc::new(AtomicU64::new(0)),
@@ -88,17 +91,50 @@ impl PollScheduler {
         self.health_immediate.store(true, Ordering::Release);
     }
 
+    #[cfg(test)]
+    pub(crate) fn status_generation(&self) -> u64 {
+        self.status_generation.load(Ordering::Acquire)
+    }
+
     pub async fn snapshot(&self) -> PollSnapshot {
         self.snapshot.read().await.clone()
     }
 
     pub async fn set_status(&self, status: RouterStatus) {
-        self.apply_status(status).await;
+        self.apply_status(status, None).await;
         self.request_refresh();
     }
 
-    pub async fn set_status_error(&self, error: &CommandError) {
+    pub async fn begin_release_observation(&self, manager_session_epoch: u64) -> bool {
+        let mut recovery = self.port_recovery.write().await;
+        if self.manager.session_epoch() != manager_session_epoch {
+            return false;
+        }
+        recovery.begin(manager_session_epoch, Instant::now());
         let mut snapshot = self.snapshot.write().await;
+        if snapshot.release_observation.take().is_some() {
+            self.publish(&mut snapshot);
+        }
+        drop(snapshot);
+        drop(recovery);
+        self.request_status_refresh();
+        true
+    }
+
+    pub async fn cancel_release_observation(&self) {
+        let mut recovery = self.port_recovery.write().await;
+        recovery.cancel();
+        let mut snapshot = self.snapshot.write().await;
+        if snapshot.release_observation.take().is_some() {
+            self.publish(&mut snapshot);
+        }
+    }
+
+    pub async fn set_status_error(&self, error: &CommandError) {
+        let mut recovery = self.port_recovery.write().await;
+        recovery.cancel();
+        let mut snapshot = self.snapshot.write().await;
+        snapshot.release_observation = None;
         snapshot.status_error = Some(PollError::new(&error.code));
         self.publish(&mut snapshot);
     }
@@ -136,6 +172,7 @@ impl PollScheduler {
     ) {
         let now = Instant::now();
         self.mark_health_stale().await;
+        self.cancel_for_manager_epoch_change().await;
         let activity_generation = activity.borrow_and_update().generation;
         let status_due =
             self.status_immediate.swap(false, Ordering::AcqRel) || now >= deadlines.status;
@@ -182,7 +219,11 @@ impl PollScheduler {
         let generation = self.status_generation.load(Ordering::Acquire);
         let Some(result) = self
             .manager
-            .poll::<RouterStatus>("router.status", json!({}), activity_generation)
+            .poll_with_session_epoch::<RouterStatus>(
+                "router.status",
+                json!({}),
+                activity_generation,
+            )
             .await
         else {
             return false;
@@ -190,8 +231,8 @@ impl PollScheduler {
         let current = self.status_generation.load(Ordering::Acquire) == generation
             && self.manager.activity().generation == activity_generation;
         match result {
-            Ok(status) if current => {
-                self.apply_status(status).await;
+            Ok((status, session_epoch)) if current => {
+                self.apply_status(status, Some(session_epoch)).await;
             }
             Err(error) if current => {
                 self.set_status_error(&error).await;
@@ -224,7 +265,13 @@ impl PollScheduler {
         current
     }
 
-    async fn apply_status(&self, status: RouterStatus) {
+    async fn apply_status(&self, status: RouterStatus, session_epoch: Option<u64>) {
+        let mut recovery = self.port_recovery.write().await;
+        if let Some(session_epoch) = session_epoch {
+            recovery.observe(&status, session_epoch, Instant::now());
+        } else if status.available() {
+            recovery.cancel();
+        }
         let mut snapshot = self.snapshot.write().await;
         if !status.available() {
             snapshot.health = None;
@@ -233,6 +280,7 @@ impl PollScheduler {
         }
         snapshot.status = Some(status);
         snapshot.status_error = None;
+        snapshot.release_observation = recovery.projection();
         self.publish(&mut snapshot);
     }
 
@@ -269,6 +317,20 @@ impl PollScheduler {
             snapshot.health_stale = true;
             self.publish(&mut snapshot);
         }
+    }
+
+    async fn cancel_for_manager_epoch_change(&self) {
+        let mut recovery = self.port_recovery.write().await;
+        let had_projection = recovery.projection().is_some();
+        if !recovery.cancel_if_epoch_changed(self.manager.session_epoch()) {
+            return;
+        }
+        if !had_projection {
+            return;
+        }
+        let mut snapshot = self.snapshot.write().await;
+        snapshot.release_observation = None;
+        self.publish(&mut snapshot);
     }
 
     fn publish(&self, snapshot: &mut PollSnapshot) {
@@ -310,9 +372,10 @@ mod tests {
     use crate::{
         error::Result,
         manager::{TransportChild, TransportEvent, TransportFactory, TransportSession},
+        port_recovery::ReleaseObservationState,
     };
     use serde_json::Value;
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::{atomic::AtomicUsize, Mutex, OnceLock};
     use tokio::sync::{mpsc, Semaphore};
 
     struct ControlledChild {
@@ -387,6 +450,57 @@ mod tests {
         }
     }
 
+    struct FailedRecoveryChild {
+        responder: mpsc::Sender<TransportEvent>,
+        replacement: bool,
+    }
+
+    impl TransportChild for FailedRecoveryChild {
+        fn write(&mut self, bytes: &[u8]) -> Result<()> {
+            let request: Value = serde_json::from_slice(bytes).unwrap();
+            let method = request["method"].as_str().unwrap();
+            let event = if method != "manager.info" {
+                TransportEvent::Terminated
+            } else {
+                let target = if self.replacement {
+                    "wrong/target"
+                } else {
+                    env!("MTLS_MANAGER_TARGET")
+                };
+                TransportEvent::Stdout(
+                    serde_json::to_vec(&json!({"id":request["id"],"result":{
+                        "version":env!("MTLS_MANAGER_VERSION"), "commit":"test", "build_date":"test",
+                        "target":target, "deployment_id":env!("MTLS_DEPLOYMENT_ID"),
+                        "management_protocol_version":env!("MTLS_MANAGEMENT_PROTOCOL_VERSION")
+                    }}))
+                    .unwrap(),
+                )
+            };
+            self.responder.try_send(event).unwrap();
+            Ok(())
+        }
+
+        fn kill(self: Box<Self>) {}
+    }
+
+    struct FailedRecoveryFactory {
+        spawns: AtomicUsize,
+    }
+
+    impl TransportFactory for FailedRecoveryFactory {
+        fn spawn(&self) -> Result<TransportSession> {
+            let replacement = self.spawns.fetch_add(1, Ordering::AcqRel) > 0;
+            let (responder, events) = mpsc::channel(8);
+            Ok(TransportSession {
+                child: Box::new(FailedRecoveryChild {
+                    responder,
+                    replacement,
+                }),
+                events,
+            })
+        }
+    }
+
     fn runtime() -> &'static tokio::runtime::Runtime {
         static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
         RUNTIME.get_or_init(|| tokio::runtime::Runtime::new().unwrap())
@@ -399,6 +513,7 @@ mod tests {
         let scheduler = PollScheduler {
             manager: ManagerClient::failed(crate::error::CommandError::manager_failed()),
             snapshot: Arc::new(RwLock::new(PollSnapshot::default())),
+            port_recovery: Arc::new(RwLock::new(PortRecovery::default())),
             visible: Arc::new(AtomicBool::new(true)),
             status_generation: Arc::new(AtomicU64::new(0)),
             health_generation: Arc::new(AtomicU64::new(0)),
@@ -450,6 +565,219 @@ mod tests {
     }
 
     #[test]
+    fn release_observation_is_projected_and_cleared_through_revisions() {
+        let observed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = observed.clone();
+        let scheduler = PollScheduler::with_observer(
+            ManagerClient::failed(crate::error::CommandError::manager_failed()),
+            move |snapshot| captured.lock().unwrap().push(snapshot),
+        );
+
+        runtime().block_on(async {
+            scheduler.begin_release_observation(0).await;
+            assert_eq!(scheduler.snapshot().await.release_observation, None);
+            assert!(observed.lock().unwrap().is_empty());
+
+            scheduler
+                .apply_status(
+                    RouterStatus {
+                        state: "absent".into(),
+                        ..RouterStatus::default()
+                    },
+                    Some(0),
+                )
+                .await;
+            assert_eq!(
+                scheduler
+                    .snapshot()
+                    .await
+                    .release_observation
+                    .unwrap()
+                    .state,
+                crate::port_recovery::ReleaseObservationState::Observing
+            );
+            let serialized = serde_json::to_value(scheduler.snapshot().await).unwrap();
+            assert_eq!(
+                serialized["release_observation"],
+                json!({ "state": "observing" })
+            );
+            assert!(!serialized["release_observation"]
+                .to_string()
+                .contains("4242"));
+
+            scheduler
+                .apply_status(
+                    RouterStatus {
+                        state: "unknown_occupant".into(),
+                        ..RouterStatus::default()
+                    },
+                    Some(0),
+                )
+                .await;
+            assert_eq!(
+                scheduler
+                    .snapshot()
+                    .await
+                    .release_observation
+                    .unwrap()
+                    .state,
+                crate::port_recovery::ReleaseObservationState::Reoccupied
+            );
+
+            scheduler.cancel_release_observation().await;
+            assert_eq!(scheduler.snapshot().await.release_observation, None);
+        });
+
+        let observed = observed.lock().unwrap();
+        assert_eq!(observed.len(), 3);
+        assert_eq!(
+            observed
+                .iter()
+                .map(|snapshot| snapshot.revision)
+                .collect::<Vec<_>>(),
+            [1, 2, 3]
+        );
+    }
+
+    #[test]
+    fn available_router_cancels_release_observation() {
+        let scheduler = PollScheduler::new(ManagerClient::failed(
+            crate::error::CommandError::manager_failed(),
+        ));
+
+        runtime().block_on(async {
+            scheduler.begin_release_observation(0).await;
+            scheduler
+                .apply_status(
+                    RouterStatus {
+                        state: "external_compatible".into(),
+                        owner: Some("external".into()),
+                        ..RouterStatus::default()
+                    },
+                    None,
+                )
+                .await;
+
+            assert_eq!(scheduler.snapshot().await.release_observation, None);
+        });
+    }
+
+    #[test]
+    fn non_absent_statuses_clear_projection_and_cannot_inherit_elapsed_time() {
+        for state in [
+            "desktop_owned",
+            "external_compatible",
+            "degraded",
+            "stale",
+            "start_failed",
+            "stopping",
+            "unexpected",
+        ] {
+            let scheduler = PollScheduler::new(ManagerClient::failed(
+                crate::error::CommandError::manager_failed(),
+            ));
+
+            runtime().block_on(async {
+                scheduler
+                    .port_recovery
+                    .write()
+                    .await
+                    .begin(0, Instant::now() - Duration::from_secs(9));
+                scheduler
+                    .apply_status(
+                        RouterStatus {
+                            state: "absent".into(),
+                            ..RouterStatus::default()
+                        },
+                        Some(0),
+                    )
+                    .await;
+                assert_eq!(
+                    scheduler
+                        .snapshot()
+                        .await
+                        .release_observation
+                        .unwrap()
+                        .state,
+                    ReleaseObservationState::Observing,
+                    "state {state}"
+                );
+
+                scheduler
+                    .apply_status(
+                        RouterStatus {
+                            state: state.into(),
+                            ..RouterStatus::default()
+                        },
+                        Some(0),
+                    )
+                    .await;
+                assert_eq!(
+                    scheduler.snapshot().await.release_observation,
+                    None,
+                    "state {state}"
+                );
+
+                scheduler
+                    .apply_status(
+                        RouterStatus {
+                            state: "absent".into(),
+                            ..RouterStatus::default()
+                        },
+                        Some(0),
+                    )
+                    .await;
+                assert_eq!(
+                    scheduler.snapshot().await.release_observation,
+                    None,
+                    "state {state}"
+                );
+            });
+        }
+    }
+
+    #[test]
+    fn stale_epoch_cannot_begin_release_observation() {
+        let manager = ManagerClient::failed(crate::error::CommandError::manager_failed());
+        let scheduler = PollScheduler::new(manager.clone());
+
+        runtime().block_on(async {
+            let inspected_epoch = manager.session_epoch();
+            manager.invalidate_session_for_test();
+
+            assert!(!scheduler.begin_release_observation(inspected_epoch).await);
+            assert_eq!(scheduler.snapshot().await.release_observation, None);
+        });
+    }
+
+    #[test]
+    fn failed_manager_recovery_epoch_cancels_release_observation() {
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let captured = observed.clone();
+        let manager = ManagerClient::new(Arc::new(FailedRecoveryFactory {
+            spawns: AtomicUsize::new(0),
+        }));
+        let scheduler = PollScheduler::with_observer(manager.clone(), move |snapshot| {
+            captured.lock().unwrap().push(snapshot)
+        });
+
+        runtime().block_on(async {
+            assert!(scheduler.begin_release_observation(0).await);
+            let error = manager
+                .call::<Value>("router.logs", json!({ "limit": 1 }))
+                .await
+                .unwrap_err();
+            assert_eq!(error.code, "SIDECAR_INVALID");
+            assert_eq!(manager.session_epoch(), 1);
+
+            scheduler.cancel_for_manager_epoch_change().await;
+            assert_eq!(scheduler.snapshot().await.release_observation, None);
+            assert_eq!(scheduler.snapshot().await.revision, 0);
+            assert!(observed.lock().unwrap().is_empty());
+        });
+    }
+
+    #[test]
     fn poll_errors_retain_cached_status_and_health() {
         let scheduler = PollScheduler::new(ManagerClient::failed(
             crate::error::CommandError::manager_failed(),
@@ -465,7 +793,7 @@ mod tests {
         };
 
         runtime().block_on(async {
-            scheduler.apply_status(status.clone()).await;
+            scheduler.apply_status(status.clone(), None).await;
             scheduler.apply_health(health.clone()).await;
             scheduler
                 .set_status_error(&CommandError::manager_failed())
@@ -480,6 +808,60 @@ mod tests {
             assert!(snapshot.status_error.is_some());
             assert!(snapshot.health_error.is_some());
         });
+    }
+
+    #[test]
+    fn status_errors_cancel_active_and_terminal_release_observations() {
+        for (elapsed, expected_state) in [
+            (Duration::ZERO, ReleaseObservationState::Observing),
+            (Duration::from_secs(10), ReleaseObservationState::Released),
+        ] {
+            let observed = Arc::new(Mutex::new(Vec::new()));
+            let captured = observed.clone();
+            let scheduler = PollScheduler::with_observer(
+                ManagerClient::failed(crate::error::CommandError::manager_failed()),
+                move |snapshot| captured.lock().unwrap().push(snapshot),
+            );
+
+            runtime().block_on(async {
+                scheduler
+                    .port_recovery
+                    .write()
+                    .await
+                    .begin(0, Instant::now() - elapsed);
+                scheduler
+                    .apply_status(
+                        RouterStatus {
+                            state: "absent".into(),
+                            ..RouterStatus::default()
+                        },
+                        Some(0),
+                    )
+                    .await;
+                assert_eq!(
+                    scheduler
+                        .snapshot()
+                        .await
+                        .release_observation
+                        .unwrap()
+                        .state,
+                    expected_state
+                );
+
+                scheduler
+                    .set_status_error(&CommandError::manager_failed())
+                    .await;
+
+                let snapshot = scheduler.snapshot().await;
+                assert_eq!(snapshot.release_observation, None);
+                assert!(snapshot.status_error.is_some());
+                assert_eq!(scheduler.port_recovery.read().await.projection(), None);
+            });
+
+            let observed = observed.lock().unwrap();
+            assert_eq!(observed.last().unwrap().release_observation, None);
+            assert!(observed.last().unwrap().status_error.is_some());
+        }
     }
 
     #[test]
@@ -514,11 +896,14 @@ mod tests {
                 }));
                 let scheduler = PollScheduler::new(manager.clone());
                 scheduler
-                    .apply_status(RouterStatus {
-                        state: "desktop_owned".to_owned(),
-                        owner: Some("desktop".to_owned()),
-                        ..RouterStatus::default()
-                    })
+                    .apply_status(
+                        RouterStatus {
+                            state: "desktop_owned".to_owned(),
+                            owner: Some("desktop".to_owned()),
+                            ..RouterStatus::default()
+                        },
+                        None,
+                    )
                     .await;
                 let mut activity = manager.subscribe_activity();
                 let manager_call = {

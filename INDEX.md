@@ -29,7 +29,7 @@ Tauri UI (React) ──invoke──▶ Rust commands ──stdin/stdout JSON─�
 
 ## Manager（`cmd/mtls-router-manager/` + `internal/manager/`）
 
-Manager 是一个基本无状态、按请求处理的 JSON 协议服务（`internal/manager/protocol/`）；一个例外是 `occupant.Service`，它在 `Inspect` 与 `ForceTerminate` 之间持有一个内存中一次性确认 token（其他长生命周期状态位于 `lifecycle.Manager` 与 `agent.Service`）。它暴露 15 个方法，分组如下：
+Manager 是一个基本无状态、按请求处理的 management protocol v4 JSON 服务（`internal/manager/protocol/`）；一个例外是 `occupant.Service`，它只为允许强制终止的目标在 `Inspect` 与 `ForceTerminate` 之间持有一个内存中一次性确认 token（其他长生命周期状态位于 `lifecycle.Manager` 与 `agent.Service`）。它暴露 15 个方法，分组如下：
 
 - `manager.info`、`diagnostics.collect` — 元数据
 - `router.status/start/stop/health/version/logs` — 路由生命周期（spawn/监控 router 二进制）
@@ -43,7 +43,7 @@ Manager 是一个基本无状态、按请求处理的 JSON 协议服务（`inter
 - `agent` — 检测、配置渲染（按 agent 格式：JSON/TOML）、带备份/回滚的事务性写入
 - `agent/modelconfig` — 无 key 的规范化 model config schema v1：`Decode`/`DecodeStructural`/`Canonical`/`DeepMerge`、token 签名
 - `trustedrouter` — 经 router `/v1/models` 的鉴权模型目录发现
-- `occupant` — 端口占用者身份检查与受保护的强制终止
+- `occupant` — 结构化端口占用诊断、Windows 权限预检、SCM/systemd supervisor 分类与受保护的精确强制终止
 - `protocol` — 请求/响应类型、方法超时、错误码
 - `state` — router 进程身份的 JSON 状态文件读写
 - `process` — PID + 启动时间 + 可执行文件三元身份校验
@@ -74,6 +74,7 @@ key 绝不出现于环境变量、CLI 参数、model config、日志或 journal 
 - `src/commands.rs` — Tauri 命令处理器，代理到 manager client
 - `src/manager.rs` — spawn 并通过 stdin/stdout 与 `mtls-router-manager serve` 通信
 - `src/scheduler.rs` — 轮询调度器，向前端 emit `router-poll-snapshot` 事件
+- `src/port_recovery.rs` — manager 报告首次释放后约 10 秒定期采样，区分未检测到重新占用与已采样到重新占用
 - `src/sidecar.rs` — 解析并校验 sidecar 二进制路径（运行时纯名字 `mtls-router[-manager][.exe]`；target-triple 名仅为构建输入）
 - `src/tray.rs` — 系统托盘，状态感知菜单
 - `src/orchestration.rs` — 首次启动流程（sidecar 有效则自动启动 router）
@@ -116,4 +117,4 @@ Rust 侧绝不向 webview 暴露 shell/fs/http 权限（由 `lib.rs` 中的测�
 - `docs/superpowers/` 含历史规格/计划；非当前行为的事实来源。
 - `scripts/build.sh` 在 `secrets/` 下生成占位 PEM 供本地构建；真实发布密钥来自 GitHub secrets/vars。
 - `.worktrees/` 目录含 git worktree 产物；分析产品代码时忽略。
-- 管理协议当前版本为 `3`；桌面端握手时在启动阶段校验。
+- 管理协议当前版本为 `4`；router、manager、setup receipt、release metadata 与桌面端必须同版本，桌面端在启动握手时校验并拒绝混合代。

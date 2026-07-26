@@ -21,7 +21,7 @@
 
 ## 常量
 
-- `ManagementProtocolVersion = "3"` —— 代码所有，不可在链接期覆盖。
+- `ManagementProtocolVersion = "4"` —— 代码所有，不可在链接期覆盖；v4 对应结构化占用诊断与终止结果，router、manager、setup/release metadata 和 desktop 必须锁步匹配。
 
 ## 注入点
 

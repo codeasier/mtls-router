@@ -35,7 +35,7 @@ func TestChannelValidatesAndFetchesOnExactlyOneConnection(t *testing.T) {
 			if r.Header.Get("Authorization") != "" {
 				t.Error("version request contained Authorization")
 			}
-			_ = json.NewEncoder(w).Encode(discovery.Version{PID: 91, DeploymentID: "prod-a", ManagementProtocolVersion: "3"})
+			_ = json.NewEncoder(w).Encode(discovery.Version{PID: 91, DeploymentID: "prod-a", ManagementProtocolVersion: "4"})
 		case "/v1/models":
 			if r.Header.Get("Authorization") != "Bearer "+channelKeyCanary {
 				t.Errorf("Authorization = %q", r.Header.Get("Authorization"))
@@ -78,7 +78,7 @@ func TestChannelSimplifiesMixedCatalog(t *testing.T) {
 			if authorization := r.Header.Get("Authorization"); authorization != "" {
 				t.Errorf("version Authorization = %q, want empty", authorization)
 			}
-			_ = json.NewEncoder(w).Encode(discovery.Version{PID: 91, DeploymentID: "prod-a", ManagementProtocolVersion: "3"})
+			_ = json.NewEncoder(w).Encode(discovery.Version{PID: 91, DeploymentID: "prod-a", ManagementProtocolVersion: "4"})
 		case "/v1/models":
 			if authorization := r.Header.Get("Authorization"); authorization != "Bearer "+channelKeyCanary {
 				t.Errorf("models Authorization = %q", authorization)
@@ -119,7 +119,7 @@ func TestChannelForcedRedialFailsBeforeKeyTransmission(t *testing.T) {
 		}
 		if r.URL.Path == "/version" {
 			w.Header().Set("Connection", "close")
-			_ = json.NewEncoder(w).Encode(discovery.Version{PID: 91, DeploymentID: "prod-a", ManagementProtocolVersion: "3"})
+			_ = json.NewEncoder(w).Encode(discovery.Version{PID: 91, DeploymentID: "prod-a", ManagementProtocolVersion: "4"})
 			return
 		}
 		modelRequests.Add(1)
@@ -141,7 +141,7 @@ func TestChannelRejectsProcessSwapBeforeKeyTransmission(t *testing.T) {
 		if r.Header.Get("Authorization") != "" {
 			keyObserved.Store(true)
 		}
-		_ = json.NewEncoder(w).Encode(discovery.Version{PID: 91, DeploymentID: "prod-a", ManagementProtocolVersion: "3"})
+		_ = json.NewEncoder(w).Encode(discovery.Version{PID: 91, DeploymentID: "prod-a", ManagementProtocolVersion: "4"})
 	}))
 	defer server.Close()
 	listener := listenerForServer(t, server.URL)
@@ -185,10 +185,10 @@ func listenerForServer(t *testing.T, rawURL string) Listener {
 func trustedFixture(listener Listener) discovery.Result {
 	return discovery.Result{
 		Classification: discovery.ExternalCompatible, Owner: "cli", ListenAddr: listener.RouterBaseURL,
-		Version: discovery.Version{PID: 91, DeploymentID: "prod-a", ManagementProtocolVersion: "3"},
+		Version: discovery.Version{PID: 91, DeploymentID: "prod-a", ManagementProtocolVersion: "4"},
 		State: state.RouterState{
 			PID: 91, Owner: "cli", ListenAddr: listener.RouterBaseURL, BinaryPath: "/router",
-			ProcessStartedAt: "start", ProcessExecutable: "/router", DeploymentID: "prod-a", ManagementProtocolVersion: "3",
+			ProcessStartedAt: "start", ProcessExecutable: "/router", DeploymentID: "prod-a", ManagementProtocolVersion: "4",
 		},
 	}
 }

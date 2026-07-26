@@ -19,7 +19,7 @@ set -euo pipefail
 IFS= read -r request
 id="$(printf '%s' "$request" | jq -r .id)"; method="$(printf '%s' "$request" | jq -r .method)"
 case "$method" in
-  manager.info) result='{"version":"fixture","commit":"x","build_date":"x","target":"x/x","deployment_id":"fixture-deployment","management_protocol_version":"3"}' ;;
+  manager.info) result='{"version":"fixture","commit":"x","build_date":"x","target":"x/x","deployment_id":"fixture-deployment","management_protocol_version":"4"}' ;;
   router.start) result='{"state":"external_compatible","owner":"cli","listen_addr":"127.0.0.1:19099","pid":4242}' ;;
   router.status) result='{"state":"external_compatible","owner":"cli","listen_addr":"127.0.0.1:19099","pid":4242}' ;;
   router.logs) result='{"lines":["fixture router log"]}' ;;

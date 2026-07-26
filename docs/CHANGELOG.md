@@ -4,26 +4,32 @@
 
 ## v0.2.1 - 2026-07-24
 
-This release refines desktop navigation and Agent presentation, improves readability and scrolling, and preserves bounded, sanitized diagnostics when a desktop-owned router fails during startup.
+This release refines desktop navigation and Agent presentation, improves readability and scrolling, preserves bounded startup diagnostics, and adds supervised port-conflict recovery with protocol-v4 diagnostics.
 
 ### Added
 
 - Added a collapsible desktop sidebar with a persisted preference while keeping every section accessible from the compact icon rail.
+- Added structured port-occupant recovery actions and reasons, bounded Windows Service/Linux systemd identifiers with manual stop guidance, and about 10 seconds of periodic desktop sampling that reports whether reoccupation was detected.
 
 ### Changed
 
 - Compacted Agent selection cards, added official Claude Code, OpenCode, and Codex logos, and standardized the user-visible `OpenCode` name without changing internal identifiers or configuration paths.
+- Advanced the matched router, manager, setup, release metadata, and desktop management contract to protocol v4; mixed generations remain rejected.
 
 ### Fixed
 
 - Increased Agent configuration label, hint, model identifier, and control sizing for better readability.
 - Kept the desktop tab header fixed while constraining scrolling to the content pane across desktop and mobile layouts.
 - Preserved bounded, sanitized output from failed router startups, including immediate Windows exits and inherited-handle cases, and exposed the diagnostics through router status and runtime logs without mixing external CLI router output.
+- Rejected known different-user Windows SIDs instead of degrading them to PID-only recovery, limited PID-only recovery after unreadable SID or complete process identity to targets that pass terminate-access preflight, and reported permission, termination, and port-release timeout failures separately.
+- Kept supervised recovery non-executing and non-elevating: copied Windows commands are safely quoted for Administrator PowerShell only, SCM/systemd guidance is manual, and macOS launchd labels are never guessed.
+- Qualified recovery evidence by mode: verified identity proves process absence and initial release; Windows PID-only proves a successful termination request and disappearance of the original listener PID, while sampled observation reports no detected reoccupation rather than continuous stability.
 
 ### Tests
 
 - Added desktop regression coverage for sidebar collapse and persistence, configuration typography, control sizing, scroll ownership, and failure-log navigation.
 - Expanded manager lifecycle and app coverage for startup output draining, cleanup, sanitization, log merging, and Windows immediate-exit behavior.
+- Added native and cross-platform coverage for structured occupant diagnostics, supervisor classification, access preflight, mode-specific termination evidence, sampled release observation, reoccupation, stable errors, and protocol-v4 artifact consistency.
 
 ---
 

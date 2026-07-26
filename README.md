@@ -20,7 +20,7 @@ Initial release of the single-binary local reverse proxy for forwarding local HT
 
 ## Desktop application
 
-The Tauri desktop application provides current-user router control, tray operation, default launch-at-login, health/log views, and explicit preview/write flows for Claude Code, opencode, and Codex. It packages the manager and router as verified sidecars and never changes Agent files on first launch.
+The Tauri desktop application provides current-user router control, tray operation, default launch-at-login, health/log views, supervised port-conflict recovery, and explicit preview/write flows for Claude Code, opencode, and Codex. Port recovery reports structured reasons and supervisor guidance, never elevates or executes stop commands, and periodically samples the port for about 10 seconds to report whether reoccupation was detected. It packages the manager and router as verified sidecars and never changes Agent files on first launch.
 
 The checked-in CI and release workflows build six native desktop packages: Windows x86_64/arm64 NSIS installers, macOS Intel/Apple Silicon DMGs, and Linux x86_64/arm64 AppImages. Each matching target runner inspects its package contents, architecture, version/deployment identity, sidecar hashes, and executable permissions. Release jobs sign Windows and macOS packages only when signing credentials are complete, notarize and staple macOS applications only when the additional Apple credentials are complete, and publish one explicit signing-status file per target. Package inspection does not install or launch the application, so separate successful target-runner install/launch evidence is still required before a desktop release is considered fully validated. See [Desktop Application](docs/DESKTOP.md) for installation, first-launch, Agent, credential, and uninstall behavior, [Desktop Troubleshooting](docs/TROUBLESHOOTING.md) for recovery guidance, and [Build and Release](docs/BUILD.md) for the exact evidence boundary.
 
@@ -153,7 +153,7 @@ Returns JSON describing the running binary and process:
   "commit": "abc1234",
   "build_date": "2026-06-21T09:23:24Z",
   "deployment_id": "production-service",
-  "management_protocol_version": "3",
+  "management_protocol_version": "4",
   "pid": 12345,
   "started_at": "2026-06-21T09:23:24Z"
 }
@@ -203,10 +203,10 @@ The current receipt-verified manager handshake is:
 
 ```json
 {"id":"info","method":"manager.info","params":{}}
-{"id":"info","result":{"version":"v0.1.1","commit":"abc1234","build_date":"2026-06-21T09:23:24Z","target":"linux/amd64","deployment_id":"production-service","management_protocol_version":"3"}}
+{"id":"info","result":{"version":"v0.1.1","commit":"abc1234","build_date":"2026-06-21T09:23:24Z","target":"linux/amd64","deployment_id":"production-service","management_protocol_version":"4"}}
 ```
 
-`MTLS_ROUTER_OPENAI_API_KEY` has been removed because environment variables are an unsafe secret transport. It no longer supplies a key. Noninteractive automation must verify `manager.info` protocol `3`, call `agent.models`, construct canonical model config, then call `agent.render` or `agent.preview` and `agent.write`. The key appears only in the `agent.models` and `agent.write` stdin request bodies. Do not put it in command-line arguments, environment variables, model config, logs, shell history, or temporary request files. See the complete [Agent Model Configuration](docs/AGENT_MODELS.md#protocol-v3-automation) contract.
+`MTLS_ROUTER_OPENAI_API_KEY` has been removed because environment variables are an unsafe secret transport. It no longer supplies a key. Noninteractive automation must verify `manager.info` protocol `4`, call `agent.models`, construct canonical model config, then call `agent.render` or `agent.preview` and `agent.write`. The key appears only in the `agent.models` and `agent.write` stdin request bodies. Do not put it in command-line arguments, environment variables, model config, logs, shell history, or temporary request files. See the complete [Agent Model Configuration](docs/AGENT_MODELS.md#protocol-v4-automation) contract.
 
 The `mtls-router` binary itself manages the router only; it does not provide agent configuration commands such as `print-config`.
 

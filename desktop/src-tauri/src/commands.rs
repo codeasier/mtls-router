@@ -5,10 +5,12 @@ use crate::{
     scheduler::PollScheduler,
     types::{
         AgentDetect, AgentFragment, AgentPreview, AgentWriteResult, ComponentVersions,
-        DesktopPaths, Diagnostics, ManagerInfo, NativeLanguage, OccupantInspection, PollSnapshot,
-        RouterHealth, RouterLogs, RouterStatus, RouterVersion,
+        DesktopPaths, Diagnostics, ManagerInfo, NativeLanguage, OccupantInspection,
+        OccupantTerminationResult, PollSnapshot, RecoveryAction, RouterHealth, RouterLogs,
+        RouterStatus, RouterVersion,
     },
 };
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{collections::HashMap, env, path::PathBuf, sync::Arc};
@@ -23,6 +25,7 @@ pub struct AppState {
     pub scheduler: PollScheduler,
     pub paths: DesktopPaths,
     pub model_flows: Arc<Mutex<HashMap<String, ModelFlow>>>,
+    pub pending_occupant: Arc<Mutex<Option<PendingOccupant>>>,
 }
 
 impl AppState {
@@ -37,6 +40,12 @@ pub(crate) struct ModelFlow {
     models: Vec<String>,
     catalog_token: String,
     modes: Option<HashMap<String, String>>,
+}
+
+pub(crate) struct PendingOccupant {
+    confirmation_token: Zeroizing<String>,
+    manager_session_epoch: u64,
+    expires_at: DateTime<Utc>,
 }
 
 struct PendingFlow {
@@ -181,33 +190,111 @@ pub async fn router_stop(state: tauri::State<'_, AppState>) -> Result<RouterStat
 pub async fn router_inspect_occupant(
     state: tauri::State<'_, AppState>,
 ) -> Result<OccupantInspection> {
-    state
-        .manager
-        .call("router.inspect_occupant", json!({}))
-        .await
+    inspect_occupant_command(&state.manager, &state.pending_occupant).await
+}
+
+async fn inspect_occupant_command(
+    manager: &ManagerClient,
+    pending_occupant: &Arc<Mutex<Option<PendingOccupant>>>,
+) -> Result<OccupantInspection> {
+    let mut pending = pending_occupant.lock().await;
+    pending.take();
+    let (inspection, manager_session_epoch): (OccupantInspection, u64) = manager
+        .call_with_session_epoch("router.inspect_occupant", json!({}))
+        .await?;
+    if inspection.recovery.action == RecoveryAction::ForceTerminate {
+        let confirmation_token = inspection
+            .confirmation_token
+            .as_ref()
+            .expect("strict forceable inspection has a token")
+            .clone();
+        *pending = Some(PendingOccupant {
+            confirmation_token: Zeroizing::new(confirmation_token),
+            manager_session_epoch,
+            expires_at: DateTime::parse_from_rfc3339(
+                inspection
+                    .expires_at
+                    .as_deref()
+                    .expect("strict forceable inspection has an expiry"),
+            )
+            .expect("strict forceable inspection expiry is RFC3339")
+            .with_timezone(&Utc),
+        });
+    }
+    Ok(inspection)
 }
 
 #[tauri::command]
 pub async fn router_force_terminate_occupant(
     request: ForceTerminateOccupantRequest,
     state: tauri::State<'_, AppState>,
-) -> Result<RouterStatus> {
-    force_terminate_occupant_command(request, &state.manager, &state.scheduler).await
+) -> Result<OccupantTerminationResult> {
+    force_terminate_occupant_command(
+        request,
+        &state.manager,
+        &state.scheduler,
+        &state.pending_occupant,
+    )
+    .await
 }
 
 async fn force_terminate_occupant_command(
+    request: ForceTerminateOccupantRequest,
+    manager: &ManagerClient,
+    scheduler: &PollScheduler,
+    pending_occupant: &Arc<Mutex<Option<PendingOccupant>>>,
+) -> Result<OccupantTerminationResult> {
+    force_terminate_occupant_command_at(request, manager, scheduler, pending_occupant, Utc::now())
+        .await
+}
+
+async fn force_terminate_occupant_command_at(
     mut request: ForceTerminateOccupantRequest,
     manager: &ManagerClient,
     scheduler: &PollScheduler,
-) -> Result<RouterStatus> {
+    pending_occupant: &Arc<Mutex<Option<PendingOccupant>>>,
+    now: DateTime<Utc>,
+) -> Result<OccupantTerminationResult> {
     if request.confirmation_token.trim().is_empty() || request.confirmation_token.len() > 4096 {
         request.confirmation_token.zeroize();
         return Err(CommandError::invalid_params(
             "confirmation token is invalid",
         ));
     }
-    let token = std::mem::take(&mut request.confirmation_token);
-    crate::orchestration::force_terminate_occupant(token, manager, scheduler).await
+    let mut token = std::mem::take(&mut request.confirmation_token);
+    let mut cached = pending_occupant.lock().await;
+    if cached.as_ref().is_some_and(|pending| {
+        pending.manager_session_epoch != manager.session_epoch() || now >= pending.expires_at
+    }) {
+        cached.take();
+        token.zeroize();
+        return Err(CommandError::invalid_params(
+            "inspected occupant confirmation has expired",
+        ));
+    }
+    if !cached
+        .as_ref()
+        .is_some_and(|pending| pending.confirmation_token.as_str() == token)
+    {
+        token.zeroize();
+        return Err(CommandError::invalid_params(
+            "confirmation token does not match the inspected occupant",
+        ));
+    }
+    let pending = cached.take().expect("matching pending occupant exists");
+    crate::orchestration::force_terminate_occupant(
+        token,
+        pending.manager_session_epoch,
+        manager,
+        scheduler,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn router_cancel_release_observation(state: tauri::State<'_, AppState>) -> Result<()> {
+    state.scheduler.cancel_release_observation().await;
+    Ok(())
 }
 
 #[tauri::command]
@@ -914,6 +1001,7 @@ mod tests {
                     can_prepare_for_uninstall: false,
                 },
                 model_flows: flows.clone(),
+                pending_occupant: Default::default(),
             };
 
             state.set_window_visibility(false);
@@ -1444,40 +1532,200 @@ mod tests {
         serde_json::from_value(json!({"version":1,"claude":{"primary":{"model":"m1"},"haiku":{"inherit_primary":true},"sonnet":{"inherit_primary":true},"opus":{"inherit_primary":true}}})).unwrap()
     }
 
+    fn forceable_inspection_response(id: &str) -> Vec<u8> {
+        serde_json::to_vec(&json!({"id":id,"result":{
+            "pid":4242,
+            "verification_mode":"windows_pid_only",
+            "listen_addr":"127.0.0.1:19099",
+            "recovery":{"action":"force_terminate"},
+            "confirmation_token":"opaque-token",
+            "expires_at":"2099-07-25T00:00:30Z"
+        }}))
+        .unwrap()
+    }
+
+    fn termination_response(id: &str) -> Vec<u8> {
+        serde_json::to_vec(&json!({"id":id,"result":{
+            "termination":"process_terminated", "port_state":"released"
+        }}))
+        .unwrap()
+    }
+
     #[test]
-    fn force_termination_command_submits_only_the_token_and_reconciles() {
+    fn force_termination_requires_and_consumes_the_inspected_token() {
         tauri::async_runtime::block_on(async {
-            let force =
-                serde_json::to_vec(&json!({"id":"desktop-1","result":{"state":"absent"}})).unwrap();
-            let status =
-                serde_json::to_vec(&json!({"id":"desktop-2","result":{"state":"absent"}})).unwrap();
-            let (manager, writes) = fake_client(vec![force, status]);
+            let (manager, writes) = fake_client(vec![
+                forceable_inspection_response("desktop-1"),
+                termination_response("desktop-2"),
+            ]);
             let scheduler = PollScheduler::new(manager.clone());
+            let pending = Arc::new(Mutex::new(None));
+            let inspection = inspect_occupant_command(&manager, &pending).await.unwrap();
+            let generation_before_force = scheduler.status_generation();
+
+            let mismatch = force_terminate_occupant_command(
+                ForceTerminateOccupantRequest {
+                    confirmation_token: "wrong-token".to_owned(),
+                },
+                &manager,
+                &scheduler,
+                &pending,
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(mismatch.code, "INVALID_PARAMS");
+
             let result = force_terminate_occupant_command(
+                ForceTerminateOccupantRequest {
+                    confirmation_token: inspection.confirmation_token.unwrap(),
+                },
+                &manager,
+                &scheduler,
+                &pending,
+            )
+            .await
+            .unwrap();
+            assert!(scheduler.status_generation() > generation_before_force);
+            assert_eq!(
+                result.termination,
+                crate::types::OccupantTermination::ProcessTerminated
+            );
+            assert!(pending.lock().await.is_none());
+            assert_eq!(scheduler.snapshot().await.release_observation, None);
+
+            let replay = force_terminate_occupant_command(
                 ForceTerminateOccupantRequest {
                     confirmation_token: "opaque-token".to_owned(),
                 },
                 &manager,
                 &scheduler,
+                &pending,
             )
             .await
-            .unwrap();
-            assert_eq!(result.state, "absent");
+            .unwrap_err();
+            assert_eq!(replay.code, "INVALID_PARAMS");
 
             let writes = writes.lock().unwrap();
-            let request = writes
+            let requests = writes
                 .iter()
-                .find(|request| request["method"] == "router.force_terminate_occupant")
-                .unwrap();
+                .filter(|request| request["method"] == "router.force_terminate_occupant")
+                .collect::<Vec<_>>();
+            assert_eq!(requests.len(), 1);
             assert_eq!(
-                request["params"],
+                requests[0]["params"],
                 json!({ "confirmation_token": "opaque-token" })
             );
-            assert!(request["params"].get("pid").is_none());
-            assert!(request["params"].get("executable").is_none());
+            assert!(requests[0]["params"].get("pid").is_none());
             assert!(writes
                 .iter()
                 .all(|request| request["method"] != "router.start"));
+        });
+    }
+
+    #[test]
+    fn blocked_or_failed_inspection_clears_pending_force_target() {
+        tauri::async_runtime::block_on(async {
+            let blocked = serde_json::to_vec(&json!({"id":"desktop-2","result":{
+                "pid":9,
+                "verification_mode":"windows_pid_only",
+                "listen_addr":"127.0.0.1:19099",
+                "recovery":{"action":"unavailable","reason":"identity_unavailable"}
+            }}))
+            .unwrap();
+            let (manager, _) = fake_client(vec![
+                forceable_inspection_response("desktop-1"),
+                blocked,
+                b"not-json".to_vec(),
+            ]);
+            let pending = Arc::new(Mutex::new(None));
+
+            inspect_occupant_command(&manager, &pending).await.unwrap();
+            assert!(pending.lock().await.is_some());
+            inspect_occupant_command(&manager, &pending).await.unwrap();
+            assert!(pending.lock().await.is_none());
+
+            *pending.lock().await = Some(PendingOccupant {
+                confirmation_token: Zeroizing::new("stale".into()),
+                manager_session_epoch: manager.session_epoch(),
+                expires_at: "2099-07-25T00:00:30Z".parse::<DateTime<Utc>>().unwrap(),
+            });
+            assert!(inspect_occupant_command(&manager, &pending).await.is_err());
+            assert!(pending.lock().await.is_none());
+        });
+    }
+
+    #[test]
+    fn invalid_termination_result_consumes_target_without_beginning_observation() {
+        tauri::async_runtime::block_on(async {
+            let invalid = serde_json::to_vec(&json!({"id":"desktop-2","result":{
+                "termination":"process_terminated", "port_state":"occupied"
+            }}))
+            .unwrap();
+            let (manager, _) =
+                fake_client(vec![forceable_inspection_response("desktop-1"), invalid]);
+            let scheduler = PollScheduler::new(manager.clone());
+            let pending = Arc::new(Mutex::new(None));
+            inspect_occupant_command(&manager, &pending).await.unwrap();
+            let generation_before_force = scheduler.status_generation();
+
+            let error = force_terminate_occupant_command(
+                ForceTerminateOccupantRequest {
+                    confirmation_token: "opaque-token".into(),
+                },
+                &manager,
+                &scheduler,
+                &pending,
+            )
+            .await
+            .unwrap_err();
+
+            assert_eq!(error.code, "INVALID_RESPONSE");
+            assert!(scheduler.status_generation() > generation_before_force);
+            assert!(pending.lock().await.is_none());
+            assert_eq!(scheduler.snapshot().await.release_observation, None);
+        });
+    }
+
+    #[test]
+    fn expired_or_stale_session_pending_target_is_consumed_locally() {
+        tauri::async_runtime::block_on(async {
+            for stale_epoch in [false, true] {
+                let (manager, writes) =
+                    fake_client(vec![forceable_inspection_response("desktop-1")]);
+                let scheduler = PollScheduler::new(manager.clone());
+                let pending = Arc::new(Mutex::new(None));
+                inspect_occupant_command(&manager, &pending).await.unwrap();
+                if stale_epoch {
+                    manager.invalidate_session_for_test();
+                }
+                let now = if stale_epoch {
+                    "2099-07-24T00:00:00Z"
+                } else {
+                    "2099-07-25T00:00:30Z"
+                }
+                .parse::<DateTime<Utc>>()
+                .unwrap();
+
+                let error = force_terminate_occupant_command_at(
+                    ForceTerminateOccupantRequest {
+                        confirmation_token: "opaque-token".into(),
+                    },
+                    &manager,
+                    &scheduler,
+                    &pending,
+                    now,
+                )
+                .await
+                .unwrap_err();
+
+                assert_eq!(error.code, "INVALID_PARAMS");
+                assert!(pending.lock().await.is_none());
+                assert!(writes
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .all(|request| request["method"] != "router.force_terminate_occupant"));
+            }
         });
     }
 }

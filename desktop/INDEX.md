@@ -8,11 +8,14 @@ Tauri 2 桌面应用（CodeasierRouter）：React 前端 + Rust 后端，通过 
 React UI ──Tauri invoke──▶ Rust commands.rs ──stdin/stdout JSON──▶ mtls-router-manager serve
                                     │
                               scheduler.rs ──poll──▶ manager ──emit──▶ "router-poll-snapshot" event ──▶ React
+                                    │
+                              port_recovery.rs ──约 10 秒采样──▶ released / reoccupied
 ```
 
 桌面应用绝不直接与 router 通信。它以长驻子进程方式拉起 `mtls-router-manager serve`，带 `--desktop-session`、`--parent-pid/start/executable` flag。
 
-- **启动失败诊断**：预启动失败按稳定阶段和可选数值 OS 错误码生成安全诊断；启动后失败会终止并等待自有子进程。lifecycle 保留有界的原始输出，而 app 协议仅暴露脱敏的、会话作用域诊断。
+- **协议与启动失败诊断**：桌面端严格校验 management protocol v4 结构；预启动失败按稳定阶段和可选数值 OS 错误码生成安全诊断，启动后失败会终止并等待自有子进程。lifecycle 保留有界原始输出，而 app 协议仅暴露脱敏的会话作用域诊断。
+- **端口恢复**：RouterPage 只按结构化 action/reason 渲染按钮或 SCM/systemd 人工引导，不执行命令、不提权、不猜测 launchd label；Windows copy command 只生成适用于管理员 PowerShell 的安全引用文本，不适用于 `cmd.exe`。Rust `port_recovery.rs` 在 manager 报告分模式成功证据与首次释放后，由 scheduler 在约 10 秒内定期采样；只有持续的 `absent` 状态可产生 `released`，`unknown_occupant` 产生 `reoccupied`，其他状态、主动启动和 manager session 变化会取消观察。
 
 ## 前端（src/）
 
@@ -35,7 +38,8 @@ React UI ──Tauri invoke──▶ Rust commands.rs ──stdin/stdout JSON─
 | `lib.rs`              | 应用入口：插件注册、setup（sidecar 校验、manager spawn、调度器启动、托盘）、invoke handler 注册                                                   |
 | `commands.rs`         | 所有 `#[tauri::command]` handler；`AppState`（manager client、调度器、路径、model flow）；`ModelFlow` 含 `Zeroizing<String>` API key              |
 | `manager.rs`          | `ManagerClient` + `TauriTransportFactory` —— spawn manager 子进程、发送 JSON 请求、读取响应；`validate_handshake()`                               |
-| `scheduler.rs`        | `PollScheduler` —— 周期性 router 状态/健康轮询；emit `router-poll-snapshot` 事件；可见性感知间隔                                                  |
+| `scheduler.rs`        | `PollScheduler` —— 周期性 router 状态/健康轮询；推进端口释放观察；emit `router-poll-snapshot` 事件；可见性感知间隔                                |
+| `port_recovery.rs`    | `PortRecovery` —— manager session epoch 绑定的约 10 秒定期采样状态；区分 `observing`、`released`、`reoccupied`                                    |
 | `sidecar.rs`          | `SidecarPaths::resolve()` —— 在 app 二进制旁定位 `mtls-router[.exe]` 与 `mtls-router-manager[.exe]`（运行时纯名字）；校验 SHA-256 + 原生架构/格式 |
 | `tray.rs`             | 系统托盘图标/菜单；状态感知标签；窗口显示/隐藏                                                                                                    |
 | `orchestration.rs`    | `first_launch()` —— sidecar 有效且无 router 运行时自动启动 router                                                                                 |
@@ -51,7 +55,7 @@ React UI ──Tauri invoke──▶ Rust commands.rs ──stdin/stdout JSON─
 - webview 能力：仅 `core:default` —— 无 shell/fs/http/opener 权限（由 `lib.rs` 中的测试强制保证）。
 - API key 存于 `Zeroizing<String>` —— 内存 drop 时清零。
 - CSP：`default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost; style-src 'self' 'unsafe-inline'`。
-- manager 握手在启动时校验：version、protocol version、deployment ID。
+- manager 握手在启动时校验：version、management protocol v4、deployment ID；v4 occupant 响应枚举、字段组合、标识上限和 token 规则均 fail closed。
 
 ## 构建
 

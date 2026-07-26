@@ -1,12 +1,13 @@
 use crate::{
-    error::Result,
+    error::{CommandError, Result},
     manager::ManagerClient,
     scheduler::PollScheduler,
-    types::{RouterHealth, RouterStatus, RouterVersion},
+    types::{OccupantTerminationResult, RouterHealth, RouterStatus, RouterVersion},
 };
 use serde_json::json;
 
 pub async fn start(manager: &ManagerClient, scheduler: &PollScheduler) -> Result<RouterStatus> {
+    scheduler.cancel_release_observation().await;
     scheduler.request_refresh();
     match manager
         .call::<RouterStatus>("router.start", json!({ "owner": "desktop" }))
@@ -63,18 +64,30 @@ pub async fn stop(manager: &ManagerClient, scheduler: &PollScheduler) -> Result<
 
 pub async fn force_terminate_occupant(
     confirmation_token: String,
+    inspected_session_epoch: u64,
     manager: &ManagerClient,
     scheduler: &PollScheduler,
-) -> Result<RouterStatus> {
+) -> Result<OccupantTerminationResult> {
     scheduler.request_status_refresh();
-    let status = manager
-        .call::<RouterStatus>(
+    let force_session_epoch = manager.session_epoch();
+    if force_session_epoch != inspected_session_epoch {
+        return Err(CommandError::invalid_params(
+            "inspected occupant belongs to an expired manager session",
+        ));
+    }
+    let result = manager
+        .call_for_session::<OccupantTerminationResult>(
             "router.force_terminate_occupant",
             json!({ "confirmation_token": confirmation_token }),
+            force_session_epoch,
         )
         .await?;
-    scheduler.set_status(status.clone()).await;
-    Ok(status)
+    if manager.session_epoch() == force_session_epoch {
+        scheduler
+            .begin_release_observation(force_session_epoch)
+            .await;
+    }
+    Ok(result)
 }
 
 pub async fn first_launch(
@@ -100,7 +113,7 @@ mod tests {
     use crate::manager::{TransportChild, TransportEvent, TransportFactory, TransportSession};
     use serde_json::Value;
     use std::sync::{Arc, Mutex, OnceLock};
-    use tokio::sync::mpsc;
+    use tokio::sync::{mpsc, Semaphore};
 
     struct Child {
         calls: Arc<Mutex<Vec<String>>>,
@@ -139,7 +152,9 @@ mod tests {
                 "router.status" | "router.start" => {
                     json!({ "state": state, "owner": if matches!(state, "desktop_owned" | "degraded") { "desktop" } else { "external" } })
                 }
-                "router.force_terminate_occupant" => json!({ "state": "absent" }),
+                "router.force_terminate_occupant" => {
+                    json!({ "termination": "process_terminated", "port_state": "released" })
+                }
                 "router.version" => {
                     json!({ "version": "router", "deployment_id": env!("MTLS_DEPLOYMENT_ID"), "management_protocol_version": env!("MTLS_MANAGEMENT_PROTOCOL_VERSION") })
                 }
@@ -172,6 +187,63 @@ mod tests {
                     sender,
                     initial: self.initial,
                     start_error: self.start_error,
+                }),
+                events,
+            })
+        }
+    }
+
+    struct EpochRaceChild {
+        sender: mpsc::Sender<TransportEvent>,
+        force_started: Arc<Semaphore>,
+        release_force: Arc<Semaphore>,
+    }
+
+    impl TransportChild for EpochRaceChild {
+        fn write(&mut self, bytes: &[u8]) -> Result<()> {
+            let request: Value = serde_json::from_slice(bytes).unwrap();
+            let method = request["method"].as_str().unwrap().to_owned();
+            let sender = self.sender.clone();
+            let force_started = self.force_started.clone();
+            let release_force = self.release_force.clone();
+            tauri::async_runtime::spawn(async move {
+                let result = if method == "manager.info" {
+                    json!({
+                        "version":env!("MTLS_MANAGER_VERSION"), "commit":"test", "build_date":"test",
+                        "target":env!("MTLS_MANAGER_TARGET"), "deployment_id":env!("MTLS_DEPLOYMENT_ID"),
+                        "management_protocol_version":env!("MTLS_MANAGEMENT_PROTOCOL_VERSION")
+                    })
+                } else {
+                    force_started.add_permits(1);
+                    release_force.acquire().await.unwrap().forget();
+                    json!({ "termination":"process_terminated", "port_state":"released" })
+                };
+                sender
+                    .send(TransportEvent::Stdout(
+                        serde_json::to_vec(&json!({"id":request["id"], "result":result})).unwrap(),
+                    ))
+                    .await
+                    .unwrap();
+            });
+            Ok(())
+        }
+
+        fn kill(self: Box<Self>) {}
+    }
+
+    struct EpochRaceFactory {
+        force_started: Arc<Semaphore>,
+        release_force: Arc<Semaphore>,
+    }
+
+    impl TransportFactory for EpochRaceFactory {
+        fn spawn(&self) -> Result<TransportSession> {
+            let (sender, events) = mpsc::channel(8);
+            Ok(TransportSession {
+                child: Box::new(EpochRaceChild {
+                    sender,
+                    force_started: self.force_started.clone(),
+                    release_force: self.release_force.clone(),
                 }),
                 events,
             })
@@ -284,7 +356,7 @@ mod tests {
     }
 
     #[test]
-    fn force_termination_reconciles_status_without_starting_router() {
+    fn force_termination_arms_observation_without_publishing_or_starting_router() {
         runtime().block_on(async {
             let calls = Arc::new(Mutex::new(Vec::new()));
             let manager = ManagerClient::new(Arc::new(Factory {
@@ -294,17 +366,75 @@ mod tests {
             }));
             let scheduler = PollScheduler::new(manager.clone());
 
-            let status =
-                force_terminate_occupant("single-use-token".to_owned(), &manager, &scheduler)
-                    .await
-                    .unwrap();
+            let result = force_terminate_occupant(
+                "single-use-token".to_owned(),
+                manager.session_epoch(),
+                &manager,
+                &scheduler,
+            )
+            .await
+            .unwrap();
 
-            assert_eq!(status.state, "absent");
+            assert_eq!(
+                result.termination,
+                crate::types::OccupantTermination::ProcessTerminated
+            );
             assert_eq!(
                 &calls.lock().unwrap()[1..],
                 ["router.force_terminate_occupant"]
             );
-            assert_eq!(scheduler.snapshot().await.status, Some(status));
+            assert_eq!(scheduler.snapshot().await.release_observation, None);
+            assert_eq!(scheduler.snapshot().await.revision, 0);
+        });
+    }
+
+    #[test]
+    fn start_cancels_observation_before_calling_manager() {
+        runtime().block_on(async {
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            let manager = ManagerClient::new(Arc::new(Factory {
+                calls,
+                initial: "absent",
+                start_error: Some("ROUTER_START_FAILED"),
+            }));
+            let scheduler = PollScheduler::new(manager.clone());
+            scheduler
+                .begin_release_observation(manager.session_epoch())
+                .await;
+
+            let _ = start(&manager, &scheduler).await;
+
+            assert_eq!(scheduler.snapshot().await.release_observation, None);
+        });
+    }
+
+    #[test]
+    fn force_epoch_race_returns_success_without_beginning_observation() {
+        runtime().block_on(async {
+            let force_started = Arc::new(Semaphore::new(0));
+            let release_force = Arc::new(Semaphore::new(0));
+            let manager = ManagerClient::new(Arc::new(EpochRaceFactory {
+                force_started: force_started.clone(),
+                release_force: release_force.clone(),
+            }));
+            let scheduler = PollScheduler::new(manager.clone());
+            let generation = scheduler.status_generation();
+            let force = {
+                let manager = manager.clone();
+                let scheduler = scheduler.clone();
+                tauri::async_runtime::spawn(async move {
+                    force_terminate_occupant("single-use-token".into(), 0, &manager, &scheduler)
+                        .await
+                })
+            };
+
+            force_started.acquire().await.unwrap().forget();
+            assert!(scheduler.status_generation() > generation);
+            manager.invalidate_session_for_test();
+            release_force.add_permits(1);
+
+            assert!(force.await.unwrap().is_ok());
+            assert_eq!(scheduler.snapshot().await.release_observation, None);
         });
     }
 }

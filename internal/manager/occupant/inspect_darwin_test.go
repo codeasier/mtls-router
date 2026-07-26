@@ -3,11 +3,61 @@
 package occupant
 
 import (
+	"bytes"
+	"context"
 	"encoding/binary"
 	"net"
 	"syscall"
 	"testing"
+
+	"github.com/codeasier/mtls-router/internal/manager/discovery"
 )
+
+func TestDarwinVerifiedTargetRecoveryDiagnostics(t *testing.T) {
+	identity := testIdentity()
+	serviceFor := func(target Target, config Config, currentUser string) *Service {
+		config.ListenAddr = identity.ListenAddr
+		return New(config, Dependencies{
+			Discover: func(context.Context) discovery.Result {
+				return discovery.Result{Classification: discovery.UnknownOccupant}
+			},
+			Inspect:     func(context.Context, string) (Target, error) { return target, nil },
+			CurrentUser: func() (string, error) { return currentUser, nil },
+			Random:      bytes.NewReader(make([]byte, 32)),
+		})
+	}
+
+	t.Run("same user remains forceable", func(t *testing.T) {
+		inspection, err := serviceFor(verifiedTarget(identity), Config{}, identity.UserID).Inspect(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if inspection.PID != identity.Process.PID || inspection.Recovery.Action != RecoveryActionForceTerminate || inspection.ConfirmationToken == "" || inspection.Supervisor != nil {
+			t.Fatalf("inspection = %+v", inspection)
+		}
+	})
+
+	tests := []struct {
+		name        string
+		config      Config
+		currentUser string
+		wantReason  RecoveryReason
+	}{
+		{name: "different user", currentUser: "different-user", wantReason: RecoveryReasonDifferentUser},
+		{name: "protected desktop", config: Config{DesktopPID: identity.Process.PID}, currentUser: identity.UserID, wantReason: RecoveryReasonProtectedProcess},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			inspection, err := serviceFor(verifiedTarget(identity), test.config, test.currentUser).Inspect(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if inspection.PID != identity.Process.PID || inspection.Recovery.Reason != test.wantReason || inspection.ConfirmationToken != "" || inspection.ExpiresAt != nil || inspection.Supervisor != nil {
+				t.Fatalf("inspection = %+v", inspection)
+			}
+		})
+	}
+}
 
 func TestDecodeDarwinTCP4LoopbackListener(t *testing.T) {
 	info := darwinTCP4TestRecord()

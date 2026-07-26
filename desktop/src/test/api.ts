@@ -20,12 +20,15 @@ export function createMockApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
       process_name: "example-server",
       executable: "/usr/local/bin/example-server",
       listen_addr: "127.0.0.1:19099",
+      recovery: { action: "force_terminate" },
       confirmation_token: "opaque-token",
       expires_at: "2026-07-18T12:00:30Z",
     }),
-    forceTerminateRouterOccupant: vi
-      .fn()
-      .mockResolvedValue({ state: "absent" }),
+    forceTerminateRouterOccupant: vi.fn().mockResolvedValue({
+      termination: "process_terminated",
+      port_state: "released",
+    }),
+    cancelRouterReleaseObservation: vi.fn().mockResolvedValue(undefined),
     retryRouterHealth: vi.fn().mockResolvedValue({
       status: "ok",
       checked_at: new Date().toISOString(),
@@ -34,7 +37,7 @@ export function createMockApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
       desktop: "desktop-v1",
       manager: "manager-v1",
       router: "router-v1",
-      management_protocol: "3",
+      management_protocol: "4",
     }),
     getRouterLogs: vi.fn().mockResolvedValue({ lines: [] }),
     collectDiagnostics: vi.fn().mockResolvedValue({ summary: "safe summary" }),

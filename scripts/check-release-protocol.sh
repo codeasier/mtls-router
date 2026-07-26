@@ -2,7 +2,7 @@
 set -euo pipefail
 
 metadata_dir="${1:?metadata directory is required}"
-expected_protocol="${EXPECTED_MANAGEMENT_PROTOCOL_VERSION:-3}"
+expected_protocol="${EXPECTED_MANAGEMENT_PROTOCOL_VERSION:-4}"
 
 metadata_count="$(find "$metadata_dir" -maxdepth 1 -type f -name 'release-metadata-*.json' | wc -l | tr -d ' ')"
 [[ "$metadata_count" -eq 12 ]] || {
