@@ -1,5 +1,6 @@
 mod autostart;
 mod commands;
+mod credential;
 mod error;
 mod manager;
 mod model_config;

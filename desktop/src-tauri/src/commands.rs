@@ -998,6 +998,7 @@ mod tests {
                 paths: DesktopPaths {
                     data_dir: String::new(),
                     log_file: String::new(),
+                    credentials_path: String::new(),
                     can_prepare_for_uninstall: false,
                 },
                 model_flows: flows.clone(),
