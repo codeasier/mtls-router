@@ -23,3 +23,6 @@
 /desktop/src-tauri/gen/
 /desktop/src-tauri/target/
 /desktop/release-artifacts/
+
+# Git worktrees created inside the repository
+/.worktrees/
