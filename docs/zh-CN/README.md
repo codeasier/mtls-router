@@ -314,10 +314,6 @@ nssm install mtls-router
 
 不要在 NSSM 下传入 `-backend`，因为 NSSM 会负责后台进程管理。
 
-## 设计
-
-见[设计规范](../superpowers/specs/2026-06-17-mtls-router-design.md)。
-
 ## License
 
 MIT

@@ -314,10 +314,6 @@ In the NSSM service editor, configure:
 
 Do not pass `-backend` under NSSM because NSSM manages the background process.
 
-## Design
-
-See the [design specification](docs/superpowers/specs/2026-06-17-mtls-router-design.md).
-
 ## License
 
 MIT

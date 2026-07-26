@@ -129,5 +129,4 @@ CLI 产物（6 目标：`linux/darwin/windows` × `amd64/arm64`）：
 
 - `INDEX.md` 与 `AGENTS.md`（全仓库，含各子目录）一律以中文撰写。
 - README 及其他用户可见文档在变更用户可见行为时，仍需保持英文版与 `docs/zh-CN/` 版本对齐。
-- `docs/superpowers/` 是历史规格/计划，非当前行为的事实来源——不要作为权威引用。
 - 新增子包时，为该包创建专属 `INDEX.md`（中文），并在根 [INDEX.md](INDEX.md) 的 [包索引](INDEX.md#包索引) 中追加一行。
