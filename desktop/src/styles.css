@@ -613,6 +613,41 @@ main {
   line-height: 1.55;
 }
 
+.credential-summary {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin: 22px 0 4px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--paper-deep);
+  font-size: 11px;
+}
+
+.credential-summary > span {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--danger);
+  box-shadow: 0 0 0 4px var(--danger-soft);
+}
+
+.credential-summary[data-state="saved"] > span {
+  background: var(--good);
+  box-shadow: 0 0 0 4px var(--good-soft);
+}
+
+.credential-summary strong {
+  flex: 1;
+}
+
+.credential-summary code {
+  color: var(--muted);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+}
+
 .inline-alert {
   margin: 18px 0 0;
   padding: 11px 13px;
@@ -1355,6 +1390,236 @@ main {
   color: var(--ink);
   font-size: 11px;
   font-weight: 750;
+}
+
+.apikey-panel {
+  min-width: 0;
+}
+
+.apikey-heading {
+  margin-bottom: 14px;
+  padding: 2px 2px 12px;
+}
+
+.apikey-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.72fr) minmax(0, 1.28fr);
+  gap: 14px;
+}
+
+.apikey-status-card,
+.apikey-form,
+.apikey-explainer {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+.apikey-status-card {
+  position: relative;
+  min-height: 270px;
+  padding: 24px;
+  overflow: hidden;
+}
+
+.apikey-status-card::after {
+  position: absolute;
+  right: -44px;
+  bottom: -64px;
+  width: 180px;
+  height: 180px;
+  border: 22px solid var(--paper-deep);
+  border-radius: 50%;
+  content: "";
+}
+
+.apikey-status-card__index {
+  color: var(--muted);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+.apikey-status-card__signal {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin: 38px 0 12px;
+  font-size: 20px;
+}
+
+.apikey-status-card__signal span {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--danger);
+  box-shadow: 0 0 0 6px var(--danger-soft);
+}
+
+.apikey-status-card[data-state="loading"] .apikey-status-card__signal span {
+  background: var(--muted);
+  box-shadow: 0 0 0 6px var(--paper-deep);
+}
+
+.apikey-status-card[data-state="saved"] .apikey-status-card__signal span {
+  background: var(--good);
+  box-shadow: 0 0 0 6px var(--good-soft);
+}
+
+.apikey-status-card > p {
+  position: relative;
+  z-index: 1;
+  max-width: 32rem;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.apikey-status-card dl {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 28px 0 0;
+}
+
+.apikey-status-card dl > div {
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.apikey-status-card dt {
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.apikey-status-card dd {
+  margin: 0;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.apikey-form {
+  display: flex;
+  min-height: 270px;
+  flex-direction: column;
+  justify-content: center;
+  padding: 30px;
+}
+
+.apikey-form > label {
+  margin-bottom: 10px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.apikey-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.apikey-input-row input {
+  width: 100%;
+  min-width: 0;
+  height: 46px;
+  padding: 0 14px;
+  color: var(--ink);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+}
+
+.apikey-form .action-row {
+  margin-top: 18px;
+}
+
+.apikey-delete {
+  color: var(--danger);
+}
+
+.apikey-alert {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  color: var(--danger);
+  border: 1px solid rgba(150, 60, 47, 0.28);
+  border-radius: var(--radius-control);
+  background: var(--danger-soft);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.apikey-explainer {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+  margin-top: 14px;
+  overflow: hidden;
+}
+
+.apikey-explainer > div {
+  position: relative;
+  min-width: 0;
+  padding: 22px 24px 22px 64px;
+}
+
+.apikey-explainer > div + div {
+  border-left: 1px solid var(--line);
+}
+
+.apikey-explainer > div > span {
+  position: absolute;
+  top: 22px;
+  left: 24px;
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  color: var(--surface-raised);
+  border-radius: 7px;
+  background: var(--ink);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 9px;
+}
+
+.apikey-explainer h3 {
+  margin: 3px 0 12px;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.apikey-explainer ul,
+.apikey-explainer p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+.apikey-explainer ul {
+  padding-left: 17px;
+}
+
+.apikey-explainer code {
+  display: block;
+  margin-bottom: 10px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .agents-workbench {
@@ -2681,6 +2946,8 @@ main {
 
   .panel-grid,
   .settings-grid,
+  .apikey-grid,
+  .apikey-explainer,
   .agent-card-grid,
   .config-workbench,
   .preview-layout,
@@ -2718,6 +2985,11 @@ main {
 
   .settings-block--danger {
     grid-column: auto;
+  }
+
+  .apikey-explainer > div + div {
+    border-top: 1px solid var(--line);
+    border-left: 0;
   }
 
   .agent-card {
@@ -2786,6 +3058,18 @@ main {
     display: flex;
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .apikey-input-row {
+    grid-template-columns: 1fr;
+  }
+
+  .apikey-input-row .text-button {
+    width: 100%;
+  }
+
+  .apikey-status-card dl {
+    grid-template-columns: 1fr;
   }
 
   .occupant-target,

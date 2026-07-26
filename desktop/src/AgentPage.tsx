@@ -19,6 +19,7 @@ import {
   type AgentPreview,
   type AgentState,
   type AgentWriteResult,
+  type CredentialSummary,
   type DesktopApi,
   type JsonObject,
   type ModelConfig,
@@ -650,12 +651,18 @@ function FileEffect({ effect }: { effect: AgentFileEffect }) {
   );
 }
 
-export function AgentPage({ api }: { api: DesktopApi }) {
+export function AgentPage({
+  api,
+  onNavigateToApiKeys = () => undefined,
+}: {
+  api: DesktopApi;
+  onNavigateToApiKeys?: () => void;
+}) {
   const { t } = useI18n();
   const [detection, setDetection] = useState<AgentDetection | null>(null);
   const [selectedModes, setSelectedModes] = useState<SelectedModes>({});
   const [stage, setStage] = useState<Stage>("select");
-  const [key, setKey] = useState("");
+  const [credential, setCredential] = useState<CredentialSummary | null>(null);
   const [discovery, setDiscovery] = useState<AgentModelsResult | null>(null);
   const [config, setConfig] = useState<ModelConfig>({ version: 1 });
   const [sources, setSources] = useState<Record<AgentId, InitializationSource>>(
@@ -702,7 +709,6 @@ export function AgentPage({ api }: { api: DesktopApi }) {
   }
   function clearFlowState(target: Stage) {
     flowRef.current = "";
-    setKey("");
     setDiscovery(null);
     setConfig({ version: 1 });
     setSources({ claude: "empty", opencode: "empty", codex: "empty" });
@@ -767,6 +773,17 @@ export function AgentPage({ api }: { api: DesktopApi }) {
   }, [api]);
 
   useEffect(() => {
+    let active = true;
+    void api
+      .getCredential()
+      .then((value) => active && setCredential(value))
+      .catch(() => active && setCredential(null));
+    return () => {
+      active = false;
+    };
+  }, [api]);
+
+  useEffect(() => {
     if (!rebuildDialogOpen) return;
     cancelRebuildRef.current?.focus();
     function handleEscape(event: KeyboardEvent) {
@@ -808,7 +825,6 @@ export function AgentPage({ api }: { api: DesktopApi }) {
   }
   async function startOver(target: Stage = "select") {
     await destroyFlow();
-    setKey("");
     setDiscovery(null);
     setPreview(null);
     setResult(null);
@@ -818,14 +834,12 @@ export function AgentPage({ api }: { api: DesktopApi }) {
   }
   async function discover(event: React.FormEvent) {
     event.preventDefault();
-    if (!key || !selected.length) return;
-    const transient = key;
-    setKey("");
+    if (!credential?.present || !selected.length) return;
     setBusy(true);
     setMessage("");
     setStage("discover");
     try {
-      const value = await api.discoverModels(selected, transient);
+      const value = await api.discoverModels(selected);
       flowRef.current = value.flow_id;
       setDiscovery(value);
       const initialized = initializeAgentConfig(
@@ -837,9 +851,13 @@ export function AgentPage({ api }: { api: DesktopApi }) {
       setSources(initialized.sources);
       setStage("configure");
     } catch (error) {
+      const code = errorCode(error);
+      if (code === "CREDENTIAL_NOT_FOUND") {
+        setCredential({ present: false, fingerprint: "", saved_at: null });
+      }
       setMessage(
         t(
-          errorCode(error) === "MODEL_AUTH_FAILED"
+          code === "MODEL_AUTH_FAILED"
             ? "agents.error.auth"
             : "agents.error.discovery",
         ),
@@ -1198,20 +1216,40 @@ export function AgentPage({ api }: { api: DesktopApi }) {
           <p className="overline">{t("agents.stage.credential")}</p>
           <h3>{t("agents.credentialHeading")}</h3>
           <p>{t("agents.credentialNote")}</p>
-          <label className="key-field">
-            <span>{t("agents.apiKey")}</span>
-            <input
-              type="password"
-              autoComplete="off"
-              spellCheck={false}
-              value={key}
-              onChange={(event) => setKey(event.target.value)}
-            />
-          </label>
+          <div
+            className="credential-summary"
+            data-state={credential?.present ? "saved" : "absent"}
+          >
+            <span aria-hidden="true" />
+            <strong>
+              {t(
+                credential
+                  ? credential.present
+                    ? "agents.credentialConfigured"
+                    : "agents.credentialMissing"
+                  : "agents.credentialLoading",
+              )}
+            </strong>
+            {credential?.present && <code>...{credential.fingerprint}</code>}
+          </div>
           <div className="action-row">
-            <button className="control-button" disabled={!key || busy}>
-              {t("agents.discover")}
-            </button>
+            {credential?.present ? (
+              <button className="control-button" disabled={busy}>
+                {t("agents.discover")}
+              </button>
+            ) : credential ? (
+              <button
+                type="button"
+                className="control-button"
+                onClick={onNavigateToApiKeys}
+              >
+                {t("agents.openApiKeys")}
+              </button>
+            ) : (
+              <button className="control-button" disabled>
+                {t("agents.discover")}
+              </button>
+            )}
             <button
               type="button"
               className="text-button"

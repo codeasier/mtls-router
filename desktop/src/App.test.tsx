@@ -60,6 +60,27 @@ describe("App navigation", () => {
     expect(screen.getByText("桌面控制面板")).toBeInTheDocument();
   });
 
+  it("opens API key management from the main navigation", async () => {
+    render(
+      <App
+        api={createMockApi({
+          getCredential: vi.fn().mockResolvedValue({
+            present: false,
+            fingerprint: "",
+            saved_at: null,
+          }),
+        })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "API 密钥" }));
+
+    expect(
+      screen.getByRole("heading", { name: "API 密钥" }),
+    ).toBeInTheDocument();
+    expect(await screen.findByText("尚未配置")).toBeInTheDocument();
+  });
+
   it("uses document visibility only to coordinate native polling", () => {
     const api = createMockApi();
     render(<App api={api} />);

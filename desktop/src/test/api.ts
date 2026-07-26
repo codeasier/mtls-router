@@ -81,9 +81,9 @@ export function createMockApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
       .fn()
       .mockImplementation(async (config) => JSON.stringify(config, null, 2)),
     getCredential: vi.fn().mockResolvedValue({
-      present: false,
-      fingerprint: "",
-      saved_at: null,
+      present: true,
+      fingerprint: "ABCD",
+      saved_at: "2026-07-26T00:00:00Z",
     }),
     saveCredential: vi.fn().mockResolvedValue({
       present: true,
