@@ -112,9 +112,8 @@ Rust 侧绝不向 webview 暴露 shell/fs/http 权限（由 `lib.rs` 中的测�
 | `internal/manager` | [INDEX.md](internal/manager/INDEX.md) | 控制面：14 个子包、15 个协议方法、生命周期、发现、agent 配置 |
 | `desktop` | [INDEX.md](desktop/INDEX.md) | Tauri 2 应用：React 前端 + Rust 后端、sidecar 管理 |
 
-## 历史与辅助参考
+## 辅助参考
 
-- `docs/superpowers/` 含历史规格/计划；非当前行为的事实来源。
 - `scripts/build.sh` 在 `secrets/` 下生成占位 PEM 供本地构建；真实发布密钥来自 GitHub secrets/vars。
 - `.worktrees/` 目录含 git worktree 产物；分析产品代码时忽略。
 - 管理协议当前版本为 `4`；router、manager、setup receipt、release metadata 与桌面端必须同版本，桌面端在启动握手时校验并拒绝混合代。
