@@ -14,6 +14,7 @@ mod tray;
 mod types;
 
 use commands::AppState;
+use credential::{CredentialError, CredentialStore};
 use manager::{ManagerClient, TauriTransportFactory};
 use scheduler::PollScheduler;
 use sidecar::SidecarPaths;
@@ -28,6 +29,17 @@ use std::{
 use tauri::{Emitter, Manager, WindowEvent};
 
 const POLL_SNAPSHOT_EVENT: &str = "router-poll-snapshot";
+
+fn load_credentials(path: std::path::PathBuf) -> Arc<CredentialStore> {
+    let credentials = Arc::new(CredentialStore::new(path));
+    if let Err(CredentialError::InvalidFormat(reason)) =
+        tauri::async_runtime::block_on(credentials.read_summary())
+    {
+        eprintln!("mtls-router: removing malformed credential file: {reason}");
+        let _ = tauri::async_runtime::block_on(credentials.delete());
+    }
+    credentials
+}
 
 pub fn verify_manager_handshake() -> Result<(), String> {
     let sidecars = SidecarPaths::resolve().map_err(|error| error.to_string())?;
@@ -119,6 +131,7 @@ pub fn run() {
             let sidecars = SidecarPaths::resolve();
             let parent = process_identity::current();
             let paths = paths::resolve()?;
+            let credentials = load_credentials(std::path::PathBuf::from(&paths.credentials_path));
             let manager = match (sidecars, parent) {
                 (Ok(sidecars), Ok(parent)) => match sidecars.validate() {
                     Ok(()) => ManagerClient::new(Arc::new(TauriTransportFactory::new(
@@ -146,6 +159,7 @@ pub fn run() {
                 paths,
                 model_flows: Default::default(),
                 pending_occupant: Default::default(),
+                credentials,
             });
             scheduler.start();
             let app_handle = app.handle().clone();
@@ -189,6 +203,9 @@ pub fn run() {
             commands::agent_model_flow_destroy,
             commands::agent_model_config_import,
             commands::agent_model_config_export,
+            commands::get_credential,
+            commands::save_credential,
+            commands::delete_credential,
             autostart::autostart_get,
             autostart::autostart_set_immediate,
             autostart::prepare_for_uninstall,
@@ -202,6 +219,8 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn frontend_capability_has_no_arbitrary_shell_file_or_opener_permission() {
         let capability: serde_json::Value =
@@ -215,5 +234,25 @@ mod tests {
         assert!(!text.contains("opener:"));
         assert!(!text.contains("fs:"));
         assert!(!text.contains("http:"));
+    }
+
+    #[test]
+    fn malformed_credential_file_is_removed_during_startup() {
+        let directory = std::env::temp_dir().join(format!(
+            "mtls-router-startup-credential-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("credentials.json");
+        std::fs::write(&path, b"{not-json").unwrap();
+
+        let credentials = load_credentials(path.clone());
+
+        assert!(!path.exists());
+        assert!(matches!(
+            tauri::async_runtime::block_on(credentials.read_summary()),
+            Err(CredentialError::NotFound)
+        ));
+        let _ = std::fs::remove_dir_all(directory);
     }
 }

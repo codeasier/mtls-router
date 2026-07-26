@@ -31,6 +31,28 @@ impl CommandError {
         Self::new("INVALID_PARAMS", message)
     }
 
+    pub fn credential_not_found() -> Self {
+        Self::new("CREDENTIAL_NOT_FOUND", "credential is not configured")
+    }
+
+    pub fn credential_invalid() -> Self {
+        Self::new(
+            "CREDENTIAL_INVALID",
+            "credential file is malformed; save the credential again",
+        )
+    }
+
+    pub fn credential_io() -> Self {
+        Self::new("CREDENTIAL_IO_ERROR", "credential file operation failed")
+    }
+
+    pub fn credential_lock_timeout() -> Self {
+        Self::new(
+            "CREDENTIAL_LOCK_TIMEOUT",
+            "another credential operation is in progress",
+        )
+    }
+
     pub fn model_config_invalid(path: impl Into<String>, rule: impl Into<String>) -> Self {
         Self::new(
             "MODEL_CONFIG_INVALID",
@@ -71,6 +93,17 @@ impl CommandError {
         let mut error = Self::new(code, message);
         error.recoverable = true;
         error
+    }
+}
+
+impl From<crate::credential::CredentialError> for CommandError {
+    fn from(error: crate::credential::CredentialError) -> Self {
+        match error {
+            crate::credential::CredentialError::NotFound => Self::credential_not_found(),
+            crate::credential::CredentialError::InvalidFormat(_) => Self::credential_invalid(),
+            crate::credential::CredentialError::Io(_) => Self::credential_io(),
+            crate::credential::CredentialError::LockTimeout => Self::credential_lock_timeout(),
+        }
     }
 }
 

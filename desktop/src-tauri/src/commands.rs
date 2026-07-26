@@ -1,13 +1,14 @@
 use crate::{
+    credential::{CredentialError, CredentialStore, MAX_KEY_BYTES},
     error::{CommandError, Result},
     manager::ManagerClient,
     model_config::{self, ModelConfig},
     scheduler::PollScheduler,
     types::{
         AgentDetect, AgentFragment, AgentPreview, AgentWriteResult, ComponentVersions,
-        DesktopPaths, Diagnostics, ManagerInfo, NativeLanguage, OccupantInspection,
-        OccupantTerminationResult, PollSnapshot, RecoveryAction, RouterHealth, RouterLogs,
-        RouterStatus, RouterVersion,
+        CredentialSummary, DesktopPaths, Diagnostics, ManagerInfo, NativeLanguage,
+        OccupantInspection, OccupantTerminationResult, PollSnapshot, RecoveryAction, RouterHealth,
+        RouterLogs, RouterStatus, RouterVersion,
     },
 };
 use chrono::{DateTime, Utc};
@@ -26,6 +27,7 @@ pub struct AppState {
     pub paths: DesktopPaths,
     pub model_flows: Arc<Mutex<HashMap<String, ModelFlow>>>,
     pub pending_occupant: Arc<Mutex<Option<PendingOccupant>>>,
+    pub credentials: Arc<CredentialStore>,
 }
 
 impl AppState {
@@ -35,7 +37,6 @@ impl AppState {
 }
 
 pub(crate) struct ModelFlow {
-    api_key: Zeroizing<String>,
     agents: Vec<String>,
     models: Vec<String>,
     catalog_token: String,
@@ -75,7 +76,6 @@ impl Drop for PendingFlow {
 #[serde(deny_unknown_fields)]
 pub struct AgentModelsRequest {
     pub agents: Vec<String>,
-    pub api_key: String,
 }
 
 #[derive(Deserialize)]
@@ -363,23 +363,26 @@ pub async fn agent_models(
     request: AgentModelsRequest,
     state: tauri::State<'_, AppState>,
 ) -> Result<AgentModelsResult> {
-    agent_models_command(request, &state.manager, state.model_flows.clone()).await
+    agent_models_command(
+        request,
+        &state.manager,
+        state.model_flows.clone(),
+        &state.credentials,
+    )
+    .await
 }
 
 async fn agent_models_command(
-    mut request: AgentModelsRequest,
+    request: AgentModelsRequest,
     manager: &ManagerClient,
     model_flows: Arc<Mutex<HashMap<String, ModelFlow>>>,
+    credentials: &CredentialStore,
 ) -> Result<AgentModelsResult> {
     validate_agents(&request.agents)?;
-    validate_api_key(&request.api_key)?;
     let flow_id = Uuid::new_v4().to_string();
-    let key = std::mem::take(&mut request.api_key);
-    request.api_key.zeroize();
     model_flows.lock().await.insert(
         flow_id.clone(),
         ModelFlow {
-            api_key: Zeroizing::new(key),
             agents: request.agents.clone(),
             models: Vec::new(),
             catalog_token: String::new(),
@@ -391,12 +394,10 @@ async fn agent_models_command(
         id: flow_id.clone(),
         keep: false,
     };
-    let params = {
-        let flows = model_flows.lock().await;
-        let flow = flows.get(&flow_id).ok_or_else(flow_expired)?;
-        json!({ "owner": "desktop", "agents": request.agents, "api_key": flow.api_key.as_str() })
-    };
-    let result: ManagerModelsResult = manager.call("agent.models", params).await?;
+    let params = json!({ "owner": "desktop", "agents": request.agents });
+    let result: ManagerModelsResult = manager
+        .call_with_credential("agent.models", params, credentials)
+        .await?;
     validate_models_result(&result, &request.agents)?;
     {
         let mut flows = model_flows.lock().await;
@@ -421,13 +422,20 @@ pub async fn agent_render(
     request: AgentConfigRequest,
     state: tauri::State<'_, AppState>,
 ) -> Result<AgentRenderResult> {
-    agent_render_command(request, &state.manager, &state.model_flows).await
+    agent_render_command(
+        request,
+        &state.manager,
+        &state.model_flows,
+        &state.credentials,
+    )
+    .await
 }
 
 async fn agent_render_command(
     request: AgentConfigRequest,
     manager: &ManagerClient,
     model_flows: &Arc<Mutex<HashMap<String, ModelFlow>>>,
+    credentials: &CredentialStore,
 ) -> Result<AgentRenderResult> {
     if request
         .modes
@@ -439,7 +447,7 @@ async fn agent_render_command(
         ));
     }
     validate_config_request(&request, model_flows).await?;
-    manager.call("agent.render", json!({ "agents": request.agents, "catalog_token": request.catalog_token, "model_config": request.model_config })).await
+    manager.call_with_credential("agent.render", json!({ "agents": request.agents, "catalog_token": request.catalog_token, "model_config": request.model_config }), credentials).await
 }
 
 #[tauri::command]
@@ -447,18 +455,25 @@ pub async fn agent_preview(
     request: AgentConfigRequest,
     state: tauri::State<'_, AppState>,
 ) -> Result<AgentPreview> {
-    agent_preview_command(request, &state.manager, &state.model_flows).await
+    agent_preview_command(
+        request,
+        &state.manager,
+        &state.model_flows,
+        &state.credentials,
+    )
+    .await
 }
 
 async fn agent_preview_command(
     request: AgentConfigRequest,
     manager: &ManagerClient,
     model_flows: &Arc<Mutex<HashMap<String, ModelFlow>>>,
+    credentials: &CredentialStore,
 ) -> Result<AgentPreview> {
     let modes = validate_agent_modes(&request.agents, request.modes.as_ref())?;
     validate_config_request(&request, model_flows).await?;
     let result = manager
-        .call(
+        .call_with_credential(
             "agent.preview",
             json!({
                 "agents": request.agents,
@@ -466,6 +481,7 @@ async fn agent_preview_command(
                 "catalog_token": request.catalog_token,
                 "model_config": request.model_config,
             }),
+            credentials,
         )
         .await?;
     let mut flows = model_flows.lock().await;
@@ -486,18 +502,32 @@ pub async fn agent_write(
     request: AgentWriteRequest,
     state: tauri::State<'_, AppState>,
 ) -> Result<AgentWriteResult> {
-    agent_write_command(request, &state.manager, &state.model_flows).await
+    agent_write_command(
+        request,
+        &state.manager,
+        &state.model_flows,
+        &state.credentials,
+    )
+    .await
 }
 
 async fn agent_write_command(
     request: AgentWriteRequest,
     manager: &ManagerClient,
     model_flows: &Arc<Mutex<HashMap<String, ModelFlow>>>,
+    credentials: &CredentialStore,
 ) -> Result<AgentWriteResult> {
     validate_agents(&request.agents)?;
     if request.revision_token.trim().is_empty() || request.revision_token.len() > 512 * 1024 {
         return Err(CommandError::invalid_params("revision token is invalid"));
     }
+    let current_key = match credentials.use_().await {
+        Ok(key) => Some(key),
+        Err(CredentialError::NotFound) => None,
+        Err(error) => return Err(error.into()),
+    };
+    let model_config_value = serde_json::to_value(&request.model_config)
+        .map_err(|_| CommandError::invalid_params("model config is invalid"))?;
     let flow = {
         let mut flows = model_flows.lock().await;
         let flow = flows.get(&request.flow_id).ok_or_else(flow_expired)?;
@@ -509,11 +539,10 @@ async fn agent_write_command(
         })?;
         validate_rebuild_approval(&request.agents, modes, &request.approve_rebuild)?;
         model_config::validate(&request.model_config, &request.agents, &flow.models)?;
-        if contains_exact_string(
-            &serde_json::to_value(&request.model_config)
-                .map_err(|_| CommandError::invalid_params("model config is invalid"))?,
-            flow.api_key.as_str(),
-        ) {
+        if current_key
+            .as_ref()
+            .is_some_and(|key| contains_exact_string(&model_config_value, key))
+        {
             return Err(CommandError::invalid_params(
                 "model config contains a credential value",
             ));
@@ -529,9 +558,11 @@ async fn agent_write_command(
         "approve_codex_auth_change": request.approve_codex_auth_change,
         "modes": flow.modes.as_ref().expect("validated bound preview modes"),
         "approve_rebuild": request.approve_rebuild,
-        "api_key": flow.api_key.as_str(),
     });
-    match manager.call("agent.write", params).await {
+    match manager
+        .call_with_credential("agent.write", params, credentials)
+        .await
+    {
         Err(error) if error.code == "PREVIEW_STALE" => {
             model_flows.lock().await.insert(request.flow_id, flow);
             Err(error)
@@ -587,6 +618,52 @@ pub fn desktop_paths(state: tauri::State<'_, AppState>) -> DesktopPaths {
     state.paths.clone()
 }
 
+async fn get_credential_command(credentials: &CredentialStore) -> Result<CredentialSummary> {
+    match credentials.read_summary().await {
+        Ok(summary) => Ok(summary),
+        Err(CredentialError::NotFound) => Ok(CredentialSummary::default()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+#[tauri::command]
+pub async fn get_credential(state: tauri::State<'_, AppState>) -> Result<CredentialSummary> {
+    get_credential_command(&state.credentials).await
+}
+
+async fn save_credential_command(
+    mut api_key: String,
+    credentials: &CredentialStore,
+) -> Result<CredentialSummary> {
+    let trimmed = api_key.trim().to_owned();
+    api_key.zeroize();
+    if trimmed.is_empty() || trimmed.len() > MAX_KEY_BYTES {
+        return Err(CommandError::credential_invalid());
+    }
+    credentials
+        .write(Zeroizing::new(trimmed))
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn save_credential(
+    api_key: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<CredentialSummary> {
+    save_credential_command(api_key, &state.credentials).await
+}
+
+async fn delete_credential_command(credentials: &CredentialStore) -> Result<CredentialSummary> {
+    credentials.delete().await.map_err(CommandError::from)?;
+    Ok(CredentialSummary::default())
+}
+
+#[tauri::command]
+pub async fn delete_credential(state: tauri::State<'_, AppState>) -> Result<CredentialSummary> {
+    delete_credential_command(&state.credentials).await
+}
+
 #[tauri::command]
 pub async fn window_visibility(visible: bool, state: tauri::State<'_, AppState>) -> Result<()> {
     state.set_window_visibility(visible);
@@ -625,13 +702,6 @@ pub fn validate_agents(agents: &[String]) -> Result<()> {
         !matches!(agent.as_str(), "claude" | "opencode" | "codex") || !seen.insert(agent)
     }) {
         return Err(CommandError::invalid_params("Agent selection is invalid"));
-    }
-    Ok(())
-}
-
-fn validate_api_key(api_key: &str) -> Result<()> {
-    if api_key.is_empty() || api_key.len() > 16 * 1024 {
-        return Err(CommandError::invalid_params("API key is invalid"));
     }
     Ok(())
 }
@@ -889,6 +959,33 @@ mod tests {
         (ManagerClient::new(Arc::new(factory)), requests)
     }
 
+    struct CredentialTempDir(PathBuf);
+
+    impl Drop for CredentialTempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn test_credentials(name: &str) -> (CredentialTempDir, Arc<CredentialStore>) {
+        let directory = std::env::temp_dir().join(format!(
+            "mtls-router-command-credential-{name}-{}",
+            Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let store = Arc::new(CredentialStore::new(directory.join("credentials.json")));
+        (CredentialTempDir(directory), store)
+    }
+
+    async fn configured_credentials(
+        name: &str,
+        key: &str,
+    ) -> (CredentialTempDir, Arc<CredentialStore>) {
+        let (directory, store) = test_credentials(name);
+        store.write(Zeroizing::new(key.to_owned())).await.unwrap();
+        (directory, store)
+    }
+
     fn mixed_model_config() -> ModelConfig {
         serde_json::from_value(json!({
             "version": 1,
@@ -905,7 +1002,6 @@ mod tests {
 
     fn mixed_flow(modes: Option<HashMap<String, String>>) -> ModelFlow {
         ModelFlow {
-            api_key: Zeroizing::new("flow-secret".into()),
             agents: vec!["claude".into(), "opencode".into()],
             models: vec!["m1".into()],
             catalog_token: "catalog".into(),
@@ -953,9 +1049,63 @@ mod tests {
     }
 
     #[test]
-    fn flow_ids_keys_and_catalog_results_are_strictly_bounded() {
-        assert!(validate_api_key("").is_err());
-        assert!(validate_api_key("fixture-key").is_ok());
+    fn credential_commands_round_trip_without_exposing_the_key() {
+        tauri::async_runtime::block_on(async {
+            let (_directory, credentials) = test_credentials("commands-round-trip");
+            assert_eq!(
+                get_credential_command(&credentials).await.unwrap(),
+                CredentialSummary::default()
+            );
+
+            let saved = save_credential_command("  fixture-secret  ".into(), &credentials)
+                .await
+                .unwrap();
+            assert!(saved.present);
+            assert_eq!(saved.fingerprint.len(), 4);
+            assert_eq!(get_credential_command(&credentials).await.unwrap(), saved);
+            assert_eq!(credentials.use_().await.unwrap().as_str(), "fixture-secret");
+
+            let deleted = delete_credential_command(&credentials).await.unwrap();
+            assert_eq!(deleted, CredentialSummary::default());
+            assert!(matches!(
+                credentials.use_().await,
+                Err(CredentialError::NotFound)
+            ));
+            assert_eq!(
+                save_credential_command(String::new(), &credentials)
+                    .await
+                    .unwrap_err()
+                    .code,
+                "CREDENTIAL_INVALID"
+            );
+        });
+    }
+
+    #[test]
+    fn manager_credential_call_omits_missing_key() {
+        tauri::async_runtime::block_on(async {
+            let response = serde_json::to_vec(&json!({
+                "id": "desktop-1",
+                "result": {}
+            }))
+            .unwrap();
+            let (manager, requests) = fake_client(vec![response]);
+            let (_directory, credentials) = test_credentials("manager-missing");
+            let _: Value = manager
+                .call_with_credential("agent.render", json!({"agents": ["claude"]}), &credentials)
+                .await
+                .unwrap();
+            let requests = requests.lock().unwrap();
+            let request = requests
+                .iter()
+                .find(|request| request["method"] == "agent.render")
+                .unwrap();
+            assert!(request["params"].get("api_key").is_none());
+        });
+    }
+
+    #[test]
+    fn flow_ids_and_catalog_results_are_strictly_bounded() {
         assert!(validate_flow_id(&Uuid::new_v4().to_string()).is_ok());
         assert!(validate_flow_id("guessable").is_err());
         let result = ManagerModelsResult {
@@ -981,11 +1131,11 @@ mod tests {
         tauri::async_runtime::block_on(async {
             let (manager, _) = fake_client(vec![]);
             let scheduler = PollScheduler::new(manager.clone());
+            let (_credential_dir, credentials) = test_credentials("visibility");
             let flow_id = Uuid::new_v4().to_string();
             let flows = Arc::new(Mutex::new(HashMap::from([(
                 flow_id.clone(),
                 ModelFlow {
-                    api_key: Zeroizing::new("visibility-secret".into()),
                     agents: vec!["claude".into()],
                     models: vec!["m1".into()],
                     catalog_token: "catalog".into(),
@@ -1003,15 +1153,13 @@ mod tests {
                 },
                 model_flows: flows.clone(),
                 pending_occupant: Default::default(),
+                credentials,
             };
 
             state.set_window_visibility(false);
 
             let flows = flows.lock().await;
-            assert_eq!(
-                flows.get(&flow_id).unwrap().api_key.as_str(),
-                "visibility-secret"
-            );
+            assert!(flows.contains_key(&flow_id));
         });
     }
 
@@ -1102,22 +1250,30 @@ mod tests {
                 "existing":{"model_config":{},"unavailable_models":{},"drifted_agents":[]},
                 "preset":{"model_config":{"version":1,"codex":{"model":"m1"}},"unavailable_agents":{}}
             }})).unwrap();
-            let (manager, _) = fake_client(vec![response]);
+            let (manager, requests) = fake_client(vec![response]);
             let flows = Arc::new(Mutex::new(HashMap::new()));
+            let (_credential_dir, credentials) =
+                configured_credentials("preset", "flow-secret").await;
             let result = agent_models_command(
                 AgentModelsRequest {
                     agents: vec!["codex".into()],
-                    api_key: "flow-secret".into(),
                 },
                 &manager,
                 flows.clone(),
+                &credentials,
             )
             .await
             .unwrap();
             assert_eq!(result.preset.model_config["codex"]["model"], "m1");
+            let requests = requests.lock().unwrap();
+            let request = requests
+                .iter()
+                .find(|request| request["method"] == "agent.models")
+                .unwrap();
+            assert_eq!(request["params"]["api_key"], "flow-secret");
+            drop(requests);
             let flows = flows.lock().await;
             let flow = flows.get(&result.flow_id).unwrap();
-            assert_eq!(flow.api_key.as_str(), "flow-secret");
             assert!(!format!("{:?}", flow.models).contains("preset"));
         });
     }
@@ -1133,6 +1289,8 @@ mod tests {
     fn agent_preview_forwards_complete_normalized_modes_and_binds_after_success() {
         tauri::async_runtime::block_on(async {
             let (manager, requests) = fake_client(vec![preview_response()]);
+            let (_credential_dir, credentials) =
+                configured_credentials("preview-forward", "flow-secret").await;
             let flow_id = Uuid::new_v4().to_string();
             let flows = Arc::new(Mutex::new(HashMap::from([(
                 flow_id.clone(),
@@ -1153,6 +1311,7 @@ mod tests {
                 },
                 &manager,
                 &flows,
+                &credentials,
             )
             .await
             .unwrap();
@@ -1180,6 +1339,7 @@ mod tests {
     fn agent_preview_rejects_malformed_modes_without_mutating_bound_flow() {
         tauri::async_runtime::block_on(async {
             let (manager, requests) = fake_client(vec![]);
+            let (_credential_dir, credentials) = test_credentials("preview-invalid");
             let flow_id = Uuid::new_v4().to_string();
             let bound = HashMap::from([
                 ("claude".into(), "merge".into()),
@@ -1214,6 +1374,7 @@ mod tests {
                     },
                     &manager,
                     &flows,
+                    &credentials,
                 )
                 .await
                 .unwrap_err();
@@ -1236,6 +1397,8 @@ mod tests {
             }}))
             .unwrap();
             let (manager, _) = fake_client(vec![failed]);
+            let (_credential_dir, credentials) =
+                configured_credentials("preview-failure", "flow-secret").await;
             let flow_id = Uuid::new_v4().to_string();
             let bound = HashMap::from([
                 ("claude".into(), "merge".into()),
@@ -1259,6 +1422,7 @@ mod tests {
                 },
                 &manager,
                 &flows,
+                &credentials,
             )
             .await
             .unwrap_err();
@@ -1271,6 +1435,7 @@ mod tests {
     fn agent_render_rejects_modes_and_write_request_rejects_caller_modes() {
         tauri::async_runtime::block_on(async {
             let (manager, requests) = fake_client(vec![]);
+            let (_credential_dir, credentials) = test_credentials("render-invalid");
             let flow_id = Uuid::new_v4().to_string();
             let flows = Arc::new(Mutex::new(HashMap::from([(
                 flow_id.clone(),
@@ -1289,6 +1454,7 @@ mod tests {
                 },
                 &manager,
                 &flows,
+                &credentials,
             )
             .await
             .unwrap_err();
@@ -1325,6 +1491,8 @@ mod tests {
             }}))
             .unwrap();
             let (manager, requests) = fake_client(vec![response]);
+            let (_credential_dir, credentials) =
+                configured_credentials("write-forward", "flow-secret").await;
             let flow_id = Uuid::new_v4().to_string();
             let bound = HashMap::from([
                 ("claude".into(), "rebuild".into()),
@@ -1339,6 +1507,7 @@ mod tests {
                 write_request(flow_id.clone(), vec!["claude".into()]),
                 &manager,
                 &flows,
+                &credentials,
             )
             .await
             .unwrap();
@@ -1350,6 +1519,7 @@ mod tests {
                 .unwrap();
             assert_eq!(request["params"]["modes"], json!(bound));
             assert_eq!(request["params"]["approve_rebuild"], json!(["claude"]));
+            assert_eq!(request["params"]["api_key"], "flow-secret");
             assert!(!flows.lock().await.contains_key(&flow_id));
         });
     }
@@ -1358,6 +1528,7 @@ mod tests {
     fn agent_write_rejects_malformed_or_non_exact_rebuild_approvals() {
         tauri::async_runtime::block_on(async {
             let (manager, requests) = fake_client(vec![]);
+            let (_credential_dir, credentials) = test_credentials("write-invalid-approval");
             let flow_id = Uuid::new_v4().to_string();
             let bound = HashMap::from([
                 ("claude".into(), "rebuild".into()),
@@ -1374,10 +1545,14 @@ mod tests {
                 vec!["opencode".into()],
                 vec!["claude".into(), "opencode".into()],
             ] {
-                let error =
-                    agent_write_command(write_request(flow_id.clone(), approval), &manager, &flows)
-                        .await
-                        .unwrap_err();
+                let error = agent_write_command(
+                    write_request(flow_id.clone(), approval),
+                    &manager,
+                    &flows,
+                    &credentials,
+                )
+                .await
+                .unwrap_err();
                 assert_eq!(error.code, "INVALID_PARAMS");
             }
             assert!(requests
@@ -1397,6 +1572,8 @@ mod tests {
             }}))
             .unwrap();
             let (manager, _) = fake_client(vec![stale]);
+            let (_credential_dir, credentials) =
+                configured_credentials("write-stale", "flow-secret").await;
             let flow_id = Uuid::new_v4().to_string();
             let bound = HashMap::from([
                 ("claude".into(), "rebuild".into()),
@@ -1411,13 +1588,13 @@ mod tests {
                 write_request(flow_id.clone(), vec!["claude".into()]),
                 &manager,
                 &flows,
+                &credentials,
             )
             .await
             .unwrap_err();
             assert_eq!(error.code, "PREVIEW_STALE");
             let flows = flows.lock().await;
             let flow = flows.get(&flow_id).unwrap();
-            assert_eq!(flow.api_key.as_str(), "flow-secret");
             assert_eq!(flow.modes, Some(bound));
         });
     }
@@ -1434,13 +1611,15 @@ mod tests {
                         .unwrap();
                 let (manager, _) = fake_client(vec![response, recovery_status]);
                 let flows = Arc::new(Mutex::new(HashMap::new()));
+                let (_credential_dir, credentials) =
+                    configured_credentials("discovery-malformed", "terminal-path-secret").await;
                 let error = agent_models_command(
                     AgentModelsRequest {
                         agents: vec!["claude".into()],
-                        api_key: "terminal-path-secret".into(),
                     },
                     &manager,
                     flows.clone(),
+                    &credentials,
                 )
                 .await
                 .unwrap_err();
@@ -1456,15 +1635,18 @@ mod tests {
         tauri::async_runtime::block_on(async {
             let (manager, requests) = fake_client(vec![b"delay".to_vec()]);
             let flows = Arc::new(Mutex::new(HashMap::new()));
+            let (_credential_dir, credentials) =
+                configured_credentials("discovery-cancel", "cancelled-secret").await;
             let task_flows = flows.clone();
+            let task_credentials = credentials.clone();
             let task = tauri::async_runtime::spawn(async move {
                 agent_models_command(
                     AgentModelsRequest {
                         agents: vec!["claude".into()],
-                        api_key: "cancelled-secret".into(),
                     },
                     &manager,
                     task_flows,
+                    &task_credentials,
                 )
                 .await
             });
@@ -1497,11 +1679,12 @@ mod tests {
             let recovery_status =
                 serde_json::to_vec(&json!({"id":"desktop-2","result":{"state":"absent"}})).unwrap();
             let (manager, _) = fake_client(vec![b"not-json".to_vec(), recovery_status]);
+            let (_credential_dir, credentials) =
+                configured_credentials("write-malformed", "write-secret").await;
             let flow_id = Uuid::new_v4().to_string();
             let flows = Arc::new(Mutex::new(HashMap::from([(
                 flow_id.clone(),
                 ModelFlow {
-                    api_key: Zeroizing::new("write-secret".into()),
                     agents: vec!["claude".into()],
                     models: vec!["m1".into()],
                     catalog_token: "catalog".into(),
@@ -1521,6 +1704,7 @@ mod tests {
                 },
                 &manager,
                 &flows,
+                &credentials,
             )
             .await
             .unwrap_err();

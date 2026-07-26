@@ -1,4 +1,5 @@
 use crate::{
+    credential::{CredentialError, CredentialStore},
     error::{CommandError, Result},
     process_identity::ProcessIdentity,
     sidecar::SidecarPaths,
@@ -253,7 +254,8 @@ impl ManagerClient {
             return Err(error.clone());
         }
         let (response, result) = oneshot::channel();
-        self.sender
+        if let Err(error) = self
+            .sender
             .send(Call {
                 method,
                 params,
@@ -262,8 +264,36 @@ impl ManagerClient {
                 activity: Some(self.begin_activity()),
             })
             .await
-            .map_err(|_| CommandError::manager_failed())?;
+        {
+            let mut call = error.0;
+            clear_json(&mut call.params);
+            return Err(CommandError::manager_failed());
+        }
         receive(result).await.map(|(value, _)| value)
+    }
+
+    pub async fn call_with_credential<T: DeserializeOwned>(
+        &self,
+        method: &'static str,
+        mut params: Value,
+        credentials: &CredentialStore,
+    ) -> Result<T> {
+        if let Some(error) = &self.startup_error {
+            return Err(error.clone());
+        }
+        match credentials.use_().await {
+            Ok(key) => {
+                params
+                    .as_object_mut()
+                    .ok_or_else(|| {
+                        CommandError::invalid_params("manager params must be an object")
+                    })?
+                    .insert("api_key".into(), Value::String(key.to_string()));
+            }
+            Err(CredentialError::NotFound) => {}
+            Err(error) => return Err(error.into()),
+        }
+        self.call(method, params).await
     }
 
     pub(crate) async fn call_with_session_epoch<T: DeserializeOwned>(
@@ -407,7 +437,11 @@ async fn run_actor(
         }
         let sensitive = matches!(
             call.method,
-            "agent.models" | "agent.write" | FORCE_TERMINATE_OCCUPANT
+            "agent.models"
+                | "agent.render"
+                | "agent.preview"
+                | "agent.write"
+                | FORCE_TERMINATE_OCCUPANT
         );
         let replayable = !sensitive;
         let params = if sensitive {
