@@ -14,6 +14,7 @@ test-workflows:
 	bash ./tests/desktop_workflow_test.sh
 	bash ./tests/agent_model_preset_workflow_test.sh
 	bash ./tests/setup_release_packaging_test.sh
+	bash ./tests/index_docs_test.sh
 
 desktop-verify:
 	cd desktop && npm run verify
