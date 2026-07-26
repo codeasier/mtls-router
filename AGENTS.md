@@ -37,7 +37,7 @@ test -z "$(gofmt -l .)"                # 格式检查（CI 强制）
 - 不要在 `internal/proxy` 中添加 pass-through 请求管线包装器；hook 应在 mux 调用点组合。
 - 不要缓冲请求体；让 `httputil.ReverseProxy` 自行流式处理。
 - 不要让 `/health` 在 HTTP 层因 upstream 降级而失败。
-- `/version` 和 `/health` 必须先于 `/` 注册，以确保优先于代理路由。
+- `/version` 与 `/health` 必须以精确 pattern 注册在与反向代理同一个 mux 上；ServeMux 按最具体 pattern 匹配（与注册顺序无关），二者因此不会进入代理链路。新增管理端点一律用精确 pattern，不要引入与 `/` 有歧义的前缀 pattern。
 
 ### 密钥与 API key 安全
 

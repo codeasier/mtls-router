@@ -21,7 +21,7 @@ Tauri UI (React) ──invoke──▶ Rust commands ──stdin/stdout JSON─�
 `run()` 编排流程：meta flags → config.Load（flag > env > build-time > default）→ mTLS transport → upstream probe → reverse proxy + mux → graceful shutdown。
 
 关键不变量：
-- `/version` 和 `/health` 先于 `/` 注册，以确保优先于代理路由
+- `/version` 与 `/health` 以精确 pattern 注册在与反向代理同一个 mux 上；ServeMux 按最具体 pattern 匹配，与注册顺序无关，因此二者永远不会被转发到 upstream
 - `/health` 永远返回 HTTP 200；降级信息放在 JSON body 中
 - 反向代理的 `FlushInterval: -1` 启用无缓冲 SSE 流式
 - mTLS 凭证为链接期变量（`main.clientCertPEM`、`main.clientKeyPEM`、`main.upstreamCAPEM`、`main.upstreamURL`），通过 `-ldflags -X` 注入
