@@ -15,6 +15,7 @@ use zeroize::{Zeroize, Zeroizing};
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
+// Keep in sync with the early UI validation in desktop/src/ApiKeysPage.tsx.
 pub const MAX_KEY_BYTES: usize = 16 * 1024;
 const SCHEMA_VERSION: u32 = 1;
 const LOCK_TIMEOUT: Duration = Duration::from_secs(2);
@@ -42,7 +43,7 @@ pub struct CredentialStore {
 struct OnDisk {
     version: u32,
     saved_at: String,
-    key: String,
+    key: Zeroizing<String>,
 }
 
 impl CredentialStore {
@@ -57,13 +58,12 @@ impl CredentialStore {
         let _guard = tokio::time::timeout(LOCK_TIMEOUT, self.inner.lock())
             .await
             .map_err(|_| CredentialError::LockTimeout)?;
-        let (saved_at, mut key) = read(&self.path)?;
+        let (saved_at, key) = read(&self.path)?;
         let summary = CredentialSummary {
             present: true,
             fingerprint: fingerprint(&key),
             saved_at: Some(saved_at),
         };
-        key.zeroize();
         Ok(summary)
     }
 
@@ -85,7 +85,7 @@ impl CredentialStore {
         let mut disk = OnDisk {
             version: SCHEMA_VERSION,
             saved_at,
-            key: key.to_string(),
+            key,
         };
         let encoded = serde_json::to_vec_pretty(&disk)
             .map(Zeroizing::new)
@@ -116,11 +116,11 @@ impl CredentialStore {
             .await
             .map_err(|_| CredentialError::LockTimeout)?;
         let (_, key) = read(&self.path)?;
-        Ok(Zeroizing::new(key))
+        Ok(key)
     }
 }
 
-fn read(path: &Path) -> Result<(String, String), CredentialError> {
+fn read(path: &Path) -> Result<(String, Zeroizing<String>), CredentialError> {
     let content = match fs::read(path) {
         Ok(content) => Zeroizing::new(content),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -131,7 +131,7 @@ fn read(path: &Path) -> Result<(String, String), CredentialError> {
     parse(&content)
 }
 
-fn parse(content: &[u8]) -> Result<(String, String), CredentialError> {
+fn parse(content: &[u8]) -> Result<(String, Zeroizing<String>), CredentialError> {
     let content = content.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(content);
     let disk: OnDisk = serde_json::from_slice(content)
         .map_err(|error| CredentialError::InvalidFormat(error.to_string()))?;

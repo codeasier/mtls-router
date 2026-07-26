@@ -4,6 +4,7 @@ import { useI18n } from "./i18n";
 import type { CredentialSummary, DesktopApi, DesktopPaths } from "./ipc";
 import type { TranslationKey } from "./locales/zh-CN";
 
+// Keep in sync with the authoritative Rust validation in credential.rs.
 const MAX_KEY_BYTES = 16 * 1024;
 
 function errorTranslation(error: unknown): TranslationKey {
