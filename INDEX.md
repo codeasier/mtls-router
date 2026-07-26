@@ -123,7 +123,7 @@ Rust 侧绝不向 webview 暴露 shell/fs/http 权限（由 `lib.rs` 中的测�
 | `internal/version` | [INDEX.md](internal/version/INDEX.md) | 链接期构建元数据变量 |
 | `internal/log` | [INDEX.md](internal/log/INDEX.md) | 访问日志响应记录器 |
 | `internal/tlspolicy` | [INDEX.md](internal/tlspolicy/INDEX.md) | TLS 最低版本解析 |
-| `internal/manager` | [INDEX.md](internal/manager/INDEX.md) | 控制面：14 个子包、15 个协议方法、生命周期、发现、agent 配置 |
+| `internal/manager` | [INDEX.md](internal/manager/INDEX.md) | 控制面：15 个协议方法、生命周期、发现、agent 配置。其 14 个子包各有专属 INDEX，导航见 [子包表](internal/manager/INDEX.md#子包) |
 | `desktop` | [INDEX.md](desktop/INDEX.md) | Tauri 2 应用：React 前端 + Rust 后端、sidecar 管理 |
 
 ## 辅助参考

@@ -4,22 +4,24 @@ mtls-router 的控制面：路由生命周期管理、Agent 配置、端口冲�
 
 ## 子包
 
+全部 14 个子包都有专属 `INDEX.md`（含文件映射、导出、不变量与依赖）。在某个子包内工作时请先读它的 INDEX.md；下表只做导航与一句话定位。
+
 | 包 | 职责 | 关键导出 |
 |---------|------|-------------|
-| `app` | 协议会话装配；将全部 15 个方法映射到服务；强制 API key 清零 | `App`、`New(Config, simplify)`、`Serve(ctx, input, output)` |
-| `protocol` | JSON 请求/响应类型、方法常量、错误码、按方法超时 | `Request`、`Response`、`Error`、`Method*`、`Code*`、`Deadlines()` |
-| `lifecycle` | router 进程 spawn/stop/reclaim；桌面前台 + CLI 分离模式；父进程监控；异常退出检测 | `Manager`、`Start(ctx, owner)`、`Stop(ctx)`、`Reclaim()`、`MonitorParent(ctx)` |
-| `discovery` | 通过关联 HTTP `/version` + `/health` 与持久状态文件及 OS 进程身份来分类 router 状态 | `Discoverer`、`Discover(ctx)`、`DiscoverStatus(ctx)`、`DiscoverStartupStatus(ctx, owner)`、`Classification` 常量 |
-| `agent` | Agent 检测、配置渲染（Claude JSON / opencode JSON / Codex TOML + JSON auth）、带备份/回滚的事务性写入、模型发现 | `Service`、`Detect()`、`Render()`、`Write()`、`PreviewRequest()`、`DiscoverModels()` |
-| `agent/modelconfig` | 无 key 的规范化 model config schema v1：decode、merge、canonical 序列化、token 签名 | `Config`、`Version`、`Decode()`、`DecodeStructural()`、`Canonical()`、`DeepMerge()`、`MaxConfigSize` |
-| `trustedrouter` | 经 router `/v1/models` 的鉴权模型目录发现；写入前重新校验绑定 | `Coordinator`、`Fetch(ctx, owner, apiKey)`、`Revalidate(ctx, owner, apiKey, binding)` |
-| `occupant` | 端口占用者结构化诊断（Linux `/proc` + systemd cgroup、macOS `SYS_PROC_INFO`、Windows TCP owner table + SCM/SID/access preflight）与带一次性确认 token 的精确强制终止 | `Service`、`Inspect(ctx)`、`ForceTerminate(ctx, token)` |
-| `state` | router 进程身份的原子化 JSON 状态文件读写；文件锁 | `RouterState`、`Read(path)`、`Write(path, value)`、`AcquireLock(path)` |
-| `process` | PID + 启动时间 + 可执行文件三元身份校验；安全信号 | `Identity`、`Inspect(pid)`、`Validate(expected, binaryPath)`、`Signal(expected, binaryPath, sig)` |
-| `preset` | 加载构建期注入的不可变 Agent model preset（base64，经 `-ldflags -X`） | `Load()` → `*modelconfig.Config` |
-| `metadata` | manager 握手信息与生产身份校验 | `Info()`、`ValidateProduction(artifacts...)` |
-| `paths` | 跨平台按用户路径解析（CLI 状态目录 + 桌面数据目录） | `Paths`、`Resolve()` |
-| `modelcatalog` | 模型目录 HTTP 客户端与 simplify 策略（链接期 `Simplify` 变量过滤含 `/` 的模型 ID） | `ParseSimplify()`、`Client` |
+| [`app`](app/INDEX.md) | 协议会话装配；将全部 15 个方法映射到服务；强制 API key 清零 | `App`、`New(Config, simplify)`、`Serve(ctx, input, output)` |
+| [`protocol`](protocol/INDEX.md) | JSON 请求/响应类型、方法常量、错误码、按方法超时 | `Request`、`Response`、`Error`、`Method*`、`Code*`、`Deadlines()` |
+| [`lifecycle`](lifecycle/INDEX.md) | router 进程 spawn/stop/reclaim；桌面前台 + CLI 分离模式；父进程监控；异常退出检测 | `Manager`、`Start(ctx, owner)`、`Stop(ctx)`、`Reclaim()`、`MonitorParent(ctx)` |
+| [`discovery`](discovery/INDEX.md) | 通过关联 HTTP `/version` + `/health` 与持久状态文件及 OS 进程身份来分类 router 状态 | `Discoverer`、`Discover(ctx)`、`DiscoverStatus(ctx)`、`DiscoverStartupStatus(ctx, owner)`、`Classification` 常量 |
+| [`agent`](agent/INDEX.md) | Agent 检测、配置渲染（Claude JSON / opencode JSON / Codex TOML + JSON auth）、带备份/回滚的事务性写入、模型发现 | `Service`、`Detect()`、`Render()`、`Write()`、`PreviewRequest()`、`DiscoverModels()` |
+| [`agent/modelconfig`](agent/modelconfig/INDEX.md) | 无 key 的规范化 model config schema v1：decode、merge、canonical 序列化、token 签名 | `Config`、`Version`、`Decode()`、`DecodeStructural()`、`Canonical()`、`DeepMerge()`、`MaxConfigSize` |
+| [`trustedrouter`](trustedrouter/INDEX.md) | 经 router `/v1/models` 的鉴权模型目录发现；写入前重新校验绑定 | `Coordinator`、`Fetch(ctx, owner, apiKey)`、`Revalidate(ctx, owner, apiKey, binding)` |
+| [`occupant`](occupant/INDEX.md) | 端口占用者结构化诊断（Linux `/proc` + systemd cgroup、macOS `SYS_PROC_INFO`、Windows TCP owner table + SCM/SID/access preflight）与带一次性确认 token 的精确强制终止 | `Service`、`Inspect(ctx)`、`ForceTerminate(ctx, token)` |
+| [`state`](state/INDEX.md) | router 进程身份的原子化 JSON 状态文件读写；文件锁 | `RouterState`、`Read(path)`、`Write(path, value)`、`AcquireLock(path)` |
+| [`process`](process/INDEX.md) | PID + 启动时间 + 可执行文件三元身份校验；安全信号 | `Identity`、`Inspect(pid)`、`Validate(expected, binaryPath)`、`Signal(expected, binaryPath, sig)` |
+| [`preset`](preset/INDEX.md) | 加载构建期注入的不可变 Agent model preset（base64，经 `-ldflags -X`） | `Load()` → `*modelconfig.Config` |
+| [`metadata`](metadata/INDEX.md) | manager 握手信息与生产身份校验 | `Info()`、`ValidateProduction(artifacts...)` |
+| [`paths`](paths/INDEX.md) | 跨平台按用户路径解析（CLI 状态目录 + 桌面数据目录） | `Paths`、`Resolve()` |
+| [`modelcatalog`](modelcatalog/INDEX.md) | 模型目录 HTTP 客户端与 simplify 策略（链接期 `Simplify` 变量过滤含 `/` 的模型 ID） | `ParseSimplify()`、`Client` |
 
 ## 协议方法（15 个）
 
