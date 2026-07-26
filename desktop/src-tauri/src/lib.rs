@@ -32,12 +32,11 @@ const POLL_SNAPSHOT_EVENT: &str = "router-poll-snapshot";
 
 fn load_credentials(path: std::path::PathBuf) -> Arc<CredentialStore> {
     let credentials = Arc::new(CredentialStore::new(path));
-    if let Err(CredentialError::InvalidFormat(reason)) =
+    if let Err(CredentialError::InvalidFormat(_)) =
         tauri::async_runtime::block_on(credentials.read_summary())
     {
-        eprintln!("mtls-router: removing malformed credential file: {reason}");
+        eprintln!("mtls-router: removing malformed credential file");
         let _ = tauri::async_runtime::block_on(credentials.delete());
-        credentials.mark_invalid_on_startup();
     }
     credentials
 }
@@ -252,17 +251,8 @@ mod tests {
         assert!(!path.exists());
         assert!(matches!(
             tauri::async_runtime::block_on(credentials.read_summary()),
-            Err(CredentialError::InvalidFormat(_))
+            Err(CredentialError::NotFound)
         ));
-        tauri::async_runtime::block_on(
-            credentials.write(zeroize::Zeroizing::new("replacement-key".into())),
-        )
-        .unwrap();
-        assert!(
-            tauri::async_runtime::block_on(credentials.read_summary())
-                .unwrap()
-                .present
-        );
         let _ = std::fs::remove_dir_all(directory);
     }
 }

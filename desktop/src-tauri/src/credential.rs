@@ -6,7 +6,6 @@ use std::{
     fs::{self, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
-    sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
 use thiserror::Error;
@@ -36,7 +35,6 @@ pub enum CredentialError {
 pub struct CredentialStore {
     path: PathBuf,
     inner: Mutex<()>,
-    invalid_on_startup: AtomicBool,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -52,16 +50,10 @@ impl CredentialStore {
         Self {
             path,
             inner: Mutex::new(()),
-            invalid_on_startup: AtomicBool::new(false),
         }
     }
 
-    pub fn mark_invalid_on_startup(&self) {
-        self.invalid_on_startup.store(true, Ordering::Release);
-    }
-
     pub async fn read_summary(&self) -> Result<CredentialSummary, CredentialError> {
-        self.check_startup_state()?;
         let _guard = tokio::time::timeout(LOCK_TIMEOUT, self.inner.lock())
             .await
             .map_err(|_| CredentialError::LockTimeout)?;
@@ -98,10 +90,10 @@ impl CredentialStore {
         let encoded = serde_json::to_vec_pretty(&disk)
             .map(Zeroizing::new)
             .map_err(|error| CredentialError::InvalidFormat(error.to_string()));
+        // The serialized buffer now owns its copy; clear the temporary field immediately.
         disk.key.zeroize();
         let encoded = encoded?;
         write_atomic(&self.path, &encoded)?;
-        self.invalid_on_startup.store(false, Ordering::Release);
         Ok(summary)
     }
 
@@ -111,33 +103,20 @@ impl CredentialStore {
             .map_err(|_| CredentialError::LockTimeout)?;
         match fs::remove_file(&self.path) {
             Ok(()) => {
-                self.invalid_on_startup.store(false, Ordering::Release);
+                sync_parent(&self.path)?;
                 Ok(())
             }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                self.invalid_on_startup.store(false, Ordering::Release);
-                Ok(())
-            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
             Err(error) => Err(error.into()),
         }
     }
 
     pub async fn use_(&self) -> Result<Zeroizing<String>, CredentialError> {
-        self.check_startup_state()?;
         let _guard = tokio::time::timeout(LOCK_TIMEOUT, self.inner.lock())
             .await
             .map_err(|_| CredentialError::LockTimeout)?;
         let (_, key) = read(&self.path)?;
         Ok(Zeroizing::new(key))
-    }
-
-    fn check_startup_state(&self) -> Result<(), CredentialError> {
-        if self.invalid_on_startup.load(Ordering::Acquire) {
-            return Err(CredentialError::InvalidFormat(
-                "malformed credential was removed during startup".into(),
-            ));
-        }
-        Ok(())
     }
 }
 
@@ -202,6 +181,14 @@ fn base32(bytes: &[u8]) -> String {
 }
 
 fn write_atomic(path: &Path, content: &[u8]) -> Result<(), CredentialError> {
+    write_atomic_with(path, content, replace_file)
+}
+
+fn write_atomic_with(
+    path: &Path,
+    content: &[u8],
+    replace: impl FnOnce(&Path, &Path) -> io::Result<()>,
+) -> Result<(), CredentialError> {
     let parent = path
         .parent()
         .ok_or_else(|| CredentialError::InvalidFormat("credential path has no parent".into()))?;
@@ -217,11 +204,7 @@ fn write_atomic(path: &Path, content: &[u8]) -> Result<(), CredentialError> {
         file.sync_all()?;
         #[cfg(unix)]
         fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600))?;
-        #[cfg(windows)]
-        if path.exists() {
-            fs::remove_file(path)?;
-        }
-        fs::rename(&temporary, path)?;
+        replace(&temporary, path)?;
         #[cfg(unix)]
         {
             fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
@@ -233,6 +216,55 @@ fn write_atomic(path: &Path, content: &[u8]) -> Result<(), CredentialError> {
         let _ = fs::remove_file(temporary);
     }
     result.map_err(CredentialError::Io)
+}
+
+#[cfg(not(windows))]
+fn replace_file(source: &Path, destination: &Path) -> io::Result<()> {
+    fs::rename(source, destination)
+}
+
+#[cfg(windows)]
+fn replace_file(source: &Path, destination: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    let source = source
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let destination = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    // Same-volume MoveFileExW replaces the directory entry without an unlink gap.
+    let moved = unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if moved == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn sync_parent(path: &Path) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        OpenOptions::new().read(true).open(parent)?.sync_all()?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn sync_parent(_path: &Path) -> io::Result<()> {
+    Ok(())
 }
 
 #[cfg(test)]
@@ -339,12 +371,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn use_returns_key_then_zeroize_drop() {
+        let dir = temp_dir("use-zeroizing");
+        let store = CredentialStore::new(dir.credential());
+        store
+            .write(Zeroizing::new("fixture-key".into()))
+            .await
+            .unwrap();
+
+        let key: Zeroizing<String> = store.use_().await.unwrap();
+        assert_eq!(key.as_str(), "fixture-key");
+        assert!(std::mem::needs_drop::<Zeroizing<String>>());
+        drop(key);
+    }
+
+    #[tokio::test]
     async fn write_overwrites_existing_key() {
         let dir = temp_dir("overwrite");
         let store = CredentialStore::new(dir.credential());
         store.write(Zeroizing::new("first".into())).await.unwrap();
         store.write(Zeroizing::new("second".into())).await.unwrap();
         assert_eq!(store.use_().await.unwrap().as_str(), "second");
+    }
+
+    #[test]
+    fn failed_replace_preserves_existing_key() {
+        let dir = temp_dir("replace-failure");
+        let path = dir.credential();
+        fs::write(&path, b"old-credential").unwrap();
+
+        let error = write_atomic_with(&path, b"new-credential", |_, _| {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "injected replacement failure",
+            ))
+        })
+        .unwrap_err();
+
+        assert!(matches!(error, CredentialError::Io(_)));
+        assert_eq!(fs::read(path).unwrap(), b"old-credential");
     }
 
     #[tokio::test]

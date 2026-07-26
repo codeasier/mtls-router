@@ -253,33 +253,6 @@ async function reachRebuildPreview(
 }
 
 describe("Agent model workbench", () => {
-  it("guides missing credentials to API key management without discovery", async () => {
-    const api = createMockApi({
-      detectAgents: vi.fn().mockResolvedValue(detection),
-      getCredential: vi.fn().mockResolvedValue({
-        present: false,
-        fingerprint: "",
-        saved_at: null,
-      }),
-    });
-    const navigate = vi.fn();
-    render(<AgentPage api={api} onNavigateToApiKeys={navigate} />);
-
-    fireEvent.click(
-      await screen.findByRole("button", {
-        name: /继续发现模型|Continue to model discovery/,
-      }),
-    );
-    fireEvent.click(
-      await screen.findByRole("button", {
-        name: /前往 API 密钥|Go to API key/,
-      }),
-    );
-
-    expect(navigate).toHaveBeenCalledOnce();
-    expect(api.discoverModels).not.toHaveBeenCalled();
-  });
-
   it("initializes each Agent independently without merging existing and preset sections", () => {
     const existingClaude = configured.claude!;
     const preset = {
@@ -1743,7 +1716,7 @@ describe("Agent model workbench", () => {
     );
     expect(
       await screen.findByText(
-        /全局 API key 已配置|Global API key is configured/,
+        /使用已保存的密钥发现模型|Discover models with the saved key/,
       ),
     ).toBeVisible();
   });
@@ -1832,37 +1805,35 @@ describe("Agent model workbench", () => {
     );
     expect(
       await screen.findByText(
-        /全局 API key 已配置|Global API key is configured/,
+        /使用已保存的密钥发现模型|Discover models with the saved key/,
       ),
     ).toBeVisible();
     expect(screen.getByText(/模型发现会话已失效/)).toBeInTheDocument();
   });
 
   it.each([
+    "CREDENTIAL_NOT_FOUND",
     "MODEL_AUTH_FAILED",
     "MODEL_DISCOVERY_FAILED",
     "MODEL_CATALOG_EMPTY",
-  ])(
-    "returns %s discovery failure to an empty credential stage",
-    async (code) => {
-      const secret = `transition-secret-${code}`;
-      const api = createMockApi({
-        detectAgents: vi.fn().mockResolvedValue(detection),
-        discoverModels: vi.fn().mockRejectedValue({ code, message: secret }),
-      });
-      await reachCredential(api);
-      fireEvent.click(
-        screen.getByRole("button", { name: /发现模型|Discover models/ }),
-      );
-      expect(
-        await screen.findByText(
-          /全局 API key 已配置|Global API key is configured/,
-        ),
-      ).toBeVisible();
-      expect(document.body.textContent).not.toContain(secret);
-      expect(localStorage.length).toBe(0);
-    },
-  );
+  ])("returns %s discovery failure to the credential stage", async (code) => {
+    const secret = `transition-secret-${code}`;
+    const api = createMockApi({
+      detectAgents: vi.fn().mockResolvedValue(detection),
+      discoverModels: vi.fn().mockRejectedValue({ code, message: secret }),
+    });
+    await reachCredential(api);
+    fireEvent.click(
+      screen.getByRole("button", { name: /发现模型|Discover models/ }),
+    );
+    expect(
+      await screen.findByText(
+        /使用已保存的密钥发现模型|Discover models with the saved key/,
+      ),
+    ).toBeVisible();
+    expect(document.body.textContent).not.toContain(secret);
+    expect(localStorage.length).toBe(0);
+  });
 
   it.each([
     ["PREVIEW_STALE", "configure"],
@@ -1904,7 +1875,7 @@ describe("Agent model workbench", () => {
       if (target === "credential") {
         expect(
           await screen.findByText(
-            /全局 API key 已配置|Global API key is configured/,
+            /使用已保存的密钥发现模型|Discover models with the saved key/,
           ),
         ).toBeVisible();
         expect(api.destroyAgentModelFlow).toHaveBeenCalledWith(

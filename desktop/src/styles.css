@@ -613,41 +613,6 @@ main {
   line-height: 1.55;
 }
 
-.credential-summary {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  margin: 22px 0 4px;
-  padding: 14px 16px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
-  background: var(--paper-deep);
-  font-size: 11px;
-}
-
-.credential-summary > span {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--danger);
-  box-shadow: 0 0 0 4px var(--danger-soft);
-}
-
-.credential-summary[data-state="saved"] > span {
-  background: var(--good);
-  box-shadow: 0 0 0 4px var(--good-soft);
-}
-
-.credential-summary strong {
-  flex: 1;
-}
-
-.credential-summary code {
-  color: var(--muted);
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 10px;
-}
-
 .inline-alert {
   margin: 18px 0 0;
   padding: 11px 13px;

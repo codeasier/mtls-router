@@ -55,7 +55,8 @@ React UI ──Tauri invoke──▶ Rust commands.rs ──stdin/stdout JSON─
 ## 安全约束
 
 - webview 能力：仅 `core:default` —— 无 shell/fs/http/opener 权限（由 `lib.rs` 中的测试强制保证）。
-- API key 持久化于数据目录的 `credentials.json`；Unix 强制 0600，Windows 当前为用户数据目录 ACL 的最佳努力实现。
+- API key 持久化于数据目录的 `credentials.json`；读取兼容 UTF-8 BOM，Unix 强制 0600，Windows 当前为用户数据目录 ACL 的最佳努力实现。
+- 凭据写入先同步临时文件再原子替换；Unix 写入和删除还会同步父目录，确保目录项变更持久化。
 - Webview 只能保存/删除 key，不能回读明文；Rust 单次调用使用 `Zeroizing<String>`，manager 请求 JSON 与序列化缓冲在发送后清零。
 - CSP：`default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost; style-src 'self' 'unsafe-inline'`。
 - manager 握手在启动时校验：version、management protocol v4、deployment ID；v4 occupant 响应枚举、字段组合、标识上限和 token 规则均 fail closed。

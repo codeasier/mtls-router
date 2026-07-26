@@ -377,10 +377,6 @@ export const en: Record<TranslationKey, string> = {
   "agents.credentialHeading": "Discover models with the saved key",
   "agents.credentialNote":
     "Model discovery and configuration writes load the key temporarily from the desktop credential store. The page cannot read its plaintext value back.",
-  "agents.credentialConfigured": "Global API key is configured",
-  "agents.credentialMissing": "Global API key is not configured",
-  "agents.credentialLoading": "Reading global API key status",
-  "agents.openApiKeys": "Go to API key",
   "agents.discover": "Discover models",
   "agents.discovering":
     "Discovering models through the trusted local router...",

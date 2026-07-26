@@ -26,6 +26,11 @@ export function ApiKeysPage({ api }: { api: DesktopApi }) {
   const [operation, setOperation] = useState<"" | "save" | "delete">("");
   const [error, setError] = useState<TranslationKey | "">("");
 
+  function clearInput() {
+    if (inputRef.current) inputRef.current.value = "";
+    setShow(false);
+  }
+
   useEffect(() => {
     let current = true;
     void Promise.allSettled([api.getCredential(), api.getDesktopPaths()]).then(
@@ -54,8 +59,7 @@ export function ApiKeysPage({ api }: { api: DesktopApi }) {
     if (operation || !inputRef.current) return;
     const key = inputRef.current.value.trim();
     if (!key || new TextEncoder().encode(key).length > MAX_KEY_BYTES) {
-      inputRef.current.value = "";
-      setShow(false);
+      clearInput();
       setError("apikey.error.length");
       return;
     }
@@ -63,13 +67,10 @@ export function ApiKeysPage({ api }: { api: DesktopApi }) {
     setError("");
     try {
       setSummary(await api.saveCredential(key));
-      inputRef.current.value = "";
-      setShow(false);
     } catch (saveError) {
       setError(errorTranslation(saveError));
     } finally {
-      if (inputRef.current) inputRef.current.value = "";
-      setShow(false);
+      clearInput();
       setOperation("");
     }
   }
@@ -80,8 +81,7 @@ export function ApiKeysPage({ api }: { api: DesktopApi }) {
     setError("");
     try {
       setSummary(await api.deleteCredential());
-      if (inputRef.current) inputRef.current.value = "";
-      setShow(false);
+      clearInput();
     } catch (deleteError) {
       setError(errorTranslation(deleteError));
     } finally {

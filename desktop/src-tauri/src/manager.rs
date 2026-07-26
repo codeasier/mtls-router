@@ -1,5 +1,4 @@
 use crate::{
-    credential::{CredentialError, CredentialStore},
     error::{CommandError, Result},
     process_identity::ProcessIdentity,
     sidecar::SidecarPaths,
@@ -21,7 +20,7 @@ use tauri_plugin_shell::{
     ShellExt,
 };
 use tokio::sync::{mpsc, oneshot, watch};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 const MANAGER_INFO: &str = "manager.info";
 const ROUTER_STATUS: &str = "router.status";
@@ -138,6 +137,10 @@ struct Call {
     expected_session_epoch: Option<u64>,
     response: oneshot::Sender<Result<ManagerReply>>,
     activity: Option<ActivityGuard>,
+}
+
+fn clear_call_params(call: &mut Call) {
+    clear_json(&mut call.params);
 }
 
 struct ManagerReply {
@@ -266,33 +269,27 @@ impl ManagerClient {
             .await
         {
             let mut call = error.0;
-            clear_json(&mut call.params);
+            clear_call_params(&mut call);
             return Err(CommandError::manager_failed());
         }
         receive(result).await.map(|(value, _)| value)
     }
 
-    pub async fn call_with_credential<T: DeserializeOwned>(
+    pub async fn call_with_key<T: DeserializeOwned>(
         &self,
         method: &'static str,
         mut params: Value,
-        credentials: &CredentialStore,
+        mut key: Zeroizing<String>,
     ) -> Result<T> {
         if let Some(error) = &self.startup_error {
             return Err(error.clone());
         }
-        match credentials.use_().await {
-            Ok(key) => {
-                params
-                    .as_object_mut()
-                    .ok_or_else(|| {
-                        CommandError::invalid_params("manager params must be an object")
-                    })?
-                    .insert("api_key".into(), Value::String(key.to_string()));
-            }
-            Err(CredentialError::NotFound) => {}
-            Err(error) => return Err(error.into()),
-        }
+        params
+            .as_object_mut()
+            .ok_or_else(|| CommandError::invalid_params("manager params must be an object"))?
+            .insert("api_key".into(), Value::String(key.to_string()));
+        key.zeroize();
+        drop(key);
         self.call(method, params).await
     }
 
@@ -661,6 +658,23 @@ mod tests {
     use super::*;
     use std::sync::{atomic::AtomicUsize, Mutex, OnceLock};
     use tokio::sync::Semaphore;
+
+    #[test]
+    fn failed_send_cleanup_clears_sensitive_call_params() {
+        let (response, _result) = oneshot::channel();
+        let mut call = Call {
+            method: "agent.models",
+            params: json!({"api_key": "fixture-secret", "nested": ["sensitive"]}),
+            expected_session_epoch: None,
+            response,
+            activity: None,
+        };
+
+        clear_call_params(&mut call);
+
+        assert_eq!(call.params["api_key"], "");
+        assert_eq!(call.params["nested"][0], "");
+    }
 
     struct FakeChild {
         writes: Arc<Mutex<Vec<Value>>>,

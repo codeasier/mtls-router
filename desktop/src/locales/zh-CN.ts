@@ -333,10 +333,6 @@ export const zhCN = {
   "agents.credentialHeading": "使用已保存的密钥发现模型",
   "agents.credentialNote":
     "模型发现和配置写入会从桌面凭据存储中临时加载密钥，页面不会回读其明文。",
-  "agents.credentialConfigured": "全局 API key 已配置",
-  "agents.credentialMissing": "尚未配置全局 API key",
-  "agents.credentialLoading": "正在读取全局 API key 状态",
-  "agents.openApiKeys": "前往 API 密钥",
   "agents.discover": "发现模型",
   "agents.discovering": "正在通过可信本地路由发现模型...",
   "agents.error.auth": "已保存密钥未通过模型服务认证，请前往 API 密钥页替换。",

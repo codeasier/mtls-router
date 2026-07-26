@@ -36,6 +36,7 @@ impl AppState {
     }
 }
 
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct ModelFlow {
     agents: Vec<String>,
     models: Vec<String>,
@@ -395,9 +396,8 @@ async fn agent_models_command(
         keep: false,
     };
     let params = json!({ "owner": "desktop", "agents": request.agents });
-    let result: ManagerModelsResult = manager
-        .call_with_credential("agent.models", params, credentials)
-        .await?;
+    let key = credentials.use_().await.map_err(CommandError::from)?;
+    let result: ManagerModelsResult = manager.call_with_key("agent.models", params, key).await?;
     validate_models_result(&result, &request.agents)?;
     {
         let mut flows = model_flows.lock().await;
@@ -506,15 +506,10 @@ async fn agent_write_command(
     if request.revision_token.trim().is_empty() || request.revision_token.len() > 512 * 1024 {
         return Err(CommandError::invalid_params("revision token is invalid"));
     }
-    let current_key = match credentials.use_().await {
-        Ok(key) => Some(key),
-        Err(CredentialError::NotFound) => None,
-        Err(error) => return Err(error.into()),
-    };
     let model_config_value = serde_json::to_value(&request.model_config)
         .map_err(|_| CommandError::invalid_params("model config is invalid"))?;
-    let flow = {
-        let mut flows = model_flows.lock().await;
+    let expected_flow = {
+        let flows = model_flows.lock().await;
         let flow = flows.get(&request.flow_id).ok_or_else(flow_expired)?;
         if flow.agents != request.agents || flow.catalog_token != request.catalog_token {
             return Err(flow_expired());
@@ -524,17 +519,21 @@ async fn agent_write_command(
         })?;
         validate_rebuild_approval(&request.agents, modes, &request.approve_rebuild)?;
         model_config::validate(&request.model_config, &request.agents, &flow.models)?;
-        if current_key
-            .as_ref()
-            .is_some_and(|key| contains_exact_string(&model_config_value, key))
-        {
-            return Err(CommandError::invalid_params(
-                "model config contains a credential value",
-            ));
+        flow.clone()
+    };
+    let current_key = credentials.use_().await.map_err(CommandError::from)?;
+    if contains_exact_string(&model_config_value, &current_key) {
+        return Err(CommandError::invalid_params(
+            "model config contains a credential value",
+        ));
+    }
+    let flow = {
+        let mut flows = model_flows.lock().await;
+        if flows.get(&request.flow_id) != Some(&expected_flow) {
+            return Err(flow_expired());
         }
         flows.remove(&request.flow_id).ok_or_else(flow_expired)?
     };
-    drop(current_key);
     let params = json!({
         "agents": request.agents,
         "catalog_token": request.catalog_token,
@@ -546,7 +545,7 @@ async fn agent_write_command(
         "approve_rebuild": request.approve_rebuild,
     });
     match manager
-        .call_with_credential("agent.write", params, credentials)
+        .call_with_key("agent.write", params, current_key)
         .await
     {
         Err(error) if error.code == "PREVIEW_STALE" => {
@@ -1068,29 +1067,6 @@ mod tests {
     }
 
     #[test]
-    fn manager_credential_call_omits_missing_key() {
-        tauri::async_runtime::block_on(async {
-            let response = serde_json::to_vec(&json!({
-                "id": "desktop-1",
-                "result": {}
-            }))
-            .unwrap();
-            let (manager, requests) = fake_client(vec![response]);
-            let (_directory, credentials) = test_credentials("manager-missing");
-            let _: Value = manager
-                .call_with_credential("agent.render", json!({"agents": ["claude"]}), &credentials)
-                .await
-                .unwrap();
-            let requests = requests.lock().unwrap();
-            let request = requests
-                .iter()
-                .find(|request| request["method"] == "agent.render")
-                .unwrap();
-            assert!(request["params"].get("api_key").is_none());
-        });
-    }
-
-    #[test]
     fn credential_save_models_delete_models_round_trip() {
         tauri::async_runtime::block_on(async {
             let models_response = |id: &str| {
@@ -1108,17 +1084,14 @@ mod tests {
                 }}))
                 .unwrap()
             };
-            let (manager, requests) = fake_client(vec![
-                models_response("desktop-1"),
-                models_response("desktop-2"),
-            ]);
+            let (manager, requests) = fake_client(vec![models_response("desktop-1")]);
             let (_directory, credentials) = test_credentials("full-round-trip");
             let flows = Arc::new(Mutex::new(HashMap::new()));
 
             save_credential_command("fixture-secret".into(), &credentials)
                 .await
                 .unwrap();
-            agent_models_command(
+            let first = agent_models_command(
                 AgentModelsRequest {
                     agents: vec!["claude".into()],
                 },
@@ -1128,26 +1101,29 @@ mod tests {
             )
             .await
             .unwrap();
+            flows.lock().await.remove(&first.flow_id);
             delete_credential_command(&credentials).await.unwrap();
-            agent_models_command(
+            let error = agent_models_command(
                 AgentModelsRequest {
                     agents: vec!["claude".into()],
                 },
                 &manager,
-                flows,
+                flows.clone(),
                 &credentials,
             )
             .await
-            .unwrap();
+            .unwrap_err();
+            assert_eq!(error.code, "CREDENTIAL_NOT_FOUND");
+            tokio::task::yield_now().await;
+            assert!(flows.lock().await.is_empty());
 
             let requests = requests.lock().unwrap();
             let model_requests = requests
                 .iter()
                 .filter(|request| request["method"] == "agent.models")
                 .collect::<Vec<_>>();
-            assert_eq!(model_requests.len(), 2);
+            assert_eq!(model_requests.len(), 1);
             assert_eq!(model_requests[0]["params"]["api_key"], "fixture-secret");
-            assert!(model_requests[1]["params"].get("api_key").is_none());
         });
     }
 
