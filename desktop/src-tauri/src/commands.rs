@@ -422,20 +422,13 @@ pub async fn agent_render(
     request: AgentConfigRequest,
     state: tauri::State<'_, AppState>,
 ) -> Result<AgentRenderResult> {
-    agent_render_command(
-        request,
-        &state.manager,
-        &state.model_flows,
-        &state.credentials,
-    )
-    .await
+    agent_render_command(request, &state.manager, &state.model_flows).await
 }
 
 async fn agent_render_command(
     request: AgentConfigRequest,
     manager: &ManagerClient,
     model_flows: &Arc<Mutex<HashMap<String, ModelFlow>>>,
-    credentials: &CredentialStore,
 ) -> Result<AgentRenderResult> {
     if request
         .modes
@@ -447,7 +440,7 @@ async fn agent_render_command(
         ));
     }
     validate_config_request(&request, model_flows).await?;
-    manager.call_with_credential("agent.render", json!({ "agents": request.agents, "catalog_token": request.catalog_token, "model_config": request.model_config }), credentials).await
+    manager.call("agent.render", json!({ "agents": request.agents, "catalog_token": request.catalog_token, "model_config": request.model_config })).await
 }
 
 #[tauri::command]
@@ -455,25 +448,18 @@ pub async fn agent_preview(
     request: AgentConfigRequest,
     state: tauri::State<'_, AppState>,
 ) -> Result<AgentPreview> {
-    agent_preview_command(
-        request,
-        &state.manager,
-        &state.model_flows,
-        &state.credentials,
-    )
-    .await
+    agent_preview_command(request, &state.manager, &state.model_flows).await
 }
 
 async fn agent_preview_command(
     request: AgentConfigRequest,
     manager: &ManagerClient,
     model_flows: &Arc<Mutex<HashMap<String, ModelFlow>>>,
-    credentials: &CredentialStore,
 ) -> Result<AgentPreview> {
     let modes = validate_agent_modes(&request.agents, request.modes.as_ref())?;
     validate_config_request(&request, model_flows).await?;
     let result = manager
-        .call_with_credential(
+        .call(
             "agent.preview",
             json!({
                 "agents": request.agents,
@@ -481,7 +467,6 @@ async fn agent_preview_command(
                 "catalog_token": request.catalog_token,
                 "model_config": request.model_config,
             }),
-            credentials,
         )
         .await?;
     let mut flows = model_flows.lock().await;
@@ -549,6 +534,7 @@ async fn agent_write_command(
         }
         flows.remove(&request.flow_id).ok_or_else(flow_expired)?
     };
+    drop(current_key);
     let params = json!({
         "agents": request.agents,
         "catalog_token": request.catalog_token,
@@ -1105,6 +1091,67 @@ mod tests {
     }
 
     #[test]
+    fn credential_save_models_delete_models_round_trip() {
+        tauri::async_runtime::block_on(async {
+            let models_response = |id: &str| {
+                serde_json::to_vec(&json!({"id": id, "result": {
+                    "models": ["m1"],
+                    "catalog_token": "catalog",
+                    "router_base_url": "http://127.0.0.1:19099",
+                    "api_base_url": "http://127.0.0.1:19099/v1",
+                    "existing": {
+                        "model_config": {},
+                        "unavailable_models": {},
+                        "drifted_agents": []
+                    },
+                    "preset": {"model_config": {}, "unavailable_agents": {}}
+                }}))
+                .unwrap()
+            };
+            let (manager, requests) = fake_client(vec![
+                models_response("desktop-1"),
+                models_response("desktop-2"),
+            ]);
+            let (_directory, credentials) = test_credentials("full-round-trip");
+            let flows = Arc::new(Mutex::new(HashMap::new()));
+
+            save_credential_command("fixture-secret".into(), &credentials)
+                .await
+                .unwrap();
+            agent_models_command(
+                AgentModelsRequest {
+                    agents: vec!["claude".into()],
+                },
+                &manager,
+                flows.clone(),
+                &credentials,
+            )
+            .await
+            .unwrap();
+            delete_credential_command(&credentials).await.unwrap();
+            agent_models_command(
+                AgentModelsRequest {
+                    agents: vec!["claude".into()],
+                },
+                &manager,
+                flows,
+                &credentials,
+            )
+            .await
+            .unwrap();
+
+            let requests = requests.lock().unwrap();
+            let model_requests = requests
+                .iter()
+                .filter(|request| request["method"] == "agent.models")
+                .collect::<Vec<_>>();
+            assert_eq!(model_requests.len(), 2);
+            assert_eq!(model_requests[0]["params"]["api_key"], "fixture-secret");
+            assert!(model_requests[1]["params"].get("api_key").is_none());
+        });
+    }
+
+    #[test]
     fn flow_ids_and_catalog_results_are_strictly_bounded() {
         assert!(validate_flow_id(&Uuid::new_v4().to_string()).is_ok());
         assert!(validate_flow_id("guessable").is_err());
@@ -1289,8 +1336,6 @@ mod tests {
     fn agent_preview_forwards_complete_normalized_modes_and_binds_after_success() {
         tauri::async_runtime::block_on(async {
             let (manager, requests) = fake_client(vec![preview_response()]);
-            let (_credential_dir, credentials) =
-                configured_credentials("preview-forward", "flow-secret").await;
             let flow_id = Uuid::new_v4().to_string();
             let flows = Arc::new(Mutex::new(HashMap::from([(
                 flow_id.clone(),
@@ -1311,7 +1356,6 @@ mod tests {
                 },
                 &manager,
                 &flows,
-                &credentials,
             )
             .await
             .unwrap();
@@ -1324,6 +1368,7 @@ mod tests {
                 .unwrap();
             assert_eq!(request["params"]["modes"]["claude"], "rebuild");
             assert_eq!(request["params"]["modes"]["opencode"], "merge");
+            assert!(request["params"].get("api_key").is_none());
             drop(requests);
             assert_eq!(
                 flows.lock().await[&flow_id].modes,
@@ -1339,7 +1384,6 @@ mod tests {
     fn agent_preview_rejects_malformed_modes_without_mutating_bound_flow() {
         tauri::async_runtime::block_on(async {
             let (manager, requests) = fake_client(vec![]);
-            let (_credential_dir, credentials) = test_credentials("preview-invalid");
             let flow_id = Uuid::new_v4().to_string();
             let bound = HashMap::from([
                 ("claude".into(), "merge".into()),
@@ -1374,7 +1418,6 @@ mod tests {
                     },
                     &manager,
                     &flows,
-                    &credentials,
                 )
                 .await
                 .unwrap_err();
@@ -1397,8 +1440,6 @@ mod tests {
             }}))
             .unwrap();
             let (manager, _) = fake_client(vec![failed]);
-            let (_credential_dir, credentials) =
-                configured_credentials("preview-failure", "flow-secret").await;
             let flow_id = Uuid::new_v4().to_string();
             let bound = HashMap::from([
                 ("claude".into(), "merge".into()),
@@ -1422,7 +1463,6 @@ mod tests {
                 },
                 &manager,
                 &flows,
-                &credentials,
             )
             .await
             .unwrap_err();
@@ -1435,7 +1475,6 @@ mod tests {
     fn agent_render_rejects_modes_and_write_request_rejects_caller_modes() {
         tauri::async_runtime::block_on(async {
             let (manager, requests) = fake_client(vec![]);
-            let (_credential_dir, credentials) = test_credentials("render-invalid");
             let flow_id = Uuid::new_v4().to_string();
             let flows = Arc::new(Mutex::new(HashMap::from([(
                 flow_id.clone(),
@@ -1454,7 +1493,6 @@ mod tests {
                 },
                 &manager,
                 &flows,
-                &credentials,
             )
             .await
             .unwrap_err();

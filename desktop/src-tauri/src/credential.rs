@@ -6,6 +6,7 @@ use std::{
     fs::{self, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
+    sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
 use thiserror::Error;
@@ -35,6 +36,7 @@ pub enum CredentialError {
 pub struct CredentialStore {
     path: PathBuf,
     inner: Mutex<()>,
+    invalid_on_startup: AtomicBool,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -50,10 +52,16 @@ impl CredentialStore {
         Self {
             path,
             inner: Mutex::new(()),
+            invalid_on_startup: AtomicBool::new(false),
         }
     }
 
+    pub fn mark_invalid_on_startup(&self) {
+        self.invalid_on_startup.store(true, Ordering::Release);
+    }
+
     pub async fn read_summary(&self) -> Result<CredentialSummary, CredentialError> {
+        self.check_startup_state()?;
         let _guard = tokio::time::timeout(LOCK_TIMEOUT, self.inner.lock())
             .await
             .map_err(|_| CredentialError::LockTimeout)?;
@@ -93,6 +101,7 @@ impl CredentialStore {
         disk.key.zeroize();
         let encoded = encoded?;
         write_atomic(&self.path, &encoded)?;
+        self.invalid_on_startup.store(false, Ordering::Release);
         Ok(summary)
     }
 
@@ -101,18 +110,34 @@ impl CredentialStore {
             .await
             .map_err(|_| CredentialError::LockTimeout)?;
         match fs::remove_file(&self.path) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Ok(()) => {
+                self.invalid_on_startup.store(false, Ordering::Release);
+                Ok(())
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                self.invalid_on_startup.store(false, Ordering::Release);
+                Ok(())
+            }
             Err(error) => Err(error.into()),
         }
     }
 
     pub async fn use_(&self) -> Result<Zeroizing<String>, CredentialError> {
+        self.check_startup_state()?;
         let _guard = tokio::time::timeout(LOCK_TIMEOUT, self.inner.lock())
             .await
             .map_err(|_| CredentialError::LockTimeout)?;
         let (_, key) = read(&self.path)?;
         Ok(Zeroizing::new(key))
+    }
+
+    fn check_startup_state(&self) -> Result<(), CredentialError> {
+        if self.invalid_on_startup.load(Ordering::Acquire) {
+            return Err(CredentialError::InvalidFormat(
+                "malformed credential was removed during startup".into(),
+            ));
+        }
+        Ok(())
     }
 }
 

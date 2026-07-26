@@ -70,4 +70,20 @@ describe("ApiKeysPage", () => {
     await waitFor(() => expect(api.deleteCredential).toHaveBeenCalledOnce());
     expect(screen.getByText("尚未配置")).toBeInTheDocument();
   });
+
+  it("clears the plaintext input when saving fails", async () => {
+    const api = createMockApi({
+      saveCredential: vi.fn().mockRejectedValue({
+        code: "CREDENTIAL_IO_ERROR",
+      }),
+    });
+    renderPage(api);
+    const input = await screen.findByLabelText("API key");
+    await userEvent.type(input, "failed-secret");
+
+    fireEvent.click(screen.getByRole("button", { name: "替换密钥" }));
+
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(input).toHaveValue("");
+  });
 });

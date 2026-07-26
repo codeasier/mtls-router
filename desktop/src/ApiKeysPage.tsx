@@ -34,6 +34,7 @@ export function ApiKeysPage({ api }: { api: DesktopApi }) {
         if (summaryResult.status === "fulfilled") {
           setSummary(summaryResult.value);
         } else {
+          setSummary({ present: false, fingerprint: "", saved_at: null });
           setError(errorTranslation(summaryResult.reason));
         }
         if (pathsResult.status === "fulfilled") {
@@ -53,6 +54,8 @@ export function ApiKeysPage({ api }: { api: DesktopApi }) {
     if (operation || !inputRef.current) return;
     const key = inputRef.current.value.trim();
     if (!key || new TextEncoder().encode(key).length > MAX_KEY_BYTES) {
+      inputRef.current.value = "";
+      setShow(false);
       setError("apikey.error.length");
       return;
     }
@@ -65,6 +68,8 @@ export function ApiKeysPage({ api }: { api: DesktopApi }) {
     } catch (saveError) {
       setError(errorTranslation(saveError));
     } finally {
+      if (inputRef.current) inputRef.current.value = "";
+      setShow(false);
       setOperation("");
     }
   }

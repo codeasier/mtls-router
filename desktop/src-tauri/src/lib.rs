@@ -37,6 +37,7 @@ fn load_credentials(path: std::path::PathBuf) -> Arc<CredentialStore> {
     {
         eprintln!("mtls-router: removing malformed credential file: {reason}");
         let _ = tauri::async_runtime::block_on(credentials.delete());
+        credentials.mark_invalid_on_startup();
     }
     credentials
 }
@@ -251,8 +252,17 @@ mod tests {
         assert!(!path.exists());
         assert!(matches!(
             tauri::async_runtime::block_on(credentials.read_summary()),
-            Err(CredentialError::NotFound)
+            Err(CredentialError::InvalidFormat(_))
         ));
+        tauri::async_runtime::block_on(
+            credentials.write(zeroize::Zeroizing::new("replacement-key".into())),
+        )
+        .unwrap();
+        assert!(
+            tauri::async_runtime::block_on(credentials.read_summary())
+                .unwrap()
+                .present
+        );
         let _ = std::fs::remove_dir_all(directory);
     }
 }

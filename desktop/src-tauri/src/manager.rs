@@ -437,11 +437,7 @@ async fn run_actor(
         }
         let sensitive = matches!(
             call.method,
-            "agent.models"
-                | "agent.render"
-                | "agent.preview"
-                | "agent.write"
-                | FORCE_TERMINATE_OCCUPANT
+            "agent.models" | "agent.write" | FORCE_TERMINATE_OCCUPANT
         );
         let replayable = !sensitive;
         let params = if sensitive {

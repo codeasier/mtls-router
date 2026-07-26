@@ -777,7 +777,11 @@ export function AgentPage({
     void api
       .getCredential()
       .then((value) => active && setCredential(value))
-      .catch(() => active && setCredential(null));
+      .catch(
+        () =>
+          active &&
+          setCredential({ present: false, fingerprint: "", saved_at: null }),
+      );
     return () => {
       active = false;
     };
