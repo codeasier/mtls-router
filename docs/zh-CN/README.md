@@ -20,7 +20,7 @@
 
 ## 桌面应用
 
-Tauri 桌面应用提供当前用户 router 控制、托盘操作、默认登录时启动、健康/日志视图，以及 Claude Code、opencode 和 Codex 的显式预览/写入流程。它把 manager 和 router 作为经过验证的 sidecar 打包，首次启动绝不会修改 Agent 文件。
+Tauri 桌面应用提供当前用户 router 控制、托盘操作、默认登录时启动、健康/日志视图、受 supervisor 管理的端口冲突恢复，以及 Claude Code、opencode 和 Codex 的显式预览/写入流程。端口恢复会报告结构化原因和 supervisor 人工引导，绝不提权或执行停止命令，并在约 10 秒内定期采样端口，报告是否检测到重新占用。它把 manager 和 router 作为经过验证的 sidecar 打包，首次启动绝不会修改 Agent 文件。
 
 当前仓库中的 CI 和 release workflow 会构建六个原生桌面包：Windows x86_64/arm64 NSIS 安装器、macOS Intel/Apple Silicon DMG，以及 Linux x86_64/arm64 AppImage。每个匹配的目标 runner 都会检查对应包的内容、架构、版本/deployment 身份、sidecar 哈希和可执行权限。Release job 仅在签名凭据完整时签名 Windows 和 macOS 包，仅在额外 Apple 凭据完整时 notarize 并 staple macOS 应用，并为每个目标发布一个明确的签名状态文件。包检查不会安装或启动应用，因此在把桌面 release 视为完整验证之前，仍需单独提供目标 runner 上成功安装/启动的证据。安装、首次启动、Agent、凭据和卸载行为见[桌面应用](DESKTOP.md)，恢复指导见[桌面应用故障排查](TROUBLESHOOTING.md)，精确证据边界见[构建与发布](BUILD.md)。
 
@@ -153,7 +153,7 @@ Windows PowerShell：
   "commit": "abc1234",
   "build_date": "2026-06-21T09:23:24Z",
   "deployment_id": "production-service",
-  "management_protocol_version": "3",
+  "management_protocol_version": "4",
   "pid": 12345,
   "started_at": "2026-06-21T09:23:24Z"
 }
@@ -203,10 +203,10 @@ Windows PowerShell：
 
 ```json
 {"id":"info","method":"manager.info","params":{}}
-{"id":"info","result":{"version":"v0.1.1","commit":"abc1234","build_date":"2026-06-21T09:23:24Z","target":"linux/amd64","deployment_id":"production-service","management_protocol_version":"3"}}
+{"id":"info","result":{"version":"v0.1.1","commit":"abc1234","build_date":"2026-06-21T09:23:24Z","target":"linux/amd64","deployment_id":"production-service","management_protocol_version":"4"}}
 ```
 
-由于环境变量不是安全的 secret 传输方式，`MTLS_ROUTER_OPENAI_API_KEY` 已移除，不再提供 key。非交互自动化必须验证 `manager.info` protocol `3`，调用 `agent.models`，构造规范 model config，再调用 `agent.render` 或 `agent.preview` 与 `agent.write`。Key 只出现在 `agent.models` 和 `agent.write` stdin 请求体中。不要把 key 放入命令行参数、环境变量、model config、日志、shell history 或临时请求文件。完整契约见 [Agent 模型配置](AGENT_MODELS.md#protocol-v3-自动化)。
+由于环境变量不是安全的 secret 传输方式，`MTLS_ROUTER_OPENAI_API_KEY` 已移除，不再提供 key。非交互自动化必须验证 `manager.info` protocol `4`，调用 `agent.models`，构造规范 model config，再调用 `agent.render` 或 `agent.preview` 与 `agent.write`。Key 只出现在 `agent.models` 和 `agent.write` stdin 请求体中。不要把 key 放入命令行参数、环境变量、model config、日志、shell history 或临时请求文件。完整契约见 [Agent 模型配置](AGENT_MODELS.md#protocol-v4-自动化)。
 
 `mtls-router` 二进制本身只管理 router，不提供 `print-config` 这类 agent 配置命令。
 
