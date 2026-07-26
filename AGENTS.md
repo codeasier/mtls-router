@@ -15,13 +15,16 @@
 ### Go
 
 ```bash
-go test ./...                          # 全部 Go 测试
-go test ./internal/proxy/...           # 单个包
-go test -run TestName ./internal/proxy # 按名称跑单个测试
+go test ./...                              # 全部 Go 测试
+go test ./internal/proxy/...               # 单个包
+go test -run TestName ./internal/proxy     # 按名称跑单个测试
+go test ./internal/manager/occupant -count=1  # 必跑：CI/release 单列且禁用缓存
 go vet ./...
-test -z "$(gofmt -l .)"                # 格式检查（CI 强制）
-./scripts/build.sh                     # 本地构建（生成占位证书 + 两个二进制）
+test -z "$(gofmt -l .)"                    # 格式检查（CI 强制）
+./scripts/build.sh                         # 本地构建（生成占位证书 + 两个二进制）
 ```
+
+- `internal/manager/occupant` 依赖真实 OS 行为，`go test ./...` 的缓存结果不足以代表 CI —— 改动该包或其依赖后，务必单独跑一次带 `-count=1` 的版本。
 
 ### 代码规范
 
@@ -66,7 +69,8 @@ test -z "$(gofmt -l .)"                # 格式检查（CI 强制）
 ```bash
 make test-shell                        # 在临时目录运行所有 tests/setup_*_test.sh
 bash tests/setup_clean_test.sh         # 直接跑单个 shell 测试
-make test-workflows                    # 桌面 + agent preset + 发布打包工作流测试
+make test-workflows                    # 桌面 + agent preset + 发布打包 + INDEX 文档一致性
+bash tests/index_docs_test.sh          # 仅跑 INDEX 覆盖与链接校验
 ```
 
 - Go 测试以 `*_test.go` 形式与包同目录存放；shell 集成测试位于 `tests/setup_*_test.sh`。
@@ -80,6 +84,7 @@ npm run typecheck                      # tsc --noEmit
 npm test                               # vitest run
 npm run build                          # tsc + vite build
 npm run verify                         # 以上全部 + rust 格式 + rust 测试
+make desktop-verify                    # 同上，仓库根目录入口
 ```
 
 ### 桌面 Rust（desktop/src-tauri/）
@@ -129,4 +134,13 @@ CLI 产物（6 目标：`linux/darwin/windows` × `amd64/arm64`）：
 
 - `INDEX.md` 与 `AGENTS.md`（全仓库，含各子目录）一律以中文撰写。
 - README 及其他用户可见文档在变更用户可见行为时，仍需保持英文版与 `docs/zh-CN/` 版本对齐。
-- 新增子包时，为该包创建专属 `INDEX.md`（中文），并在根 [INDEX.md](INDEX.md) 的 [包索引](INDEX.md#包索引) 中追加一行。
+
+### INDEX 层级与同步规则
+
+- **每一个 `internal/` 下的 Go 包都必须有自己的 `INDEX.md`**（中文），含文件映射、关键导出、不变量与依赖。这条覆盖到最深一层，包括 `internal/manager/*` 与 `internal/manager/agent/modelconfig`。
+- 导航分两级，新增包时两处都要更新：
+  - `internal/` 的顶层包 → 在根 [INDEX.md](INDEX.md) 的 [包索引](INDEX.md#包索引) 追加一行。
+  - `internal/manager/` 的子包 → 在 [internal/manager/INDEX.md](internal/manager/INDEX.md) 的子包表追加一行并链到其 `INDEX.md`；根 INDEX 不逐个列出。
+- 覆盖范围**不含** `cmd/`、`scripts/`、`tests/`、`systemd/`：这些目录刻意不设专属 INDEX。
+- `make test-workflows`（CI 的 "Scope and workflow assertions" job）会校验上述覆盖与所有 `INDEX.md` / `AGENTS.md` 中相对链接的可解析性，漏建或漏登记会直接失败。
+- 事实类内容只写在 `INDEX.md`，`AGENTS.md` 只写「做/不做」并链接过去 —— 同一事实写两遍必然分裂。
