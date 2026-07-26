@@ -22,9 +22,10 @@ React UI ──Tauri invoke──▶ Rust commands.rs ──stdin/stdout JSON─
 | 文件                                | 职责                                                                                                              |
 | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | `ipc.ts`                            | `DesktopApi` 接口 + `createDesktopApi()` —— 所有 Tauri 命令的类型化包装；`sanitizeSensitiveText()` 用于客户端脱敏 |
-| `App.tsx`                           | 根布局：侧边栏导航（Router/Agents/Logs/Settings）+ 区块渲染                                                       |
+| `App.tsx`                           | 根布局：侧边栏导航（Router/Agents/API 密钥/Logs/Settings）+ 区块渲染                                              |
 | `RouterPage.tsx`                    | router 状态、start/stop、health、占用者检查/终止                                                                  |
-| `AgentPage.tsx`                     | Agent 检测、模型发现、配置预览/写入流程                                                                           |
+| `AgentPage.tsx`                     | Agent 检测、使用全局凭据发现模型、配置预览/写入流程；不接触明文 API key                                           |
+| `ApiKeysPage.tsx`                   | 全局 API key 保存、替换、删除及摘要展示；提交后清空输入，不提供明文回读                                           |
 | `LogsPage.tsx`                      | 有界的、安全过滤的 router 日志，手动刷新                                                                          |
 | `SettingsPage.tsx`                  | 自启动、诊断、卸载准备、语言                                                                                      |
 | `model.ts`                          | 共享类型（`SectionId`、`navigationItems`）                                                                        |
@@ -36,15 +37,16 @@ React UI ──Tauri invoke──▶ Rust commands.rs ──stdin/stdout JSON─
 | 文件                  | 职责                                                                                                                                              |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `lib.rs`              | 应用入口：插件注册、setup（sidecar 校验、manager spawn、调度器启动、托盘）、invoke handler 注册                                                   |
-| `commands.rs`         | 所有 `#[tauri::command]` handler；`AppState`（manager client、调度器、路径、model flow）；`ModelFlow` 含 `Zeroizing<String>` API key              |
-| `manager.rs`          | `ManagerClient` + `TauriTransportFactory` —— spawn manager 子进程、发送 JSON 请求、读取响应；`validate_handshake()`                               |
+| `commands.rs`         | 所有 `#[tauri::command]` handler；`AppState`（manager client、调度器、路径、无密钥 model flow、全局凭据存储）                                     |
+| `credential.rs`       | `CredentialStore`：严格 schema、原子写入、Unix 0600、摘要/使用/删除及进程内并发控制；明文使用值以 `Zeroizing<String>` 返回                        |
+| `manager.rs`          | `ManagerClient` + `TauriTransportFactory` —— spawn manager 子进程、发送 JSON 请求、读取响应；仅向协议定义凭据字段的 `agent.models/write` 注入 key |
 | `scheduler.rs`        | `PollScheduler` —— 周期性 router 状态/健康轮询；推进端口释放观察；emit `router-poll-snapshot` 事件；可见性感知间隔                                |
 | `port_recovery.rs`    | `PortRecovery` —— manager session epoch 绑定的约 10 秒定期采样状态；区分 `observing`、`released`、`reoccupied`                                    |
 | `sidecar.rs`          | `SidecarPaths::resolve()` —— 在 app 二进制旁定位 `mtls-router[.exe]` 与 `mtls-router-manager[.exe]`（运行时纯名字）；校验 SHA-256 + 原生架构/格式 |
 | `tray.rs`             | 系统托盘图标/菜单；状态感知标签；窗口显示/隐藏                                                                                                    |
 | `orchestration.rs`    | `first_launch()` —— sidecar 有效且无 router 运行时自动启动 router                                                                                 |
 | `model_config.rs`     | model config 导入/导出 JSON 校验                                                                                                                  |
-| `paths.rs`            | 桌面数据目录解析（委托给 `MTLS_ROUTER_DESKTOP_DATA_DIR` 或 OS 默认）                                                                              |
+| `paths.rs`            | 桌面数据目录解析（委托给 `MTLS_ROUTER_DESKTOP_DATA_DIR` 或 OS 默认），并派生 `credentials.json` 路径                                              |
 | `process_identity.rs` | `current()` —— 捕获 PID + 启动时间 + 可执行文件用于父身份 flag                                                                                    |
 | `autostart.rs`        | 登录启动插件包装；首次启动默认启用                                                                                                                |
 | `types.rs`            | 镜像 manager 协议结果的 serde 类型                                                                                                                |
@@ -53,7 +55,8 @@ React UI ──Tauri invoke──▶ Rust commands.rs ──stdin/stdout JSON─
 ## 安全约束
 
 - webview 能力：仅 `core:default` —— 无 shell/fs/http/opener 权限（由 `lib.rs` 中的测试强制保证）。
-- API key 存于 `Zeroizing<String>` —— 内存 drop 时清零。
+- API key 持久化于数据目录的 `credentials.json`；Unix 强制 0600，Windows 当前为用户数据目录 ACL 的最佳努力实现。
+- Webview 只能保存/删除 key，不能回读明文；Rust 单次调用使用 `Zeroizing<String>`，manager 请求 JSON 与序列化缓冲在发送后清零。
 - CSP：`default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost; style-src 'self' 'unsafe-inline'`。
 - manager 握手在启动时校验：version、management protocol v4、deployment ID；v4 occupant 响应枚举、字段组合、标识上限和 token 规则均 fail closed。
 
