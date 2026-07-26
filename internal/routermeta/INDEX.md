@@ -16,7 +16,7 @@ router 监听器上 `/version` 与 `/health` 端点的管理 HTTP handler。
 
 ## 关键不变量
 
-- 这些端点必须先于 `/` 在 mux 上注册，以确保优先于代理路由。
+- 这些端点必须以精确 pattern 注册在承载反向代理的同一个 mux 上。ServeMux 按最具体 pattern 匹配，与注册顺序无关，因此它们不会被 `/` 捕获并转发到 upstream。
 - `/health` 绝不可返回非 200 的 HTTP 状态 —— setup 脚本依赖「connection refused = 未启动，200 = 已启动」。
 - `/version` 暴露精确构建元数据 —— 绝不公开暴露。
 

@@ -76,16 +76,36 @@ func TestHandleMetaFlagsRejectsUnexpectedPositionalArgs(t *testing.T) {
 	}
 }
 
-func TestManagementRoutesTakePrecedenceOverProxyRoute(t *testing.T) {
-	mux := http.NewServeMux()
+func registerManagementRoutes(mux *http.ServeMux) {
 	mux.Handle("/version", routermeta.VersionHandler(routermeta.InfoProviderFunc(func() map[string]any {
 		return map[string]any{"route": "version"}
 	})))
 	mux.Handle("/health", routermeta.HealthHandler(health.ProbeFunc(func() error { return nil })))
+}
+
+func registerProxyRoute(mux *http.ServeMux) {
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("proxy"))
 	}))
+}
 
+// Precedence comes from ServeMux pattern specificity, not registration order,
+// so both orders must behave identically. Exercising both keeps the invariant
+// from being misread as "register the management routes first".
+func TestManagementRoutesTakePrecedenceOverProxyRoute(t *testing.T) {
+	orders := []struct {
+		name     string
+		register func(*http.ServeMux)
+	}{
+		{name: "management registered first", register: func(mux *http.ServeMux) {
+			registerManagementRoutes(mux)
+			registerProxyRoute(mux)
+		}},
+		{name: "proxy registered first", register: func(mux *http.ServeMux) {
+			registerProxyRoute(mux)
+			registerManagementRoutes(mux)
+		}},
+	}
 	tests := []struct {
 		path string
 		want string
@@ -94,12 +114,18 @@ func TestManagementRoutesTakePrecedenceOverProxyRoute(t *testing.T) {
 		{path: "/health", want: "ok"},
 		{path: "/anything-else", want: "proxy"},
 	}
-	for _, tt := range tests {
-		t.Run(tt.path, func(t *testing.T) {
-			rec := httptest.NewRecorder()
-			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tt.path, nil))
-			if !bytes.Contains(rec.Body.Bytes(), []byte(tt.want)) {
-				t.Fatalf("body = %q, want to contain %q", rec.Body.String(), tt.want)
+	for _, order := range orders {
+		t.Run(order.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			order.register(mux)
+			for _, tt := range tests {
+				t.Run(tt.path, func(t *testing.T) {
+					rec := httptest.NewRecorder()
+					mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tt.path, nil))
+					if !bytes.Contains(rec.Body.Bytes(), []byte(tt.want)) {
+						t.Fatalf("body = %q, want to contain %q", rec.Body.String(), tt.want)
+					}
+				})
 			}
 		})
 	}
