@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -251,12 +252,12 @@ func TestServeWiresEveryMethodSequentiallyAndSanitizesOutput(t *testing.T) {
 		Owner:          "desktop",
 		ListenAddr:     "http://127.0.0.1:19099",
 		Version: discovery.Version{
-			Version: "router-v1", PID: 91, DeploymentID: "prod-a", ManagementProtocolVersion: "3",
+			Version: "router-v1", PID: 91, DeploymentID: "prod-a", ManagementProtocolVersion: "4",
 		},
 		Health: discovery.Health{Status: "ok"},
 		State: state.RouterState{
 			PID: 91, Owner: "desktop", ListenAddr: "http://127.0.0.1:19099", LogPath: logPath,
-			RouterVersion: "router-v1", DeploymentID: "prod-a", ManagementProtocolVersion: "3",
+			RouterVersion: "router-v1", DeploymentID: "prod-a", ManagementProtocolVersion: "4",
 		},
 	}
 	lifecycleManager := &fakeLifecycle{
@@ -278,7 +279,7 @@ func TestServeWiresEveryMethodSequentiallyAndSanitizesOutput(t *testing.T) {
 	}
 	manager := newWithDependencies(Config{RouterPath: os.Args[0], Paths: managerpaths.Paths{DesktopLogFile: logPath}}, dependencies{
 		info: func() protocol.ManagerInfoResult {
-			return protocol.ManagerInfoResult{Version: "manager-v1", Commit: "abc123", BuildDate: "2026-07-12T00:00:00Z", Target: "test/test", DeploymentID: "prod-a", ManagementProtocolVersion: "3"}
+			return protocol.ManagerInfoResult{Version: "manager-v1", Commit: "abc123", BuildDate: "2026-07-12T00:00:00Z", Target: "test/test", DeploymentID: "prod-a", ManagementProtocolVersion: "4"}
 		},
 		discoverStatus: func(context.Context) discovery.Result { return found },
 		discoverHealth: func(context.Context) discovery.Result { return found },
@@ -428,7 +429,7 @@ func TestRouterVersionUsesStatusDiscovery(t *testing.T) {
 			return discovery.Result{
 				Classification: discovery.DesktopOwned,
 				Version: discovery.Version{
-					Version: "router-v1", DeploymentID: "prod-a", ManagementProtocolVersion: "3",
+					Version: "router-v1", DeploymentID: "prod-a", ManagementProtocolVersion: "4",
 				},
 			}
 		},
@@ -590,7 +591,7 @@ func TestAgentModelsReturnsCompleteKeyFreeCatalogResult(t *testing.T) {
 	const key = "agent-models-protocol-secret-canary"
 	binding := trustedrouter.Binding{
 		RouterBaseURL: "http://[::1]:19443", APIBaseURL: "http://[::1]:19443/v1",
-		DeploymentID: "prod-a", ProtocolVersion: "3",
+		DeploymentID: "prod-a", ProtocolVersion: "4",
 	}
 	manager := newWithDependencies(Config{}, dependencies{
 		trusted: fakeTrustedRouter{fetch: func(_ context.Context, owner protocol.RouterOwner, gotKey string) (trustedrouter.Result, *protocol.Error) {
@@ -603,7 +604,7 @@ func TestAgentModelsReturnsCompleteKeyFreeCatalogResult(t *testing.T) {
 			if strings.Join([]string{string(selected[0]), string(selected[1])}, ",") != "claude,codex" || strings.Join(catalog, ",") != "model-a,model-b" {
 				t.Fatalf("selected=%v catalog=%v", selected, catalog)
 			}
-			if claims.Owner != "cli" || claims.RouterBaseURL != binding.RouterBaseURL || claims.DeploymentID != binding.DeploymentID || claims.ProtocolVersion != "3" {
+			if claims.Owner != "cli" || claims.RouterBaseURL != binding.RouterBaseURL || claims.DeploymentID != binding.DeploymentID || claims.ProtocolVersion != "4" {
 				t.Fatalf("claims=%+v", claims)
 			}
 			return agent.ModelsResult{CatalogToken: "signed-catalog", Existing: agent.ModelsExisting{
@@ -648,7 +649,7 @@ func TestAgentModelsReturnsCompleteKeyFreeCatalogResult(t *testing.T) {
 func TestAgentModelsNoPresetUsesStableEmptyObjects(t *testing.T) {
 	manager := newWithDependencies(Config{}, dependencies{
 		trusted: fakeTrustedRouter{fetch: func(context.Context, protocol.RouterOwner, string) (trustedrouter.Result, *protocol.Error) {
-			return trustedrouter.Result{Models: []string{"model-a"}, Binding: trustedrouter.Binding{RouterBaseURL: "http://127.0.0.1:19099", APIBaseURL: "http://127.0.0.1:19099/v1", DeploymentID: "prod-a", ProtocolVersion: "3"}}, nil
+			return trustedrouter.Result{Models: []string{"model-a"}, Binding: trustedrouter.Binding{RouterBaseURL: "http://127.0.0.1:19099", APIBaseURL: "http://127.0.0.1:19099/v1", DeploymentID: "prod-a", ProtocolVersion: "4"}}, nil
 		}},
 		models: fakeModelsService{discover: func(context.Context, []agent.Kind, []string, modelconfig.CatalogClaims) (agent.ModelsResult, error) {
 			return agent.ModelsResult{CatalogToken: "token", Existing: agent.ModelsExisting{ModelConfig: json.RawMessage(`{}`), UnavailableModels: map[string][]string{}, DriftedAgents: []string{}}}, nil
@@ -737,7 +738,7 @@ func TestAgentWritePreflightOrderPrecedesWriteArtifacts(t *testing.T) {
 		validatePreview: func(context.Context, agent.WriteRequest) error { calls = append(calls, "preview"); return nil },
 		binding: func(context.Context, []agent.Kind, string, json.RawMessage) (agent.CatalogBinding, error) {
 			calls = append(calls, "router-binding")
-			return agent.CatalogBinding{Owner: "cli", RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "3", Models: []string{"model-a"}}, nil
+			return agent.CatalogBinding{Owner: "cli", RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "4", Models: []string{"model-a"}}, nil
 		},
 		write: func(context.Context, agent.WriteRequest) (agent.WriteResult, error) {
 			calls = append(calls, "artifacts")
@@ -837,7 +838,7 @@ func TestAgentWriteEveryPreflightFailureCreatesZeroArtifacts(t *testing.T) {
 					if test.bindingErr != nil {
 						return agent.CatalogBinding{}, test.bindingErr
 					}
-					return agent.CatalogBinding{Owner: "cli", RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "3"}, nil
+					return agent.CatalogBinding{Owner: "cli", RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "4"}, nil
 				},
 				write: func(context.Context, agent.WriteRequest) (agent.WriteResult, error) {
 					writeCalls++
@@ -898,14 +899,17 @@ func TestOccupantHandlersExposeSafeResultAndSubmitOnlyToken(t *testing.T) {
 	forceCalls := 0
 	manager := newWithDependencies(Config{}, dependencies{occupant: &fakeOccupant{
 		inspect: func(context.Context) (occupant.Inspection, error) {
-			return occupant.Inspection{PID: 42, VerificationMode: occupant.VerificationModeVerifiedIdentity, ProcessName: "listener", Executable: executable, ListenAddr: "127.0.0.1:19099", ConfirmationToken: token, ExpiresAt: expiresAt}, nil
+			return occupant.Inspection{
+				PID: 42, VerificationMode: occupant.VerificationModeVerifiedIdentity, ProcessName: "listener", Executable: executable,
+				ListenAddr: "127.0.0.1:19099", Recovery: occupant.Recovery{Action: occupant.RecoveryActionForceTerminate}, ConfirmationToken: token, ExpiresAt: &expiresAt,
+			}, nil
 		},
 		forceTerminate: func(_ context.Context, got string) (occupant.Result, error) {
 			forceCalls++
 			if got != token {
 				t.Fatalf("token = %q", got)
 			}
-			return occupant.Result{State: "absent"}, nil
+			return occupant.Result{Termination: "process_terminated", PortState: "released"}, nil
 		},
 	}})
 	input := strings.NewReader(strings.Join([]string{
@@ -916,11 +920,12 @@ func TestOccupantHandlersExposeSafeResultAndSubmitOnlyToken(t *testing.T) {
 	if err := manager.Serve(context.Background(), input, &output); err != nil {
 		t.Fatal(err)
 	}
-	if forceCalls != 1 || !strings.Contains(output.String(), `"verification_mode":"verified_identity"`) || !strings.Contains(output.String(), `"process_name":"listener"`) || !strings.Contains(output.String(), `"executable":`) || !strings.Contains(output.String(), `"state":"absent"`) {
-		t.Fatalf("force calls=%d output=%s", forceCalls, output.String())
-	}
-	if strings.Contains(output.String(), "started_at") || strings.Contains(output.String(), "user") || strings.Contains(output.String(), "socket") {
-		t.Fatalf("inspection exposed internal identity: %s", output.String())
+	want := strings.Join([]string{
+		`{"id":"inspect","result":{"pid":42,"verification_mode":"verified_identity","process_name":"listener","executable":` + strconv.Quote(executable) + `,"listen_addr":"127.0.0.1:19099","recovery":{"action":"force_terminate"},"confirmation_token":"opaque-confirmation","expires_at":"2026-07-18T01:02:33Z"}}`,
+		`{"id":"terminate","result":{"termination":"process_terminated","port_state":"released"}}`,
+	}, "\n") + "\n"
+	if forceCalls != 1 || output.String() != want {
+		t.Fatalf("force calls=%d response=%s, want %s", forceCalls, output.String(), want)
 	}
 }
 
@@ -930,7 +935,7 @@ func TestOccupantHandlerOmitsUnverifiedProcessMetadata(t *testing.T) {
 		inspect: func(context.Context) (occupant.Inspection, error) {
 			return occupant.Inspection{
 				PID: 4242, VerificationMode: occupant.VerificationModeWindowsPIDOnly,
-				ListenAddr: "127.0.0.1:19099", ConfirmationToken: "token", ExpiresAt: expiresAt,
+				ListenAddr: "127.0.0.1:19099", Recovery: occupant.Recovery{Action: occupant.RecoveryActionForceTerminate}, ConfirmationToken: "token", ExpiresAt: &expiresAt,
 			}, nil
 		},
 	}})
@@ -938,7 +943,27 @@ func TestOccupantHandlerOmitsUnverifiedProcessMetadata(t *testing.T) {
 	if err := manager.Serve(context.Background(), strings.NewReader(`{"id":"inspect","method":"router.inspect_occupant"}`+"\n"), &output); err != nil {
 		t.Fatal(err)
 	}
-	want := `{"id":"inspect","result":{"pid":4242,"verification_mode":"windows_pid_only","listen_addr":"127.0.0.1:19099","confirmation_token":"token","expires_at":"2026-07-22T12:00:30Z"}}` + "\n"
+	want := `{"id":"inspect","result":{"pid":4242,"verification_mode":"windows_pid_only","listen_addr":"127.0.0.1:19099","recovery":{"action":"force_terminate"},"confirmation_token":"token","expires_at":"2026-07-22T12:00:30Z"}}` + "\n"
+	if output.String() != want {
+		t.Fatalf("response = %s, want %s", output.String(), want)
+	}
+}
+
+func TestOccupantHandlerMapsBlockedServiceExactly(t *testing.T) {
+	manager := newWithDependencies(Config{}, dependencies{occupant: &fakeOccupant{
+		inspect: func(context.Context) (occupant.Inspection, error) {
+			return occupant.Inspection{
+				PID: 8, VerificationMode: occupant.VerificationModeWindowsPIDOnly, ListenAddr: "127.0.0.1:19099",
+				Recovery:   occupant.Recovery{Action: occupant.RecoveryActionManualStopRequired, Reason: occupant.RecoveryReasonServiceManaged},
+				Supervisor: &occupant.Supervisor{Kind: occupant.SupervisorWindowsService, Scope: occupant.SupervisorScopeSystem, Identifiers: []string{"Svc"}},
+			}, nil
+		},
+	}})
+	var output bytes.Buffer
+	if err := manager.Serve(context.Background(), strings.NewReader(`{"id":"inspect","method":"router.inspect_occupant"}`+"\n"), &output); err != nil {
+		t.Fatal(err)
+	}
+	want := `{"id":"inspect","result":{"pid":8,"verification_mode":"windows_pid_only","listen_addr":"127.0.0.1:19099","recovery":{"action":"manual_stop_required","reason":"service_managed"},"supervisor":{"kind":"windows_service","scope":"system","identifiers":["Svc"]}}}` + "\n"
 	if output.String() != want {
 		t.Fatalf("response = %s, want %s", output.String(), want)
 	}
@@ -1022,6 +1047,23 @@ func TestOccupantHandlersRejectInvalidShapesAndMapSanitizedErrors(t *testing.T) 
 	}
 }
 
+func TestOccupantHandlerMapsPermissionDeniedExactly(t *testing.T) {
+	manager := newWithDependencies(Config{}, dependencies{occupant: &fakeOccupant{
+		forceTerminate: func(context.Context, string) (occupant.Result, error) {
+			return occupant.Result{}, fmt.Errorf("%w: sensitive native error", occupant.ErrPermissionDenied)
+		},
+	}})
+	var output bytes.Buffer
+	request := `{"id":"terminate","method":"router.force_terminate_occupant","params":{"confirmation_token":"token"}}` + "\n"
+	if err := manager.Serve(context.Background(), strings.NewReader(request), &output); err != nil {
+		t.Fatal(err)
+	}
+	want := `{"id":"terminate","error":{"code":"OCCUPANT_PERMISSION_DENIED","message":"permission to terminate port occupant was denied"}}` + "\n"
+	if output.String() != want {
+		t.Fatalf("response = %s, want %s", output.String(), want)
+	}
+}
+
 func TestMapOccupantErrorCoversStableCodes(t *testing.T) {
 	tests := map[error]protocol.ErrorCode{
 		occupant.ErrNotFound:            protocol.CodeOccupantNotFound,
@@ -1029,6 +1071,7 @@ func TestMapOccupantErrorCoversStableCodes(t *testing.T) {
 		occupant.ErrIdentityUnavailable: protocol.CodeOccupantIdentityUnavailable,
 		occupant.ErrChanged:             protocol.CodeOccupantChanged,
 		occupant.ErrProtected:           protocol.CodeOccupantProtected,
+		occupant.ErrPermissionDenied:    protocol.CodeOccupantPermissionDenied,
 		occupant.ErrTerminationFailed:   protocol.CodeOccupantTerminationFailed,
 		occupant.ErrPortReleaseTimeout:  protocol.CodePortReleaseTimeout,
 		occupant.ErrConfirmationExpired: protocol.CodeConfirmationExpired,

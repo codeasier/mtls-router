@@ -66,14 +66,14 @@ protocol_tmp="$(mktemp -d)"
 trap 'rm -rf "$protocol_tmp"' EXIT
 for kind in cli desktop; do
   for os_arch in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64 windows-arm64; do
-    printf '{"schema_version":1,"producer":"%s-%s","management_protocol_version":"3"}\n' "$kind" "$os_arch" >"$protocol_tmp/release-metadata-$kind-$os_arch.json"
+    printf '{"schema_version":1,"producer":"%s-%s","management_protocol_version":"4"}\n' "$kind" "$os_arch" >"$protocol_tmp/release-metadata-$kind-$os_arch.json"
   done
 done
-"$PROTOCOL_CHECK" "$protocol_tmp" || fail 'matching protocol-v3 metadata was rejected'
-jq '.management_protocol_version = "2"' "$protocol_tmp/release-metadata-cli-linux-amd64.json" >"$protocol_tmp/mixed.json"
-mv "$protocol_tmp/mixed.json" "$protocol_tmp/release-metadata-cli-linux-amd64.json"
+"$PROTOCOL_CHECK" "$protocol_tmp" || fail 'matching protocol-v4 metadata was rejected'
+jq '.management_protocol_version = "3"' "$protocol_tmp/release-metadata-cli-linux-amd64.json" >"$protocol_tmp/deliberate-protocol-v3-mismatch.json"
+mv "$protocol_tmp/deliberate-protocol-v3-mismatch.json" "$protocol_tmp/release-metadata-cli-linux-amd64.json"
 if "$PROTOCOL_CHECK" "$protocol_tmp" >/dev/null 2>&1; then
-  fail 'mixed protocol-v2/v3 release metadata was accepted'
+  fail 'deliberate mixed protocol-v3/v4 release metadata was accepted'
 fi
 [[ "$(grep -Fc 'version="${GITHUB_REF_NAME#v}"' "$WORKFLOW")" -eq 2 ]] || \
   fail 'CLI and desktop jobs must derive tag versions without the v prefix'

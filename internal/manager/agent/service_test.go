@@ -482,7 +482,7 @@ func TestV2PreviewAcceptsReportedClaudeConfigurationWithoutFable(t *testing.T) {
 	models := []string{"gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"}
 	discovery, err := service.DiscoverModels(context.Background(), []Kind{ClaudeCode}, models, modelconfig.CatalogClaims{
 		Models: models, Agents: []modelconfig.Agent{modelconfig.Claude}, Owner: "desktop",
-		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "test", ProtocolVersion: "3",
+		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "test", ProtocolVersion: "4",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -515,7 +515,7 @@ func TestV2PreviewRejectsModelOutsideCatalogWithoutTransactionArtifacts(t *testi
 	}
 	discovery, err := service.DiscoverModels(context.Background(), []Kind{ClaudeCode}, []string{"model-a"}, modelconfig.CatalogClaims{
 		Models: []string{"model-a"}, Agents: []modelconfig.Agent{modelconfig.Claude}, Owner: "cli",
-		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "test", ProtocolVersion: "3",
+		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "test", ProtocolVersion: "4",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -545,7 +545,7 @@ func TestCatalogTokensBindSimplifyAcrossServiceProcesses(t *testing.T) {
 	}
 	fullCatalog, err := full.DiscoverModels(context.Background(), []Kind{ClaudeCode}, []string{"provider/slash"}, modelconfig.CatalogClaims{
 		Models: []string{"provider/slash"}, Agents: []modelconfig.Agent{modelconfig.Claude}, Owner: "cli",
-		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "test", ProtocolVersion: "3", Simplify: true,
+		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "test", ProtocolVersion: "4", Simplify: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -580,7 +580,7 @@ func TestCatalogTokensBindSimplifyAcrossServiceProcesses(t *testing.T) {
 
 	simplifiedCatalog, err := simplified.DiscoverModels(context.Background(), []Kind{ClaudeCode}, []string{"model-a"}, modelconfig.CatalogClaims{
 		Models: []string{"model-a"}, Agents: []modelconfig.Agent{modelconfig.Claude}, Owner: "cli",
-		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "test", ProtocolVersion: "3",
+		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "test", ProtocolVersion: "4",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -590,18 +590,20 @@ func TestCatalogTokensBindSimplifyAcrossServiceProcesses(t *testing.T) {
 	assertCode(t, err, CodeModelCatalogStale)
 }
 
-func TestCurrentServiceRejectsSignedOldProtocolCatalogForRenderAndPreview(t *testing.T) {
+func TestCurrentServiceRejectsSignedProtocolV3CatalogForRenderAndPreview(t *testing.T) {
+	const mismatchedProtocolV3 = "3"
+
 	home := t.TempDir()
 	service := newTestService(t, filepath.Join(home, "manager-state"), home, map[string]bool{"claude": true}, nil)
 	if err := service.ensureSigner(); err != nil {
 		t.Fatal(err)
 	}
-	if version.ManagementProtocolVersion != "3" {
-		t.Fatalf("test requires management protocol v3, got %q", version.ManagementProtocolVersion)
+	if version.ManagementProtocolVersion != "4" {
+		t.Fatalf("test requires management protocol v4, got %q", version.ManagementProtocolVersion)
 	}
 	token, err := service.signer.SignCatalog(modelconfig.CatalogClaims{
 		Models: []string{"model-a"}, Agents: []modelconfig.Agent{modelconfig.Claude}, Owner: "cli",
-		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "test", ProtocolVersion: "2",
+		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "test", ProtocolVersion: mismatchedProtocolV3,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1549,7 +1551,7 @@ func previewWithModes(t *testing.T, service *Service, kinds []Kind, modes map[Ki
 	t.Helper()
 	models := []string{"model-primary", "model-sonnet"}
 	discovery, err := service.DiscoverModels(context.Background(), kinds, models, modelconfig.CatalogClaims{
-		Models: models, Agents: kindsToModelAgents(kinds), Owner: "cli", RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "test", ProtocolVersion: "3",
+		Models: models, Agents: kindsToModelAgents(kinds), Owner: "cli", RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "test", ProtocolVersion: "4",
 	})
 	if err != nil {
 		t.Fatal(err)

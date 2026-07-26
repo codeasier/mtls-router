@@ -129,8 +129,46 @@ export const en: Record<TranslationKey, string> = {
     "This process is protected by the desktop lifecycle and cannot be terminated through port recovery.",
   "router.occupant.error.changed":
     "The port occupant changed or the confirmation expired. Inspect it again before confirming.",
+  "router.occupant.error.permissionDenied":
+    "Termination permission was denied after inspection. Stop the process from its original privilege context and inspect again.",
+  "router.occupant.error.terminationFailed":
+    "The termination request did not end the process. No router start was attempted.",
+  "router.occupant.error.releaseTimeout":
+    "The process changed, but the app could not confirm that the port was released. Inspect the current occupant before continuing.",
   "router.occupant.error.temporary":
     "The occupant cannot be inspected right now. No termination request was sent.",
+  "router.occupant.reason.serviceManaged":
+    "A system service manages this process. Stop every listed service through its supervisor before retrying.",
+  "router.occupant.reason.insufficientPrivilege":
+    "The current privilege level cannot terminate this process. Exit it normally from the same privilege context or use the system process manager. Do not run the desktop app as administrator or root.",
+  "router.occupant.reason.differentUser":
+    "This process belongs to another user. Ask that user or an administrator to stop it; the desktop app will not elevate.",
+  "router.occupant.reason.protectedProcess":
+    "This protected process cannot be terminated through port recovery. Resolve its owning application or lifecycle manager instead.",
+  "router.occupant.reason.identityUnavailable":
+    "The process identity cannot be verified reliably, so destructive recovery is unavailable.",
+  "router.occupant.supervisor.windows":
+    "Open services.msc or run each shown sc.exe command in Administrator PowerShell. Shared hosts require stopping every listed Windows Service separately.",
+  "router.occupant.supervisor.systemdUser":
+    "Stop the identified user service from the same login session.",
+  "router.occupant.supervisor.systemdSystem":
+    "Stop the identified system service from an authorized terminal.",
+  "router.occupant.supervisor.generic":
+    "Stop the service in its system supervisor, then retry inspection. No supervisor identifier was inferred.",
+  "router.occupant.copyCommand": "Copy command",
+  "router.occupant.commandCopied": "Command copied",
+  "router.occupant.commandCopyFailed": "Unable to copy the command",
+  "router.occupant.observation.observing":
+    "Confirming that the port remains released",
+  "router.occupant.observation.released": "The port remains released",
+  "router.occupant.observation.reoccupied":
+    "A replacement process or supervisor reoccupied the port",
+  "router.occupant.observation.termination-ineffective":
+    "The termination request did not end the original process",
+  "router.occupant.observation.replacement":
+    "A replacement process now occupies the port",
+  "router.occupant.observation.supervisorGuidance":
+    "If a supervisor restarted the process, identify and stop the responsible service in Service Control Manager (SCM), systemd unit, or launchd job before retrying. The app does not guess supervisor identifiers.",
   "router.occupant.dialogOverline": "IRREVERSIBLE ACTION",
   "router.occupant.dialogTitle": "Confirm force termination",
   "router.occupant.warning":
@@ -140,8 +178,6 @@ export const en: Record<TranslationKey, string> = {
   "router.occupant.cancel": "Cancel",
   "router.occupant.confirm": "Force terminate",
   "router.occupant.terminating": "Terminating...",
-  "router.occupant.released":
-    "The port was released. The router remains stopped until you select Start router.",
   "router.desktop": "Desktop",
   "router.manager": "Manager",
   "router.router": "Router",

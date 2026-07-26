@@ -64,8 +64,8 @@ fi
 
 version="${VERSION:-$(cd "$desktop_dir" && node -p "require('./package.json').version")}"
 deployment_id="${DEPLOYMENT_ID:-dev}"
-management_protocol_version="${MANAGEMENT_PROTOCOL_VERSION:-3}"
-[[ "$management_protocol_version" == 3 ]] || {
+management_protocol_version="${MANAGEMENT_PROTOCOL_VERSION:-4}"
+[[ "$management_protocol_version" == 4 ]] || {
   printf 'unsupported MANAGEMENT_PROTOCOL_VERSION: %s\n' "$management_protocol_version" >&2
   exit 1
 }

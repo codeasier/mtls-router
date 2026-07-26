@@ -34,7 +34,7 @@ func TestDiscoverModelsReturnsTypedPrefillUnavailableDriftAndNoSecrets(t *testin
 	selected := []Kind{ClaudeCode, OpenCode, Codex}
 	result, err := service.DiscoverModels(context.Background(), selected, []string{"model-a", "model-b"}, modelconfig.CatalogClaims{
 		Models: []string{"model-b", "model-a"}, Agents: []modelconfig.Agent{modelconfig.Claude, modelconfig.OpenCode, modelconfig.Codex},
-		Owner: "cli", RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "3",
+		Owner: "cli", RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "4",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -75,7 +75,7 @@ func TestDiscoverModelsNoStateReturnsEmptyKeyFreeResult(t *testing.T) {
 	}
 	result, err := service.DiscoverModels(context.Background(), []Kind{OpenCode}, []string{"model-a"}, modelconfig.CatalogClaims{
 		Models: []string{"model-a"}, Agents: []modelconfig.Agent{modelconfig.OpenCode}, Owner: "cli",
-		RouterBaseURL: "http://[::1]:19099", DeploymentID: "prod-a", ProtocolVersion: "3",
+		RouterBaseURL: "http://[::1]:19099", DeploymentID: "prod-a", ProtocolVersion: "4",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -96,7 +96,7 @@ func TestDiscoverModelsAuthoritativelySignsServiceSimplifyPolicy(t *testing.T) {
 		}
 		result, err := service.DiscoverModels(context.Background(), []Kind{ClaudeCode}, []string{"model-a"}, modelconfig.CatalogClaims{
 			Models: []string{"model-a"}, Agents: []modelconfig.Agent{modelconfig.Claude}, Owner: "cli",
-			RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "3", Simplify: !simplify,
+			RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "4", Simplify: !simplify,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -123,7 +123,7 @@ func TestDiscoverModelsReportsFilteredExistingAndPresetModelsUnavailable(t *test
 	}
 	result, err := service.DiscoverModels(context.Background(), []Kind{ClaudeCode, Codex}, []string{"model-a"}, modelconfig.CatalogClaims{
 		Models: []string{"model-a"}, Agents: []modelconfig.Agent{modelconfig.Claude, modelconfig.Codex}, Owner: "cli",
-		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "3",
+		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "4",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -153,7 +153,7 @@ func TestDiscoverModelsPresetNoPresetReturnsEmptyObjects(t *testing.T) {
 	}
 	result, err := service.DiscoverModels(context.Background(), []Kind{ClaudeCode}, []string{"model-a"}, modelconfig.CatalogClaims{
 		Models: []string{"model-a"}, Agents: []modelconfig.Agent{modelconfig.Claude}, Owner: "cli",
-		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "3",
+		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "4",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -181,7 +181,7 @@ func TestDiscoverModelsPresetSelectedScopeAndMixedValidity(t *testing.T) {
 
 	result, err := service.DiscoverModels(context.Background(), []Kind{ClaudeCode, OpenCode}, []string{"shared"}, modelconfig.CatalogClaims{
 		Models: []string{"shared"}, Agents: []modelconfig.Agent{modelconfig.Claude, modelconfig.OpenCode}, Owner: "cli",
-		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "3",
+		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "4",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -228,7 +228,7 @@ func TestDiscoverModelsFablePresetAvailabilityIsClaudeAtomic(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := service.DiscoverModels(context.Background(), []Kind{ClaudeCode, OpenCode}, []string{"shared"}, modelconfig.CatalogClaims{
-		Models: []string{"shared"}, Agents: []modelconfig.Agent{modelconfig.Claude, modelconfig.OpenCode}, Owner: "cli", RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "3",
+		Models: []string{"shared"}, Agents: []modelconfig.Agent{modelconfig.Claude, modelconfig.OpenCode}, Owner: "cli", RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "4",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -259,7 +259,7 @@ func TestDiscoverModelsPresetReportsCompleteBoundedUnavailableModels(t *testing.
 	}
 	result, err := service.DiscoverModels(context.Background(), []Kind{OpenCode}, []string{"available"}, modelconfig.CatalogClaims{
 		Models: []string{"available"}, Agents: []modelconfig.Agent{modelconfig.OpenCode}, Owner: "cli",
-		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "3",
+		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "4",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -285,7 +285,7 @@ func TestDiscoverModelsProjectsClaudeContextNameAndInheritance(t *testing.T) {
 	}
 	result, err := service.DiscoverModels(context.Background(), []Kind{ClaudeCode}, []string{"primary"}, modelconfig.CatalogClaims{
 		Models: []string{"primary"}, Agents: []modelconfig.Agent{modelconfig.Claude}, Owner: "cli",
-		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "3",
+		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "4",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -328,7 +328,7 @@ func TestDiscoverModelsProjectsUppercaseClaudeContextSuffix(t *testing.T) {
 	models := []string{"gpt-5.4", "gpt-5.6-sol", "opus-4-8"}
 	result, err := service.DiscoverModels(context.Background(), []Kind{ClaudeCode}, models, modelconfig.CatalogClaims{
 		Models: models, Agents: []modelconfig.Agent{modelconfig.Claude}, Owner: "cli",
-		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "3",
+		RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "4",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -393,7 +393,7 @@ func TestDiscoverModelsProjectsClaudeBudgets(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := service.DiscoverModels(context.Background(), []Kind{ClaudeCode}, []string{"primary"}, modelconfig.CatalogClaims{
-		Models: []string{"primary"}, Agents: []modelconfig.Agent{modelconfig.Claude}, Owner: "cli", RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "3",
+		Models: []string{"primary"}, Agents: []modelconfig.Agent{modelconfig.Claude}, Owner: "cli", RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "4",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -450,7 +450,7 @@ func TestDiscoverModelsRejectsInvalidClaudeBudgets(t *testing.T) {
 				t.Fatal(err)
 			}
 			result, err := service.DiscoverModels(context.Background(), []Kind{ClaudeCode}, []string{"primary"}, modelconfig.CatalogClaims{
-				Models: []string{"primary"}, Agents: []modelconfig.Agent{modelconfig.Claude}, Owner: "cli", RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "3",
+				Models: []string{"primary"}, Agents: []modelconfig.Agent{modelconfig.Claude}, Owner: "cli", RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "4",
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -478,7 +478,7 @@ func TestDiscoverModelsProjectsOnlyTypedOpenCodeOptionsAndVariants(t *testing.T)
 		t.Fatal(err)
 	}
 	result, err := service.DiscoverModels(context.Background(), []Kind{OpenCode}, []string{"model-a"}, modelconfig.CatalogClaims{
-		Models: []string{"model-a"}, Agents: []modelconfig.Agent{modelconfig.OpenCode}, Owner: "cli", RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "3",
+		Models: []string{"model-a"}, Agents: []modelconfig.Agent{modelconfig.OpenCode}, Owner: "cli", RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "4",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -515,7 +515,7 @@ func TestDiscoverModelsRoundTripsRenderedOpenCodeVariantShapes(t *testing.T) {
 				t.Fatal(err)
 			}
 			result, err := service.DiscoverModels(context.Background(), []Kind{OpenCode}, []string{"model-a"}, modelconfig.CatalogClaims{
-				Models: []string{"model-a"}, Agents: []modelconfig.Agent{modelconfig.OpenCode}, Owner: "cli", RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "3",
+				Models: []string{"model-a"}, Agents: []modelconfig.Agent{modelconfig.OpenCode}, Owner: "cli", RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "4",
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -587,7 +587,7 @@ func TestDiscoverModelsClaudeSuffixProjectionIsExact(t *testing.T) {
 			}
 			result, err := service.DiscoverModels(context.Background(), []Kind{ClaudeCode}, []string{"model"}, modelconfig.CatalogClaims{
 				Models: []string{"model"}, Agents: []modelconfig.Agent{modelconfig.Claude}, Owner: "cli",
-				RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "3",
+				RouterBaseURL: "http://127.0.0.1:19099", DeploymentID: "prod-a", ProtocolVersion: "4",
 			})
 			if err != nil {
 				t.Fatal(err)

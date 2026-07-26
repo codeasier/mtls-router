@@ -9,6 +9,17 @@ describe("localization resources", () => {
     expect(Object.keys(en).sort()).toEqual(Object.keys(zhCN).sort());
   });
 
+  it.each([en, zhCN])(
+    "keeps reoccupation guidance platform-neutral in each catalog",
+    (catalog) => {
+      const guidance =
+        catalog["router.occupant.observation.supervisorGuidance"];
+      expect(guidance).toMatch(/SCM/);
+      expect(guidance).toMatch(/systemd/);
+      expect(guidance).toMatch(/launchd/);
+    },
+  );
+
   it("falls back to Chinese when the active catalog is missing a key", () => {
     expect(
       resolveTranslation("en", "sample.key", {

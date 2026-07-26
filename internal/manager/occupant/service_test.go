@@ -3,9 +3,12 @@ package occupant
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -46,11 +49,254 @@ func TestServiceInspectionTokenAndTermination(t *testing.T) {
 		t.Fatalf("inspection = %+v", inspection)
 	}
 	result, err := service.ForceTerminate(context.Background(), inspection.ConfirmationToken)
-	if err != nil || result.State != "absent" || signals != 1 {
+	if err != nil || result.Termination != "process_terminated" || result.PortState != "released" || signals != 1 {
 		t.Fatalf("result=%+v err=%v signals=%d", result, err, signals)
 	}
 	if _, err := service.ForceTerminate(context.Background(), inspection.ConfirmationToken); !errors.Is(err, ErrConfirmationExpired) || signals != 1 {
 		t.Fatalf("replay err=%v signals=%d", err, signals)
+	}
+}
+
+func TestServiceInspectRecoveryActions(t *testing.T) {
+	identity := testIdentity()
+	verified := verifiedTarget(identity)
+	pidOnly := Target{Mode: VerificationModeWindowsPIDOnly, PID: identity.Process.PID, ListenAddr: identity.ListenAddr}
+	serviceTarget := verified
+	serviceTarget.Supervisor = &Supervisor{Kind: SupervisorWindowsService, Scope: SupervisorScopeSystem, Identifiers: []string{"RouterSvc"}}
+	pidOnlyServiceTarget := pidOnly
+	pidOnlyServiceTarget.Supervisor = &Supervisor{Kind: SupervisorWindowsService, Scope: SupervisorScopeSystem, Identifiers: []string{"RouterSvc"}}
+	pidOnlyServiceTarget.BlockReason = RecoveryReasonServiceManaged
+	sessionZeroTarget := pidOnly
+	sessionZeroTarget.BlockReason = RecoveryReasonIdentityUnavailable
+	permissionTarget := pidOnly
+	permissionTarget.BlockReason = RecoveryReasonInsufficientPrivilege
+	differentUserTarget := verified
+	differentUserTarget.BlockReason = RecoveryReasonDifferentUser
+	protectedTarget := verified
+	protectedTarget.BlockReason = RecoveryReasonProtectedProcess
+	unavailableTarget := pidOnly
+	unavailableTarget.BlockReason = RecoveryReasonIdentityUnavailable
+	serviceFor := func(target Target) *Service {
+		return New(Config{ListenAddr: identity.ListenAddr}, Dependencies{
+			Discover: func(context.Context) discovery.Result {
+				return discovery.Result{Classification: discovery.UnknownOccupant}
+			},
+			Inspect:         func(context.Context, string) (Target, error) { return target, nil },
+			SupportsPIDOnly: func() bool { return true },
+			CurrentUser:     func() (string, error) { return identity.UserID, nil },
+			Random:          bytes.NewReader(make([]byte, 32)),
+		})
+	}
+	tests := []struct {
+		name         string
+		target       Target
+		wantAction   RecoveryAction
+		wantReason   RecoveryReason
+		wantToken    bool
+		wantMetadata bool
+	}{
+		{name: "verified current user", target: verified, wantAction: RecoveryActionForceTerminate, wantToken: true, wantMetadata: true},
+		{name: "service", target: serviceTarget, wantAction: RecoveryActionManualStopRequired, wantReason: RecoveryReasonServiceManaged, wantMetadata: true},
+		{name: "PID-only SCM service", target: pidOnlyServiceTarget, wantAction: RecoveryActionManualStopRequired, wantReason: RecoveryReasonServiceManaged},
+		{name: "unnamed Session 0 target", target: sessionZeroTarget, wantAction: RecoveryActionUnavailable, wantReason: RecoveryReasonIdentityUnavailable},
+		{name: "permission denied", target: permissionTarget, wantAction: RecoveryActionManualStopRequired, wantReason: RecoveryReasonInsufficientPrivilege},
+		{name: "different user", target: differentUserTarget, wantAction: RecoveryActionManualStopRequired, wantReason: RecoveryReasonDifferentUser},
+		{name: "protected", target: protectedTarget, wantAction: RecoveryActionUnavailable, wantReason: RecoveryReasonProtectedProcess, wantMetadata: true},
+		{name: "identity unavailable", target: unavailableTarget, wantAction: RecoveryActionUnavailable, wantReason: RecoveryReasonIdentityUnavailable},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			inspection, err := serviceFor(test.target).Inspect(context.Background())
+			if err != nil || inspection.Recovery.Action != test.wantAction || inspection.Recovery.Reason != test.wantReason {
+				t.Fatalf("inspection = %+v, err = %v", inspection, err)
+			}
+			if (inspection.ConfirmationToken != "") != test.wantToken || (inspection.ExpiresAt != nil) != test.wantToken {
+				t.Fatalf("token invariant failed: %+v", inspection)
+			}
+			hasMetadata := inspection.ProcessName != "" || inspection.Executable != ""
+			if hasMetadata != test.wantMetadata || (hasMetadata && (inspection.ProcessName != "listener" || inspection.Executable != identity.Process.Executable)) {
+				t.Fatalf("metadata invariant failed: %+v", inspection)
+			}
+		})
+	}
+}
+
+func TestServiceInspectClassifiesSystemdSupervisorAfterOwnership(t *testing.T) {
+	identity := testIdentity()
+	identity.UserID = "0"
+	target := verifiedTarget(identity)
+	target.Supervisor = &Supervisor{Kind: SupervisorSystemdSystem, Scope: SupervisorScopeSystem, Identifiers: []string{"router.service"}}
+
+	for _, test := range []struct {
+		name           string
+		currentUser    string
+		wantReason     RecoveryReason
+		wantSupervisor bool
+		wantMetadata   bool
+	}{
+		{name: "same user remains service managed", currentUser: identity.UserID, wantReason: RecoveryReasonServiceManaged, wantSupervisor: true, wantMetadata: true},
+		{name: "root service under different user redacts metadata", currentUser: "1001", wantReason: RecoveryReasonDifferentUser},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service := New(Config{ListenAddr: identity.ListenAddr}, Dependencies{
+				Discover: func(context.Context) discovery.Result {
+					return discovery.Result{Classification: discovery.UnknownOccupant}
+				},
+				Inspect:     func(context.Context, string) (Target, error) { return target, nil },
+				CurrentUser: func() (string, error) { return test.currentUser, nil },
+				Random:      bytes.NewReader(make([]byte, 32)),
+			})
+
+			inspection, err := service.Inspect(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if inspection.Recovery.Action != RecoveryActionManualStopRequired || inspection.Recovery.Reason != test.wantReason {
+				t.Fatalf("recovery = %+v", inspection.Recovery)
+			}
+			if (inspection.Supervisor != nil) != test.wantSupervisor {
+				t.Fatalf("supervisor = %+v", inspection.Supervisor)
+			}
+			hasMetadata := inspection.ProcessName != "" || inspection.Executable != ""
+			if hasMetadata != test.wantMetadata {
+				t.Fatalf("metadata invariant failed: %+v", inspection)
+			}
+		})
+	}
+}
+
+func TestServiceInspectRejectsMalformedSupervisorMetadata(t *testing.T) {
+	identity := testIdentity()
+	seventeen := make([]string, 17)
+	for index := range seventeen {
+		seventeen[index] = fmt.Sprintf("Service%02d", index)
+	}
+	largeStructure := make([]string, 16)
+	for index := range largeStructure {
+		largeStructure[index] = fmt.Sprintf("%02d%s", index, strings.Repeat("x", 254))
+	}
+	tests := []struct {
+		name       string
+		supervisor *Supervisor
+	}{
+		{name: "unknown kind", supervisor: &Supervisor{Kind: "other", Scope: SupervisorScopeSystem, Identifiers: []string{"Alpha"}}},
+		{name: "wrong scope", supervisor: &Supervisor{Kind: SupervisorWindowsService, Scope: SupervisorScopeUser, Identifiers: []string{"Alpha"}}},
+		{name: "unsorted", supervisor: &Supervisor{Kind: SupervisorWindowsService, Scope: SupervisorScopeSystem, Identifiers: []string{"Beta", "Alpha"}}},
+		{name: "duplicate", supervisor: &Supervisor{Kind: SupervisorWindowsService, Scope: SupervisorScopeSystem, Identifiers: []string{"Alpha", "Alpha"}}},
+		{name: "too many", supervisor: &Supervisor{Kind: SupervisorWindowsService, Scope: SupervisorScopeSystem, Identifiers: seventeen}},
+		{name: "identifier too large", supervisor: &Supervisor{Kind: SupervisorWindowsService, Scope: SupervisorScopeSystem, Identifiers: []string{strings.Repeat("x", 257)}}},
+		{name: "structure too large", supervisor: &Supervisor{Kind: SupervisorWindowsService, Scope: SupervisorScopeSystem, Identifiers: largeStructure}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			target := verifiedTarget(identity)
+			target.Supervisor = test.supervisor
+			service := New(Config{ListenAddr: identity.ListenAddr}, Dependencies{
+				Discover: func(context.Context) discovery.Result {
+					return discovery.Result{Classification: discovery.UnknownOccupant}
+				},
+				Inspect:     func(context.Context, string) (Target, error) { return target, nil },
+				CurrentUser: func() (string, error) { return identity.UserID, nil },
+				Random:      bytes.NewReader(make([]byte, 32)),
+			})
+
+			inspection, err := service.Inspect(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := json.Marshal(inspection)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if inspection.Supervisor != nil || inspection.Recovery.Reason != RecoveryReasonIdentityUnavailable || inspection.ConfirmationToken != "" || bytes.Contains(encoded, []byte(`"supervisor"`)) {
+				t.Fatalf("malformed supervisor serialized or became forceable: %s", encoded)
+			}
+		})
+	}
+}
+
+func TestServiceInspectProtectedTargetOmitsSupervisor(t *testing.T) {
+	identity := testIdentity()
+	target := verifiedTarget(identity)
+	target.Supervisor = &Supervisor{
+		Kind:        SupervisorWindowsService,
+		Scope:       SupervisorScopeSystem,
+		Identifiers: []string{"RouterSvc"},
+	}
+	service := New(Config{ListenAddr: identity.ListenAddr, DesktopPID: identity.Process.PID}, Dependencies{
+		Discover: func(context.Context) discovery.Result {
+			return discovery.Result{Classification: discovery.UnknownOccupant}
+		},
+		Inspect:     func(context.Context, string) (Target, error) { return target, nil },
+		CurrentUser: func() (string, error) { return identity.UserID, nil },
+		Random:      bytes.NewReader(make([]byte, 32)),
+	})
+
+	inspection, err := service.Inspect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(inspection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"pid":42,"verification_mode":"verified_identity","process_name":"listener","executable":"/tmp/listener","listen_addr":"127.0.0.1:19099","recovery":{"action":"unavailable","reason":"protected_process"}}`
+	if inspection.Supervisor != nil || string(encoded) != want {
+		t.Fatalf("protected inspection shape = %s, want %s", encoded, want)
+	}
+}
+
+func TestServiceInspectDifferentUserOmitsProcessMetadata(t *testing.T) {
+	identity := testIdentity()
+	identity.UserID = "other-user"
+	service := New(Config{ListenAddr: identity.ListenAddr}, Dependencies{
+		Discover: func(context.Context) discovery.Result {
+			return discovery.Result{Classification: discovery.UnknownOccupant}
+		},
+		Inspect:     func(context.Context, string) (Target, error) { return verifiedTarget(identity), nil },
+		CurrentUser: func() (string, error) { return "current-user", nil },
+		Random:      bytes.NewReader(make([]byte, 32)),
+	})
+
+	inspection, err := service.Inspect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspection.Recovery.Action != RecoveryActionManualStopRequired || inspection.Recovery.Reason != RecoveryReasonDifferentUser {
+		t.Fatalf("recovery = %+v", inspection.Recovery)
+	}
+	if inspection.ProcessName != "" || inspection.Executable != "" {
+		t.Fatalf("different-user inspection exposed process metadata: %+v", inspection)
+	}
+	encoded, err := json.Marshal(inspection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"pid":42,"verification_mode":"verified_identity","listen_addr":"127.0.0.1:19099","recovery":{"action":"manual_stop_required","reason":"different_user"}}`
+	if string(encoded) != want {
+		t.Fatalf("different-user inspection shape = %s, want %s", encoded, want)
+	}
+}
+
+func TestServiceForceTerminateMapsPermissionDenied(t *testing.T) {
+	identity := testIdentity()
+	service := New(Config{ListenAddr: identity.ListenAddr}, Dependencies{
+		Discover: func(context.Context) discovery.Result {
+			return discovery.Result{Classification: discovery.UnknownOccupant}
+		},
+		Inspect:     func(context.Context, string) (Target, error) { return verifiedTarget(identity), nil },
+		CurrentUser: func() (string, error) { return identity.UserID, nil },
+		SameProcess: func(left, right process.Identity) (bool, error) { return left == right, nil },
+		Validate:    func(process.Identity, string) (process.Status, error) { return process.StatusGenuine, nil },
+		Signal:      func(process.Identity, os.Signal) error { return os.ErrPermission },
+		Random:      bytes.NewReader(make([]byte, 32)),
+	})
+	inspection, err := service.Inspect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ForceTerminate(context.Background(), inspection.ConfirmationToken); !errors.Is(err, ErrPermissionDenied) {
+		t.Fatalf("error = %v, want %v", err, ErrPermissionDenied)
 	}
 }
 
@@ -85,16 +331,17 @@ func TestServiceExpirySupersessionAndRestart(t *testing.T) {
 	}
 }
 
-func TestServiceRejectsChangedOwnedAndProtectedWithoutSignal(t *testing.T) {
+func TestServiceDiagnosesChangedOwnerAndProtectedWithoutSignal(t *testing.T) {
 	for _, test := range []struct {
-		name      string
-		mutate    func(*Identity, *Config)
-		wantError error
+		name       string
+		mutate     func(*Identity, *Config)
+		wantAction RecoveryAction
+		wantReason RecoveryReason
 	}{
-		{name: "other user", mutate: func(identity *Identity, _ *Config) { identity.UserID = "other" }, wantError: ErrNotOwned},
-		{name: "desktop", mutate: func(identity *Identity, config *Config) { config.DesktopPID = identity.Process.PID }, wantError: ErrProtected},
-		{name: "manager", mutate: func(identity *Identity, config *Config) { config.ManagerIdentity = identity.Process }, wantError: ErrProtected},
-		{name: "managed router", mutate: func(_ *Identity, config *Config) { config.IsProtected = func(Identity) bool { return true } }, wantError: ErrProtected},
+		{name: "other user", mutate: func(identity *Identity, _ *Config) { identity.UserID = "other" }, wantAction: RecoveryActionManualStopRequired, wantReason: RecoveryReasonDifferentUser},
+		{name: "desktop", mutate: func(identity *Identity, config *Config) { config.DesktopPID = identity.Process.PID }, wantAction: RecoveryActionUnavailable, wantReason: RecoveryReasonProtectedProcess},
+		{name: "manager", mutate: func(identity *Identity, config *Config) { config.ManagerIdentity = identity.Process }, wantAction: RecoveryActionUnavailable, wantReason: RecoveryReasonProtectedProcess},
+		{name: "managed router", mutate: func(_ *Identity, config *Config) { config.IsProtected = func(Identity) bool { return true } }, wantAction: RecoveryActionUnavailable, wantReason: RecoveryReasonProtectedProcess},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			identity := testIdentity()
@@ -108,8 +355,9 @@ func TestServiceRejectsChangedOwnedAndProtectedWithoutSignal(t *testing.T) {
 				Inspect: func(context.Context, string) (Target, error) { return verifiedTarget(identity), nil }, CurrentUser: func() (string, error) { return "user", nil },
 				Signal: func(process.Identity, os.Signal) error { signals++; return nil }, Random: bytes.NewReader(make([]byte, 32)),
 			})
-			if _, err := service.Inspect(context.Background()); !errors.Is(err, test.wantError) || signals != 0 {
-				t.Fatalf("error=%v signals=%d", err, signals)
+			inspection, err := service.Inspect(context.Background())
+			if err != nil || inspection.Recovery.Action != test.wantAction || inspection.Recovery.Reason != test.wantReason || inspection.ConfirmationToken != "" || inspection.ExpiresAt != nil || signals != 0 {
+				t.Fatalf("inspection=%+v error=%v signals=%d", inspection, err, signals)
 			}
 		})
 	}
@@ -170,6 +418,41 @@ func TestServiceChangedIdentityConsumesTokenWithoutSignal(t *testing.T) {
 	}
 	live.SocketID = "replacement-socket"
 	if _, err := service.ForceTerminate(context.Background(), inspection.ConfirmationToken); !errors.Is(err, ErrChanged) || signals != 0 {
+		t.Fatalf("error=%v signals=%d", err, signals)
+	}
+	if _, err := service.ForceTerminate(context.Background(), inspection.ConfirmationToken); !errors.Is(err, ErrConfirmationExpired) || signals != 0 {
+		t.Fatalf("replay error=%v signals=%d", err, signals)
+	}
+}
+
+func TestServiceConfirmationPermissionLossConsumesTokenWithoutSignal(t *testing.T) {
+	identity := testIdentity()
+	permissionDenied := false
+	signals := 0
+	service := New(Config{ListenAddr: identity.ListenAddr}, Dependencies{
+		Discover: func(context.Context) discovery.Result {
+			return discovery.Result{Classification: discovery.UnknownOccupant}
+		},
+		Inspect: func(context.Context, string) (Target, error) {
+			target := verifiedTarget(identity)
+			if permissionDenied {
+				target.BlockReason = RecoveryReasonInsufficientPrivilege
+			}
+			return target, nil
+		},
+		CurrentUser: func() (string, error) { return identity.UserID, nil },
+		SameProcess: func(left, right process.Identity) (bool, error) { return left == right, nil },
+		Validate:    func(process.Identity, string) (process.Status, error) { return process.StatusGenuine, nil },
+		Signal:      func(process.Identity, os.Signal) error { signals++; return nil },
+		Random:      bytes.NewReader(make([]byte, 32)),
+	})
+
+	inspection, err := service.Inspect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	permissionDenied = true
+	if _, err := service.ForceTerminate(context.Background(), inspection.ConfirmationToken); !errors.Is(err, ErrPermissionDenied) || signals != 0 {
 		t.Fatalf("error=%v signals=%d", err, signals)
 	}
 	if _, err := service.ForceTerminate(context.Background(), inspection.ConfirmationToken); !errors.Is(err, ErrConfirmationExpired) || signals != 0 {
@@ -301,20 +584,22 @@ func TestServiceForceTerminatePIDOnly(t *testing.T) {
 		signalErr      error
 		sleepErr       error
 		wantError      error
-		wantState      string
+		wantReleased   bool
 		wantSignals    []int
 		wantOwnerCalls int
 	}{
-		{name: "same PID released", owners: []pidOwnerResult{{pid: 4242}, {err: ErrNotFound}}, wantState: "absent", wantSignals: []int{4242}, wantOwnerCalls: 2},
+		{name: "same PID released", owners: []pidOwnerResult{{pid: 4242}, {err: ErrNotFound}}, wantReleased: true, wantSignals: []int{4242}, wantOwnerCalls: 2},
 		{name: "changed PID before signal", owners: []pidOwnerResult{{pid: 4343}}, wantError: ErrChanged, wantOwnerCalls: 1},
 		{name: "owner disappeared before signal", owners: []pidOwnerResult{{err: ErrNotFound}}, wantError: ErrChanged, wantOwnerCalls: 1},
 		{name: "ambiguous before signal", owners: []pidOwnerResult{{err: ErrIdentityUnavailable}}, wantError: ErrChanged, wantOwnerCalls: 1},
 		{name: "protected before signal", owners: []pidOwnerResult{{pid: 4242}}, protectAfter: true, wantError: ErrProtected, wantOwnerCalls: 1},
 		{name: "process disappeared while signaling", owners: []pidOwnerResult{{pid: 4242}}, signalErr: process.ErrNotFound, wantError: ErrChanged, wantSignals: []int{4242}, wantOwnerCalls: 1},
+		{name: "permission denied while signaling", owners: []pidOwnerResult{{pid: 4242}}, signalErr: os.ErrPermission, wantError: ErrPermissionDenied, wantSignals: []int{4242}, wantOwnerCalls: 1},
+		{name: "native permission denied while signaling", owners: []pidOwnerResult{{pid: 4242}}, signalErr: ErrPermissionDenied, wantError: ErrPermissionDenied, wantSignals: []int{4242}, wantOwnerCalls: 1},
 		{name: "signal failed", owners: []pidOwnerResult{{pid: 4242}}, signalErr: errors.New("denied"), wantError: ErrTerminationFailed, wantSignals: []int{4242}, wantOwnerCalls: 1},
 		{name: "replacement during release", owners: []pidOwnerResult{{pid: 4242}, {pid: 4343}}, wantError: ErrChanged, wantSignals: []int{4242}, wantOwnerCalls: 2},
 		{name: "ambiguity during release", owners: []pidOwnerResult{{pid: 4242}, {err: ErrIdentityUnavailable}}, wantError: ErrChanged, wantSignals: []int{4242}, wantOwnerCalls: 2},
-		{name: "released at timeout recheck", owners: []pidOwnerResult{{pid: 4242}, {pid: 4242}, {err: ErrNotFound}}, sleepErr: context.DeadlineExceeded, wantState: "absent", wantSignals: []int{4242}, wantOwnerCalls: 3},
+		{name: "released at timeout recheck", owners: []pidOwnerResult{{pid: 4242}, {pid: 4242}, {err: ErrNotFound}}, sleepErr: context.DeadlineExceeded, wantReleased: true, wantSignals: []int{4242}, wantOwnerCalls: 3},
 		{name: "replacement at timeout recheck", owners: []pidOwnerResult{{pid: 4242}, {pid: 4242}, {pid: 4343}}, sleepErr: context.DeadlineExceeded, wantError: ErrChanged, wantSignals: []int{4242}, wantOwnerCalls: 3},
 		{name: "same PID times out", owners: []pidOwnerResult{{pid: 4242}, {pid: 4242}, {pid: 4242}}, sleepErr: context.DeadlineExceeded, wantError: ErrPortReleaseTimeout, wantSignals: []int{4242}, wantOwnerCalls: 3},
 	} {
@@ -330,8 +615,9 @@ func TestServiceForceTerminatePIDOnly(t *testing.T) {
 			fixture.protected = test.protectAfter
 
 			result, err := service.ForceTerminate(context.Background(), inspection.ConfirmationToken)
-			if !errors.Is(err, test.wantError) || result.State != test.wantState {
-				t.Fatalf("result=%+v error=%v, want state=%q error=%v", result, err, test.wantState, test.wantError)
+			isReleased := result.Termination == "process_terminated" && result.PortState == "released"
+			if !errors.Is(err, test.wantError) || isReleased != test.wantReleased {
+				t.Fatalf("result=%+v error=%v, want released=%t error=%v", result, err, test.wantReleased, test.wantError)
 			}
 			if !equalInts(fixture.signals, test.wantSignals) {
 				t.Fatalf("signals=%v, want %v", fixture.signals, test.wantSignals)
@@ -488,8 +774,9 @@ func TestServiceRejectsPIDOnlyWithoutExplicitSupport(t *testing.T) {
 	fixture := &pidOnlyFixture{}
 	service := newPIDOnlyService(t, Config{ListenAddr: target.ListenAddr}, target, fixture)
 
-	if _, err := service.Inspect(context.Background()); !errors.Is(err, ErrIdentityUnavailable) {
-		t.Fatalf("error = %v", err)
+	inspection, err := service.Inspect(context.Background())
+	if err != nil || inspection.Recovery.Action != RecoveryActionUnavailable || inspection.Recovery.Reason != RecoveryReasonIdentityUnavailable || inspection.ConfirmationToken != "" || inspection.ExpiresAt != nil {
+		t.Fatalf("inspection = %+v, error = %v", inspection, err)
 	}
 	if fixture.ownerCalls != 0 || len(fixture.signals) != 0 {
 		t.Fatalf("owner calls=%d signals=%v", fixture.ownerCalls, fixture.signals)
@@ -511,8 +798,9 @@ func TestServiceRejectsInvalidPIDOnlyTargets(t *testing.T) {
 			fixture := &pidOnlyFixture{supports: true}
 			service := newPIDOnlyService(t, Config{ListenAddr: listenAddr}, target, fixture)
 
-			if _, err := service.Inspect(context.Background()); !errors.Is(err, ErrIdentityUnavailable) {
-				t.Fatalf("error = %v", err)
+			inspection, err := service.Inspect(context.Background())
+			if err != nil || inspection.Recovery.Action != RecoveryActionUnavailable || inspection.Recovery.Reason != RecoveryReasonIdentityUnavailable || inspection.ConfirmationToken != "" || inspection.ExpiresAt != nil {
+				t.Fatalf("inspection = %+v, error = %v", inspection, err)
 			}
 			if fixture.ownerCalls != 0 || len(fixture.signals) != 0 {
 				t.Fatalf("owner calls=%d signals=%v", fixture.ownerCalls, fixture.signals)
@@ -521,7 +809,7 @@ func TestServiceRejectsInvalidPIDOnlyTargets(t *testing.T) {
 	}
 }
 
-func TestServiceRejectsProtectedPIDOnlyTargets(t *testing.T) {
+func TestServiceDiagnosesProtectedPIDOnlyTargets(t *testing.T) {
 	for _, test := range []struct {
 		name   string
 		config func(Target) Config
@@ -538,8 +826,9 @@ func TestServiceRejectsProtectedPIDOnlyTargets(t *testing.T) {
 			target := testPIDOnlyTarget()
 			fixture := &pidOnlyFixture{supports: true}
 			service := newPIDOnlyService(t, test.config(target), target, fixture)
-			if _, err := service.Inspect(context.Background()); !errors.Is(err, ErrProtected) {
-				t.Fatalf("error = %v", err)
+			inspection, err := service.Inspect(context.Background())
+			if err != nil || inspection.Recovery.Action != RecoveryActionUnavailable || inspection.Recovery.Reason != RecoveryReasonProtectedProcess || inspection.ConfirmationToken != "" || inspection.ExpiresAt != nil {
+				t.Fatalf("inspection = %+v, error = %v", inspection, err)
 			}
 			if fixture.ownerCalls != 0 || len(fixture.signals) != 0 {
 				t.Fatalf("owner calls=%d signals=%v", fixture.ownerCalls, fixture.signals)

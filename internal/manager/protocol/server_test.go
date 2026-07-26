@@ -82,11 +82,23 @@ func TestV2AgentParamsRejectMixedShapes(t *testing.T) {
 }
 
 func TestProtocolResultJSONExactShapes(t *testing.T) {
+	expiresAt := time.Date(2026, 7, 25, 0, 0, 30, 0, time.UTC)
 	tests := []struct {
 		name  string
 		value any
 		keys  []string
+		want  string
 	}{
+		{name: "forceable occupant", value: RouterOccupantInspectionResult{
+			PID: 7, VerificationMode: "windows_pid_only", ListenAddr: "127.0.0.1:19099",
+			Recovery: RouterOccupantRecovery{Action: "force_terminate"}, ConfirmationToken: "token", ExpiresAt: &expiresAt,
+		}, want: `{"pid":7,"verification_mode":"windows_pid_only","listen_addr":"127.0.0.1:19099","recovery":{"action":"force_terminate"},"confirmation_token":"token","expires_at":"2026-07-25T00:00:30Z"}`},
+		{name: "blocked occupant", value: RouterOccupantInspectionResult{
+			PID: 8, VerificationMode: "windows_pid_only", ListenAddr: "127.0.0.1:19099",
+			Recovery:   RouterOccupantRecovery{Action: "manual_stop_required", Reason: "service_managed"},
+			Supervisor: &RouterOccupantSupervisor{Kind: "windows_service", Scope: "system", Identifiers: []string{"Svc"}},
+		}, want: `{"pid":8,"verification_mode":"windows_pid_only","listen_addr":"127.0.0.1:19099","recovery":{"action":"manual_stop_required","reason":"service_managed"},"supervisor":{"kind":"windows_service","scope":"system","identifiers":["Svc"]}}`},
+		{name: "occupant termination", value: RouterOccupantTerminationResult{Termination: "process_terminated", PortState: "released"}, want: `{"termination":"process_terminated","port_state":"released"}`},
 		{name: "models", value: AgentModelsResult{}, keys: []string{"api_base_url", "catalog_token", "existing", "models", "preset", "router_base_url"}},
 		{name: "models existing", value: AgentModelsExisting{}, keys: []string{"drifted_agents", "model_config", "unavailable_models"}},
 		{name: "models preset", value: AgentModelsPreset{ModelConfig: json.RawMessage(`{}`), UnavailableAgents: map[string]AgentPresetUnavailable{}}, keys: []string{"model_config", "unavailable_agents"}},
@@ -99,6 +111,12 @@ func TestProtocolResultJSONExactShapes(t *testing.T) {
 			encoded, err := json.Marshal(test.value)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if test.want != "" {
+				if string(encoded) != test.want {
+					t.Fatalf("shape = %s, want %s", encoded, test.want)
+				}
+				return
 			}
 			var object map[string]json.RawMessage
 			if err := json.Unmarshal(encoded, &object); err != nil {

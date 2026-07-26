@@ -5,7 +5,13 @@ package occupant
 import (
 	"encoding/binary"
 	"errors"
+	"syscall"
 	"testing"
+	"unicode/utf16"
+	"unsafe"
+
+	"github.com/codeasier/mtls-router/internal/manager/process"
+	"golang.org/x/sys/windows"
 )
 
 type windowsTCPRow struct {
@@ -145,6 +151,81 @@ func TestWindowsSupportsPIDOnlyNative(t *testing.T) {
 	}
 }
 
+func TestDecodeWindowsServicesForPID(t *testing.T) {
+	buffer := windowsServiceTable(
+		windowsServiceRow{name: "Other", pid: 41},
+		windowsServiceRow{name: "Beta", pid: 42},
+		windowsServiceRow{name: "Stopped", pid: 0},
+		windowsServiceRow{name: "Alpha", pid: 42},
+		windowsServiceRow{name: "Beta", pid: 42},
+	)
+	names, err := decodeWindowsServicesForPID(buffer, 5, 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !equalStrings(names, []string{"Beta", "Alpha", "Beta"}) {
+		t.Fatalf("names = %v", names)
+	}
+}
+
+func TestDecodeWindowsServicesForPIDRejectsMalformedBuffers(t *testing.T) {
+	valid := windowsServiceTable(windowsServiceRow{name: "Alpha", pid: 42})
+	outside := append([]byte(nil), valid...)
+	(*windows.ENUM_SERVICE_STATUS_PROCESS)(unsafe.Pointer(&outside[0])).ServiceName = new(uint16)
+	tests := []struct {
+		name   string
+		buffer []byte
+		count  uint32
+	}{
+		{name: "missing rows", buffer: nil, count: 1},
+		{name: "short rows", buffer: valid[:unsafe.Sizeof(windows.ENUM_SERVICE_STATUS_PROCESS{})-1], count: 1},
+		{name: "excessive count", buffer: valid, count: ^uint32(0)},
+		{name: "name outside buffer", buffer: outside, count: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := decodeWindowsServicesForPID(test.buffer, test.count, 42); !errors.Is(err, ErrIdentityUnavailable) {
+				t.Fatalf("error = %v, want %v", err, ErrIdentityUnavailable)
+			}
+		})
+	}
+}
+
+func TestServicesForPIDWithDependenciesFailsClosed(t *testing.T) {
+	openErr := errors.New("SCM denied")
+	if _, err := servicesForPIDWithDependencies(42, windowsSCMDependencies{
+		open: func() (windows.Handle, error) { return 0, openErr },
+	}); !errors.Is(err, openErr) {
+		t.Fatalf("open error = %v, want %v", err, openErr)
+	}
+
+	closed := false
+	if _, err := servicesForPIDWithDependencies(42, windowsSCMDependencies{
+		open: func() (windows.Handle, error) { return 1, nil },
+		enumerate: func(windows.Handle, []byte) (uint32, uint32, error) {
+			return windowsSCMBufferLimit + 1, 0, syscall.ERROR_MORE_DATA
+		},
+		close: func(windows.Handle) error { closed = true; return nil },
+	}); !errors.Is(err, ErrIdentityUnavailable) || !closed {
+		t.Fatalf("oversized result error = %v closed = %t", err, closed)
+	}
+}
+
+func TestWindowsAccessErrorMapping(t *testing.T) {
+	if !errors.Is(mapWindowsProcessError(windows.ERROR_ACCESS_DENIED), ErrPermissionDenied) {
+		t.Fatal("access denied did not map to permission error")
+	}
+	if !errors.Is(mapWindowsProcessError(windows.ERROR_INVALID_PARAMETER), process.ErrNotFound) {
+		t.Fatal("invalid parameter did not map to process-not-found")
+	}
+}
+
+func TestProcessSessionIDNativeRejectsInvalidPID(t *testing.T) {
+	if _, err := processSessionIDNative(0); !errors.Is(err, process.ErrNotFound) {
+		t.Fatalf("error = %v, want %v", err, process.ErrNotFound)
+	}
+}
+
 func windowsTCPTable(rows ...windowsTCPRow) []byte {
 	buffer := make([]byte, 4+len(rows)*windowsTCPRowOwnerPIDSize)
 	binary.LittleEndian.PutUint32(buffer[:4], uint32(len(rows)))
@@ -157,6 +238,33 @@ func windowsTCPTable(rows ...windowsTCPRow) []byte {
 		copy(row[12:16], value.remoteIP[:])
 		binary.LittleEndian.PutUint32(row[16:20], value.remotePort)
 		binary.LittleEndian.PutUint32(row[20:24], value.pid)
+	}
+	return buffer
+}
+
+type windowsServiceRow struct {
+	name string
+	pid  uint32
+}
+
+func windowsServiceTable(rows ...windowsServiceRow) []byte {
+	rowSize := int(unsafe.Sizeof(windows.ENUM_SERVICE_STATUS_PROCESS{}))
+	stringBytes := 0
+	encodedNames := make([][]uint16, len(rows))
+	for index, row := range rows {
+		encodedNames[index] = append(utf16.Encode([]rune(row.name)), 0)
+		stringBytes += len(encodedNames[index]) * 2
+	}
+	buffer := make([]byte, rowSize*len(rows)+stringBytes)
+	rowValues := unsafe.Slice((*windows.ENUM_SERVICE_STATUS_PROCESS)(unsafe.Pointer(&buffer[0])), len(rows))
+	offset := rowSize * len(rows)
+	for index, row := range rows {
+		rowValues[index].ServiceName = (*uint16)(unsafe.Pointer(&buffer[offset]))
+		rowValues[index].ServiceStatusProcess.ProcessId = row.pid
+		for _, value := range encodedNames[index] {
+			binary.LittleEndian.PutUint16(buffer[offset:offset+2], value)
+			offset += 2
+		}
 	}
 	return buffer
 }

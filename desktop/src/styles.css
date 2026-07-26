@@ -774,9 +774,109 @@ main {
 }
 
 .occupant-target dd,
+.occupant-guidance__target dd,
 .danger-dialog__details dd {
   margin: 4px 0 0;
   font-weight: 750;
+}
+
+.release-observation {
+  display: grid;
+  gap: 6px;
+  margin-top: 16px;
+  padding: 13px 15px;
+  border: 1px solid var(--line-strong);
+  border-left: 4px solid var(--signal);
+  border-radius: 9px;
+  background: var(--paper-deep);
+}
+
+.release-observation--released {
+  border-left-color: var(--good);
+}
+
+.release-observation--reoccupied {
+  border-left-color: var(--danger);
+}
+
+.release-observation p,
+.occupant-guidance p,
+.occupant-copy-result {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.occupant-guidance {
+  display: grid;
+  gap: 13px;
+}
+
+.occupant-guidance__target {
+  display: flex;
+  gap: 26px;
+  margin: 0;
+}
+
+.occupant-guidance__target dt {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.occupant-guidance__reason {
+  padding-left: 11px;
+  border-left: 3px solid var(--danger);
+}
+
+.occupant-commands {
+  display: grid;
+  gap: 10px;
+}
+
+.occupant-commands ul {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.occupant-commands li {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--paper-deep);
+}
+
+.occupant-commands li > strong,
+.occupant-guidance__target dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.occupant-command {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.occupant-command code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.occupant-command .text-button,
+.occupant-guidance__retry {
+  flex: 0 0 auto;
 }
 
 .dialog-backdrop {
@@ -849,7 +949,7 @@ main {
   background: var(--surface-raised);
 }
 
-.text-button:hover:not(:disabled) {
+.text-button:hover:not(:disabled):not([aria-disabled="true"]) {
   color: var(--signal-hover);
   border-color: rgba(220, 91, 47, 0.45);
   background: var(--signal-soft);
@@ -857,6 +957,7 @@ main {
 
 .control-button:disabled,
 .text-button:disabled,
+.text-button[aria-disabled="true"],
 .toggle:disabled {
   color: #8c8177;
   border-color: var(--line);
@@ -2689,12 +2790,14 @@ main {
 
   .occupant-target,
   .occupant-blocked,
+  .occupant-command,
   .danger-dialog__actions {
     align-items: stretch;
     flex-direction: column;
   }
 
   .occupant-target dl,
+  .occupant-guidance__target,
   .danger-dialog__details {
     grid-template-columns: 1fr;
   }
@@ -2702,6 +2805,15 @@ main {
   .occupant-target dl {
     display: grid;
     gap: 10px;
+  }
+
+  .occupant-guidance__target {
+    display: grid;
+    gap: 10px;
+  }
+
+  .occupant-command .text-button {
+    width: 100%;
   }
 
   .danger-dialog__path {

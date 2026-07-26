@@ -48,7 +48,7 @@ cp "$ROOT/setup.sh" "$clean/setup.sh"
 # Agent commands are interactive only and compatibility aliases use current protocol guidance.
 for command in 'agent print-config --agent=claude' 'agent write-config --agent=claude' '--print-config --agent=claude' '--write-config --agent=claude'; do
   if MTLS_ROUTER_OPENAI_API_KEY=environment-canary "${common[@]}" bash "$clean/setup.sh" $command </dev/null >/dev/null 2>"$tmp/noninteractive-error"; then fail "$command accepted noninteractive key input"; fi
-  grep -Fq 'protocol v3' "$tmp/noninteractive-error" || fail "$command omitted v3 automation guidance"
+  grep -Fq 'protocol v4' "$tmp/noninteractive-error" || fail "$command omitted v4 automation guidance"
 done
 [[ ! -e "$home/claude/settings.json" ]] || fail "noninteractive command changed Agent config"
 
@@ -64,4 +64,4 @@ grep -Fq '不会隐式下载' "$tmp/uninstalled-error" || fail "Agent missing-ma
 # A hostile inherited CODEX_HOME is not touched when the test fixes its isolated value.
 [[ ! -e "$CODEX_HOME" ]] || fail "hostile outer CODEX_HOME was touched"
 
-printf 'PASS: setup manager wrapper and v3 noninteractive guidance\n'
+printf 'PASS: setup manager wrapper and v4 noninteractive guidance\n'

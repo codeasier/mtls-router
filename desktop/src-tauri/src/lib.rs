@@ -5,6 +5,7 @@ mod manager;
 mod model_config;
 mod orchestration;
 mod paths;
+mod port_recovery;
 mod process_identity;
 mod scheduler;
 mod sidecar;
@@ -143,6 +144,7 @@ pub fn run() {
                 scheduler: scheduler.clone(),
                 paths,
                 model_flows: Default::default(),
+                pending_occupant: Default::default(),
             });
             scheduler.start();
             let app_handle = app.handle().clone();
@@ -171,6 +173,7 @@ pub fn run() {
             commands::router_stop,
             commands::router_inspect_occupant,
             commands::router_force_terminate_occupant,
+            commands::router_cancel_release_observation,
             commands::router_health,
             commands::poll_snapshot,
             commands::router_logs,

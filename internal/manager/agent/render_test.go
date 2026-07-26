@@ -438,7 +438,7 @@ func renderCatalogToken(t *testing.T, service *Service, selected []Kind, models 
 	for i, kind := range selected {
 		agents[i] = modelAgent(kind)
 	}
-	token, err := service.signer.SignCatalog(modelconfig.CatalogClaims{Models: models, Agents: agents, Owner: "cli", RouterBaseURL: baseURL, DeploymentID: "test-deployment", ProtocolVersion: "3"})
+	token, err := service.signer.SignCatalog(modelconfig.CatalogClaims{Models: models, Agents: agents, Owner: "cli", RouterBaseURL: baseURL, DeploymentID: "test-deployment", ProtocolVersion: "4"})
 	if err != nil {
 		t.Fatal(err)
 	}

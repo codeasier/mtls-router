@@ -31,7 +31,7 @@ func TestCoordinatorAbsentStartsOnceUnderRequestedOwner(t *testing.T) {
 	discoveries := 0
 	starter := &lifecycleStub{state: trusted.State}
 	coordinator := Coordinator{
-		Listener: listener, DeploymentID: "prod-a", ProtocolVersion: "3", Lifecycle: starter,
+		Listener: listener, DeploymentID: "prod-a", ProtocolVersion: "4", Lifecycle: starter,
 		DesktopEligible: func() bool { return true }, AbsentStartOK: func() bool { return true },
 		Discover: func(context.Context) discovery.Result {
 			discoveries++
@@ -68,7 +68,7 @@ func TestCoordinatorRejectsUnsafeStatesWithoutStart(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			starter := &lifecycleStub{}
 			coordinator := Coordinator{
-				Listener: listener, DeploymentID: "prod-a", ProtocolVersion: "3", Lifecycle: starter,
+				Listener: listener, DeploymentID: "prod-a", ProtocolVersion: "4", Lifecycle: starter,
 				DesktopEligible: func() bool { return true }, AbsentStartOK: func() bool { return test.startOK },
 				Discover: func(context.Context) discovery.Result { return discovery.Result{Classification: test.classification} },
 			}
@@ -95,12 +95,12 @@ func TestCoordinatorRejectsDesktopOwnerBeforeDiscovery(t *testing.T) {
 func TestCoordinatorRejectsChangedWriteBindingBeforeDiscovery(t *testing.T) {
 	listener, _ := NormalizeListener("127.0.0.1:19099")
 	discoveries := 0
-	coordinator := Coordinator{Listener: listener, DeploymentID: "prod-a", ProtocolVersion: "3", Discover: func(context.Context) discovery.Result {
+	coordinator := Coordinator{Listener: listener, DeploymentID: "prod-a", ProtocolVersion: "4", Discover: func(context.Context) discovery.Result {
 		discoveries++
 		return discovery.Result{}
 	}}
 	_, err := coordinator.Revalidate(context.Background(), protocol.RouterOwnerCLI, channelKeyCanary, Binding{
-		RouterBaseURL: "http://127.0.0.1:19100", APIBaseURL: "http://127.0.0.1:19100/v1", DeploymentID: "prod-a", ProtocolVersion: "3",
+		RouterBaseURL: "http://127.0.0.1:19100", APIBaseURL: "http://127.0.0.1:19100/v1", DeploymentID: "prod-a", ProtocolVersion: "4",
 	})
 	if err == nil || err.Code != protocol.CodeModelCatalogStale || discoveries != 0 {
 		t.Fatalf("error=%+v discoveries=%d", err, discoveries)
@@ -117,7 +117,7 @@ func TestTrustedStateMatchesOnlyExactOwnedOrDegradedBinding(t *testing.T) {
 			found.Owner = "desktop"
 			found.State.Owner = "desktop"
 		}
-		if !trustedStateMatches(found, listener, "prod-a", "3") {
+		if !trustedStateMatches(found, listener, "prod-a", "4") {
 			t.Fatalf("classification %q was not trusted", classification)
 		}
 	}
@@ -132,7 +132,7 @@ func TestTrustedStateMatchesOnlyExactOwnedOrDegradedBinding(t *testing.T) {
 	} {
 		found := base
 		mutate(&found)
-		if trustedStateMatches(found, listener, "prod-a", "3") {
+		if trustedStateMatches(found, listener, "prod-a", "4") {
 			t.Fatalf("mismatched state was trusted: %+v", found)
 		}
 	}
@@ -168,7 +168,7 @@ func TestCoordinatorTrustedRouterStateOwnerAddressDeploymentMatrix(t *testing.T)
 			if test.edit != nil {
 				test.edit(&found)
 			}
-			if got := trustedStateMatches(found, listener, "prod-a", "3"); got != test.want {
+			if got := trustedStateMatches(found, listener, "prod-a", "4"); got != test.want {
 				t.Fatalf("trustedStateMatches() = %t, want %t: %+v", got, test.want, found)
 			}
 		})
@@ -211,7 +211,7 @@ func TestCoordinatorAbsentStartAndRestartMatrix(t *testing.T) {
 			starter := &lifecycleStub{state: test.started}
 			discoveries := 0
 			coordinator := Coordinator{
-				Listener: listener, DeploymentID: "prod-a", ProtocolVersion: "3", Lifecycle: starter,
+				Listener: listener, DeploymentID: "prod-a", ProtocolVersion: "4", Lifecycle: starter,
 				DesktopEligible: func() bool { return test.eligible }, AbsentStartOK: func() bool { return test.restartOK },
 				Discover: func(context.Context) discovery.Result {
 					discoveries++

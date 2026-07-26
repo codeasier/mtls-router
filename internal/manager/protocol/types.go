@@ -59,6 +59,7 @@ const (
 	CodeOccupantIdentityUnavailable ErrorCode = "OCCUPANT_IDENTITY_UNAVAILABLE"
 	CodeOccupantChanged             ErrorCode = "OCCUPANT_CHANGED"
 	CodeOccupantProtected           ErrorCode = "OCCUPANT_PROTECTED"
+	CodeOccupantPermissionDenied    ErrorCode = "OCCUPANT_PERMISSION_DENIED"
 	CodeOccupantTerminationFailed   ErrorCode = "OCCUPANT_TERMINATION_FAILED"
 	CodePortReleaseTimeout          ErrorCode = "PORT_RELEASE_TIMEOUT"
 	CodeConfirmationExpired         ErrorCode = "CONFIRMATION_EXPIRED"
@@ -208,17 +209,31 @@ type RouterLogsResult struct {
 }
 
 type RouterOccupantInspectionResult struct {
-	PID               int       `json:"pid"`
-	VerificationMode  string    `json:"verification_mode"`
-	ProcessName       string    `json:"process_name,omitempty"`
-	Executable        string    `json:"executable,omitempty"`
-	ListenAddr        string    `json:"listen_addr"`
-	ConfirmationToken string    `json:"confirmation_token"`
-	ExpiresAt         time.Time `json:"expires_at"`
+	PID               int                       `json:"pid"`
+	VerificationMode  string                    `json:"verification_mode"`
+	ProcessName       string                    `json:"process_name,omitempty"`
+	Executable        string                    `json:"executable,omitempty"`
+	ListenAddr        string                    `json:"listen_addr"`
+	Recovery          RouterOccupantRecovery    `json:"recovery"`
+	Supervisor        *RouterOccupantSupervisor `json:"supervisor,omitempty"`
+	ConfirmationToken string                    `json:"confirmation_token,omitempty"`
+	ExpiresAt         *time.Time                `json:"expires_at,omitempty"`
+}
+
+type RouterOccupantRecovery struct {
+	Action string `json:"action"`
+	Reason string `json:"reason,omitempty"`
+}
+
+type RouterOccupantSupervisor struct {
+	Kind        string   `json:"kind"`
+	Scope       string   `json:"scope"`
+	Identifiers []string `json:"identifiers"`
 }
 
 type RouterOccupantTerminationResult struct {
-	State string `json:"state"`
+	Termination string `json:"termination"`
+	PortState   string `json:"port_state"`
 }
 
 type AgentState struct {

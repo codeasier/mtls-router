@@ -4,11 +4,13 @@ import { useI18n, type Translator } from "./i18n";
 import type {
   DesktopApi,
   OccupantInspection,
+  OccupantSupervisor,
   PollSnapshot,
+  ReleaseObservation,
   RouterHealth,
   RouterStatus,
 } from "./ipc";
-import { sanitizeSensitiveText } from "./ipc";
+import { sanitizeSensitiveText, validOccupantInspection } from "./ipc";
 
 type Operation = "starting" | "stopping" | null;
 type RouterMessage =
@@ -17,10 +19,17 @@ type RouterMessage =
   | "router.error.start"
   | "router.error.stop"
   | "router.error.health"
-  | "router.error.sidecarReinstall"
-  | "router.occupant.released";
+  | "router.error.sidecarReinstall";
 type OccupantError =
-  "not-owned" | "unverifiable" | "protected" | "changed" | "temporary";
+  | "not-owned"
+  | "unverifiable"
+  | "protected"
+  | "changed"
+  | "permission-denied"
+  | "termination-failed"
+  | "release-timeout"
+  | "temporary";
+type ReoccupationOutcome = "termination-ineffective" | "replacement";
 export const MAX_FAILURE_LOG_LINES = 20;
 type HealthState = "unknown" | "checking" | "healthy" | "degraded" | "stale";
 type ViewState =
@@ -252,59 +261,15 @@ function occupantError(code: string): OccupantError {
     case "OCCUPANT_NOT_FOUND":
     case "CONFIRMATION_EXPIRED":
       return "changed";
+    case "OCCUPANT_PERMISSION_DENIED":
+      return "permission-denied";
+    case "OCCUPANT_TERMINATION_FAILED":
+      return "termination-failed";
+    case "PORT_RELEASE_TIMEOUT":
+      return "release-timeout";
     default:
       return "temporary";
   }
-}
-
-function validOccupantInspection(value: unknown): value is OccupantInspection {
-  if (!value || typeof value !== "object") return false;
-  const inspection = value as Record<string, unknown>;
-  const keys = Object.keys(inspection);
-  const hasExactKeys = (allowed: readonly string[]) =>
-    keys.length === allowed.length &&
-    keys.every((key) => allowed.includes(key));
-  const rfc3339 =
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:[0-5]\d(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
-  const validBase =
-    Number.isInteger(inspection.pid) &&
-    (inspection.pid as number) > 0 &&
-    (inspection.pid as number) <= 0xffffffff &&
-    inspection.listen_addr === "127.0.0.1:19099" &&
-    typeof inspection.confirmation_token === "string" &&
-    inspection.confirmation_token.trim() !== "" &&
-    typeof inspection.expires_at === "string" &&
-    rfc3339.test(inspection.expires_at) &&
-    Number.isFinite(Date.parse(inspection.expires_at));
-  if (!validBase) return false;
-
-  if (inspection.verification_mode === "verified_identity") {
-    return (
-      hasExactKeys([
-        "pid",
-        "verification_mode",
-        "process_name",
-        "executable",
-        "listen_addr",
-        "confirmation_token",
-        "expires_at",
-      ]) &&
-      typeof inspection.process_name === "string" &&
-      inspection.process_name.trim() !== "" &&
-      typeof inspection.executable === "string" &&
-      inspection.executable.trim() !== ""
-    );
-  }
-  if (inspection.verification_mode === "windows_pid_only") {
-    return hasExactKeys([
-      "pid",
-      "verification_mode",
-      "listen_addr",
-      "confirmation_token",
-      "expires_at",
-    ]);
-  }
-  return false;
 }
 
 const occupantErrorKeys = {
@@ -312,8 +277,44 @@ const occupantErrorKeys = {
   unverifiable: "router.occupant.error.unverifiable",
   protected: "router.occupant.error.protected",
   changed: "router.occupant.error.changed",
+  "permission-denied": "router.occupant.error.permissionDenied",
+  "termination-failed": "router.occupant.error.terminationFailed",
+  "release-timeout": "router.occupant.error.releaseTimeout",
   temporary: "router.occupant.error.temporary",
 } as const;
+
+const recoveryReasonKeys = {
+  service_managed: "router.occupant.reason.serviceManaged",
+  insufficient_privilege: "router.occupant.reason.insufficientPrivilege",
+  different_user: "router.occupant.reason.differentUser",
+  protected_process: "router.occupant.reason.protectedProcess",
+  identity_unavailable: "router.occupant.reason.identityUnavailable",
+} as const;
+
+function supervisorCommand(
+  supervisor: OccupantSupervisor,
+  identifier: string,
+): string {
+  if (supervisor.kind === "windows_service") {
+    const powerShellLiteral = `'${identifier.replaceAll("'", "''")}'`;
+    return `sc.exe stop ${powerShellLiteral}`;
+  }
+  const posixLiteral = `'${identifier.replaceAll("'", `'"'"'`)}'`;
+  if (supervisor.kind === "systemd_user") {
+    return `systemctl --user stop -- ${posixLiteral}`;
+  }
+  return `sudo systemctl stop -- ${posixLiteral}`;
+}
+
+function supervisorGuidanceKey(supervisor: OccupantSupervisor) {
+  if (supervisor.kind === "windows_service") {
+    return "router.occupant.supervisor.windows" as const;
+  }
+  if (supervisor.kind === "systemd_user") {
+    return "router.occupant.supervisor.systemdUser" as const;
+  }
+  return "router.occupant.supervisor.systemdSystem" as const;
+}
 
 export function RouterPage({
   api,
@@ -342,16 +343,52 @@ export function RouterPage({
   const [inspectingOccupant, setInspectingOccupant] = useState(false);
   const [occupantDialogOpen, setOccupantDialogOpen] = useState(false);
   const [terminatingOccupant, setTerminatingOccupant] = useState(false);
+  const [releaseObservation, setReleaseObservation] = useState<
+    ReleaseObservation["state"] | null
+  >(null);
+  const [reoccupiedRevision, setReoccupiedRevision] = useState(-1);
+  const [reoccupationOutcome, setReoccupationOutcome] =
+    useState<ReoccupationOutcome | null>(null);
+  const [copyResult, setCopyResult] = useState<"copied" | "failed" | null>(
+    null,
+  );
+  const [postForceFocus, setPostForceFocus] = useState<{
+    target: "start" | "retry";
+    generation: number;
+  } | null>(null);
   const latestRevision = useRef(-1);
   const occupantGeneration = useRef(0);
   const statusState = useRef<RouterStatus | null>(null);
+  const observationState = useRef<ReleaseObservation["state"] | null>(null);
+  const reoccupiedRevisionState = useRef(-1);
+  const forcedOccupantPid = useRef<number | null>(null);
+  const autoInspectionKey = useRef<string | null>(null);
+  const copyRequest = useRef(0);
+  const focusGeneration = useRef(0);
+  const startRouterRef = useRef<HTMLButtonElement>(null);
+  const occupantRetryRef = useRef<HTMLButtonElement>(null);
+  const forceTriggerRef = useRef<HTMLButtonElement>(null);
   const cancelOccupantRef = useRef<HTMLButtonElement>(null);
+  const confirmOccupantRef = useRef<HTMLButtonElement>(null);
 
   const applySnapshot = useCallback((snapshot: PollSnapshot) => {
     if (snapshot.revision <= latestRevision.current) return;
     latestRevision.current = snapshot.revision;
     setSnapshotRevision(snapshot.revision);
     setNow(Date.now());
+    const nextObservation = snapshot.release_observation?.state ?? null;
+    if (nextObservation !== observationState.current) {
+      observationState.current = nextObservation;
+      setReleaseObservation(nextObservation);
+      if (nextObservation === "reoccupied") {
+        reoccupiedRevisionState.current = snapshot.revision;
+        setReoccupiedRevision(snapshot.revision);
+      } else {
+        reoccupiedRevisionState.current = -1;
+        setReoccupationOutcome(null);
+        if (nextObservation === "released") forcedOccupantPid.current = null;
+      }
+    }
     if (snapshot.status) {
       statusState.current = snapshot.status;
       setStatus(snapshot.status);
@@ -387,36 +424,61 @@ export function RouterPage({
     }
   }, []);
 
-  const inspectOccupant = useCallback(async () => {
-    const generation = ++occupantGeneration.current;
-    setInspectingOccupant(true);
-    setOccupant(null);
-    setOccupantFailure(null);
-    try {
-      const inspected = await api.inspectRouterOccupant();
-      if (
-        generation === occupantGeneration.current &&
-        statusState.current?.state === "unknown_occupant"
-      ) {
-        if (validOccupantInspection(inspected)) {
-          setOccupant(inspected);
-        } else {
-          setOccupantFailure("unverifiable");
+  const inspectOccupant = useCallback(
+    async (reoccupation?: { originalPid: number; revision: number }) => {
+      const generation = ++occupantGeneration.current;
+      setInspectingOccupant(true);
+      setOccupant(null);
+      setOccupantFailure(null);
+      copyRequest.current += 1;
+      setCopyResult(null);
+      try {
+        const inspected = await api.inspectRouterOccupant();
+        const currentReoccupation =
+          !reoccupation ||
+          (observationState.current === "reoccupied" &&
+            reoccupiedRevisionState.current === reoccupation.revision);
+        if (
+          generation === occupantGeneration.current &&
+          statusState.current?.state === "unknown_occupant" &&
+          currentReoccupation
+        ) {
+          if (validOccupantInspection(inspected)) {
+            setOccupant(inspected);
+            if (reoccupation) {
+              setReoccupationOutcome(
+                inspected.pid === reoccupation.originalPid
+                  ? "termination-ineffective"
+                  : "replacement",
+              );
+              forcedOccupantPid.current = null;
+            }
+          } else {
+            setOccupantFailure("unverifiable");
+            if (reoccupation) forcedOccupantPid.current = null;
+          }
+        }
+      } catch (error) {
+        const currentReoccupation =
+          !reoccupation ||
+          (observationState.current === "reoccupied" &&
+            reoccupiedRevisionState.current === reoccupation.revision);
+        if (
+          generation === occupantGeneration.current &&
+          statusState.current?.state === "unknown_occupant" &&
+          currentReoccupation
+        ) {
+          setOccupantFailure(occupantError(errorCode(error)));
+          if (reoccupation) forcedOccupantPid.current = null;
+        }
+      } finally {
+        if (generation === occupantGeneration.current) {
+          setInspectingOccupant(false);
         }
       }
-    } catch (error) {
-      if (
-        generation === occupantGeneration.current &&
-        statusState.current?.state === "unknown_occupant"
-      ) {
-        setOccupantFailure(occupantError(errorCode(error)));
-      }
-    } finally {
-      if (generation === occupantGeneration.current) {
-        setInspectingOccupant(false);
-      }
-    }
-  }, [api]);
+    },
+    [api],
+  );
 
   useEffect(() => {
     let current = true;
@@ -452,6 +514,7 @@ export function RouterPage({
     return () => {
       current = false;
       unlisten?.();
+      void api.cancelRouterReleaseObservation().catch(() => undefined);
     };
   }, [api, applySnapshot]);
 
@@ -466,31 +529,57 @@ export function RouterPage({
   }, [health, snapshotRevision]);
 
   useEffect(() => {
+    const inspectionKey =
+      status?.state === "unknown_occupant"
+        ? releaseObservation === "reoccupied"
+          ? `reoccupied:${reoccupiedRevision}`
+          : "occupied"
+        : null;
     const timer = window.setTimeout(() => {
-      if (status?.state === "unknown_occupant") {
-        void inspectOccupant();
+      if (inspectionKey && autoInspectionKey.current !== inspectionKey) {
+        autoInspectionKey.current = inspectionKey;
+        const originalPid = forcedOccupantPid.current;
+        void inspectOccupant(
+          releaseObservation === "reoccupied" && originalPid !== null
+            ? { originalPid, revision: reoccupiedRevision }
+            : undefined,
+        );
         return;
       }
+      if (inspectionKey) return;
+      autoInspectionKey.current = null;
       occupantGeneration.current += 1;
       setOccupant(null);
       setOccupantFailure(null);
+      copyRequest.current += 1;
+      setCopyResult(null);
       setInspectingOccupant(false);
       setOccupantDialogOpen(false);
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [status?.state, inspectOccupant]);
+  }, [status?.state, releaseObservation, reoccupiedRevision, inspectOccupant]);
 
   useEffect(() => {
     if (!occupantDialogOpen) return;
     cancelOccupantRef.current?.focus();
     function handleEscape(event: KeyboardEvent) {
       if (event.key === "Escape" && !terminatingOccupant) {
-        setOccupantDialogOpen(false);
+        closeOccupantDialog();
       }
     }
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
   }, [occupantDialogOpen, terminatingOccupant]);
+
+  function closeOccupantDialog() {
+    forceTriggerRef.current?.focus();
+    setOccupantDialogOpen(false);
+  }
+
+  function requestPostForceFocus(target: "start" | "retry") {
+    const generation = ++focusGeneration.current;
+    setPostForceFocus({ target, generation });
+  }
 
   const available = isAvailable(status);
   const observedHealth = checkingHealth ? "checking" : healthState(health, now);
@@ -516,6 +605,21 @@ export function RouterPage({
   const canRetryHealth = available && !operation && !checkingHealth;
   const pidOnlyOccupant = occupant?.verification_mode === "windows_pid_only";
 
+  useEffect(() => {
+    if (
+      !postForceFocus ||
+      postForceFocus.generation !== focusGeneration.current
+    )
+      return;
+    const target =
+      postForceFocus.target === "start"
+        ? startRouterRef.current
+        : occupantRetryRef.current;
+    if (!target || target.disabled) return;
+    target.focus();
+    setPostForceFocus(null);
+  }, [postForceFocus, currentState, occupantFailure]);
+
   async function refreshSnapshot() {
     const snapshot = await api.getPollSnapshot();
     applySnapshot(snapshot);
@@ -527,6 +631,13 @@ export function RouterPage({
     setActionFailed(false);
     setMessage("");
     try {
+      try {
+        await api.cancelRouterReleaseObservation();
+      } catch {
+        // Router start also cancels scheduler observation on the native side.
+      }
+      observationState.current = null;
+      setReleaseObservation(null);
       const next = await api.startRouter();
       setStatus(next);
       await refreshSnapshot();
@@ -586,29 +697,49 @@ export function RouterPage({
   }
 
   async function forceTerminateOccupant() {
-    if (!occupant || terminatingOccupant) return;
+    if (
+      !occupant ||
+      occupant.recovery.action !== "force_terminate" ||
+      terminatingOccupant
+    )
+      return;
+    const confirmationToken = occupant.confirmation_token;
+    if (typeof confirmationToken !== "string") return;
+    forcedOccupantPid.current = occupant.pid;
+    setReoccupationOutcome(null);
     setTerminatingOccupant(true);
     setMessage("");
     try {
-      const next = await api.forceTerminateRouterOccupant(
-        occupant.confirmation_token,
-      );
-      statusState.current = next;
-      setStatus(next);
-      setOccupantDialogOpen(false);
-      setOccupant(null);
-      setHealth(null);
-      await refreshSnapshot();
-      setMessage("router.occupant.released");
+      await api.forceTerminateRouterOccupant(confirmationToken);
     } catch (error) {
       const failure = occupantError(errorCode(error));
-      if (failure === "changed") {
-        setOccupantDialogOpen(false);
-        setOccupant(null);
-      }
+      setOccupantDialogOpen(false);
+      setOccupant(null);
       setOccupantFailure(failure);
-    } finally {
+      forcedOccupantPid.current = null;
+      requestPostForceFocus("retry");
       setTerminatingOccupant(false);
+      return;
+    }
+    setOccupantDialogOpen(false);
+    setOccupant(null);
+    setHealth(null);
+    try {
+      await refreshSnapshot();
+    } catch {
+      // Scheduler snapshots will continue reconciling the successful release.
+    }
+    requestPostForceFocus("start");
+    setTerminatingOccupant(false);
+  }
+
+  async function copyCommand(command: string) {
+    const request = ++copyRequest.current;
+    try {
+      await navigator.clipboard.writeText(command);
+      if (request === copyRequest.current) setCopyResult("copied");
+    } catch {
+      if (request === copyRequest.current) setCopyResult("failed");
     }
   }
 
@@ -656,6 +787,24 @@ export function RouterPage({
           <p className="inline-alert" role="alert">
             {t(message)}
           </p>
+        )}
+
+        {releaseObservation && (
+          <section
+            className={`release-observation release-observation--${releaseObservation}`}
+            role="status"
+          >
+            <strong>
+              {t(
+                releaseObservation === "reoccupied" && reoccupationOutcome
+                  ? `router.occupant.observation.${reoccupationOutcome}`
+                  : `router.occupant.observation.${releaseObservation}`,
+              )}
+            </strong>
+            {releaseObservation === "reoccupied" && (
+              <p>{t("router.occupant.observation.supervisorGuidance")}</p>
+            )}
+          </section>
         )}
 
         {(failureDiagnostics.lastError ||
@@ -706,38 +855,114 @@ export function RouterPage({
             {inspectingOccupant && (
               <p role="status">{t("router.occupant.inspecting")}</p>
             )}
-            {occupant && !inspectingOccupant && (
-              <div className="occupant-target">
-                <dl>
-                  {!pidOnlyOccupant && (
+            {occupant?.recovery.action === "force_terminate" &&
+              !inspectingOccupant && (
+                <div className="occupant-target">
+                  <dl>
+                    {!pidOnlyOccupant && (
+                      <div>
+                        <dt>{t("router.occupant.process")}</dt>
+                        <dd>{occupant.process_name}</dd>
+                      </div>
+                    )}
                     <div>
-                      <dt>{t("router.occupant.process")}</dt>
-                      <dd>{occupant.process_name}</dd>
+                      <dt>{t("router.occupant.pid")}</dt>
+                      <dd>{occupant.pid}</dd>
                     </div>
+                  </dl>
+                  {pidOnlyOccupant && (
+                    <p className="danger-dialog__warning">
+                      {t("router.occupant.pidOnlyWarning")}
+                    </p>
                   )}
-                  <div>
-                    <dt>{t("router.occupant.pid")}</dt>
-                    <dd>{occupant.pid}</dd>
-                  </div>
-                </dl>
-                {pidOnlyOccupant && (
-                  <p className="danger-dialog__warning">
-                    {t("router.occupant.pidOnlyWarning")}
+                  <button
+                    ref={forceTriggerRef}
+                    type="button"
+                    className="control-button control-button--danger"
+                    onClick={() => setOccupantDialogOpen(true)}
+                  >
+                    {t("router.occupant.forceAction")}
+                  </button>
+                </div>
+              )}
+            {occupant &&
+              occupant.recovery.action !== "force_terminate" &&
+              !inspectingOccupant && (
+                <div className="occupant-guidance">
+                  <dl className="occupant-guidance__target">
+                    {!pidOnlyOccupant && occupant.process_name && (
+                      <div>
+                        <dt>{t("router.occupant.process")}</dt>
+                        <dd>{occupant.process_name}</dd>
+                      </div>
+                    )}
+                    <div>
+                      <dt>{t("router.occupant.pid")}</dt>
+                      <dd>{occupant.pid}</dd>
+                    </div>
+                  </dl>
+                  <p className="occupant-guidance__reason">
+                    {t(recoveryReasonKeys[occupant.recovery.reason])}
                   </p>
+                  {occupant.recovery.reason === "service_managed" &&
+                    !occupant.supervisor && (
+                      <p>{t("router.occupant.supervisor.generic")}</p>
+                    )}
+                  {occupant.recovery.reason === "service_managed" &&
+                    occupant.supervisor && (
+                      <div className="occupant-commands">
+                        <p>{t(supervisorGuidanceKey(occupant.supervisor))}</p>
+                        <ul>
+                          {occupant.supervisor.identifiers.map((identifier) => {
+                            const command = supervisorCommand(
+                              occupant.supervisor!,
+                              identifier,
+                            );
+                            return (
+                              <li key={identifier}>
+                                <strong>{identifier}</strong>
+                                <div className="occupant-command">
+                                  <code>{command}</code>
+                                  <button
+                                    type="button"
+                                    className="text-button"
+                                    onClick={() => void copyCommand(command)}
+                                  >
+                                    {t("router.occupant.copyCommand")}
+                                  </button>
+                                </div>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </div>
+                    )}
+                  <button
+                    type="button"
+                    className="text-button occupant-guidance__retry"
+                    onClick={() => void inspectOccupant()}
+                  >
+                    {t("router.occupant.retry")}
+                  </button>
+                </div>
+              )}
+            {copyResult && (
+              <p
+                className="occupant-copy-result"
+                role={copyResult === "failed" ? "alert" : "status"}
+              >
+                {t(
+                  copyResult === "copied"
+                    ? "router.occupant.commandCopied"
+                    : "router.occupant.commandCopyFailed",
                 )}
-                <button
-                  type="button"
-                  className="control-button control-button--danger"
-                  onClick={() => setOccupantDialogOpen(true)}
-                >
-                  {t("router.occupant.forceAction")}
-                </button>
-              </div>
+              </p>
             )}
             {occupantFailure && !inspectingOccupant && (
               <div className="occupant-blocked" role="alert">
                 <p>{t(occupantErrorKeys[occupantFailure])}</p>
                 <button
+                  ref={occupantRetryRef}
                   type="button"
                   className="text-button"
                   onClick={() => void inspectOccupant()}
@@ -751,6 +976,7 @@ export function RouterPage({
 
         <div className="action-row" aria-label={t("router.actionsAria")}>
           <button
+            ref={startRouterRef}
             type="button"
             className="control-button"
             onClick={start}
@@ -786,75 +1012,106 @@ export function RouterPage({
           </button>
         </div>
       </section>
-      {occupantDialogOpen && occupant && (
-        <div
-          className="dialog-backdrop"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget && !terminatingOccupant) {
-              setOccupantDialogOpen(false);
-            }
-          }}
-        >
-          <section
-            className="danger-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="occupant-dialog-title"
-            aria-describedby="occupant-dialog-warning"
+      {occupantDialogOpen &&
+        occupant?.recovery.action === "force_terminate" && (
+          <div
+            className="dialog-backdrop"
+            onMouseDown={(event) => {
+              if (
+                event.target === event.currentTarget &&
+                !terminatingOccupant
+              ) {
+                closeOccupantDialog();
+              }
+            }}
           >
-            <p className="overline">{t("router.occupant.dialogOverline")}</p>
-            <h2 id="occupant-dialog-title">
-              {t("router.occupant.dialogTitle")}
-            </h2>
-            <dl className="danger-dialog__details">
-              {!pidOnlyOccupant && (
+            <section
+              className="danger-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="occupant-dialog-title"
+              aria-describedby="occupant-dialog-warning"
+              onKeyDown={(event) => {
+                if (event.key !== "Tab") return;
+                if (terminatingOccupant) {
+                  event.preventDefault();
+                  cancelOccupantRef.current?.focus();
+                  return;
+                }
+                if (
+                  event.shiftKey &&
+                  document.activeElement === cancelOccupantRef.current
+                ) {
+                  event.preventDefault();
+                  confirmOccupantRef.current?.focus();
+                } else if (
+                  !event.shiftKey &&
+                  document.activeElement === confirmOccupantRef.current
+                ) {
+                  event.preventDefault();
+                  cancelOccupantRef.current?.focus();
+                }
+              }}
+            >
+              <p className="overline">{t("router.occupant.dialogOverline")}</p>
+              <h2 id="occupant-dialog-title">
+                {t("router.occupant.dialogTitle")}
+              </h2>
+              <dl className="danger-dialog__details">
+                {!pidOnlyOccupant && (
+                  <div>
+                    <dt>{t("router.occupant.process")}</dt>
+                    <dd>{occupant.process_name}</dd>
+                  </div>
+                )}
                 <div>
-                  <dt>{t("router.occupant.process")}</dt>
-                  <dd>{occupant.process_name}</dd>
+                  <dt>{t("router.occupant.pid")}</dt>
+                  <dd>{occupant.pid}</dd>
                 </div>
-              )}
-              <div>
-                <dt>{t("router.occupant.pid")}</dt>
-                <dd>{occupant.pid}</dd>
+                {!pidOnlyOccupant && (
+                  <div className="danger-dialog__path">
+                    <dt>{t("router.occupant.executable")}</dt>
+                    <dd>{occupant.executable}</dd>
+                  </div>
+                )}
+              </dl>
+              <p
+                id="occupant-dialog-warning"
+                className="danger-dialog__warning"
+              >
+                {t(
+                  pidOnlyOccupant
+                    ? "router.occupant.pidOnlyWarning"
+                    : "router.occupant.warning",
+                )}
+              </p>
+              <div className="danger-dialog__actions">
+                <button
+                  ref={cancelOccupantRef}
+                  type="button"
+                  className="text-button"
+                  aria-disabled={terminatingOccupant || undefined}
+                  onClick={() => {
+                    if (!terminatingOccupant) closeOccupantDialog();
+                  }}
+                >
+                  {t("router.occupant.cancel")}
+                </button>
+                <button
+                  ref={confirmOccupantRef}
+                  type="button"
+                  className="control-button control-button--danger"
+                  disabled={terminatingOccupant}
+                  onClick={() => void forceTerminateOccupant()}
+                >
+                  {terminatingOccupant
+                    ? t("router.occupant.terminating")
+                    : t("router.occupant.confirm")}
+                </button>
               </div>
-              {!pidOnlyOccupant && (
-                <div className="danger-dialog__path">
-                  <dt>{t("router.occupant.executable")}</dt>
-                  <dd>{occupant.executable}</dd>
-                </div>
-              )}
-            </dl>
-            <p id="occupant-dialog-warning" className="danger-dialog__warning">
-              {t(
-                pidOnlyOccupant
-                  ? "router.occupant.pidOnlyWarning"
-                  : "router.occupant.warning",
-              )}
-            </p>
-            <div className="danger-dialog__actions">
-              <button
-                ref={cancelOccupantRef}
-                type="button"
-                className="text-button"
-                disabled={terminatingOccupant}
-                onClick={() => setOccupantDialogOpen(false)}
-              >
-                {t("router.occupant.cancel")}
-              </button>
-              <button
-                type="button"
-                className="control-button control-button--danger"
-                disabled={terminatingOccupant}
-                onClick={() => void forceTerminateOccupant()}
-              >
-                {terminatingOccupant
-                  ? t("router.occupant.terminating")
-                  : t("router.occupant.confirm")}
-              </button>
-            </div>
-          </section>
-        </div>
-      )}
+            </section>
+          </div>
+        )}
     </div>
   );
 }

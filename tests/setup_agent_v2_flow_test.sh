@@ -15,7 +15,7 @@ set -euo pipefail
 request="$(dd bs=4194304 count=1 2>/dev/null)"; method="$(printf '%s' "$request" | jq -r .method)"
 printf 'method %s\n' "$method" >>"$FAKE_LOG"
 case "$method" in
-  manager.info) jq -cn --arg target "$FAKE_TARGET" '{id:"setup-secret-info",result:{version:"v2-test",commit:"test",build_date:"test",target:$target,deployment_id:"fake-v2",management_protocol_version:"3"}}' ;;
+  manager.info) jq -cn --arg target "$FAKE_TARGET" '{id:"setup-secret-info",result:{version:"v2-test",commit:"test",build_date:"test",target:$target,deployment_id:"fake-v2",management_protocol_version:"4"}}' ;;
   agent.detect) jq -cn '{id:"detect",result:{agents:[{agent:"claude",name:"Claude Code",detected:true,path:"/tmp/claude",format:"json"},{agent:"opencode",name:"opencode",detected:true,path:"/tmp/opencode",format:"json"},{agent:"codex",name:"Codex",detected:true,path:"/tmp/codex",auth_path:"/tmp/auth",format:"toml"}]}}' ;;
   agent.models)
     printf '%s' "$request" | jq -e '.params.owner=="cli" and .params.api_key=="v2-key-canary" and (.params|keys)==["agents","api_key","owner"]' >/dev/null

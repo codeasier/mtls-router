@@ -33,7 +33,7 @@ IFS= read -r request
 id="\$(printf '%s' "\$request" | jq -r '.id // empty')"
 method="\$(printf '%s' "\$request" | jq -r '.method // empty')"
 if [[ "\$method" == manager.info ]]; then
-  jq -cn --arg id "\$id" '{id:\$id,result:{version:"$generation",commit:"test",build_date:"test",target:"test/test",deployment_id:"test-deployment",management_protocol_version:"3"}}'
+  jq -cn --arg id "\$id" '{id:\$id,result:{version:"$generation",commit:"test",build_date:"test",target:"test/test",deployment_id:"test-deployment",management_protocol_version:"4"}}'
 else
   jq -cn --arg id "\$id" '{id:\$id,result:{}}'
 fi
@@ -72,7 +72,7 @@ run_install "$package" "$install" "$home" >/dev/null
 receipt="$home/state/install-receipt.json"
 jq -e --arg router "$install/mtls-router" --arg manager "$install/mtls-router-manager" '
   .schema_version == 1 and .deployment_id == "test-deployment" and
-  .management_protocol_version == "3" and .router.path == $router and
+  .management_protocol_version == "4" and .router.path == $router and
   .manager.path == $manager and .router.version == "v2" and .manager.version == "v2"' "$receipt" >/dev/null || fail "receipt metadata is incomplete"
 [[ "$(file_mode "$receipt")" == 600 ]] || fail "receipt is not mode 0600"
 

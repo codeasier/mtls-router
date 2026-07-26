@@ -120,28 +120,126 @@ func (s *Service) Inspect(ctx context.Context) (Inspection, error) {
 	if err := s.requireUnknown(ctx); err != nil {
 		return Inspection{}, err
 	}
-	target, err := s.inspectEligible(ctx)
+	target, err := s.deps.Inspect(ctx, s.config.ListenAddr)
 	if err != nil {
 		return Inspection{}, err
 	}
+	inspection, forceable, err := s.classifyTarget(target)
+	if err != nil {
+		return Inspection{}, err
+	}
+	if !forceable {
+		return inspection, nil
+	}
+	record, err := s.mintToken(target)
+	if err != nil {
+		return Inspection{}, err
+	}
+	inspection.Recovery = Recovery{Action: RecoveryActionForceTerminate}
+	inspection.ConfirmationToken = record.value
+	inspection.ExpiresAt = &record.expiresAt
+	return inspection, nil
+}
+
+func (s *Service) mintToken(target Target) (*tokenRecord, error) {
 	random := make([]byte, 32)
 	if _, err := io.ReadFull(s.deps.Random, random); err != nil {
-		return Inspection{}, ErrIdentityUnavailable
+		return nil, ErrIdentityUnavailable
 	}
 	now := s.deps.Now().UTC()
 	record := &tokenRecord{
 		value: base64.RawURLEncoding.EncodeToString(random), expiresAt: now.Add(tokenLifetime), target: target,
 	}
 	s.token = record
+	return record, nil
+}
+
+func (s *Service) classifyTarget(target Target) (Inspection, bool, error) {
+	invalidSupervisor := target.Supervisor != nil && !validSupervisor(target.Supervisor)
+	if invalidSupervisor {
+		target.Supervisor = nil
+	}
 	inspection := Inspection{
-		PID: target.PID, VerificationMode: target.Mode, ListenAddr: target.ListenAddr,
-		ConfirmationToken: record.value, ExpiresAt: record.expiresAt,
+		PID: target.PID, VerificationMode: target.Mode, ListenAddr: target.ListenAddr, Supervisor: target.Supervisor,
+	}
+	identity := target.Identity
+	validVerifiedIdentity := target.Mode == VerificationModeVerifiedIdentity &&
+		identity.ListenAddr == s.config.ListenAddr && identity.Network == "tcp4" && identity.SocketID != "" &&
+		identity.Process.PID > 0 && identity.Process.StartedAt != "" && identity.Process.Executable != "" && identity.UserID != "" &&
+		target.PID == identity.Process.PID && target.ListenAddr == identity.ListenAddr
+	if validVerifiedIdentity {
+		inspection.ProcessName = filepath.Base(identity.Process.Executable)
+		inspection.Executable = identity.Process.Executable
+	}
+	if s.isProtectedTarget(target) {
+		inspection.Supervisor = nil
+		inspection.Recovery = Recovery{Action: RecoveryActionUnavailable, Reason: RecoveryReasonProtectedProcess}
+		return inspection, false, nil
 	}
 	if target.Mode == VerificationModeVerifiedIdentity {
-		inspection.ProcessName = filepath.Base(target.Identity.Process.Executable)
-		inspection.Executable = target.Identity.Process.Executable
+		if !validVerifiedIdentity {
+			inspection.Supervisor = nil
+			inspection.Recovery = Recovery{Action: RecoveryActionUnavailable, Reason: RecoveryReasonIdentityUnavailable}
+			return inspection, false, nil
+		}
+		userID, err := s.deps.CurrentUser()
+		if err != nil || userID == "" {
+			inspection.Supervisor = nil
+			inspection.Recovery = Recovery{Action: RecoveryActionUnavailable, Reason: RecoveryReasonIdentityUnavailable}
+			return inspection, false, nil
+		}
+		if identity.UserID != userID {
+			inspection.ProcessName = ""
+			inspection.Executable = ""
+			inspection.Supervisor = nil
+			inspection.Recovery = Recovery{Action: RecoveryActionManualStopRequired, Reason: RecoveryReasonDifferentUser}
+			return inspection, false, nil
+		}
 	}
-	return inspection, nil
+	if invalidSupervisor {
+		inspection.Recovery = Recovery{Action: RecoveryActionUnavailable, Reason: RecoveryReasonIdentityUnavailable}
+		return inspection, false, nil
+	}
+	if target.Supervisor != nil {
+		inspection.Recovery = Recovery{Action: RecoveryActionManualStopRequired, Reason: RecoveryReasonServiceManaged}
+		return inspection, false, nil
+	}
+	if target.BlockReason != "" {
+		recovery, ok := recoveryForReason(target.BlockReason)
+		if !ok {
+			return Inspection{}, false, ErrIdentityUnavailable
+		}
+		inspection.Recovery = recovery
+		if recovery.Reason == RecoveryReasonDifferentUser {
+			inspection.ProcessName = ""
+			inspection.Executable = ""
+		}
+		return inspection, false, nil
+	}
+	switch target.Mode {
+	case VerificationModeVerifiedIdentity:
+		return inspection, true, nil
+	case VerificationModeWindowsPIDOnly:
+		if s.deps.SupportsPIDOnly == nil || !s.deps.SupportsPIDOnly() || s.deps.InspectPIDOwner == nil || s.deps.SignalPID == nil || target.ListenAddr != s.config.ListenAddr || target.PID <= 0 {
+			inspection.Recovery = Recovery{Action: RecoveryActionUnavailable, Reason: RecoveryReasonIdentityUnavailable}
+			return inspection, false, nil
+		}
+		return inspection, true, nil
+	default:
+		inspection.Recovery = Recovery{Action: RecoveryActionUnavailable, Reason: RecoveryReasonIdentityUnavailable}
+		return inspection, false, nil
+	}
+}
+
+func recoveryForReason(reason RecoveryReason) (Recovery, bool) {
+	switch reason {
+	case RecoveryReasonServiceManaged, RecoveryReasonInsufficientPrivilege, RecoveryReasonDifferentUser:
+		return Recovery{Action: RecoveryActionManualStopRequired, Reason: reason}, true
+	case RecoveryReasonProtectedProcess, RecoveryReasonIdentityUnavailable:
+		return Recovery{Action: RecoveryActionUnavailable, Reason: reason}, true
+	default:
+		return Recovery{}, false
+	}
 }
 
 func (s *Service) ForceTerminate(ctx context.Context, token string) (Result, error) {
@@ -182,6 +280,9 @@ func (s *Service) forceTerminateVerified(preSignalCtx, ctx context.Context, targ
 	if err != nil || !same {
 		return Result{}, ErrChanged
 	}
+	if live.BlockReason == RecoveryReasonInsufficientPrivilege {
+		return Result{}, ErrPermissionDenied
+	}
 	status, err := s.deps.Validate(live.Identity.Process, live.Identity.Process.Executable)
 	if err != nil || status != process.StatusGenuine {
 		return Result{}, ErrChanged
@@ -189,6 +290,9 @@ func (s *Service) forceTerminateVerified(preSignalCtx, ctx context.Context, targ
 	if err := s.deps.Signal(live.Identity.Process, os.Kill); err != nil {
 		if errors.Is(err, process.ErrIdentityMismatch) || errors.Is(err, process.ErrNotFound) {
 			return Result{}, ErrChanged
+		}
+		if errors.Is(err, os.ErrPermission) || errors.Is(err, ErrPermissionDenied) {
+			return Result{}, ErrPermissionDenied
 		}
 		return Result{}, ErrTerminationFailed
 	}
@@ -210,24 +314,12 @@ func (s *Service) forceTerminatePIDOnly(preSignalCtx, ctx context.Context, targe
 		if errors.Is(err, process.ErrNotFound) {
 			return Result{}, ErrChanged
 		}
+		if errors.Is(err, os.ErrPermission) || errors.Is(err, ErrPermissionDenied) {
+			return Result{}, ErrPermissionDenied
+		}
 		return Result{}, ErrTerminationFailed
 	}
 	return s.waitPIDReleased(ctx, target)
-}
-
-func (s *Service) inspectEligible(ctx context.Context) (Target, error) {
-	target, err := s.deps.Inspect(ctx, s.config.ListenAddr)
-	if err != nil {
-		return Target{}, err
-	}
-	switch target.Mode {
-	case VerificationModeVerifiedIdentity:
-		return s.validateVerifiedTarget(target)
-	case VerificationModeWindowsPIDOnly:
-		return s.validatePIDOnlyTarget(target)
-	default:
-		return Target{}, ErrIdentityUnavailable
-	}
 }
 
 func (s *Service) inspectVerifiedEligible(ctx context.Context) (Target, error) {
@@ -242,6 +334,16 @@ func (s *Service) inspectVerifiedEligible(ctx context.Context) (Target, error) {
 }
 
 func (s *Service) validateVerifiedTarget(target Target) (Target, error) {
+	if target.Supervisor != nil {
+		return Target{}, ErrChanged
+	}
+	switch target.BlockReason {
+	case "", RecoveryReasonInsufficientPrivilege:
+	case RecoveryReasonProtectedProcess:
+		return Target{}, ErrProtected
+	default:
+		return Target{}, ErrChanged
+	}
 	identity := target.Identity
 	if identity.ListenAddr != s.config.ListenAddr || identity.Network != "tcp4" || identity.SocketID == "" || identity.Process.PID <= 0 || identity.Process.StartedAt == "" || identity.Process.Executable == "" || identity.UserID == "" {
 		return Target{}, ErrIdentityUnavailable
@@ -262,18 +364,19 @@ func (s *Service) validateVerifiedTarget(target Target) (Target, error) {
 	return target, nil
 }
 
-func (s *Service) validatePIDOnlyTarget(target Target) (Target, error) {
-	if s.deps.SupportsPIDOnly == nil || !s.deps.SupportsPIDOnly() || s.deps.InspectPIDOwner == nil || s.deps.SignalPID == nil || target.ListenAddr != s.config.ListenAddr || target.PID <= 0 {
-		return Target{}, ErrIdentityUnavailable
-	}
-	if s.isProtectedPID(target.PID) {
-		return Target{}, ErrProtected
-	}
-	return target, nil
+func (s *Service) isProtectedPID(pid int) bool {
+	return pid > 0 && (pid == s.config.DesktopPID || pid == s.config.ManagerIdentity.PID || (s.config.IsProtectedPID != nil && s.config.IsProtectedPID(pid)))
 }
 
-func (s *Service) isProtectedPID(pid int) bool {
-	return pid == s.config.DesktopPID || pid == s.config.ManagerIdentity.PID || (s.config.IsProtectedPID != nil && s.config.IsProtectedPID(pid))
+func (s *Service) isProtectedTarget(target Target) bool {
+	if target.BlockReason == RecoveryReasonProtectedProcess || s.isProtectedPID(target.PID) {
+		return true
+	}
+	if target.Mode != VerificationModeVerifiedIdentity {
+		return false
+	}
+	identity := target.Identity
+	return s.isProtectedPID(identity.Process.PID) || (s.config.IsProtected != nil && s.config.IsProtected(identity))
 }
 
 func (s *Service) requireUnknown(ctx context.Context) error {
@@ -304,7 +407,7 @@ func (s *Service) waitReleased(parent context.Context, identity Identity) (Resul
 		if status == process.StatusAbsent {
 			conn, err := s.deps.Dial(ctx, "tcp4", identity.ListenAddr)
 			if err != nil {
-				return Result{State: string(discovery.Absent)}, nil
+				return releasedResult(), nil
 			}
 			_ = conn.Close()
 			if replacement, inspectErr := s.deps.Inspect(ctx, identity.ListenAddr); inspectErr == nil {
@@ -334,7 +437,7 @@ func (s *Service) waitPIDReleased(parent context.Context, target Target) (Result
 	for {
 		pid, err := s.deps.InspectPIDOwner(ctx, target.ListenAddr)
 		if errors.Is(err, ErrNotFound) {
-			return Result{State: string(discovery.Absent)}, nil
+			return releasedResult(), nil
 		}
 		if err != nil || pid != target.PID {
 			return Result{}, ErrChanged
@@ -345,7 +448,7 @@ func (s *Service) waitPIDReleased(parent context.Context, target Target) (Result
 			cancel()
 			switch {
 			case errors.Is(inspectErr, ErrNotFound):
-				return Result{State: string(discovery.Absent)}, nil
+				return releasedResult(), nil
 			case inspectErr != nil || pid != target.PID:
 				return Result{}, ErrChanged
 			default:
@@ -353,6 +456,10 @@ func (s *Service) waitPIDReleased(parent context.Context, target Target) (Result
 			}
 		}
 	}
+}
+
+func releasedResult() Result {
+	return Result{Termination: "process_terminated", PortState: "released"}
 }
 
 func reserveReleaseWindow(parent context.Context, releaseTimeout time.Duration) (context.Context, context.CancelFunc) {
