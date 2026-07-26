@@ -2,20 +2,30 @@
 /dist/
 /mtls-router
 /mtls-router.exe
+/mtls-router-manager
+/mtls-router-manager.exe
 *.test
 *.out
+coverage.html
 
-# Local secrets (NEVER commit)
+# Local credentials (NEVER commit)
 /secrets/
+.env
+.env.*
+credentials.json
 
 # Editor / OS
 .DS_Store
+._*
+Thumbs.db
 *.swp
 .idea/
 .vscode/
 
 # Go
 /vendor/
+/go.work
+/go.work.sum
 
 # Desktop
 /desktop/node_modules/
