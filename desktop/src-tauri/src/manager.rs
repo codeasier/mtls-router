@@ -659,16 +659,22 @@ mod tests {
     use std::sync::{atomic::AtomicUsize, Mutex, OnceLock};
     use tokio::sync::Semaphore;
 
-    #[test]
-    fn failed_send_cleanup_clears_sensitive_call_params() {
+    #[tokio::test]
+    async fn failed_send_cleanup_clears_sensitive_call_params() {
         let (response, _result) = oneshot::channel();
-        let mut call = Call {
-            method: "agent.models",
-            params: json!({"api_key": "fixture-secret", "nested": ["sensitive"]}),
-            expected_session_epoch: None,
-            response,
-            activity: None,
-        };
+        let (sender, receiver) = mpsc::channel(1);
+        drop(receiver);
+        let mut call = sender
+            .send(Call {
+                method: "agent.models",
+                params: json!({"api_key": "fixture-secret", "nested": ["sensitive"]}),
+                expected_session_epoch: None,
+                response,
+                activity: None,
+            })
+            .await
+            .unwrap_err()
+            .0;
 
         clear_call_params(&mut call);
 
