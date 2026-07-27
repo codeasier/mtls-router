@@ -211,6 +211,7 @@ describe("Agent page coordinator", () => {
     expect(await screen.findByRole("note")).toHaveTextContent(
       /可能已过期|may be out of date/,
     );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByText("/safe/claude/settings.json")).toBeVisible();
   });
 

@@ -2332,7 +2332,14 @@ main {
   display: grid;
   gap: 5px;
   max-height: 420px;
+  margin: 0;
+  padding: 0;
   overflow: auto;
+  list-style: none;
+}
+
+.model-catalog .catalog-model {
+  cursor: default;
 }
 
 .catalog-model {

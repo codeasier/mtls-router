@@ -153,10 +153,6 @@ export function AgentPage({
     } catch (error) {
       if (errorCode(error) === "REQUEST_SUPERSEDED") return;
       setStale(Boolean(detection));
-      setIssue({
-        kind: "detect",
-        code: errorCode(error) || "AGENT_DETECT_FAILED",
-      });
     } finally {
       setRefreshing(false);
     }

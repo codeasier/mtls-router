@@ -437,18 +437,14 @@ function Catalog({
           onChange={(event) => setSearch(event.target.value)}
         />
       </label>
-      <div
-        className="catalog-list"
-        role="radiogroup"
-        aria-label={t("agents.catalogLabel")}
-      >
+      <ul className="catalog-list" aria-label={t("agents.catalogLabel")}>
         {visible.map((model) => (
-          <div className="catalog-model" key={model}>
+          <li className="catalog-model" key={model}>
             <code>{safe(model)}</code>
-          </div>
+          </li>
         ))}
-        {!visible.length && <p>{t("agents.catalogEmptySearch")}</p>}
-      </div>
+        {!visible.length && <li>{t("agents.catalogEmptySearch")}</li>}
+      </ul>
     </div>
   );
 }
@@ -1357,11 +1353,6 @@ export function AgentWorkflow({
                     />
                   ),
                 )}
-                <ExtraEditor
-                  agent="opencode"
-                  value={extra}
-                  onChange={setExtra}
-                />
               </section>
             )}
             {target.agent === "codex" && config.codex && (

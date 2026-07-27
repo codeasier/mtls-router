@@ -348,6 +348,18 @@ describe("single-Agent workflow", () => {
       },
     });
 
+    expect(
+      screen.getByRole("list", {
+        name: /可用模型目录|Available model catalog/,
+      }),
+    ).toBeVisible();
+    expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText(/OpenCode extra JSON/),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByLabelText(/模型 extra JSON|Model extra JSON/),
+    ).toBeInTheDocument();
     const variants = screen.getByLabelText(/Variants JSON/);
     fireEvent.change(variants, {
       target: { value: '{"unsafe":{"connection":"secret"}}' },

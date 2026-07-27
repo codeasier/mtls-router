@@ -244,6 +244,11 @@ export function AgentOverview({
           if (!agent) return null;
           const installation = installationPresentation(agent);
           const configuration = configurationPresentation(agent);
+          const installationLabel = t(
+            installation.state === "installed"
+              ? "agents.installation.installed"
+              : "agents.installation.notInstalled",
+          );
           const reasons = recoveryReasons(agent);
           const label = actionLabel(agent, configuration, t);
           const target: AgentTarget = {
@@ -261,17 +266,9 @@ export function AgentOverview({
               <div className="agent-card__states">
                 <span
                   className={`agent-state agent-state--installation agent-state--${installation.state.replace("_", "-")}`}
-                  aria-label={`CLI: ${t(
-                    installation.state === "installed"
-                      ? "agents.installation.installed"
-                      : "agents.installation.notInstalled",
-                  )}`}
+                  aria-label={`CLI: ${installationLabel}`}
                 >
-                  {t(
-                    installation.state === "installed"
-                      ? "agents.installation.installed"
-                      : "agents.installation.notInstalled",
-                  )}
+                  {installationLabel}
                 </span>
                 <span
                   className={`agent-state agent-state--configuration agent-state--${configuration.state}`}
