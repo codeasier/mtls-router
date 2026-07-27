@@ -292,6 +292,49 @@ describe("occupant wire validation", () => {
 });
 
 describe("typed desktop API", () => {
+  it("uses content-free native lifecycle events and strict commands", async () => {
+    const invoke = vi.fn().mockResolvedValue(undefined);
+    const unlistenFocus = vi.fn();
+    const unlistenQuit = vi.fn();
+    const listen = vi
+      .fn()
+      .mockResolvedValueOnce(unlistenFocus)
+      .mockResolvedValueOnce(unlistenQuit);
+    const api = createDesktopApi(invoke as InvokeFn, listen as ListenFn);
+    const focused = vi.fn();
+    const quitRequested = vi.fn();
+
+    await api.setAgentDraftDirty(true);
+    await api.resolveAppQuit(false);
+    const stopFocus = await api.subscribeMainWindowFocused(focused);
+    const stopQuit = await api.subscribeAgentDraftQuitRequested(quitRequested);
+    listen.mock.calls[0][1]({ payload: { ignored: true } });
+    listen.mock.calls[1][1]({ payload: "ignored" });
+    stopFocus();
+    stopQuit();
+
+    expect(invoke).toHaveBeenNthCalledWith(1, "set_agent_draft_dirty", {
+      request: { dirty: true },
+    });
+    expect(invoke).toHaveBeenNthCalledWith(2, "resolve_app_quit", {
+      request: { confirmed: false },
+    });
+    expect(listen).toHaveBeenNthCalledWith(
+      1,
+      "main-window-focused",
+      expect.any(Function),
+    );
+    expect(listen).toHaveBeenNthCalledWith(
+      2,
+      "agent-draft-quit-requested",
+      expect.any(Function),
+    );
+    expect(focused).toHaveBeenCalledWith();
+    expect(quitRequested).toHaveBeenCalledWith();
+    expect(unlistenFocus).toHaveBeenCalledOnce();
+    expect(unlistenQuit).toHaveBeenCalledOnce();
+  });
+
   it("centralizes lifecycle command names and typed arguments", async () => {
     const invoke = vi.fn().mockResolvedValue({ state: "desktop_owned" });
     const api = createDesktopApi(invoke as InvokeFn);

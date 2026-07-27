@@ -15,7 +15,6 @@ pub enum QuitState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum QuitAction {
     None,
-    FocusWindow,
     RequestConfirmation,
     WaitForLifecycle,
     ExecuteQuit,
@@ -80,13 +79,16 @@ impl LifecycleState {
 
     pub fn request_quit(&self, webview_exists: bool) -> QuitAction {
         let mut inner = self.lock();
-        match inner.quit {
-            QuitState::Exiting | QuitState::WaitingForLifecycle => return QuitAction::None,
-            QuitState::AwaitingConfirmation => return QuitAction::FocusWindow,
-            QuitState::Idle => {}
-        }
         if !webview_exists {
             inner.draft_dirty = false;
+            if inner.quit == QuitState::AwaitingConfirmation {
+                inner.quit = QuitState::Idle;
+            }
+        }
+        match inner.quit {
+            QuitState::Exiting | QuitState::WaitingForLifecycle => return QuitAction::None,
+            QuitState::AwaitingConfirmation => return QuitAction::RequestConfirmation,
+            QuitState::Idle => {}
         }
         if inner.draft_dirty {
             inner.quit = QuitState::AwaitingConfirmation;
@@ -207,12 +209,12 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_confirmation_request_only_refocuses_window() {
+    fn duplicate_confirmation_request_refocuses_and_retries_delivery() {
         let state = LifecycleState::default();
         state.set_draft_dirty(true);
 
         assert_eq!(state.request_quit(true), QuitAction::RequestConfirmation);
-        assert_eq!(state.request_quit(true), QuitAction::FocusWindow);
+        assert_eq!(state.request_quit(true), QuitAction::RequestConfirmation);
     }
 
     #[test]
@@ -221,6 +223,16 @@ mod tests {
         state.set_draft_dirty(true);
 
         assert_eq!(state.request_quit(false), QuitAction::ExecuteQuit);
+    }
+
+    #[test]
+    fn webview_disappearing_during_confirmation_clears_stale_dirty_state() {
+        let state = LifecycleState::default();
+        state.set_draft_dirty(true);
+        assert_eq!(state.request_quit(true), QuitAction::RequestConfirmation);
+
+        assert_eq!(state.request_quit(false), QuitAction::ExecuteQuit);
+        assert!(state.is_exiting());
     }
 
     #[test]

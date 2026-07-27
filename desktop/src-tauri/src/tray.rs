@@ -17,7 +17,7 @@ use tauri::{
     image::Image,
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
-    App, AppHandle, Manager, Runtime, WindowEvent,
+    App, AppHandle, Emitter, EventTarget, Manager, Runtime, WindowEvent,
 };
 use tauri_plugin_opener::OpenerExt;
 
@@ -27,6 +27,36 @@ const START_ID: &str = "start";
 const STOP_ID: &str = "stop";
 const LOGS_ID: &str = "logs";
 const QUIT_ID: &str = "quit";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MainWindowEvent {
+    Focused,
+    DraftQuitRequested,
+}
+
+impl MainWindowEvent {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Focused => "main-window-focused",
+            Self::DraftQuitRequested => "agent-draft-quit-requested",
+        }
+    }
+
+    fn target_label(self) -> &'static str {
+        MAIN_WINDOW
+    }
+}
+
+pub(crate) fn emit_main_window_event<R: Runtime>(
+    app: &AppHandle<R>,
+    event: MainWindowEvent,
+) -> tauri::Result<()> {
+    app.emit_to(
+        EventTarget::webview_window(event.target_label()),
+        event.name(),
+        (),
+    )
+}
 
 pub type ActionFuture<T> = Pin<Box<dyn Future<Output = Result<T, String>> + Send + 'static>>;
 
@@ -420,14 +450,73 @@ fn open_logs<R: Runtime>(app: AppHandle<R>) {
     });
 }
 
-fn request_quit<R: Runtime>(app: AppHandle<R>) {
+pub(crate) fn request_quit<R: Runtime>(app: AppHandle<R>) {
     let lifecycle = app.state::<TrayState<R>>().lifecycle.clone();
     let action = lifecycle.request_quit(app.get_webview_window(MAIN_WINDOW).is_some());
+    handle_quit_action(app, &lifecycle, action);
+}
+
+pub(crate) fn resolve_quit<R: Runtime>(
+    app: &AppHandle<R>,
+    lifecycle: &LifecycleState,
+    confirmed: bool,
+) {
+    let action = lifecycle.resolve_quit(confirmed);
+    handle_quit_action(app.clone(), lifecycle, action);
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct QuitEffects {
+    show_main_window: bool,
+    emit_confirmation: bool,
+    execute_quit: bool,
+}
+
+fn quit_effects(action: QuitAction) -> QuitEffects {
     match action {
-        QuitAction::FocusWindow | QuitAction::RequestConfirmation => show_main_window(&app),
-        QuitAction::ExecuteQuit => execute_quit(app),
-        QuitAction::None | QuitAction::WaitForLifecycle => {}
+        QuitAction::RequestConfirmation => QuitEffects {
+            show_main_window: true,
+            emit_confirmation: true,
+            execute_quit: false,
+        },
+        QuitAction::ExecuteQuit => QuitEffects {
+            show_main_window: false,
+            emit_confirmation: false,
+            execute_quit: true,
+        },
+        QuitAction::None | QuitAction::WaitForLifecycle => QuitEffects::default(),
     }
+}
+
+fn record_confirmation_delivery(lifecycle: &LifecycleState, delivered: bool) {
+    if !delivered {
+        lifecycle.reset_after_emit_failure();
+    }
+}
+
+fn handle_quit_action<R: Runtime>(
+    app: AppHandle<R>,
+    lifecycle: &LifecycleState,
+    action: QuitAction,
+) {
+    let effects = quit_effects(action);
+    if effects.show_main_window {
+        show_main_window(&app);
+    }
+    if effects.emit_confirmation {
+        let delivered = emit_main_window_event(&app, MainWindowEvent::DraftQuitRequested).is_ok();
+        record_confirmation_delivery(lifecycle, delivered);
+        if !delivered {
+            eprintln!("mtls-router: cannot deliver draft quit confirmation request");
+        }
+    }
+    if effects.execute_quit {
+        execute_quit(app);
+    }
+}
+
+pub(crate) fn should_prevent_exit(lifecycle: &LifecycleState) -> bool {
+    !lifecycle.is_exiting()
 }
 
 pub(crate) fn execute_quit<R: Runtime>(app: AppHandle<R>) {
@@ -877,6 +966,72 @@ mod tests {
         );
         assert_eq!(quit_decision(Some(&spoofed)), QuitDecision::ExitWithoutStop);
         assert_eq!(quit_decision(None), QuitDecision::ExitWithoutStop);
+    }
+
+    #[test]
+    fn exit_requests_are_prevented_until_shared_state_is_exiting() {
+        let lifecycle = LifecycleState::default();
+        assert!(should_prevent_exit(&lifecycle));
+
+        lifecycle.set_draft_dirty(true);
+        assert_eq!(
+            lifecycle.request_quit(true),
+            QuitAction::RequestConfirmation
+        );
+        assert!(should_prevent_exit(&lifecycle));
+        assert_eq!(lifecycle.resolve_quit(true), QuitAction::ExecuteQuit);
+        assert!(!should_prevent_exit(&lifecycle));
+    }
+
+    #[test]
+    fn native_events_are_targeted_only_to_the_main_webview() {
+        assert_eq!(MainWindowEvent::Focused.name(), "main-window-focused");
+        assert_eq!(
+            MainWindowEvent::DraftQuitRequested.name(),
+            "agent-draft-quit-requested"
+        );
+        assert_eq!(MainWindowEvent::Focused.target_label(), "main");
+        assert_eq!(MainWindowEvent::DraftQuitRequested.target_label(), "main");
+    }
+
+    #[test]
+    fn failed_confirmation_delivery_resets_the_quit_state() {
+        let lifecycle = LifecycleState::default();
+        lifecycle.set_draft_dirty(true);
+        assert_eq!(
+            lifecycle.request_quit(true),
+            QuitAction::RequestConfirmation
+        );
+
+        record_confirmation_delivery(&lifecycle, false);
+
+        assert_eq!(
+            lifecycle.request_quit(true),
+            QuitAction::RequestConfirmation
+        );
+    }
+
+    #[test]
+    fn successful_delivery_still_refocuses_and_reemits_on_duplicate_quit() {
+        let lifecycle = LifecycleState::default();
+        lifecycle.set_draft_dirty(true);
+        assert_eq!(
+            lifecycle.request_quit(true),
+            QuitAction::RequestConfirmation
+        );
+        record_confirmation_delivery(&lifecycle, true);
+
+        let repeated = lifecycle.request_quit(true);
+
+        assert_eq!(repeated, QuitAction::RequestConfirmation);
+        assert_eq!(
+            quit_effects(repeated),
+            QuitEffects {
+                show_main_window: true,
+                emit_confirmation: true,
+                execute_quit: false,
+            }
+        );
     }
 
     #[test]

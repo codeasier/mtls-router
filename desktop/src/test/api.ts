@@ -6,7 +6,13 @@ export function createMockApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
   const api: DesktopApi = {
     getPollSnapshot: vi.fn(),
     subscribePollSnapshots: vi.fn().mockResolvedValue(() => undefined),
+    subscribeMainWindowFocused: vi.fn().mockResolvedValue(() => undefined),
+    subscribeAgentDraftQuitRequested: vi
+      .fn()
+      .mockResolvedValue(() => undefined),
     setWindowVisibility: vi.fn().mockResolvedValue(undefined),
+    setAgentDraftDirty: vi.fn().mockResolvedValue(undefined),
+    resolveAppQuit: vi.fn().mockResolvedValue(undefined),
     getRouterStatus: vi.fn().mockResolvedValue({ state: "absent" }),
     startRouter: vi.fn().mockResolvedValue({
       state: "desktop_owned",

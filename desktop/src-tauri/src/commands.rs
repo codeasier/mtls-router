@@ -32,6 +32,35 @@ pub struct AppState {
     pub lifecycle: Arc<LifecycleState>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetAgentDraftDirtyRequest {
+    dirty: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResolveAppQuitRequest {
+    confirmed: bool,
+}
+
+#[tauri::command]
+pub fn set_agent_draft_dirty(
+    request: SetAgentDraftDirtyRequest,
+    state: tauri::State<'_, AppState>,
+) {
+    state.lifecycle.set_draft_dirty(request.dirty);
+}
+
+#[tauri::command]
+pub fn resolve_app_quit(
+    request: ResolveAppQuitRequest,
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) {
+    crate::tray::resolve_quit(&app, &state.lifecycle, request.confirmed);
+}
+
 impl AppState {
     fn set_window_visibility(&self, visible: bool) {
         self.scheduler.set_visible(visible);
@@ -1076,6 +1105,24 @@ mod tests {
         assert!(validate_agents(&["claude".to_owned(), "codex".to_owned()]).is_ok());
         assert!(validate_agents(&["shell".to_owned()]).is_err());
         assert!(validate_agents(&["claude".to_owned(), "claude".to_owned()]).is_err());
+        assert!(serde_json::from_value::<SetAgentDraftDirtyRequest>(json!({
+            "dirty": true
+        }))
+        .is_ok());
+        assert!(serde_json::from_value::<SetAgentDraftDirtyRequest>(json!({
+            "dirty": true,
+            "unknown": true
+        }))
+        .is_err());
+        assert!(serde_json::from_value::<ResolveAppQuitRequest>(json!({
+            "confirmed": false
+        }))
+        .is_ok());
+        assert!(serde_json::from_value::<ResolveAppQuitRequest>(json!({
+            "confirmed": false,
+            "unknown": true
+        }))
+        .is_err());
     }
 
     #[test]

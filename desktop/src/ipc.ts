@@ -2,6 +2,8 @@ import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen as tauriListen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export const POLL_SNAPSHOT_EVENT = "router-poll-snapshot";
+export const MAIN_WINDOW_FOCUSED_EVENT = "main-window-focused";
+export const AGENT_DRAFT_QUIT_REQUESTED_EVENT = "agent-draft-quit-requested";
 
 export const COMMANDS = {
   routerStatus: "router_status",
@@ -33,6 +35,8 @@ export const COMMANDS = {
   desktopPaths: "desktop_paths",
   prepareForUninstall: "prepare_for_uninstall",
   windowVisibility: "window_visibility",
+  setAgentDraftDirty: "set_agent_draft_dirty",
+  resolveAppQuit: "resolve_app_quit",
 } as const;
 
 export const MAX_LOG_LINES = 200;
@@ -651,7 +655,11 @@ export interface DesktopApi {
   subscribePollSnapshots(
     listener: (snapshot: PollSnapshot) => void,
   ): Promise<UnlistenFn>;
+  subscribeMainWindowFocused(listener: () => void): Promise<UnlistenFn>;
+  subscribeAgentDraftQuitRequested(listener: () => void): Promise<UnlistenFn>;
   setWindowVisibility(visible: boolean): Promise<void>;
+  setAgentDraftDirty(dirty: boolean): Promise<void>;
+  resolveAppQuit(confirmed: boolean): Promise<void>;
   getRouterStatus(): Promise<RouterStatus>;
   startRouter(): Promise<RouterStatus>;
   stopRouter(): Promise<RouterStatus>;
@@ -751,8 +759,16 @@ export function createDesktopApi(
       listen<PollSnapshot>(POLL_SNAPSHOT_EVENT, (event) =>
         listener(event.payload),
       ),
+    subscribeMainWindowFocused: (listener) =>
+      listen<void>(MAIN_WINDOW_FOCUSED_EVENT, () => listener()),
+    subscribeAgentDraftQuitRequested: (listener) =>
+      listen<void>(AGENT_DRAFT_QUIT_REQUESTED_EVENT, () => listener()),
     setWindowVisibility: (visible) =>
       invoke(COMMANDS.windowVisibility, { visible }),
+    setAgentDraftDirty: (dirty) =>
+      invoke(COMMANDS.setAgentDraftDirty, { request: { dirty } }),
+    resolveAppQuit: (confirmed) =>
+      invoke(COMMANDS.resolveAppQuit, { request: { confirmed } }),
     getRouterStatus: () => invoke(COMMANDS.routerStatus),
     startRouter: () => invoke(COMMANDS.routerStart, { owner: "desktop" }),
     stopRouter: () => invoke(COMMANDS.routerStop),

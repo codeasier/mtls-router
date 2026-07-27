@@ -193,6 +193,12 @@ pub fn run() {
             match event {
                 WindowEvent::Focused(true) => {
                     window.state::<AppState>().scheduler.set_visible(true);
+                    if window.label() == "main" {
+                        let _ = tray::emit_main_window_event(
+                            window.app_handle(),
+                            tray::MainWindowEvent::Focused,
+                        );
+                    }
                 }
                 WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed => {
                     window.state::<AppState>().scheduler.set_visible(false);
@@ -230,9 +236,20 @@ pub fn run() {
             commands::desktop_paths,
             commands::window_visibility,
             commands::set_native_language,
+            commands::set_agent_draft_dirty,
+            commands::resolve_app_quit,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running mtls-router desktop");
+        .build(tauri::generate_context!())
+        .expect("error while building mtls-router desktop")
+        .run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                let lifecycle = &app.state::<AppState>().lifecycle;
+                if tray::should_prevent_exit(lifecycle) {
+                    api.prevent_exit();
+                    tray::request_quit(app.clone());
+                }
+            }
+        });
 }
 
 #[cfg(test)]
