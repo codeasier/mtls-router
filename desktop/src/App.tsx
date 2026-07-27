@@ -199,7 +199,12 @@ function AppContent({ api }: { api: DesktopApi }) {
             />
           )}
           {activeSection === "logs" && <LogsPage api={api} />}
-          {activeSection === "agents" && <AgentPage api={api} />}
+          {activeSection === "agents" && (
+            <AgentPage
+              api={api}
+              onNavigateToApiKeys={() => setActiveSection("api-keys")}
+            />
+          )}
           {activeSection === "api-keys" && <ApiKeysPage api={api} />}
           {activeSection === "settings" && <SettingsPage api={api} />}
         </div>

@@ -268,6 +268,37 @@ export const en: Record<TranslationKey, string> = {
   "apikey.error.lock":
     "Another credential operation is active. Try again shortly.",
   "apikey.error.load": "The credential status could not be loaded. Try again.",
+  "agents.overview.refresh": "Detect again",
+  "agents.overview.refreshing": "Detecting again",
+  "agents.overview.stale": "Status may be out of date. Detect again.",
+  "agents.installation.installed": "CLI installed",
+  "agents.installation.notInstalled": "CLI not installed",
+  "agents.configuration.invalid": "Invalid configuration",
+  "agents.configuration.readonly": "Not writable",
+  "agents.configuration.configured": "Configured",
+  "agents.configuration.create": "Ready to create",
+  "agents.configuration.ready": "Ready to configure",
+  "agents.action.configure": "Configure {agent}",
+  "agents.action.edit": "Edit {agent} configuration",
+  "agents.action.create": "Generate {agent} configuration",
+  "agents.issue.credential.notFound": "No API key has been saved.",
+  "agents.issue.credential.invalid":
+    "The saved API key is malformed. Save it again.",
+  "agents.issue.credential.io":
+    "Credential storage is unavailable. Try again later.",
+  "agents.issue.credential.locked":
+    "Credential storage is in use. Wait for the current operation to finish and try again.",
+  "agents.issue.credential.unavailable":
+    "Credential storage is unavailable. Try again later.",
+  "agents.issue.auth": "The saved API key was rejected by the model service.",
+  "agents.issue.discovery":
+    "The model catalog is temporarily unavailable. Try again.",
+  "agents.issue.manager":
+    "The local manager is temporarily unavailable. Try again or restart the app.",
+  "agents.issue.unknown": "Unable to start configuration ({code}).",
+  "agents.issue.toApiKeys": "Go to API key",
+  "agents.issue.replaceApiKey": "Replace API key",
+  "agents.issue.retry": "Retry {agent}",
   "agents.operation.create": "Create",
   "agents.operation.replace": "Replace",
   "agents.operation.preserve": "Preserve unmanaged configuration",
@@ -523,6 +554,8 @@ export const en: Record<TranslationKey, string> = {
   "agents.resultHeading": "Agent configuration result",
   "agents.resultNote":
     "These paths come from the manager transaction result; no credential value is displayed.",
+  "agents.result.installLater":
+    "Configuration generated; install {agent} to use it.",
   "agents.success": "Success",
   "agents.failure": "Failed",
   "agents.rolledBack": "This change was rolled back",

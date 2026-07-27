@@ -56,36 +56,38 @@ Router 页面会区分本地进程和上游健康。运行中的进程可能处�
 
 ## 配置 Agent
 
-Agent 页面支持 Claude Code、opencode 和 Codex。检测只返回元数据：路径、格式、是否存在、可写性以及已配置或无效状态，不返回已存储的 API key 值。检测遵循 `CLAUDE_CONFIG_DIR`、`OPENCODE_CONFIG` 和 `CODEX_HOME`；Codex home 目录存在时也可识别 Codex 桌面安装。
+Agent 总览始终以独立卡片展示 Claude Code、OpenCode 和 Codex。每张卡片根据命令查找结果显示 CLI 安装状态，并独立显示配置文件是否存在、是否可写以及已配置或无效状态。检测只返回元数据，绝不返回已保存的 API key 明文。检测遵循 `CLAUDE_CONFIG_DIR`、`OPENCODE_CONFIG` 和 `CODEX_HOME`；Codex home 目录存在时可以定位 Codex 配置，但这本身不表示 Codex CLI 命令已安装。
+
+CLI 未安装时，只要目标路径可写，仍可生成配置。预安装配置写入成功仍属于成功，并会说明必须安装 CLI 后才能使用该配置。每张卡片只会为对应的一个 Agent 打开工作流；桌面端不会在同一工作流中选择或批量处理多个 Agent。
 
 正常**合并**会保留受支持的无关配置。**备份并重建**是独立的破坏性恢复操作，只会为符合条件的语法无效文件显示。它会用纯托管输出替换完整的已批准 Agent 文件集；无关设置、注释、格式以及有效伴随文件中的元数据都会丢失。备份可能包含 API key。继续前必须确认这些损失并保护每个备份。
 
-Agent 配置必须显式执行 key-before-discovery 流程：
+Agent 配置采用以下单 Agent 流程：
 
-1. 刷新检测。为有效且可写的 Agent 选择**合并**。对于无效 Agent，只有检测标记为符合条件时才能选择**备份并重建**；其他无效配置必须手工修复。
-2. 输入 API key。React 会立即清空输入框；Rust 只在一次性且不可 replay 的临时流程中保留它。
-3. 通过可信本地 router 发现 manager 经过认证和构建过滤的模型目录。默认会排除包含 ASCII `/` 的有效 ID；使用 `SIMPLIFY=False` 构建的 release 会保留它们。该过滤目录是所有已选 Agent、导入配置、preset、预览和刷新的权威依据。这是不可变的 manager 构建策略，不是运行时偏好，也不是对 proxy 路由支持的限制。桌面端绝不会选择第一个模型、按模型名称或能力推断选择，也不会替换模型。可见的构建 preset 只有在 manager 根据该目录验证某个 section 的全部精确 ID 后，才能提供该 section 作为可编辑初始值。
-4. 每个 Agent 独立采用 `existing > preset > empty` 初始化；界面会标明 section 来自 existing 配置还是推荐 preset，并为不可用的完整 preset section 列出缺失 base ID。配置各 Agent 原生选择：Claude 主模型/角色继承以及可选显示名称和 Standard/1M context、opencode 模型子集/默认/选项，以及一个 Codex 模型/选项。Claude 提供本地化的**启用 Fable**控件。空 Claude 表单默认禁用 Fable；启用时创建 inherit-primary 选择，并显示与现有角色相同的继承/显式模型、显示名称和 Standard/1M 控件；禁用时删除完整 Fable 选择及其 metadata。Existing Claude 作为完整 section 优先于 preset Claude，因此不会把 preset Fable 合并进省略 Fable 的 existing Claude section。Preset 值始终可编辑且不代表任何批准。未设置的可选字段保持省略。可以导入或导出无 key 的规范 model config；导入会完整替换当前表单，而不是与 existing 或 preset 值合并，并在导出、预览与写入中精确保留已启用或省略的 Fable。
-5. 生成结构化预览，审查脱敏片段以及每个创建、替换、保留、迁移、漂移批准、状态和备份操作。正常 merge 在未设置显式 `OPENCODE_CONFIG` 时，会把标准 `~/.config/opencode/opencode.jsonc` 迁移到 sibling `opencode.json`；已有 sibling 会构成迁移冲突。显式 `.jsonc` override 会原地规范化。Rebuild 则在已批准 JSON 或 JSONC 路径原地替换为 strict JSON，不执行 sibling 迁移。Codex rebuild 始终替换 `config.toml` 和 `auth.json`，创建缺失的伴随文件并丢弃有效伴随 metadata；该文件对中每个现有文件都必须备份。
-6. 批准并写入。Rebuild Agent 会出现在单独的破坏性确认中，并且必须与预览精确一致。Manager 会消耗内存中的 key，在创建任何写入产物前刷新目录，随后检查修改路径和实际备份路径。
+1. 刷新总览。为一个有效且可写的 Agent 打开**合并**。对于无效 Agent，只有检测标记为符合条件时才能打开**备份并重建**；其他无效配置必须手工修复。CLI 安装状态不会阻止这两种操作。
+2. 点击卡片操作后，Rust 才会加载由 API 密钥页面管理的全局 API key，并通过可信本地 router 仅为该 Agent 发现 manager 经过认证和构建过滤的模型目录。总览既不加载模型，也不使用凭据。凭据缺失或无效以及认证失败会返回总览，并提供前往 API 密钥页面的操作；模型上游和 manager 失败会提供安全的重试或刷新操作。
+3. 默认会排除包含 ASCII `/` 的有效模型 ID；使用 `SIMPLIFY=False` 构建的 release 会保留它们。该过滤目录是目标 Agent、导入配置、preset、预览和刷新的权威依据。这是不可变的 manager 构建策略，不是运行时偏好，也不是对 proxy 路由支持的限制。桌面端绝不会选择第一个模型、按模型名称或能力推断选择，也不会替换模型。可见的构建 preset 只有在 manager 根据该目录验证该 section 的全部精确 ID 后，才能提供该 section 作为可编辑初始值。
+4. 目标 Agent 采用 `existing > preset > empty` 初始化；界面会标明其 section 来自 existing 配置还是推荐 preset，并为不可用的完整 preset section 列出缺失 base ID。配置 Agent 原生选择：Claude 主模型/角色继承以及可选显示名称和 Standard/1M context、OpenCode 模型子集/默认/选项，或一个 Codex 模型/选项。Claude 提供本地化的**启用 Fable**控件。空 Claude 表单默认禁用 Fable；启用时创建 inherit-primary 选择，并显示与现有角色相同的继承/显式模型、显示名称和 Standard/1M 控件；禁用时删除完整 Fable 选择及其 metadata。Existing Claude 作为完整 section 优先于 preset Claude，因此不会把 preset Fable 合并进省略 Fable 的 existing Claude section。Preset 值始终可编辑且不代表任何批准。未设置的可选字段保持省略。可以导入或导出无 key 的规范 model config；导入会完整替换当前表单，而不是与 existing 或 preset 值合并，并在导出、预览与写入中精确保留已启用或省略的 Fable。
+5. 生成精确的结构化预览，审查脱敏片段以及每个创建、替换、保留、迁移、漂移批准、状态和备份操作。预览规范化后的 model config 会成为写入输入。正常 merge 在未设置显式 `OPENCODE_CONFIG` 时，会把标准 `~/.config/opencode/opencode.jsonc` 迁移到 sibling `opencode.json`；已有 sibling 会构成迁移冲突。显式 `.jsonc` override 会原地规范化。Rebuild 则在已批准 JSON 或 JSONC 路径原地替换为 strict JSON，不执行 sibling 迁移。Codex rebuild 始终替换 `config.toml` 和 `auth.json`，创建缺失的伴随文件并丢弃有效伴随 metadata；该文件对中每个现有文件都必须备份。
+6. 批准并写入。托管漂移和 Codex 认证变更仍需显式批准。Rebuild 需要单独的破坏性确认，并且必须与单 Agent 预览精确一致。创建任何写入产物前，Rust 会重新加载已保存的全局 key，manager 会刷新目录；成功后再检查修改路径和实际备份路径。
 
-重建资格要求至少一个文件语法无效，并且完整托管文件集没有其他 blocker。结构有效但不受支持、文件不可读或超限、非普通文件、链接、路径不可写、父目录不可用、存在待恢复事务或禁用写入时，都不符合条件。语法有效和 parser 兼容性问题必须修复，不能重建。不同 Agent 可在同一事务中独立选择 merge 或 rebuild；不存在自动恢复、解析绕过、全局强制覆盖，也不会在 merge 失败后 fallback 到 rebuild。
+重建资格要求至少一个文件语法无效，并且完整托管文件集没有其他 blocker。结构有效但不受支持、文件不可读或超限、非普通文件、链接、路径不可写、父目录不可用、存在待恢复事务或禁用写入时，都不符合条件。语法有效和 parser 兼容性问题必须修复，不能重建。重建只应用于打开当前工作流的 Agent；不存在自动恢复、解析绕过、全局强制覆盖，也不会在 merge 失败后 fallback 到 rebuild。
 
 Rebuild 输出有意只包含托管内容：Claude `settings.json` 只包含托管 `env`；opencode strict JSON 只包含根 `model` 和 `provider.mtls-router`；Codex `config.toml` 只包含托管 model/provider 设置，`auth.json` 只包含 `auth_mode` 和 `OPENAI_API_KEY`。精确输出和资格契约见 [Agent 模型配置](AGENT_MODELS.md#破坏性重建恢复)。
 
-写入前，manager 会再次确认文件仍与已批准的 revision 一致。`PREVIEW_STALE` 表示目标已变化；此时不会开始写入，必须重新预览。替换现有文件前会创建备份。一次多 Agent 写入是一个事务：失败时会回滚本事务已经修改的文件，但保留诊断备份。如果无法证明回滚成功，后续 Agent 写入会安全失败。
+写入前，manager 会再次确认文件仍与已批准的 revision 一致。`PREVIEW_STALE` 表示目标已变化；此时不会开始写入，必须重新预览。替换现有文件前会创建备份。桌面端只提交一个 Agent，同时保留该 Agent 完整文件集的事务安全：失败时会回滚本事务已经修改的文件，但保留诊断备份。如果无法证明回滚成功，后续 Agent 写入会安全失败。
 
 备份保留在原配置旁边，可能包含旧 API key。它们属于敏感恢复产物，应当像原 Agent 文件一样保护、保留或删除。预览只显示计划的 sibling 备份 pattern；创建并逐字节验证备份后，成功结果才显示实际路径。两者都绝不会显示备份内容，失败操作可能只显示错误。存在事务 journal 或未解决恢复时绝不能手工还原；应联系维护者，因为修改目标会导致恢复无法证明其身份。恢复问题解决后，应停止拥有文件的 Agent，保留当前文件，验证原路径及父目录仍是预期当前用户所有且不是链接，再通过同目录私有临时文件加原子替换恢复。对于 Codex，只恢复事务前存在的文件；只有已审查操作能证明伴随文件之前不存在时，才能删除该事务新建的文件，否则应联系维护者。
 
-检测中的 `configured` 仅表示本地托管字段结构完整且内部一致，不证明所选模型当前已获授权。需要手工刷新时重新进入配置并提供 key；系统不会后台同步目录或重写 Agent 文件。目录/认证/校验失败、模型消失、未批准漂移或所有权状态无效都会安全失败，不使用静态/cache fallback，也不会部分写入。服务契约、规范 schema、省略、迁移与所有权规则见 [Agent 模型配置](AGENT_MODELS.md)。
+检测中的 `configured` 仅表示本地托管字段结构完整且内部一致，不证明所选模型当前已获授权。需要手工刷新时重新进入配置，桌面端会使用已保存的全局 key；系统不会后台同步目录或重写 Agent 文件。目录/认证/校验失败、模型消失、未批准漂移或所有权状态无效都会安全失败，不使用静态/cache fallback，也不会部分写入。服务契约、规范 schema、省略、迁移与所有权规则见 [Agent 模型配置](AGENT_MODELS.md)。
 
-对于 Claude，规范配置会分别存储认证 base model ID 和可选精确字段 `context: "1m"`。启用 Fable 会渲染 `ANTHROPIC_DEFAULT_FABLE_MODEL` 及可选的 `ANTHROPIC_DEFAULT_FABLE_MODEL_NAME`；省略 Fable 时不会渲染或认领这两个 key。启用 Fable 要认领已有未托管值时，预览会显示 collision；禁用时只删除能证明之前由 manager 所有的 stale 路径，并保留从未取得所有权的手工 key。Manager 只在渲染 Claude 模型环境变量时追加 `[1m]`；它不会推断 1M 支持，也不会写入 `CLAUDE_CODE_DISABLE_1M_CONTEXT`。运行时拒绝不会触发 fallback 或重写。Fable alias 要求 Claude Code 2.1.170 或更高版本。与此独立，数值 custom-model context override 从 Claude Code 2.1.193 起可直接作用于未知模型名称；更早版本可能忽略它。Preset discovery 本身不会写 Agent 文件或 manager 事务状态，preset 数据也不会存入桌面端 secret-bearing flow。
+对于 Claude，规范配置会分别存储认证 base model ID 和可选精确字段 `context: "1m"`。启用 Fable 会渲染 `ANTHROPIC_DEFAULT_FABLE_MODEL` 及可选的 `ANTHROPIC_DEFAULT_FABLE_MODEL_NAME`；省略 Fable 时不会渲染或认领这两个 key。启用 Fable 要认领已有未托管值时，预览会显示 collision；禁用时只删除能证明之前由 manager 所有的 stale 路径，并保留从未取得所有权的手工 key。Manager 只在渲染 Claude 模型环境变量时追加 `[1m]`；它不会推断 1M 支持，也不会写入 `CLAUDE_CODE_DISABLE_1M_CONTEXT`。运行时拒绝不会触发 fallback 或重写。Fable alias 要求 Claude Code 2.1.170 或更高版本。与此独立，数值 custom-model context override 从 Claude Code 2.1.193 起可直接作用于未知模型名称；更早版本可能忽略它。Preset discovery 本身不会写 Agent 文件或 manager 事务状态，preset 数据在桌面 flow 中只作为不含 key 的模型状态保存。
 
 ## API key 边界和限制
 
-桌面应用会把输入 key 提交给 `agent.models`，立即清空密码输入框，并只在 zeroizing Rust 临时流程状态中保留到一次 `agent.write`。Timeout、malformed response、manager restart 或 uncertain delivery 后，secret-bearing 调用绝不会自动 replay。应用不会有意把 key 放入桌面或 manager 持久状态、进程参数、环境变量、日志、诊断、model config、catalog/revision token、预览响应或写入响应。
+API 密钥页面会在桌面凭据存储中保存、替换或删除一个全局 API key；webview 只能读取摘要，绝不能回读明文。Agent 总览既不读取也不验证该 key。只有点击卡片操作后，Rust 才会按需为 `agent.models` 加载它，并在 `agent.write` 前再次加载当前保存值。桌面 `ModelFlow` 只包含 Agent、目录和预览模式状态，不包含 API key。Timeout、malformed response、manager restart 或 uncertain delivery 后，secret-bearing 调用绝不会自动 replay。除凭据存储以及 Agent 文件或已批准备份外，应用不会有意把 key 放入桌面或 manager 持久状态、进程参数、环境变量、日志、诊断、model config、catalog/revision token、预览响应或写入响应。
 
-所选 Agent 的配置文件仍需按该 Agent 的要求持久化 key。用户批准的恢复备份也可能持久化旧 key。清除 JavaScript 和 Rust 中的应用引用只是 best effort，不保证能从进程或操作系统内存中进行取证级擦除。
+目标 Agent 的配置文件仍需按该 Agent 的要求持久化 key。用户批准的恢复备份也可能持久化旧 key。Rust 每次按需使用 key 时都会把它保存在 zeroizing 内存中，但清除应用引用只是 best effort，不保证能从进程或操作系统内存中进行取证级擦除。
 
 `MTLS_ROUTER_OPENAI_API_KEY` 已移除，不再提供 key。精确的非交互 manager 自动化见 [stdin manager 自动化](#stdin-manager-自动化)。
 
