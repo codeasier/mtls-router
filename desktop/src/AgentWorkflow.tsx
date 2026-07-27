@@ -698,6 +698,14 @@ function validateRebuildPreview(
     return false;
   if (preview.fragments.some((fragment) => fragment.agent !== target.agent))
     return false;
+  if (preview.drifted_agents.some((agent) => agent !== target.agent))
+    return false;
+  if (
+    preview.managed_collisions.some(
+      (collision) => collision.agent !== target.agent,
+    )
+  )
+    return false;
   if (
     preview.files.some(
       (effect) => effect.agent && effect.agent !== target.agent,
@@ -711,10 +719,30 @@ function validateRebuildPreview(
     rebuildEffects.map((effect) => `${effect.agent}\0${effect.path}`),
   );
   if (unique.size !== rebuildEffects.length) return false;
-  return target.mode === "rebuild"
-    ? rebuildEffects.length > 0 &&
-        rebuildEffects.every((effect) => effect.agent === target.agent)
-    : rebuildEffects.length === 0;
+  if (target.mode === "merge") return rebuildEffects.length === 0;
+  return (
+    rebuildEffects.length > 0 &&
+    rebuildEffects.every((effect) => effect.agent === target.agent) &&
+    !preview.files.some(
+      (effect) => effect.agent === target.agent && effect.mode === "merge",
+    )
+  );
+}
+
+function validateWriteResult(
+  result: unknown,
+  target: AgentId,
+): result is AgentWriteResult {
+  if (!result || typeof result !== "object") return false;
+  const statuses = (result as { agents?: unknown }).agents;
+  if (!Array.isArray(statuses) || statuses.length !== 1) return false;
+  const status = statuses[0];
+  return (
+    Boolean(status) &&
+    typeof status === "object" &&
+    (status as { agent?: unknown }).agent === target &&
+    typeof (status as { success?: unknown }).success === "boolean"
+  );
 }
 
 export function AgentWorkflow({
@@ -917,12 +945,31 @@ export function AgentWorkflow({
         approveRebuild,
       );
       onFlowConsumed();
+      if (!validateWriteResult(value, target.agent)) {
+        onReturnToOverview(retryIssue("INVALID_RESPONSE", target));
+        return;
+      }
       setResult(value);
       setStage("result");
     } catch (error) {
       const code = errorCode(error);
-      if (code === "PREVIEW_STALE") await recoverStalePreview();
-      else onReturnToOverview(retryIssue(code, target));
+      if (code === "PREVIEW_STALE") {
+        await recoverStalePreview();
+      } else {
+        onFlowConsumed();
+        if (code === "ROLLBACK_FAILED") {
+          try {
+            const detection = await refreshDetection();
+            if (targetIsReusable(detection, target))
+              onReturnToOverview(retryIssue(code, target));
+            else onReturnToOverview();
+          } catch {
+            onReturnToOverview({ kind: "detect", code });
+          }
+        } else {
+          onReturnToOverview(retryIssue(code, target));
+        }
+      }
     } finally {
       writeInFlightRef.current = false;
       setBusy(false);

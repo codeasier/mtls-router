@@ -151,6 +151,15 @@ function previewFor(
   };
 }
 
+const opencodeRebuildEffect = {
+  agent: "opencode" as const,
+  mode: "rebuild" as const,
+  path: "/safe/opencode/config.json",
+  role: "config",
+  format: "json",
+  operation: "replace",
+};
+
 function selectClaudePrimary() {
   fireEvent.change(screen.getByLabelText(/^主模型$|^Primary model$/), {
     target: { value: "model-a" },
@@ -482,18 +491,19 @@ describe("single-Agent workflow", () => {
     const rebuildPreview = previewFor("opencode", opencodeConfig, {
       files: [
         {
-          agent: "opencode",
-          mode: "rebuild",
-          path: "/safe/opencode/config.json",
-          role: "config",
-          format: "json",
-          operation: "replace",
+          ...opencodeRebuildEffect,
           backup_required: true,
           backup_pattern: "/safe/opencode/config.json.bak-<timestamp>-<random>",
           backup_sensitive: true,
           warning: "Existing unrelated settings will be discarded.",
         },
       ],
+      state_change: {
+        path: "/safe/manager/state.json",
+        role: "state",
+        format: "json",
+        operation: "replace",
+      },
     });
     const api = createMockApi({
       previewAgents: vi.fn().mockResolvedValue(rebuildPreview),
@@ -553,42 +563,90 @@ describe("single-Agent workflow", () => {
     expectSingletonRequests(api, "opencode");
   });
 
-  it.each([
-    ["merge target with a rebuild effect", targets.opencode, "opencode"],
-    ["rebuild target with another Agent effect", targets.rebuild, "codex"],
-  ] as const)("fails closed for %s", async (_, target, effectAgent) => {
-    const api = createMockApi({
-      previewAgents: vi.fn().mockResolvedValue(
-        previewFor("opencode", opencodeConfig, {
-          files: [
-            {
-              agent: effectAgent,
-              mode: "rebuild",
-              path: `/safe/${effectAgent}/config`,
-              role: "config",
-              format: "json",
-              operation: "replace",
-            },
-          ],
-        }),
-      ),
-    });
-    renderWorkflow({
-      api,
-      target,
-      discovery: {
-        ...baseDiscovery,
-        existing: { ...baseDiscovery.existing, model_config: opencodeConfig },
+  const invalidRebuildPreviewCases: Array<
+    [string, AgentTarget, Partial<AgentPreview>]
+  > = [
+    [
+      "a merge target with a rebuild effect",
+      targets.opencode,
+      { files: [opencodeRebuildEffect] },
+    ],
+    [
+      "a rebuild effect without an Agent",
+      targets.rebuild,
+      { files: [{ ...opencodeRebuildEffect, agent: undefined }] },
+    ],
+    [
+      "a rebuild effect for another Agent",
+      targets.rebuild,
+      { files: [{ ...opencodeRebuildEffect, agent: "codex" as const }] },
+    ],
+    [
+      "mixed merge and rebuild Agent effects",
+      targets.rebuild,
+      {
+        files: [
+          opencodeRebuildEffect,
+          {
+            ...opencodeRebuildEffect,
+            mode: "merge" as const,
+            path: "/safe/opencode/models.json",
+          },
+        ],
       },
-    });
-    generatePreview();
-    const write = await screen.findByRole("button", {
-      name: /写入所选 Agent|Write selected Agents/,
-    });
-    expect(write).toBeDisabled();
-    fireEvent.click(write);
-    expect(api.writeAgents).not.toHaveBeenCalled();
-  });
+    ],
+    [
+      "cross-Agent drift metadata",
+      targets.rebuild,
+      {
+        files: [opencodeRebuildEffect],
+        drifted_agents: ["codex" as const],
+      },
+    ],
+    [
+      "cross-Agent collision metadata",
+      targets.rebuild,
+      {
+        files: [opencodeRebuildEffect],
+        managed_collisions: [
+          {
+            agent: "codex" as const,
+            path: "/safe/codex/config.toml",
+            type: "fixed_managed_path",
+            action: "replace",
+          },
+        ],
+      },
+    ],
+  ];
+
+  it.each(invalidRebuildPreviewCases)(
+    "fails closed for %s",
+    async (_, target, previewOverrides) => {
+      const api = createMockApi({
+        previewAgents: vi.fn().mockResolvedValue(
+          previewFor("opencode", opencodeConfig, {
+            ...previewOverrides,
+          }),
+        ),
+      });
+      renderWorkflow({
+        api,
+        target,
+        discovery: {
+          ...baseDiscovery,
+          existing: { ...baseDiscovery.existing, model_config: opencodeConfig },
+        },
+      });
+      generatePreview();
+      const write = await screen.findByRole("button", {
+        name: /写入所选 Agent|Write selected Agents/,
+      });
+      expect(write).toBeDisabled();
+      fireEvent.click(write);
+      expect(api.writeAgents).not.toHaveBeenCalled();
+    },
+  );
 
   it("keeps configure state after stale preview only while the immutable target remains eligible", async () => {
     const refreshDetection = vi.fn().mockResolvedValue(detection);
@@ -621,30 +679,19 @@ describe("single-Agent workflow", () => {
     ).toBeVisible();
     expect(screen.getByLabelText(/^主模型$|^Primary model$/)).toBeVisible();
     expect(refreshDetection).toHaveBeenCalledTimes(1);
+    expect(callbacks.onFlowConsumed).not.toHaveBeenCalled();
     expect(callbacks.onReturnToOverview).not.toHaveBeenCalled();
     expect(document.body.textContent).not.toContain("sk-stale-canary-secret");
   });
 
-  it("returns stale, expired, and transaction failures with stable retry issues", async () => {
-    const codes = [
-      "MODEL_CATALOG_STALE",
-      "MODEL_FLOW_EXPIRED",
-      "BACKUP_FAILED",
-      "WRITE_FAILED",
-      "ROLLBACK_FAILED",
-    ] as const;
+  it("returns stale and expired previews with stable retry issues", async () => {
+    const codes = ["MODEL_CATALOG_STALE", "MODEL_FLOW_EXPIRED"] as const;
     for (const code of codes) {
       const api = createMockApi({
-        previewAgents:
-          code === "MODEL_CATALOG_STALE" || code === "MODEL_FLOW_EXPIRED"
-            ? vi.fn().mockRejectedValue({
-                code,
-                message: `sk-${code}-canary-secret`,
-              })
-            : vi.fn().mockResolvedValue(previewFor("claude", claudeConfig)),
-        writeAgents: vi
-          .fn()
-          .mockRejectedValue({ code, message: `sk-${code}-canary-secret` }),
+        previewAgents: vi.fn().mockRejectedValue({
+          code,
+          message: `sk-${code}-canary-secret`,
+        }),
       });
       const callbacks = renderWorkflow({
         api,
@@ -654,13 +701,6 @@ describe("single-Agent workflow", () => {
         },
       });
       generatePreview();
-      if (code !== "MODEL_CATALOG_STALE" && code !== "MODEL_FLOW_EXPIRED") {
-        fireEvent.click(
-          await screen.findByRole("button", {
-            name: /写入所选 Agent|Write selected Agents/,
-          }),
-        );
-      }
       await waitFor(() =>
         expect(callbacks.onReturnToOverview).toHaveBeenCalledWith({
           kind: "retry",
@@ -672,6 +712,160 @@ describe("single-Agent workflow", () => {
       expectSingletonRequests(api, "claude");
       document.body.innerHTML = "";
     }
+  });
+
+  it.each(["BACKUP_FAILED", "WRITE_FAILED"] as const)(
+    "invalidates the flow before returning safe %s handling",
+    async (code) => {
+      const api = createMockApi({
+        previewAgents: vi
+          .fn()
+          .mockResolvedValue(previewFor("claude", claudeConfig)),
+        writeAgents: vi.fn().mockRejectedValue({
+          code,
+          message: `sk-${code}-canary-secret`,
+        }),
+      });
+      const callbacks = renderWorkflow({
+        api,
+        discovery: {
+          ...baseDiscovery,
+          existing: { ...baseDiscovery.existing, model_config: claudeConfig },
+        },
+      });
+      generatePreview();
+      fireEvent.click(
+        await screen.findByRole("button", {
+          name: /写入所选 Agent|Write selected Agents/,
+        }),
+      );
+
+      await waitFor(() =>
+        expect(callbacks.onReturnToOverview).toHaveBeenCalledWith({
+          kind: "retry",
+          code,
+          target: targets.claude,
+        }),
+      );
+      expect(callbacks.onFlowConsumed).toHaveBeenCalledTimes(1);
+      expect(callbacks.onFlowConsumed.mock.invocationCallOrder[0]).toBeLessThan(
+        callbacks.onReturnToOverview.mock.invocationCallOrder[0],
+      );
+      expect(document.body.textContent).not.toContain("canary-secret");
+    },
+  );
+
+  it("refreshes detection after ROLLBACK_FAILED before allowing target retry", async () => {
+    const refreshDetection = vi.fn().mockResolvedValue(detection);
+    const api = createMockApi({
+      previewAgents: vi
+        .fn()
+        .mockResolvedValue(previewFor("claude", claudeConfig)),
+      writeAgents: vi.fn().mockRejectedValue({ code: "ROLLBACK_FAILED" }),
+    });
+    const callbacks = renderWorkflow({
+      api,
+      refreshDetection,
+      discovery: {
+        ...baseDiscovery,
+        existing: { ...baseDiscovery.existing, model_config: claudeConfig },
+      },
+    });
+    generatePreview();
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: /写入所选 Agent|Write selected Agents/,
+      }),
+    );
+
+    await waitFor(() =>
+      expect(callbacks.onReturnToOverview).toHaveBeenCalledWith({
+        kind: "retry",
+        code: "ROLLBACK_FAILED",
+        target: targets.claude,
+      }),
+    );
+    expect(callbacks.onFlowConsumed).toHaveBeenCalledTimes(1);
+    expect(refreshDetection).toHaveBeenCalledTimes(1);
+    expect(refreshDetection.mock.invocationCallOrder[0]).toBeLessThan(
+      callbacks.onReturnToOverview.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("does not offer rollback retry when refreshed detection makes the target ineligible", async () => {
+    const refreshDetection = vi.fn().mockResolvedValue({
+      agents: detection.agents.map((agent) =>
+        agent.agent === "claude" ? { ...agent, writable: false } : agent,
+      ),
+    });
+    const api = createMockApi({
+      previewAgents: vi
+        .fn()
+        .mockResolvedValue(previewFor("claude", claudeConfig)),
+      writeAgents: vi.fn().mockRejectedValue({ code: "ROLLBACK_FAILED" }),
+    });
+    const callbacks = renderWorkflow({
+      api,
+      refreshDetection,
+      discovery: {
+        ...baseDiscovery,
+        existing: { ...baseDiscovery.existing, model_config: claudeConfig },
+      },
+    });
+    generatePreview();
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: /写入所选 Agent|Write selected Agents/,
+      }),
+    );
+
+    await waitFor(() =>
+      expect(callbacks.onReturnToOverview).toHaveBeenCalled(),
+    );
+    expect(callbacks.onReturnToOverview).toHaveBeenCalledWith();
+    expect(callbacks.onReturnToOverview).not.toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "retry" }),
+    );
+    expect(refreshDetection).toHaveBeenCalledTimes(1);
+    expect(callbacks.onFlowConsumed).toHaveBeenCalledTimes(1);
+  });
+
+  it("requires detection recovery instead of stale retry when rollback refresh fails", async () => {
+    const refreshDetection = vi
+      .fn()
+      .mockRejectedValue(new Error("sk-rollback-detect-canary-secret"));
+    const api = createMockApi({
+      previewAgents: vi
+        .fn()
+        .mockResolvedValue(previewFor("claude", claudeConfig)),
+      writeAgents: vi.fn().mockRejectedValue({ code: "ROLLBACK_FAILED" }),
+    });
+    const callbacks = renderWorkflow({
+      api,
+      refreshDetection,
+      discovery: {
+        ...baseDiscovery,
+        existing: { ...baseDiscovery.existing, model_config: claudeConfig },
+      },
+    });
+    generatePreview();
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: /写入所选 Agent|Write selected Agents/,
+      }),
+    );
+
+    await waitFor(() =>
+      expect(callbacks.onReturnToOverview).toHaveBeenCalledWith({
+        kind: "detect",
+        code: "ROLLBACK_FAILED",
+      }),
+    );
+    expect(callbacks.onReturnToOverview).not.toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "retry" }),
+    );
+    expect(callbacks.onFlowConsumed).toHaveBeenCalledTimes(1);
+    expect(document.body.textContent).not.toContain("canary-secret");
   });
 
   it("returns to overview when stale detection makes the target ineligible or fails", async () => {
@@ -715,6 +909,91 @@ describe("single-Agent workflow", () => {
       );
       document.body.innerHTML = "";
     }
+  });
+
+  it.each([
+    ["missing", []],
+    ["foreign", [{ agent: "codex" as const, success: true }]],
+    [
+      "duplicate",
+      [
+        { agent: "claude" as const, success: true },
+        { agent: "claude" as const, success: true },
+      ],
+    ],
+  ])(
+    "rejects a %s write status without rendering transaction complete",
+    async (_, agents) => {
+      const api = createMockApi({
+        previewAgents: vi
+          .fn()
+          .mockResolvedValue(previewFor("claude", claudeConfig)),
+        writeAgents: vi.fn().mockResolvedValue({
+          transaction_id: "tx-malformed",
+          agents,
+        }),
+      });
+      const callbacks = renderWorkflow({
+        api,
+        discovery: {
+          ...baseDiscovery,
+          existing: { ...baseDiscovery.existing, model_config: claudeConfig },
+        },
+      });
+      generatePreview();
+      fireEvent.click(
+        await screen.findByRole("button", {
+          name: /写入所选 Agent|Write selected Agents/,
+        }),
+      );
+
+      await waitFor(() =>
+        expect(callbacks.onReturnToOverview).toHaveBeenCalledWith({
+          kind: "retry",
+          code: "INVALID_RESPONSE",
+          target: targets.claude,
+        }),
+      );
+      expect(callbacks.onFlowConsumed).toHaveBeenCalledTimes(1);
+      expect(
+        screen.queryByText(/Agent 配置结果|Agent configuration result/),
+      ).not.toBeInTheDocument();
+    },
+  );
+
+  it("renders the target's explicit failed write status as failure", async () => {
+    const api = createMockApi({
+      previewAgents: vi
+        .fn()
+        .mockResolvedValue(previewFor("claude", claudeConfig)),
+      writeAgents: vi.fn().mockResolvedValue({
+        transaction_id: "tx-failed-status",
+        agents: [
+          {
+            agent: "claude",
+            success: false,
+            error_code: "WRITE_FAILED",
+          },
+        ],
+      }),
+    });
+    const callbacks = renderWorkflow({
+      api,
+      discovery: {
+        ...baseDiscovery,
+        existing: { ...baseDiscovery.existing, model_config: claudeConfig },
+      },
+    });
+    generatePreview();
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: /写入所选 Agent|Write selected Agents/,
+      }),
+    );
+
+    expect(await screen.findByText(/^失败$|^Failure$/)).toBeVisible();
+    expect(callbacks.onFlowConsumed).toHaveBeenCalledTimes(1);
+    expect(callbacks.onReturnToOverview).not.toHaveBeenCalled();
   });
 
   it("shows sanitized result paths, consumes the flow, refreshes, and returns", async () => {
