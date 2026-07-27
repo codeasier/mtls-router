@@ -484,6 +484,7 @@ export const zhCN = {
   "agents.transactionComplete": "事务完成",
   "agents.resultHeading": "Agent 配置结果",
   "agents.resultNote": "下列路径来自 manager 的事务结果；页面不会显示凭据值。",
+  "agents.result.installLater": "配置已生成；安装 {agent} 后即可使用。",
   "agents.success": "成功",
   "agents.failure": "失败",
   "agents.rolledBack": "已回滚本次变更",

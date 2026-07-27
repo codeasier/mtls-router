@@ -1044,6 +1044,7 @@ describe("single-Agent workflow", () => {
     });
     const callbacks = renderWorkflow({
       api,
+      target: { ...targets.claude, installedAtEntry: false },
       discovery: {
         ...baseDiscovery,
         existing: { ...baseDiscovery.existing, model_config: claudeConfig },
@@ -1057,9 +1058,52 @@ describe("single-Agent workflow", () => {
     );
 
     expect(await screen.findByText(/^失败$|^Failure$/)).toBeVisible();
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
     expect(callbacks.onFlowConsumed).not.toHaveBeenCalled();
     expect(callbacks.onReturnToOverview).not.toHaveBeenCalled();
   });
+
+  it.each([
+    [false, true],
+    [true, false],
+  ])(
+    "shows the install-later note only when installedAtEntry is %s",
+    async (installedAtEntry, expectNote) => {
+      const api = createMockApi({
+        previewAgents: vi
+          .fn()
+          .mockResolvedValue(previewFor("claude", claudeConfig)),
+        writeAgents: vi.fn().mockResolvedValue({
+          transaction_id: "tx-install-later",
+          agents: [{ agent: "claude", success: true }],
+        }),
+      });
+      renderWorkflow({
+        api,
+        target: { ...targets.claude, installedAtEntry },
+        discovery: {
+          ...baseDiscovery,
+          existing: { ...baseDiscovery.existing, model_config: claudeConfig },
+        },
+      });
+      generatePreview();
+      fireEvent.click(
+        await screen.findByRole("button", {
+          name: /写入所选 Agent|Write selected Agents/,
+        }),
+      );
+
+      expect(await screen.findByText(/^成功$|^Success$/)).toBeVisible();
+      expect(screen.queryByText(/^失败$|^Failure$/)).not.toBeInTheDocument();
+      if (expectNote) {
+        expect(await screen.findByRole("note")).toHaveTextContent(
+          /配置已生成；安装 Claude Code 后即可使用|Configuration generated; install Claude Code to use it/,
+        );
+      } else {
+        expect(screen.queryByRole("note")).not.toBeInTheDocument();
+      }
+    },
+  );
 
   it("shows sanitized result paths, consumes the flow, refreshes, and returns", async () => {
     const refreshDetection = vi.fn().mockResolvedValue(detection);

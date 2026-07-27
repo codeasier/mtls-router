@@ -546,6 +546,8 @@ export const en: Record<TranslationKey, string> = {
   "agents.resultHeading": "Agent configuration result",
   "agents.resultNote":
     "These paths come from the manager transaction result; no credential value is displayed.",
+  "agents.result.installLater":
+    "Configuration generated; install {agent} to use it.",
   "agents.success": "Success",
   "agents.failure": "Failed",
   "agents.rolledBack": "This change was rolled back",
