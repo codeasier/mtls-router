@@ -2,6 +2,8 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { AgentConfigFields } from "./AgentConfigFields";
+import { AgentPreviewPane } from "./AgentPreviewPane";
 import { AgentWorkflow } from "./AgentWorkflow";
 import type { AgentTarget } from "./agentPresentation";
 import {
@@ -214,6 +216,12 @@ describe("single-Agent workflow", () => {
     expect(
       screen.queryByLabelText(/选择 Claude Code|Select Claude Code/),
     ).not.toBeInTheDocument();
+    const workbench = document.querySelector(".config-workbench")!;
+    expect(workbench.querySelector(":scope > .catalog-rail")).not.toBeNull();
+    expect(workbench.querySelector(":scope > .config-panels")).not.toBeNull();
+    expect(
+      workbench.querySelector(":scope > .config-panels .config-actions"),
+    ).not.toBeNull();
     selectClaudePrimary();
     generatePreview();
 
@@ -429,6 +437,328 @@ describe("single-Agent workflow", () => {
       },
     });
     expectSingletonRequests(api, "codex");
+  });
+
+  it.each([
+    [
+      "claude",
+      targets.claude,
+      /Claude Code extra JSON/,
+      claudeConfig,
+      { custom: "7" },
+    ],
+    ["codex", targets.codex, /Codex extra JSON/, codexConfig, { custom: 7 }],
+  ] as const)(
+    "rejects protected top-level extra fields for %s",
+    async (_, target, label, modelConfig, expectedExtra) => {
+      const api = createMockApi({
+        previewAgents: vi
+          .fn()
+          .mockResolvedValue(previewFor(target.agent, modelConfig)),
+      });
+      renderWorkflow({
+        api,
+        target,
+        discovery: {
+          ...baseDiscovery,
+          existing: {
+            ...baseDiscovery.existing,
+            model_config: modelConfig,
+          },
+        },
+      });
+
+      const extra = screen.getByLabelText(label);
+      fireEvent.change(extra, {
+        target: { value: '{"safe":{"api_key":"must-not-pass"}}' },
+      });
+      expect(extra).toHaveAttribute("aria-invalid", "true");
+      const protectedErrors = screen.getAllByText(/protected_path/);
+      expect(protectedErrors).toHaveLength(2);
+      protectedErrors.forEach((error) =>
+        expect(error).toHaveAttribute("role", "alert"),
+      );
+      expect(
+        screen.getByRole("button", {
+          name: /生成写入预览|Generate write preview/,
+        }),
+      ).toBeDisabled();
+      expect(api.previewAgents).not.toHaveBeenCalled();
+
+      fireEvent.change(extra, { target: { value: '{"custom":7}' } });
+      generatePreview();
+      await waitFor(() => expect(api.previewAgents).toHaveBeenCalledTimes(1));
+      expect(
+        vi.mocked(api.previewAgents).mock.calls[0][3][target.agent]?.extra,
+      ).toEqual(expectedExtra);
+
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: /返回配置|Back to configuration/,
+        }),
+      );
+      fireEvent.change(extra, { target: { value: "" } });
+      generatePreview();
+      await waitFor(() => expect(api.previewAgents).toHaveBeenCalledTimes(2));
+      expect(vi.mocked(api.previewAgents).mock.calls[1][3]).toEqual(
+        modelConfig,
+      );
+    },
+  );
+
+  it.each([
+    [
+      "claude",
+      targets.claude,
+      /Claude Code extra JSON/,
+      {
+        ...claudeConfig,
+        claude: { ...claudeConfig.claude!, extra: { canonical: "yes" } },
+      } satisfies ModelConfig,
+    ],
+    [
+      "codex",
+      targets.codex,
+      /Codex extra JSON/,
+      {
+        ...codexConfig,
+        codex: {
+          ...codexConfig.codex!,
+          extra: { model_auto_compact_token_limit_scope: "total" },
+        },
+      } satisfies ModelConfig,
+    ],
+  ] as const)(
+    "removes canonical %s extra after preview and explicit deletion",
+    async (_, target, label, canonicalConfig) => {
+      const api = createMockApi({
+        previewAgents: vi
+          .fn()
+          .mockResolvedValueOnce(previewFor(target.agent, canonicalConfig))
+          .mockImplementation(async (_agents, _flow, _catalog, config) =>
+            previewFor(target.agent, config),
+          ),
+      });
+      renderWorkflow({
+        api,
+        target,
+        discovery: {
+          ...baseDiscovery,
+          existing: {
+            ...baseDiscovery.existing,
+            model_config:
+              target.agent === "claude" ? claudeConfig : codexConfig,
+          },
+        },
+      });
+
+      generatePreview();
+      await screen.findByRole("button", {
+        name: /返回配置|Back to configuration/,
+      });
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: /返回配置|Back to configuration/,
+        }),
+      );
+      const canonicalExtra = screen.getByLabelText(label);
+      expect(canonicalExtra).not.toHaveValue("");
+
+      fireEvent.change(canonicalExtra, { target: { value: "" } });
+      generatePreview();
+      await waitFor(() => expect(api.previewAgents).toHaveBeenCalledTimes(2));
+      expect(
+        vi.mocked(api.previewAgents).mock.calls[1][3][target.agent]?.extra,
+      ).toBeUndefined();
+    },
+  );
+
+  it("preserves invalid ObjectField text and error when a sibling setting changes", () => {
+    const api = createMockApi();
+    renderWorkflow({
+      api,
+      target: targets.opencode,
+      discovery: {
+        ...baseDiscovery,
+        existing: { ...baseDiscovery.existing, model_config: opencodeConfig },
+      },
+    });
+
+    const variants = screen.getByLabelText(/Variants JSON/);
+    fireEvent.change(variants, { target: { value: '{"broken":' } });
+    const describedBy = variants.getAttribute("aria-describedby")!;
+    expect(document.getElementById(describedBy)).toHaveAttribute(
+      "role",
+      "alert",
+    );
+    fireEvent.change(screen.getByLabelText("model-a reasoning"), {
+      target: { value: "true" },
+    });
+
+    expect(variants).toHaveValue('{"broken":');
+    expect(variants).toHaveAttribute("aria-invalid", "true");
+    const previewButton = screen.getByRole("button", {
+      name: /生成写入预览|Generate write preview/,
+    });
+    const exportButton = screen.getByRole("button", {
+      name: /导出.*配置|Export configuration/,
+    });
+    expect(previewButton).toBeDisabled();
+    expect(exportButton).toBeDisabled();
+    exportButton.removeAttribute("disabled");
+    fireEvent.click(exportButton);
+    previewButton.removeAttribute("disabled");
+    fireEvent.click(previewButton);
+    expect(api.previewAgents).not.toHaveBeenCalled();
+    expect(api.exportAgentModelConfig).not.toHaveBeenCalled();
+  });
+
+  it("reports invalid local JSON as a dirty local draft", () => {
+    const onDraftStateChange = vi.fn();
+    render(
+      <AgentConfigFields
+        target={targets.opencode}
+        discovery={baseDiscovery}
+        config={opencodeConfig}
+        disabled={false}
+        resetToken={0}
+        onChange={vi.fn()}
+        onDraftStateChange={onDraftStateChange}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText(/Variants JSON/), {
+      target: { value: '{"broken":' },
+    });
+    expect(onDraftStateChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        error: expect.any(String),
+        hasLocalDraft: true,
+      }),
+    );
+  });
+
+  it("resets approvals when preview revision identity changes", () => {
+    const first = previewFor("claude", claudeConfig, {
+      revision_token: "revision-1",
+      managed_config_drift: true,
+      requires_codex_auth_approval: true,
+    });
+    const props = {
+      target: targets.claude,
+      result: null,
+      busy: false,
+      onGenerate: vi.fn(),
+      onBackToEdit: vi.fn(),
+      onWrite: vi.fn(),
+      onCancel: vi.fn(),
+      onFinish: vi.fn(),
+    };
+    const view = render(<AgentPreviewPane {...props} preview={first} />);
+    const approvals = screen.getAllByRole("checkbox");
+    approvals.forEach((approval) => fireEvent.click(approval));
+    approvals.forEach((approval) => expect(approval).toBeChecked());
+
+    view.rerender(
+      <AgentPreviewPane
+        {...props}
+        preview={{ ...first, revision_token: "revision-2" }}
+      />,
+    );
+    screen
+      .getAllByRole("checkbox")
+      .forEach((approval) => expect(approval).not.toBeChecked());
+  });
+
+  it("closes rebuild confirmation when preview revision identity changes", () => {
+    const first = previewFor("opencode", opencodeConfig, {
+      revision_token: "revision-1",
+      files: [opencodeRebuildEffect],
+    });
+    const props = {
+      target: targets.rebuild,
+      result: null,
+      busy: false,
+      onGenerate: vi.fn(),
+      onBackToEdit: vi.fn(),
+      onWrite: vi.fn(),
+      onCancel: vi.fn(),
+      onFinish: vi.fn(),
+    };
+    const view = render(<AgentPreviewPane {...props} preview={first} />);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /写入所选 Agent|Write selected Agents/,
+      }),
+    );
+    expect(screen.getByRole("dialog")).toBeVisible();
+
+    view.rerender(
+      <AgentPreviewPane
+        {...props}
+        preview={{ ...first, revision_token: "revision-2" }}
+      />,
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("presents every file effect and an accessible preview heading", async () => {
+    const api = createMockApi({
+      previewAgents: vi.fn().mockResolvedValue(
+        previewFor("claude", claudeConfig, {
+          files: [
+            {
+              agent: "claude",
+              mode: "merge",
+              path: "/safe/claude/create.json",
+              role: "config",
+              format: "json",
+              operation: "create",
+              preserves: ["theme", "hooks"],
+            },
+            {
+              agent: "claude",
+              mode: "merge",
+              path: "/safe/claude/preserve.json",
+              role: "settings",
+              format: "json",
+              operation: "preserve",
+              backup_path: "/safe/claude/preserve.json.bak",
+            },
+          ],
+          state_change: {
+            path: "/safe/manager/state.json",
+            role: "state",
+            format: "json",
+            operation: "replace",
+          },
+        }),
+      ),
+    });
+    renderWorkflow({
+      api,
+      discovery: {
+        ...baseDiscovery,
+        existing: { ...baseDiscovery.existing, model_config: claudeConfig },
+      },
+    });
+
+    generatePreview();
+
+    expect(
+      await screen.findByRole("heading", {
+        name: /已脱敏托管片段|Redacted managed fragments/,
+      }),
+    ).toBeVisible();
+    for (const path of [
+      "/safe/claude/create.json",
+      "/safe/claude/preserve.json",
+      "/safe/claude/preserve.json.bak",
+      "/safe/manager/state.json",
+    ]) {
+      expect(screen.getByText(path)).toBeVisible();
+    }
+    expect(screen.getByText(/theme, hooks/)).toBeVisible();
   });
 
   it("writes preview-normalized config only after managed drift and auth approvals", async () => {
