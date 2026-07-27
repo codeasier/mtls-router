@@ -134,7 +134,9 @@ export function AgentPage({
         onBack={leavePanel}
         onGuardStateChange={(state) => {
           guardStateRef.current = state;
-          onDirtyChange(state.dirty || state.busy);
+          // Keep native quit routed through the live panel; its guard still skips
+          // the dialog for clean drafts and blocks active operations.
+          onDirtyChange(true);
         }}
         onNavigateToApiKeys={onNavigateToApiKeys}
         onRetrySession={() => setPanelSession((value) => value + 1)}

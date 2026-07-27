@@ -203,6 +203,12 @@ export function AgentPanel({
                 })}
               </p>
             )}
+            {controller.target?.mode === "rebuild" && (
+              <p className="drift-note" role="alert">
+                {t("agents.recovery.guidance.eligible")}{" "}
+                {t("agents.recovery.warning")}
+              </p>
+            )}
             {controller.phase.kind === "editing" &&
               controller.phase.refresh.kind === "failed" && (
                 <p className="drift-note" role="alert">

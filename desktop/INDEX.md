@@ -22,7 +22,7 @@ React UI ──Tauri invoke──▶ Rust commands.rs ──stdin/stdout JSON─
 | 文件                                | 职责                                                                                                              |
 | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | `ipc.ts`                            | `DesktopApi` 接口 + `createDesktopApi()` —— 所有 Tauri 命令的类型化包装；`sanitizeSensitiveText()` 用于客户端脱敏 |
-| `App.tsx`                           | 根布局、区块导航与注册式 Agent leave guard；dirty/busy 同步原生退出保护并共用可访问确认框                         |
+| `App.tsx`                           | 根布局、区块导航与注册式 Agent leave guard；面板存续期同步原生退出保护并共用可访问确认框                          |
 | `RouterPage.tsx`                    | router 状态、start/stop、health、占用者检查/终止                                                                  |
 | `AgentPage.tsx`                     | Agents 页面协调器：仅负责本地检测总览、单 Agent 目标选择、离开 guard 注册与返回焦点恢复                           |
 | `AgentOverview.tsx`                 | Claude Code / OpenCode / Codex 总览；分别展示 CLI 安装与配置状态，不依赖模型上游                                  |

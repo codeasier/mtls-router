@@ -988,14 +988,8 @@ export function useAgentPanelController({
         return;
       if (choice === "preserve") {
         const candidate = current.phase.refresh.candidate;
-        const baselines = createPanelBaselines(
-          targetId,
-          candidate.detection,
-          candidate.discovery,
-        );
         commitSnapshot((latest) => ({
           ...latest,
-          formBaseline: baselines.form,
           externalBaseline: candidate.externalBaseline,
           phase: { kind: "editing", refresh: { kind: "idle" } },
           preview: null,

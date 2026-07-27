@@ -73,6 +73,7 @@ pub(crate) struct ModelFlow {
     models: Vec<String>,
     catalog_token: String,
     modes: Option<HashMap<String, String>>,
+    write_in_flight: bool,
 }
 
 pub(crate) struct PendingOccupant {
@@ -462,6 +463,7 @@ async fn agent_models_command(
             models: Vec::new(),
             catalog_token: String::new(),
             modes: None,
+            write_in_flight: false,
         },
     );
     let mut pending = PendingFlow {
@@ -545,7 +547,10 @@ async fn agent_preview_command(
         .await?;
     let mut flows = model_flows.lock().await;
     let flow = flows.get_mut(&request.flow_id).ok_or_else(flow_expired)?;
-    if flow.agents != request.agents || flow.catalog_token != request.catalog_token {
+    if flow.write_in_flight
+        || flow.agents != request.agents
+        || flow.catalog_token != request.catalog_token
+    {
         return Err(flow_expired());
     }
     flow.modes = Some(modes);
@@ -585,6 +590,9 @@ async fn agent_write_command(
     let expected_flow = {
         let flows = model_flows.lock().await;
         let flow = flows.get(&request.flow_id).ok_or_else(flow_expired)?;
+        if flow.write_in_flight {
+            return Err(flow_expired());
+        }
         if flow.agents != request.agents || flow.catalog_token != request.catalog_token {
             return Err(flow_expired());
         }
@@ -603,10 +611,12 @@ async fn agent_write_command(
     }
     let flow = {
         let mut flows = model_flows.lock().await;
-        if flows.get(&request.flow_id) != Some(&expected_flow) {
+        let current = flows.get_mut(&request.flow_id).ok_or_else(flow_expired)?;
+        if current != &expected_flow {
             return Err(flow_expired());
         }
-        flows.remove(&request.flow_id).ok_or_else(flow_expired)?
+        current.write_in_flight = true;
+        current.clone()
     };
     let params = json!({
         "agents": request.agents,
@@ -623,10 +633,33 @@ async fn agent_write_command(
         .await
     {
         Err(error) if error.code == "PREVIEW_STALE" => {
-            model_flows.lock().await.insert(request.flow_id, flow);
+            finish_model_flow_write(model_flows, &request.flow_id, &flow, true).await;
             Err(error)
         }
-        result => result,
+        result => {
+            finish_model_flow_write(model_flows, &request.flow_id, &flow, false).await;
+            result
+        }
+    }
+}
+
+async fn finish_model_flow_write(
+    model_flows: &Arc<Mutex<HashMap<String, ModelFlow>>>,
+    flow_id: &str,
+    flow: &ModelFlow,
+    preview_stale: bool,
+) {
+    let mut flows = model_flows.lock().await;
+    if flows.get(flow_id) != Some(flow) {
+        return;
+    }
+    if preview_stale {
+        flows
+            .get_mut(flow_id)
+            .expect("flow checked above")
+            .write_in_flight = false;
+    } else {
+        flows.remove(flow_id);
     }
 }
 
@@ -650,7 +683,7 @@ pub async fn agent_model_config_import(
     validate_agents(&agents)?;
     let flows = state.model_flows.lock().await;
     let flow = flows.get(&flow_id).ok_or_else(flow_expired)?;
-    if flow.agents != agents {
+    if flow.write_in_flight || flow.agents != agents {
         return Err(flow_expired());
     }
     model_config::import_json(&content, &agents, &flow.models)
@@ -666,7 +699,7 @@ pub async fn agent_model_config_export(
     validate_agents(&agents)?;
     let flows = state.model_flows.lock().await;
     let flow = flows.get(&flow_id).ok_or_else(flow_expired)?;
-    if flow.agents != agents {
+    if flow.write_in_flight || flow.agents != agents {
         return Err(flow_expired());
     }
     model_config::export_json(&model_config, &agents, &flow.models)
@@ -866,7 +899,10 @@ async fn validate_config_request(
     }
     let flows = model_flows.lock().await;
     let flow = flows.get(&request.flow_id).ok_or_else(flow_expired)?;
-    if flow.agents != request.agents || flow.catalog_token != request.catalog_token {
+    if flow.write_in_flight
+        || flow.agents != request.agents
+        || flow.catalog_token != request.catalog_token
+    {
         return Err(flow_expired());
     }
     model_config::validate(&request.model_config, &request.agents, &flow.models)
@@ -1065,6 +1101,7 @@ mod tests {
             models: vec!["m1".into()],
             catalog_token: "catalog".into(),
             modes,
+            write_in_flight: false,
         }
     }
 
@@ -1281,6 +1318,7 @@ mod tests {
                     models: vec!["m1".into()],
                     catalog_token: "catalog".into(),
                     modes: None,
+                    write_in_flight: false,
                 },
             )])));
             let state = AppState {
@@ -1822,6 +1860,7 @@ mod tests {
                     models: vec!["m1".into()],
                     catalog_token: "catalog".into(),
                     modes: Some(HashMap::from([("claude".into(), "merge".into())])),
+                    write_in_flight: false,
                 },
             )])));
             let error = agent_write_command(
@@ -1843,6 +1882,21 @@ mod tests {
             .unwrap_err();
             assert_eq!(error.code, "INVALID_RESPONSE");
             assert!(flows.lock().await.is_empty());
+        });
+    }
+
+    #[test]
+    fn stale_write_does_not_restore_a_flow_destroyed_while_in_flight() {
+        tauri::async_runtime::block_on(async {
+            let flow_id = Uuid::new_v4().to_string();
+            let mut flow = mixed_flow(Some(HashMap::from([("claude".into(), "merge".into())])));
+            flow.write_in_flight = true;
+            let flows = Arc::new(Mutex::new(HashMap::from([(flow_id.clone(), flow.clone())])));
+
+            flows.lock().await.remove(&flow_id);
+            finish_model_flow_write(&flows, &flow_id, &flow, true).await;
+
+            assert!(!flows.lock().await.contains_key(&flow_id));
         });
     }
 

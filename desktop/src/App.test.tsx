@@ -360,6 +360,32 @@ describe("App navigation", () => {
     expect(api.resolveAppQuit).toHaveBeenLastCalledWith(false);
   });
 
+  it("routes clean-panel native quit through the live guard without a dialog", async () => {
+    const quitRequest = { current: null as (() => void) | null };
+    const api = createMockApi({
+      detectAgents: vi.fn().mockResolvedValue(detection),
+      discoverModels: vi.fn().mockResolvedValue(agentDiscovery),
+      subscribeAgentDraftQuitRequested: vi.fn(async (listener) => {
+        quitRequest.current = listener;
+        return () => undefined;
+      }),
+    });
+    render(<App api={api} />);
+    fireEvent.click(screen.getByRole("button", { name: "Agent 配置" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "编辑 Claude Code 配置" }),
+    );
+    await screen.findByLabelText("主模型");
+    await waitFor(() =>
+      expect(api.setAgentDraftDirty).toHaveBeenLastCalledWith(true),
+    );
+
+    act(() => quitRequest.current?.());
+
+    expect(api.resolveAppQuit).toHaveBeenLastCalledWith(true);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
   it("does nothing when the active Agent section is selected again", async () => {
     const api = createMockApi({
       detectAgents: vi.fn().mockResolvedValue(detection),

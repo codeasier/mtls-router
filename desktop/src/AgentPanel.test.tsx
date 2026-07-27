@@ -741,7 +741,7 @@ describe("useAgentPanelController", () => {
     expect(phase()).toEqual({ kind: "editing", refresh: { kind: "idle" } });
   });
 
-  it("rebases a preserved dirty draft onto the candidate form baseline", async () => {
+  it("keeps the original form baseline when preserving a dirty conflict", async () => {
     const api = readyApi();
     render(<Harness api={api} target="claude" />);
     await waitFor(() => expect(phase().kind).toBe("editing"));
@@ -766,7 +766,7 @@ describe("useAgentPanelController", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "change-to-candidate-c" }),
     );
-    expect(screen.getByTestId("dirty")).toHaveTextContent("false");
+    expect(screen.getByTestId("dirty")).toHaveTextContent("true");
   });
 
   it("discards a dirty conflict into the candidate config", async () => {
@@ -1838,6 +1838,35 @@ describe("AgentPanel integration", () => {
     expect(view.container.querySelector(".agent-panel__preview")).toBeVisible();
     expect(primary).toBeDisabled();
     expect(previewHeading).toHaveFocus();
+  });
+
+  it("warns before editing an eligible recovery target", async () => {
+    const recoveryDetection = {
+      agents: detection.agents.map((state) =>
+        state.agent === "claude"
+          ? {
+              ...state,
+              invalid: true,
+              recovery: { eligible: true, files: [] },
+            }
+          : state,
+      ),
+    };
+    const api = readyApi({
+      detectAgents: vi.fn().mockResolvedValue(recoveryDetection),
+    });
+    renderWithI18n(
+      <AgentPanel
+        api={api}
+        target="claude"
+        onBack={vi.fn()}
+        onNavigateToApiKeys={vi.fn()}
+      />,
+    );
+
+    expect(
+      await screen.findByText(/无关设置、注释、格式以及有效伴随文件/),
+    ).toHaveAttribute("role", "alert");
   });
 
   it("sends the imperative field snapshot when preview is generated", async () => {
