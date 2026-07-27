@@ -4,6 +4,7 @@ import {
   createExternalSnapshot,
   createPanelBaselines,
   isConfigDirty,
+  panelOperationAvailability,
   sameExternalSnapshot,
   targetMode,
 } from "./agentPanelState";
@@ -393,5 +394,31 @@ describe("targetMode", () => {
     expect(currentMode).toBe("merge");
     expect(changedMode).toBe("rebuild");
     expect(changedMode).not.toBe(currentMode);
+  });
+});
+
+describe("panel operation availability", () => {
+  it("keeps editing and export available while a candidate is checking", () => {
+    expect(
+      panelOperationAvailability(
+        { kind: "editing", refresh: { kind: "checking" } },
+        true,
+      ),
+    ).toEqual({ edit: true, export: true, preview: false, import: false });
+  });
+
+  it("allows only safe export for a blocked dirty draft with a live flow", () => {
+    expect(
+      panelOperationAvailability(
+        { kind: "blocked-dirty", canExport: true, errorCode: null },
+        true,
+      ),
+    ).toEqual({ edit: false, export: true, preview: false, import: false });
+    expect(
+      panelOperationAvailability(
+        { kind: "blocked-dirty", canExport: true, errorCode: null },
+        false,
+      ),
+    ).toEqual({ edit: false, export: false, preview: false, import: false });
   });
 });

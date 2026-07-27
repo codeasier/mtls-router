@@ -11,7 +11,7 @@ import {
 export type PanelPhase =
   | { kind: "loading" }
   | { kind: "readonly"; reason: ReadonlyReason }
-  | { kind: "blocked-dirty"; canExport: boolean }
+  | { kind: "blocked-dirty"; canExport: boolean; errorCode: string | null }
   | { kind: "editing"; refresh: RefreshState }
   | { kind: "preview-loading" }
   | { kind: "previewing" }
@@ -24,6 +24,13 @@ export type RefreshState =
   | { kind: "checking" }
   | { kind: "conflict"; candidate: CandidateDiscovery }
   | { kind: "failed"; code: string };
+
+export interface PanelOperationAvailability {
+  edit: boolean;
+  export: boolean;
+  preview: boolean;
+  import: boolean;
+}
 
 export type ReadonlyReason =
   | { kind: "credential"; code: string }
@@ -144,4 +151,30 @@ export function isConfigDirty(
 export function targetMode(state: AgentState): AgentMode | null {
   if (state.invalid) return state.recovery.eligible ? "rebuild" : null;
   return state.writable ? "merge" : null;
+}
+
+export function panelOperationAvailability(
+  phase: PanelPhase,
+  hasActiveFlow: boolean,
+): PanelOperationAvailability {
+  if (phase.kind === "blocked-dirty") {
+    return {
+      edit: false,
+      export: phase.canExport && hasActiveFlow,
+      preview: false,
+      import: false,
+    };
+  }
+  if (phase.kind !== "editing") {
+    return { edit: false, export: false, preview: false, import: false };
+  }
+
+  const checking = phase.refresh.kind === "checking";
+  const conflicted = phase.refresh.kind === "conflict";
+  return {
+    edit: true,
+    export: hasActiveFlow,
+    preview: hasActiveFlow && !checking && !conflicted,
+    import: hasActiveFlow && !checking && !conflicted,
+  };
 }
