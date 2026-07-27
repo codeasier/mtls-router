@@ -4,7 +4,12 @@ import { AgentOverview, type OverviewIssue } from "./AgentOverview";
 import { AgentWorkflow } from "./AgentWorkflow";
 import { completeAgentDetection, type AgentTarget } from "./agentPresentation";
 import { useI18n } from "./i18n";
-import type { AgentDetection, AgentModelsResult, DesktopApi } from "./ipc";
+import type {
+  AgentDetection,
+  AgentId,
+  AgentModelsResult,
+  DesktopApi,
+} from "./ipc";
 
 interface WorkflowSession {
   target: AgentTarget;
@@ -61,6 +66,8 @@ export function AgentPage({
   const [stale, setStale] = useState(false);
   const flowRef = useRef("");
   const flowApiRef = useRef<DesktopApi | null>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const restoreFocusRef = useRef<AgentId | null>(null);
   const requestRef = useRef(0);
   const detectionGenerationRef = useRef(0);
   const startingRef = useRef(false);
@@ -128,6 +135,15 @@ export function AgentPage({
     };
   }, [destroyFlow, refreshDetection]);
 
+  useEffect(() => {
+    const agent = restoreFocusRef.current;
+    if (session || loading || !detection || !agent) return;
+    restoreFocusRef.current = null;
+    const action = document.getElementById(`agent-${agent}-action`);
+    if (action instanceof HTMLButtonElement && !action.disabled) action.focus();
+    else headingRef.current?.focus();
+  }, [detection, loading, session]);
+
   async function refreshOverview() {
     if (refreshing) return;
     setRefreshing(true);
@@ -186,6 +202,7 @@ export function AgentPage({
   }
 
   function returnToOverview(nextIssue?: OverviewIssue) {
+    restoreFocusRef.current = session?.target.agent ?? null;
     void destroyFlow();
     setSession(null);
     setIssue(nextIssue ?? null);
@@ -216,7 +233,9 @@ export function AgentPage({
       <header className="agents-workbench__header">
         <div>
           <p className="overline">{t("agents.overline")}</p>
-          <h2 id="agents-heading">{t("agents.heading")}</h2>
+          <h2 ref={headingRef} id="agents-heading" tabIndex={-1}>
+            {t("agents.heading")}
+          </h2>
         </div>
       </header>
       {loading ? (

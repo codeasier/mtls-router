@@ -543,6 +543,7 @@ describe("single-Agent workflow", () => {
     expect(cancel).toHaveFocus();
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(write).toHaveFocus();
     fireEvent.click(write);
     await user.click(
       screen.getByRole("button", {

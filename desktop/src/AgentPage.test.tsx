@@ -314,7 +314,34 @@ describe("Agent page coordinator", () => {
       expect(api.destroyAgentModelFlow).toHaveBeenCalledWith("flow-claude"),
     );
     expect(api.destroyAgentModelFlow).toHaveBeenCalledTimes(1);
-    expect(screen.getByText("/safe/claude/settings.json")).toBeVisible();
+    expect(
+      screen.getByRole("button", {
+        name: /编辑 Claude Code 配置|Edit Claude Code configuration/,
+      }),
+    ).toHaveFocus();
+  });
+
+  it("focuses the overview heading when the originating action is disabled", async () => {
+    const readonlyDetection: AgentDetection = {
+      agents: detection.agents.map((agent) =>
+        agent.agent === "claude"
+          ? { ...agent, writable: false, configured: false }
+          : agent,
+      ),
+    };
+    const detectAgents = vi
+      .fn()
+      .mockResolvedValueOnce(detection)
+      .mockResolvedValueOnce(readonlyDetection);
+    await openClaude({ detectAgents });
+
+    fireEvent.click(screen.getByRole("button", { name: "workflow finish" }));
+
+    expect(
+      await screen.findByRole("heading", {
+        level: 2,
+      }),
+    ).toHaveFocus();
   });
 
   it("destroys once on a flow-invalidating workflow error and retains overview", async () => {

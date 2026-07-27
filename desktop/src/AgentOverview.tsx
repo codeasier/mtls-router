@@ -123,7 +123,7 @@ function IssueNotice({
   const { t } = useI18n();
   if (issue.kind === "credential" || issue.kind === "auth") {
     return (
-      <div className="agent-alert" role="alert">
+      <div className="agent-alert agent-overview__error" role="alert">
         <span>
           {t(
             issue.kind === "auth"
@@ -147,7 +147,7 @@ function IssueNotice({
   }
   if (issue.kind === "retry") {
     return (
-      <div className="agent-alert" role="alert">
+      <div className="agent-alert agent-overview__error" role="alert">
         <span>{retryIssueMessage(issue.code, t)}</span>{" "}
         <button
           type="button"
@@ -162,7 +162,7 @@ function IssueNotice({
     );
   }
   return (
-    <div className="agent-alert" role="alert">
+    <div className="agent-alert agent-overview__error" role="alert">
       <span>{retryIssueMessage(issue.code, t)}</span>{" "}
       <button type="button" className="text-button" onClick={onRefresh}>
         {t("agents.overview.refresh")}
@@ -198,9 +198,13 @@ export function AgentOverview({
       )}
       <div className="agent-toolbar">
         {refreshing ? (
-          <p role="status">{t("agents.overview.refreshing")}</p>
+          <p className="agent-overview__loading" role="status">
+            {t("agents.overview.refreshing")}
+          </p>
         ) : stale ? (
-          <p role="note">{t("agents.overview.stale")}</p>
+          <p className="agent-overview__stale" role="note">
+            {t("agents.overview.stale")}
+          </p>
         ) : (
           <span />
         )}
@@ -217,7 +221,11 @@ export function AgentOverview({
           )}
         </button>
       </div>
-      <div className="agent-card-grid">
+      <ul
+        className="agent-card-grid"
+        aria-label={t("agents.heading")}
+        aria-busy={refreshing}
+      >
         {agentOrder.map((id) => {
           const agent = byAgent.get(id);
           if (!agent) return null;
@@ -232,20 +240,30 @@ export function AgentOverview({
           };
 
           return (
-            <article className="agent-card" key={id}>
+            <li className="agent-card" key={id}>
               <div className="agent-card__head">
                 <AgentLogo agent={id} />
                 <h3>{agentNames[id]}</h3>
               </div>
-              <div className="agent-card__topline">
-                <span className="agent-state">
+              <div className="agent-card__states">
+                <span
+                  className={`agent-state agent-state--installation agent-state--${installation.state.replace("_", "-")}`}
+                  aria-label={`CLI: ${t(
+                    installation.state === "installed"
+                      ? "agents.installation.installed"
+                      : "agents.installation.notInstalled",
+                  )}`}
+                >
                   {t(
                     installation.state === "installed"
                       ? "agents.installation.installed"
                       : "agents.installation.notInstalled",
                   )}
                 </span>
-                <span className="agent-state">
+                <span
+                  className={`agent-state agent-state--configuration agent-state--${configuration.state}`}
+                  aria-label={`${t("agents.stage.configure")}: ${configurationLabel(configuration.state, t)}`}
+                >
                   {configurationLabel(configuration.state, t)}
                 </span>
               </div>
@@ -269,20 +287,21 @@ export function AgentOverview({
               )}
               <button
                 type="button"
+                id={`agent-${id}-action`}
                 className={
                   configuration.action === "rebuild"
-                    ? "agent-rebuild-toggle"
-                    : "control-button"
+                    ? "agent-card__action agent-rebuild-toggle"
+                    : "agent-card__action control-button"
                 }
                 disabled={refreshing || configuration.action === "disabled"}
                 onClick={() => onConfigure(target)}
               >
                 {label}
               </button>
-            </article>
+            </li>
           );
         })}
-      </div>
+      </ul>
     </>
   );
 }

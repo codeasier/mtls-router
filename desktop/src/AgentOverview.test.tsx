@@ -71,8 +71,11 @@ describe("AgentOverview", () => {
       />,
     );
 
+    const cardList = screen.getByRole("list", {
+      name: /模型配置工作台|Model configuration workbench/,
+    });
     expect(
-      screen.getAllByRole("article").map((card) => card.textContent),
+      Array.from(cardList.children).map((card) => card.textContent),
     ).toEqual([
       expect.stringContaining("Claude Code"),
       expect.stringContaining("OpenCode"),
@@ -85,6 +88,19 @@ describe("AgentOverview", () => {
     expect(screen.getByTitle("/safe/claude/settings.json")).toBeVisible();
     expect(screen.getByText("配置语法无效。")).toBeVisible();
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+
+    const installationStates = screen.getAllByLabelText(/^CLI:/);
+    const configurationStates = screen.getAllByLabelText(/^配置:/);
+    expect(installationStates).toHaveLength(3);
+    expect(configurationStates).toHaveLength(3);
+    expect(installationStates[0]).toHaveClass(
+      "agent-state--installation",
+      "agent-state--not-installed",
+    );
+    expect(configurationStates[0]).toHaveClass(
+      "agent-state--configuration",
+      "agent-state--create",
+    );
   });
 
   it("emits one immutable target per card action and disables blocked cards", () => {
@@ -145,12 +161,14 @@ describe("AgentOverview", () => {
     );
     expect(screen.getByRole("status")).toHaveTextContent("正在重新检测");
     expect(screen.getByRole("button", { name: "正在重新检测" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Claude Code/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /OpenCode/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Codex/ })).toBeDisabled();
     expect(
-      screen.getByRole("button", { name: "生成 Claude Code 配置" }),
-    ).toBeDisabled();
-    expect(
-      screen.getByRole("button", { name: "备份并重建 OpenCode" }),
-    ).toBeDisabled();
+      screen.getByRole("list", {
+        name: /模型配置工作台|Model configuration workbench/,
+      }),
+    ).toHaveAttribute("aria-busy", "true");
   });
 
   it.each([
@@ -172,6 +190,7 @@ describe("AgentOverview", () => {
     );
 
     const alert = screen.getByRole("alert");
+    expect(alert).toHaveClass("agent-overview__error");
     expect(alert).toHaveTextContent(
       kind === "auth"
         ? "已保存的 API key 未通过模型服务认证"
