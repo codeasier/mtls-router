@@ -2,6 +2,7 @@ mod autostart;
 mod commands;
 mod credential;
 mod error;
+mod lifecycle;
 mod manager;
 mod model_config;
 mod orchestration;
@@ -151,8 +152,15 @@ pub fn run() {
                 }
                 let _ = observer_app.emit(POLL_SNAPSHOT_EVENT, snapshot);
             });
+            let lifecycle = Arc::new(lifecycle::LifecycleState::default());
             autostart::initialize_default(app)?;
-            tray::setup(app, manager.clone(), scheduler.clone(), &paths.log_file)?;
+            tray::setup(
+                app,
+                manager.clone(),
+                scheduler.clone(),
+                &paths.log_file,
+                lifecycle.clone(),
+            )?;
             app.manage(AppState {
                 manager: manager.clone(),
                 scheduler: scheduler.clone(),
@@ -160,12 +168,22 @@ pub fn run() {
                 model_flows: Default::default(),
                 pending_occupant: Default::default(),
                 credentials,
+                lifecycle: lifecycle.clone(),
             });
             scheduler.start();
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                if let Ok(status) = orchestration::first_launch(&manager, &scheduler).await {
+                let Some(output) = lifecycle
+                    .run_operation(orchestration::first_launch(&manager, &scheduler))
+                    .await
+                else {
+                    return;
+                };
+                if let Ok(status) = output.value {
                     tray::update_status(&app_handle, &status.into());
+                }
+                if output.quit_action == lifecycle::QuitAction::ExecuteQuit {
+                    tray::execute_quit(app_handle);
                 }
             });
             Ok(())

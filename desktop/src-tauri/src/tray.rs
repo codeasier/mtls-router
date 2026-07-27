@@ -2,13 +2,11 @@ use std::{
     future::Future,
     path::PathBuf,
     pin::Pin,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
-    },
+    sync::{Arc, Mutex},
 };
 
 use crate::{
+    lifecycle::{LifecycleState, OperationOutput, QuitAction},
     manager::ManagerClient,
     scheduler::PollScheduler,
     types::{NativeLanguage, PollSnapshot, RouterStatus},
@@ -177,7 +175,7 @@ struct TrayState<R: Runtime> {
     controller: Controller,
     language: Mutex<NativeLanguage>,
     presentation: Mutex<Presentation>,
-    operation_active: AtomicBool,
+    lifecycle: Arc<LifecycleState>,
 }
 
 pub fn setup(
@@ -185,6 +183,7 @@ pub fn setup(
     manager: ManagerClient,
     scheduler: PollScheduler,
     log_file: &str,
+    lifecycle: Arc<LifecycleState>,
 ) -> tauri::Result<()> {
     let controller = manager_controller(
         app.handle().clone(),
@@ -256,7 +255,7 @@ pub fn setup(
         controller,
         language: Mutex::new(language),
         presentation: Mutex::new(initial_presentation),
-        operation_active: AtomicBool::new(false),
+        lifecycle,
     });
 
     Ok(())
@@ -368,28 +367,50 @@ enum LifecycleAction {
 
 fn run_lifecycle_action<R: Runtime>(app: AppHandle<R>, action: LifecycleAction) {
     let state = app.state::<TrayState<R>>();
-    if state.operation_active.swap(true, Ordering::AcqRel) {
-        return;
-    }
     let controller = state.controller.clone();
+    let lifecycle = state.lifecycle.clone();
     let transient = match action {
         LifecycleAction::Start => RouterSnapshot::new("starting", None::<String>),
         LifecycleAction::Stop => RouterSnapshot::new("stopping", Some("desktop")),
     };
-    update_status(&app, &transient);
     tauri::async_runtime::spawn(async move {
-        let result = match action {
-            LifecycleAction::Start => (controller.start)().await,
-            LifecycleAction::Stop => (controller.stop)().await,
+        let begin_app = app.clone();
+        let Some(output) =
+            run_controller_lifecycle_action(&lifecycle, &controller, action, move || {
+                update_status(&begin_app, &transient)
+            })
+            .await
+        else {
+            return;
         };
-        match result {
+        match output.value {
             Ok(snapshot) => update_status(&app, &snapshot),
             Err(_) => apply_error(&app),
         }
-        app.state::<TrayState<R>>()
-            .operation_active
-            .store(false, Ordering::Release);
+        if output.quit_action == QuitAction::ExecuteQuit {
+            execute_quit(app);
+        }
     });
+}
+
+async fn run_controller_lifecycle_action<F>(
+    lifecycle: &LifecycleState,
+    controller: &Controller,
+    action: LifecycleAction,
+    on_begin: F,
+) -> Option<OperationOutput<Result<RouterSnapshot, String>>>
+where
+    F: FnOnce(),
+{
+    lifecycle
+        .run_operation(async {
+            on_begin();
+            match action {
+                LifecycleAction::Start => (controller.start)().await,
+                LifecycleAction::Stop => (controller.stop)().await,
+            }
+        })
+        .await
 }
 
 fn open_logs<R: Runtime>(app: AppHandle<R>) {
@@ -400,7 +421,21 @@ fn open_logs<R: Runtime>(app: AppHandle<R>) {
 }
 
 fn request_quit<R: Runtime>(app: AppHandle<R>) {
-    let controller = app.state::<TrayState<R>>().controller.clone();
+    let lifecycle = app.state::<TrayState<R>>().lifecycle.clone();
+    let action = lifecycle.request_quit(app.get_webview_window(MAIN_WINDOW).is_some());
+    match action {
+        QuitAction::FocusWindow | QuitAction::RequestConfirmation => show_main_window(&app),
+        QuitAction::ExecuteQuit => execute_quit(app),
+        QuitAction::None | QuitAction::WaitForLifecycle => {}
+    }
+}
+
+pub(crate) fn execute_quit<R: Runtime>(app: AppHandle<R>) {
+    let state = app.state::<TrayState<R>>();
+    if !state.lifecycle.try_begin_quit_operation() {
+        return;
+    }
+    let controller = state.controller.clone();
     tauri::async_runtime::spawn(async move {
         let decision = match (controller.status)().await {
             Ok(snapshot) => quit_decision(Some(&snapshot)),
@@ -692,6 +727,39 @@ mod tests {
         assert!(presentation(&snapshot("degraded", Some("desktop"))).can_stop);
         assert!(!presentation(&snapshot("desktop_owned", None)).can_stop);
         assert!(!presentation(&snapshot("external_compatible", Some("cli"))).can_stop);
+    }
+
+    #[test]
+    fn tray_controller_actions_release_shared_gate_after_failure() {
+        tauri::async_runtime::block_on(async {
+            let lifecycle = LifecycleState::default();
+            let controller = Controller::new(
+                || Box::pin(async { unreachable!() }),
+                || Box::pin(async { Err("start failed".to_owned()) }),
+                || Box::pin(async { Ok(RouterSnapshot::new("absent", None::<String>)) }),
+                || Box::pin(async { Ok(()) }),
+            );
+
+            let failed = run_controller_lifecycle_action(
+                &lifecycle,
+                &controller,
+                LifecycleAction::Start,
+                || {},
+            )
+            .await
+            .unwrap();
+            assert_eq!(failed.value, Err("start failed".to_owned()));
+
+            let succeeded = run_controller_lifecycle_action(
+                &lifecycle,
+                &controller,
+                LifecycleAction::Stop,
+                || {},
+            )
+            .await
+            .unwrap();
+            assert_eq!(succeeded.value.unwrap().state, "absent");
+        });
     }
 
     #[test]

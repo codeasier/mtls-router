@@ -1,6 +1,7 @@
 use crate::{
     credential::{CredentialError, CredentialStore, MAX_KEY_BYTES},
     error::{CommandError, Result},
+    lifecycle::{LifecycleState, OperationOutput, QuitAction},
     manager::ManagerClient,
     model_config::{self, ModelConfig},
     scheduler::PollScheduler,
@@ -28,6 +29,7 @@ pub struct AppState {
     pub model_flows: Arc<Mutex<HashMap<String, ModelFlow>>>,
     pub pending_occupant: Arc<Mutex<Option<PendingOccupant>>>,
     pub credentials: Arc<CredentialStore>,
+    pub lifecycle: Arc<LifecycleState>,
 }
 
 impl AppState {
@@ -174,17 +176,33 @@ pub async fn router_status(state: tauri::State<'_, AppState>) -> Result<RouterSt
 #[tauri::command]
 pub async fn router_start(
     owner: String,
+    app: AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<RouterStatus> {
     if owner != "desktop" {
         return Err(CommandError::invalid_params("owner must be desktop"));
     }
-    crate::orchestration::start(&state.manager, &state.scheduler).await
+    let output = run_lifecycle_command(
+        &state.lifecycle,
+        crate::orchestration::start(&state.manager, &state.scheduler),
+    )
+    .await?;
+    resume_quit_after_operation(&app, output.quit_action);
+    output.value
 }
 
 #[tauri::command]
-pub async fn router_stop(state: tauri::State<'_, AppState>) -> Result<RouterStatus> {
-    crate::orchestration::stop(&state.manager, &state.scheduler).await
+pub async fn router_stop(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<RouterStatus> {
+    let output = run_lifecycle_command(
+        &state.lifecycle,
+        crate::orchestration::stop(&state.manager, &state.scheduler),
+    )
+    .await?;
+    resume_quit_after_operation(&app, output.quit_action);
+    output.value
 }
 
 #[tauri::command]
@@ -228,15 +246,42 @@ async fn inspect_occupant_command(
 #[tauri::command]
 pub async fn router_force_terminate_occupant(
     request: ForceTerminateOccupantRequest,
+    app: AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<OccupantTerminationResult> {
-    force_terminate_occupant_command(
-        request,
-        &state.manager,
-        &state.scheduler,
-        &state.pending_occupant,
+    let output = run_lifecycle_command(
+        &state.lifecycle,
+        force_terminate_occupant_command(
+            request,
+            &state.manager,
+            &state.scheduler,
+            &state.pending_occupant,
+        ),
     )
-    .await
+    .await?;
+    resume_quit_after_operation(&app, output.quit_action);
+    output.value
+}
+
+async fn run_lifecycle_command<F, T>(
+    lifecycle: &LifecycleState,
+    operation: F,
+) -> Result<OperationOutput<Result<T>>>
+where
+    F: std::future::Future<Output = Result<T>>,
+{
+    lifecycle.run_operation(operation).await.ok_or_else(|| {
+        CommandError::new(
+            "OPERATION_IN_PROGRESS",
+            "another Router lifecycle operation is in progress",
+        )
+    })
+}
+
+fn resume_quit_after_operation(app: &AppHandle, action: QuitAction) {
+    if action == QuitAction::ExecuteQuit {
+        crate::tray::execute_quit(app.clone());
+    }
 }
 
 async fn force_terminate_occupant_command(
@@ -1150,6 +1195,32 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_router_lifecycle_command_returns_stable_busy_error() {
+        tauri::async_runtime::block_on(async {
+            let lifecycle = LifecycleState::default();
+            let output = lifecycle
+                .run_operation(async {
+                    run_lifecycle_command(&lifecycle, async { Ok::<_, CommandError>(()) })
+                        .await
+                        .unwrap_err()
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(output.value.code, "OPERATION_IN_PROGRESS");
+            let failure = run_lifecycle_command(&lifecycle, async {
+                Err::<(), _>(CommandError::new("START_FAILED", "start failed"))
+            })
+            .await
+            .unwrap();
+            assert_eq!(failure.value.unwrap_err().code, "START_FAILED");
+            assert!(run_lifecycle_command(&lifecycle, async { Ok(()) })
+                .await
+                .is_ok());
+        });
+    }
+
+    #[test]
     fn window_visibility_is_not_a_model_flow_lifecycle_boundary() {
         tauri::async_runtime::block_on(async {
             let (manager, _) = fake_client(vec![]);
@@ -1177,6 +1248,7 @@ mod tests {
                 model_flows: flows.clone(),
                 pending_occupant: Default::default(),
                 credentials,
+                lifecycle: Default::default(),
             };
 
             state.set_window_visibility(false);
