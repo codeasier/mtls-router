@@ -21,7 +21,7 @@ Claude deferred tool 字段以及未来开放列表 Anthropic 请求字段会原
 
 ## 交互流程
 
-Shell、PowerShell 和桌面端的 merge 流程都使用以下顺序：
+Shell、PowerShell 和桌面客户端都保持以下 protocol 顺序：
 
 1. 检测并选择 Claude Code、opencode 和/或 Codex。
 2. 隐藏读取 API key，并建立可信的 protocol-v4 loopback router。
@@ -30,7 +30,17 @@ Shell、PowerShell 和桌面端的 merge 流程都使用以下顺序：
 5. Print 时渲染脱敏片段；write 时预览精确文件、备份、迁移、所有权和漂移影响。
 6. 写入前用临时 key 重新获取目录，再执行一次原子多文件事务。
 
-Shell 和 PowerShell 安装命令始终省略恢复 mode，因此只支持 merge。桌面端可在同一事务中为有效 Agent 独立选择 `merge`，并为符合条件的无效 Agent 选择 `rebuild`；重建还必须遵守下文契约。
+Shell 和 PowerShell 安装命令始终省略恢复 mode，因此只支持 merge。桌面端一次只打开一个持续单 Agent 面板：有效 Agent 使用 `merge`，符合条件的无效 Agent 使用 `rebuild`。每次桌面 preview 和事务都精确只包含该 Agent；重建还必须遵守下文契约。Management protocol v4 的 method、parameter、result 和事务语义保持不变。
+
+### 桌面持续面板
+
+每次进入面板都会执行 `agent.detect`、读取桌面凭据摘要，并且只有存在 key 且目标可编辑或符合恢复条件时才调用已认证的 `agent.models`。桌面端以 `existing > preset > empty` 初始化，在同一页面保留编辑器和 preview rail，每次写入都必须先为当前草稿生成 preview，事务结束后仍留在面板中。写入成功会消费当前 flow、立即报告成功，然后重新执行 detection、凭据摘要和 discovery，用新 flow 加载实际落盘配置。该重载失败属于独立面板状态，不会把已完成写入改成失败。
+
+初次或完整 reload discovery 缺少已保存 key、认证失败或目录失败时，面板只展示无 key 的 `agent.detect` metadata 和恢复操作。由于字段级 prefill、import、export、render 和 preview 都需要已认证 `agent.models` 签发的 catalog token，因此不能安全提供这些能力。后台候选刷新失败时则保留已有草稿和 active flow，提示无法验证外部状态，并继续允许仍然安全的操作。API key 始终留在 Rust 和含密钥的 manager 请求中，不会返回 webview，也不会进入 model config。
+
+可编辑面板监听原生窗口 focus signal，每 15 秒最多启动一次候选 discovery；手动刷新绕过间隔，但不绕过 single-flight。Clean 面板采用候选状态。Dirty 面板保留 form baseline 和草稿：外部状态未变时只替换 active discovery，发生变化时必须显式选择保留草稿或加载磁盘状态。Detection 变为不兼容或不可写时会阻止编辑、import、preview 和 write；只有仍存在有效 active flow 时才能 export。刷新期间不存在轮询、自动合并、旧目录 fallback 或 Agent 文件重写。
+
+前端最多拥有一个 active flow 和一个未决候选请求。兼容候选成功后先成为 active，再销毁旧 flow；clean mode transition 会先销毁不兼容的旧 flow，再启动全新 discovery。销毁请求失败时会去重保留并重试。过期、迟到、面板已卸载或目标不匹配的候选 flow 都会销毁；离开或卸载面板时也会销毁其 active flow。写入成功会消费 active flow，不再重复销毁。`PREVIEW_STALE`、`MODEL_FLOW_EXPIRED` 和 `MODEL_CATALOG_STALE` 会清除 preview approval、保留内存草稿，并在面板内重新 discovery；没有有效 flow 时 export 保持禁用。
 
 只有在完整响应和全部 ID 通过校验后才会过滤。因此，包含 ASCII `/` 的 malformed ID 不会被隐藏，请求仍以 `MODEL_RESPONSE_INVALID` 失败。如果校验成功但全部 ID 都被过滤，发现或刷新以 `MODEL_CATALOG_EMPTY` 失败。
 
@@ -38,7 +48,7 @@ Shell 和 PowerShell 安装命令始终省略恢复 mode，因此只支持 merge
 
 `agent print-config` 同样需要 key，因为它必须根据当前目录验证选择。它不会修改 Agent 文件、事务 journal、备份或 last-applied sidecar。模型发现可能启动 router，首次使用可能创建私有 token signing key。
 
-模型目录只是配置时快照。系统不会后台刷新或重写 Agent 文件。需要刷新时重新进入配置并提供 key。
+模型目录只是配置时快照。Shell 和 PowerShell 客户端需要重新进入配置并提供 key 才能刷新。桌面端可以通过上述显式刷新或节流后的原生 focus discovery 替换该快照；这不会轮询或重写 Agent 文件。
 
 ### 构建 preset
 
