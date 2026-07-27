@@ -1,495 +1,133 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { AgentPage } from "./AgentPage";
-import type { OverviewIssue } from "./AgentOverview";
-import type { AgentTarget } from "./agentPresentation";
-import type { AgentDetection, AgentModelsResult } from "./ipc";
+import { AgentPage, type LeaveGuard } from "./AgentPage";
+import type { AgentDetection } from "./ipc";
 import { createMockApi } from "./test/api";
+import { renderWithI18n } from "./test/render";
 
-vi.mock("./AgentWorkflow", () => ({
-  AgentWorkflow: ({
+vi.mock("./AgentPanel", () => ({
+  AgentPanel: ({
     target,
     onBack,
-    onFlowConsumed,
-    onReturnToOverview,
-    refreshDetection,
+    onGuardStateChange,
+    onReloaded,
   }: {
-    target: AgentTarget;
+    target: string;
     onBack(): void;
-    onFlowConsumed(): void;
-    onReturnToOverview(issue?: OverviewIssue): void;
-    refreshDetection(): Promise<AgentDetection>;
+    onGuardStateChange(state: { dirty: boolean; busy: boolean }): void;
+    onReloaded(detection: AgentDetection): void;
   }) => (
-    <div aria-label={`workflow-${target.agent}`}>
-      <button onClick={onBack}>workflow back</button>
+    <div aria-label={`panel-${target}`}>
+      <button onClick={() => onGuardStateChange({ dirty: true, busy: false })}>
+        make dirty
+      </button>
+      <button onClick={() => onGuardStateChange({ dirty: false, busy: true })}>
+        make busy
+      </button>
       <button
         onClick={() =>
-          onReturnToOverview({
-            kind: "retry",
-            code: "MODEL_FLOW_EXPIRED",
-            target,
+          onReloaded({
+            agents: detection.agents.map((agent) => ({
+              ...agent,
+              path: `/reloaded/${agent.agent}`,
+            })),
           })
         }
       >
-        workflow error
+        report reload
       </button>
-      <button onClick={onFlowConsumed}>workflow consume</button>
-      <button onClick={() => onReturnToOverview()}>workflow return</button>
-      {[
-        "CREDENTIAL_NOT_FOUND",
-        "CREDENTIAL_INVALID",
-        "CREDENTIAL_IO_ERROR",
-        "CREDENTIAL_LOCK_TIMEOUT",
-      ].map((code) => (
-        <button
-          key={code}
-          onClick={() => onReturnToOverview({ kind: "credential", code })}
-        >
-          workflow {code}
-        </button>
-      ))}
-      <button
-        onClick={() => {
-          void refreshDetection().catch(() =>
-            onReturnToOverview({
-              kind: "retry",
-              code: "PREVIEW_STALE",
-              target,
-            }),
-          );
-        }}
-      >
-        workflow failed refresh
-      </button>
-      <button
-        onClick={() => {
-          void refreshDetection().catch(() => undefined);
-        }}
-      >
-        workflow refresh
-      </button>
-      <button
-        onClick={() => {
-          onFlowConsumed();
-          void refreshDetection().then(() => onReturnToOverview());
-        }}
-      >
-        workflow finish
-      </button>
+      <button onClick={onBack}>panel back</button>
     </div>
   ),
 }));
 
 const detection: AgentDetection = {
-  agents: [
-    {
-      agent: "claude",
-      name: "Claude Code",
-      detected: true,
-      command: "/safe/bin/claude",
-      path: "/safe/claude/settings.json",
-      format: "json",
-      exists: true,
-      writable: true,
-      configured: true,
-      invalid: false,
-      recovery: { eligible: false, files: [] },
-    },
-    {
-      agent: "opencode",
-      name: "OpenCode",
-      detected: true,
-      command: "/safe/bin/opencode",
-      path: "/safe/opencode/config.json",
-      format: "json",
-      exists: true,
-      writable: true,
-      configured: false,
-      invalid: false,
-      recovery: { eligible: false, files: [] },
-    },
-    {
-      agent: "codex",
-      name: "Codex",
-      detected: true,
-      command: "/safe/bin/codex",
-      path: "/safe/codex/config.toml",
-      format: "toml",
-      exists: true,
-      writable: true,
-      configured: false,
-      invalid: false,
-      recovery: { eligible: false, files: [] },
-    },
-  ],
+  agents: ["claude", "opencode", "codex"].map((agent) => ({
+    agent: agent as "claude" | "opencode" | "codex",
+    name: agent,
+    detected: true,
+    command: `/safe/bin/${agent}`,
+    path: `/safe/${agent}/config`,
+    format: agent === "codex" ? "toml" : "json",
+    exists: true,
+    writable: true,
+    configured: true,
+    invalid: false,
+    recovery: { eligible: false, files: [] },
+  })),
 };
 
-const claudeDiscovery: AgentModelsResult = {
-  flow_id: "flow-claude",
-  models: ["model-a"],
-  catalog_token: "catalog-token",
-  router_base_url: "http://127.0.0.1:19099",
-  api_base_url: "http://127.0.0.1:19099/v1",
-  existing: {
-    model_config: {},
-    unavailable_models: {},
-    drifted_agents: [],
-  },
-  preset: { model_config: {}, unavailable_agents: {} },
-};
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise;
-    reject = rejectPromise;
-  });
-  return { promise, resolve, reject };
-}
-
-function renderPage(
-  overrides: Parameters<typeof createMockApi>[0] = {},
-  onNavigateToApiKeys = vi.fn(),
-) {
+function setup() {
   const api = createMockApi({
     detectAgents: vi.fn().mockResolvedValue(detection),
-    discoverModels: vi.fn().mockResolvedValue(claudeDiscovery),
-    ...overrides,
   });
-  const view = render(
-    <AgentPage api={api} onNavigateToApiKeys={onNavigateToApiKeys} />,
+  let guard: LeaveGuard | null = null;
+  const onRequestLeave = vi.fn((action: () => void) => action());
+  const onDirtyChange = vi.fn();
+  renderWithI18n(
+    <AgentPage
+      api={api}
+      onNavigateToApiKeys={vi.fn()}
+      onRequestLeave={onRequestLeave}
+      onDirtyChange={onDirtyChange}
+      registerLeaveGuard={(next) => {
+        guard = next;
+      }}
+    />,
   );
-  return { api, view, onNavigateToApiKeys };
+  return { api, onRequestLeave, onDirtyChange, getGuard: () => guard };
 }
 
-async function openClaude(overrides: Parameters<typeof createMockApi>[0] = {}) {
-  const rendered = renderPage(overrides);
-  fireEvent.click(
-    await screen.findByRole("button", {
-      name: /编辑 Claude Code 配置|Edit Claude Code configuration/,
-    }),
-  );
-  await screen.findByLabelText("workflow-claude");
-  return rendered;
-}
-
-describe("Agent page coordinator", () => {
-  it("loads only complete local detection until one card is opened", async () => {
-    const { api } = renderPage();
-
-    await screen.findByText("/safe/claude/settings.json");
+describe("AgentPage", () => {
+  it("keeps the overview detection-only and lets AgentPanel own discovery", async () => {
+    const { api } = setup();
+    await screen.findByText("/safe/claude/config");
     expect(api.discoverModels).not.toHaveBeenCalled();
 
     fireEvent.click(
-      screen.getByRole("button", {
-        name: /编辑 Claude Code 配置|Edit Claude Code configuration/,
-      }),
+      screen.getByRole("button", { name: /编辑 Claude Code 配置/ }),
     );
-
-    await waitFor(() =>
-      expect(api.discoverModels).toHaveBeenCalledWith(["claude"]),
-    );
-    expect(api.discoverModels).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText("panel-claude")).toBeVisible();
+    expect(api.discoverModels).not.toHaveBeenCalled();
   });
 
-  it("retains cards and marks them stale when refresh fails", async () => {
-    const detectAgents = vi
-      .fn()
-      .mockResolvedValueOnce(detection)
-      .mockRejectedValueOnce({ code: "MANAGER_FAILED" });
-    renderPage({ detectAgents });
-
-    await screen.findByText("/safe/claude/settings.json");
+  it("registers panel dirtiness as the leave guard", async () => {
+    const { getGuard, onDirtyChange } = setup();
     fireEvent.click(
-      screen.getByRole("button", {
-        name: /刷新|重新检测|Refresh|Detect again/,
-      }),
+      await screen.findByRole("button", { name: /编辑 Claude Code 配置/ }),
     );
-
-    expect(await screen.findByRole("note")).toHaveTextContent(
-      /可能已过期|may be out of date/,
-    );
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.getByText("/safe/claude/settings.json")).toBeVisible();
+    expect(getGuard()?.()).toBe("allow");
+    fireEvent.click(screen.getByRole("button", { name: "make dirty" }));
+    expect(getGuard()?.()).toBe("confirm");
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+    fireEvent.click(screen.getByRole("button", { name: "make busy" }));
+    expect(getGuard()?.()).toBe("block");
   });
 
-  it.each([
-    ["missing", { agents: detection.agents.slice(0, 2) }],
-    [
-      "duplicate",
-      {
-        agents: [detection.agents[0], detection.agents[0], detection.agents[2]],
-      },
-    ],
-  ])(
-    "rejects %s initial detection without fabricating cards",
-    async (_, value) => {
-      const { api } = renderPage({
-        detectAgents: vi.fn().mockResolvedValue(value),
-      });
+  it("routes Back through the guard and restores focus to the card action", async () => {
+    const { onRequestLeave } = setup();
+    fireEvent.click(
+      await screen.findByRole("button", { name: /编辑 Claude Code 配置/ }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "panel back" }));
 
-      expect(await screen.findByRole("alert")).toHaveTextContent(
-        /Agent 检测失败|Agent detection failed/,
-      );
+    expect(onRequestLeave).toHaveBeenCalledOnce();
+    await waitFor(() =>
       expect(
-        screen.queryByText("/safe/claude/settings.json"),
-      ).not.toBeInTheDocument();
-      expect(api.discoverModels).not.toHaveBeenCalled();
-    },
-  );
+        screen.getByRole("button", { name: /编辑 Claude Code 配置/ }),
+      ).toHaveFocus(),
+    );
+  });
 
-  it("retains complete cards when refreshed detection is malformed", async () => {
-    const detectAgents = vi
-      .fn()
-      .mockResolvedValueOnce(detection)
-      .mockResolvedValueOnce({ agents: detection.agents.slice(0, 2) });
-    renderPage({ detectAgents });
-
-    await screen.findByText("/safe/claude/settings.json");
+  it("uses successful panel reload detection when returning to overview", async () => {
+    setup();
     fireEvent.click(
-      screen.getByRole("button", {
-        name: /刷新|重新检测|Refresh|Detect again/,
-      }),
+      await screen.findByRole("button", { name: /编辑 Claude Code 配置/ }),
     );
+    fireEvent.click(screen.getByRole("button", { name: "report reload" }));
+    fireEvent.click(screen.getByRole("button", { name: "panel back" }));
 
-    expect(await screen.findByRole("note")).toBeVisible();
-    expect(screen.getByText("/safe/codex/config.toml")).toBeVisible();
-  });
-
-  it.each([
-    ["CREDENTIAL_NOT_FOUND", /前往 API 密钥|Go to API Keys/],
-    ["CREDENTIAL_INVALID", /前往 API 密钥|Go to API Keys/],
-    ["CREDENTIAL_IO_ERROR", /前往 API 密钥|Go to API Keys/],
-    ["CREDENTIAL_LOCK_TIMEOUT", /前往 API 密钥|Go to API Keys/],
-    ["MODEL_AUTH_FAILED", /更换 API 密钥|Replace API key/],
-    ["MODEL_DISCOVERY_FAILED", /重试 Claude Code|Retry Claude Code/],
-    ["UNKNOWN_BACKEND_CODE", /重试 Claude Code|Retry Claude Code/],
-  ])(
-    "classifies %s without rendering backend messages",
-    async (code, action) => {
-      const secret = `secret-${code}`;
-      const { api } = renderPage({
-        discoverModels: vi.fn().mockRejectedValue({ code, message: secret }),
-      });
-      fireEvent.click(
-        await screen.findByRole("button", {
-          name: /编辑 Claude Code 配置|Edit Claude Code configuration/,
-        }),
-      );
-
-      expect(await screen.findByRole("button", { name: action })).toBeVisible();
-      expect(document.body.textContent).not.toContain(secret);
-      expect(api.destroyAgentModelFlow).not.toHaveBeenCalled();
-    },
-  );
-
-  it("retries discovery only for the issue's original Agent", async () => {
-    const discoverModels = vi
-      .fn()
-      .mockRejectedValueOnce({ code: "MODEL_DISCOVERY_FAILED" })
-      .mockResolvedValueOnce(claudeDiscovery);
-    const { api } = renderPage({ discoverModels });
-    fireEvent.click(
-      await screen.findByRole("button", {
-        name: /编辑 Claude Code 配置|Edit Claude Code configuration/,
-      }),
-    );
-    fireEvent.click(
-      await screen.findByRole("button", {
-        name: /重试 Claude Code|Retry Claude Code/,
-      }),
-    );
-
-    await screen.findByLabelText("workflow-claude");
-    expect(api.discoverModels).toHaveBeenNthCalledWith(1, ["claude"]);
-    expect(api.discoverModels).toHaveBeenNthCalledWith(2, ["claude"]);
-  });
-
-  it("destroys the exact live flow once when the workflow goes back", async () => {
-    const { api } = await openClaude();
-    fireEvent.click(screen.getByRole("button", { name: "workflow back" }));
-
-    await waitFor(() =>
-      expect(api.destroyAgentModelFlow).toHaveBeenCalledWith("flow-claude"),
-    );
-    expect(api.destroyAgentModelFlow).toHaveBeenCalledTimes(1);
-    expect(
-      screen.getByRole("button", {
-        name: /编辑 Claude Code 配置|Edit Claude Code configuration/,
-      }),
-    ).toHaveFocus();
-  });
-
-  it("focuses the overview heading when the originating action is disabled", async () => {
-    const readonlyDetection: AgentDetection = {
-      agents: detection.agents.map((agent) =>
-        agent.agent === "claude"
-          ? { ...agent, writable: false, configured: false }
-          : agent,
-      ),
-    };
-    const detectAgents = vi
-      .fn()
-      .mockResolvedValueOnce(detection)
-      .mockResolvedValueOnce(readonlyDetection);
-    await openClaude({ detectAgents });
-
-    fireEvent.click(screen.getByRole("button", { name: "workflow finish" }));
-
-    expect(
-      await screen.findByRole("heading", {
-        level: 2,
-      }),
-    ).toHaveFocus();
-  });
-
-  it("destroys once on a flow-invalidating workflow error and retains overview", async () => {
-    const { api } = await openClaude();
-    fireEvent.click(screen.getByRole("button", { name: "workflow error" }));
-
-    expect(
-      await screen.findByRole("button", {
-        name: /重试 Claude Code|Retry Claude Code/,
-      }),
-    ).toBeVisible();
-    expect(api.destroyAgentModelFlow).toHaveBeenCalledWith("flow-claude");
-    expect(api.destroyAgentModelFlow).toHaveBeenCalledTimes(1);
-    expect(screen.getByText("/safe/claude/settings.json")).toBeVisible();
-  });
-
-  it.each([
-    "CREDENTIAL_NOT_FOUND",
-    "CREDENTIAL_INVALID",
-    "CREDENTIAL_IO_ERROR",
-    "CREDENTIAL_LOCK_TIMEOUT",
-  ])(
-    "lets a classified %s write failure reach parent flow cleanup",
-    async (code) => {
-      const { api } = await openClaude();
-      fireEvent.click(screen.getByRole("button", { name: `workflow ${code}` }));
-
-      expect(
-        await screen.findByRole("button", {
-          name: /前往 API 密钥|Go to API Keys/,
-        }),
-      ).toBeVisible();
-      expect(api.destroyAgentModelFlow).toHaveBeenCalledWith("flow-claude");
-      expect(api.destroyAgentModelFlow).toHaveBeenCalledTimes(1);
-    },
-  );
-
-  it("consumes a successful write flow without destroying it", async () => {
-    const { api, view } = await openClaude();
-    fireEvent.click(screen.getByRole("button", { name: "workflow consume" }));
-    view.unmount();
-
-    expect(api.destroyAgentModelFlow).not.toHaveBeenCalled();
-  });
-
-  it("destroys the exact live flow once on unmount", async () => {
-    const { api, view } = await openClaude();
-    view.unmount();
-
-    await waitFor(() =>
-      expect(api.destroyAgentModelFlow).toHaveBeenCalledWith("flow-claude"),
-    );
-    expect(api.destroyAgentModelFlow).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not destroy the live flow when rerendered with the same API", async () => {
-    const { api, view, onNavigateToApiKeys } = await openClaude();
-    view.rerender(
-      <AgentPage api={api} onNavigateToApiKeys={onNavigateToApiKeys} />,
-    );
-
-    expect(screen.getByLabelText("workflow-claude")).toBeVisible();
-    expect(api.destroyAgentModelFlow).not.toHaveBeenCalled();
-  });
-
-  it("refreshes detection after result finish without rediscovering or destroying", async () => {
-    const { api } = await openClaude();
-    fireEvent.click(screen.getByRole("button", { name: "workflow finish" }));
-
-    await waitFor(() => expect(api.detectAgents).toHaveBeenCalledTimes(2));
-    expect(screen.getByText("/safe/claude/settings.json")).toBeVisible();
-    expect(api.discoverModels).toHaveBeenCalledTimes(1);
-    expect(api.destroyAgentModelFlow).not.toHaveBeenCalled();
-  });
-
-  it("does not let an older detection response overwrite a newer one", async () => {
-    const older = deferred<AgentDetection>();
-    const newer = deferred<AgentDetection>();
-    const detectAgents = vi
-      .fn()
-      .mockResolvedValueOnce(detection)
-      .mockReturnValueOnce(older.promise)
-      .mockReturnValueOnce(newer.promise);
-    const { api } = await openClaude({ detectAgents });
-
-    fireEvent.click(screen.getByRole("button", { name: "workflow refresh" }));
-    fireEvent.click(screen.getByRole("button", { name: "workflow refresh" }));
-    const newerDetection: AgentDetection = {
-      agents: detection.agents.map((agent) => ({
-        ...agent,
-        path: `/new/${agent.agent}`,
-      })),
-    };
-    newer.resolve(newerDetection);
-    await waitFor(() => expect(api.detectAgents).toHaveBeenCalledTimes(3));
-    older.resolve({
-      agents: detection.agents.map((agent) => ({
-        ...agent,
-        path: `/old/${agent.agent}`,
-      })),
-    });
-    fireEvent.click(screen.getByRole("button", { name: "workflow consume" }));
-    fireEvent.click(screen.getByRole("button", { name: "workflow return" }));
-
-    expect(await screen.findByText("/new/claude")).toBeVisible();
-    expect(screen.queryByText("/old/claude")).not.toBeInTheDocument();
-    expect(api.destroyAgentModelFlow).not.toHaveBeenCalled();
-  });
-
-  it("marks retained detection stale when a workflow refresh fails", async () => {
-    const detectAgents = vi
-      .fn()
-      .mockResolvedValueOnce(detection)
-      .mockRejectedValueOnce({ code: "MANAGER_FAILED" });
-    const { api } = await openClaude({ detectAgents });
-    fireEvent.click(
-      screen.getByRole("button", { name: "workflow failed refresh" }),
-    );
-
-    expect(await screen.findByRole("note")).toHaveTextContent(
-      /可能已过期|may be out of date/,
-    );
-    expect(screen.getByText("/safe/claude/settings.json")).toBeVisible();
-    expect(api.destroyAgentModelFlow).toHaveBeenCalledWith("flow-claude");
-  });
-
-  it("cleans up before navigating from a classified credential issue", async () => {
-    const onNavigateToApiKeys = vi.fn();
-    renderPage(
-      {
-        discoverModels: vi.fn().mockRejectedValue({
-          code: "CREDENTIAL_NOT_FOUND",
-        }),
-      },
-      onNavigateToApiKeys,
-    );
-    fireEvent.click(
-      await screen.findByRole("button", {
-        name: /编辑 Claude Code 配置|Edit Claude Code configuration/,
-      }),
-    );
-    fireEvent.click(
-      await screen.findByRole("button", {
-        name: /前往 API 密钥|Go to API Keys/,
-      }),
-    );
-
-    expect(onNavigateToApiKeys).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("/reloaded/claude")).toBeVisible();
   });
 });

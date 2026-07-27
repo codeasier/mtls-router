@@ -1,8 +1,14 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
-import type { AgentDetection } from "./ipc";
+import type { AgentDetection, AgentModelsResult } from "./ipc";
 import { createMockApi } from "./test/api";
 
 const detection: AgentDetection = {
@@ -20,6 +26,49 @@ const detection: AgentDetection = {
     recovery: { eligible: false, files: [] },
   })),
 };
+
+const agentDiscovery: AgentModelsResult = {
+  flow_id: "flow-guard",
+  models: ["model-a", "model-b"],
+  catalog_token: "catalog-guard",
+  router_base_url: "http://127.0.0.1:19099",
+  api_base_url: "http://127.0.0.1:19099/v1",
+  existing: {
+    model_config: {
+      version: 1,
+      claude: {
+        primary: { model: "model-a" },
+        haiku: { inherit_primary: true },
+        sonnet: { inherit_primary: true },
+        opus: { inherit_primary: true },
+      },
+    },
+    unavailable_models: {},
+    drifted_agents: [],
+  },
+  preset: { model_config: {}, unavailable_agents: {} },
+};
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+async function openDirtyAgent(api: ReturnType<typeof createMockApi>) {
+  fireEvent.click(screen.getByRole("button", { name: "Agent 配置" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "编辑 Claude Code 配置" }),
+  );
+  fireEvent.change(await screen.findByLabelText("主模型"), {
+    target: { value: "model-b" },
+  });
+  await waitFor(() =>
+    expect(api.setAgentDraftDirty).toHaveBeenLastCalledWith(true),
+  );
+}
 
 describe("App navigation", () => {
   beforeEach(() => {
@@ -250,6 +299,137 @@ describe("App navigation", () => {
     );
     expect(window.localStorage.getItem("mtls-router.sidebar.collapsed")).toBe(
       "0",
+    );
+  });
+
+  it("guards sidebar navigation, cancels without leaving, and restores focus", async () => {
+    const api = createMockApi({
+      detectAgents: vi.fn().mockResolvedValue(detection),
+      discoverModels: vi.fn().mockResolvedValue(agentDiscovery),
+    });
+    render(<App api={api} />);
+    await openDirtyAgent(api);
+
+    const settings = screen.getByRole("button", { name: "系统设置" });
+    fireEvent.click(settings);
+    expect(screen.getByRole("dialog")).toHaveAccessibleName("放弃更改并离开？");
+    fireEvent.click(screen.getByRole("button", { name: "继续编辑" }));
+
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Claude Code" }),
+    ).toBeVisible();
+    expect(settings).toHaveFocus();
+
+    fireEvent.click(settings);
+    fireEvent.click(screen.getByRole("button", { name: "放弃并离开" }));
+    const settingsHeading = screen.getByRole("heading", {
+      level: 1,
+      name: "系统设置",
+    });
+    expect(settingsHeading).toBeVisible();
+    expect(settingsHeading).toHaveFocus();
+    await waitFor(() =>
+      expect(api.setAgentDraftDirty).toHaveBeenLastCalledWith(false),
+    );
+  });
+
+  it("uses one accessible dialog to resolve native quit cancel and confirm", async () => {
+    const quitRequest = { current: null as (() => void) | null };
+    const api = createMockApi({
+      detectAgents: vi.fn().mockResolvedValue(detection),
+      discoverModels: vi.fn().mockResolvedValue(agentDiscovery),
+      subscribeAgentDraftQuitRequested: vi.fn(async (listener) => {
+        quitRequest.current = listener;
+        return () => undefined;
+      }),
+    });
+    render(<App api={api} />);
+    await openDirtyAgent(api);
+
+    act(() => {
+      quitRequest.current?.();
+      quitRequest.current?.();
+    });
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    expect(api.resolveAppQuit).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "放弃并离开" }));
+    expect(api.resolveAppQuit).toHaveBeenLastCalledWith(true);
+
+    act(() => quitRequest.current?.());
+    fireEvent.click(screen.getByRole("button", { name: "继续编辑" }));
+    expect(api.resolveAppQuit).toHaveBeenLastCalledWith(false);
+  });
+
+  it("does nothing when the active Agent section is selected again", async () => {
+    const api = createMockApi({
+      detectAgents: vi.fn().mockResolvedValue(detection),
+      discoverModels: vi.fn().mockResolvedValue(agentDiscovery),
+    });
+    render(<App api={api} />);
+    await openDirtyAgent(api);
+
+    fireEvent.click(screen.getByRole("button", { name: "Agent 配置" }));
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Claude Code" }),
+    ).toBeVisible();
+  });
+
+  it("blocks Back, sidebar, and native quit while preview is loading", async () => {
+    const pendingPreview =
+      deferred<
+        Awaited<ReturnType<ReturnType<typeof createMockApi>["previewAgents"]>>
+      >();
+    const quitRequest = { current: null as (() => void) | null };
+    const api = createMockApi({
+      detectAgents: vi.fn().mockResolvedValue(detection),
+      discoverModels: vi.fn().mockResolvedValue(agentDiscovery),
+      previewAgents: vi.fn(() => pendingPreview.promise),
+      subscribeAgentDraftQuitRequested: vi.fn(async (listener) => {
+        quitRequest.current = listener;
+        return () => undefined;
+      }),
+    });
+    render(<App api={api} />);
+    fireEvent.click(screen.getByRole("button", { name: "Agent 配置" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "编辑 Claude Code 配置" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "生成写入预览" }),
+    );
+    await waitFor(() =>
+      expect(api.setAgentDraftDirty).toHaveBeenLastCalledWith(true),
+    );
+
+    expect(
+      screen.getByRole("button", { name: "返回 Agent 概览" }),
+    ).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "系统设置" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Claude Code" }),
+    ).toBeVisible();
+
+    act(() => quitRequest.current?.());
+    expect(api.resolveAppQuit).toHaveBeenLastCalledWith(false);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    await act(async () =>
+      pendingPreview.resolve({
+        revision_token: "revision-busy",
+        model_config: {
+          ...agentDiscovery.existing.model_config,
+          version: 1,
+        },
+        fragments: [],
+        files: [],
+        managed_config_drift: false,
+        drifted_agents: [],
+        managed_collisions: [],
+        requires_codex_auth_approval: false,
+      }),
     );
   });
 });

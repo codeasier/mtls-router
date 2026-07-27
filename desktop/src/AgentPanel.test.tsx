@@ -15,7 +15,9 @@ import type {
   DesktopApi,
   ModelConfig,
 } from "./ipc";
+import { AgentPanel } from "./AgentPanel";
 import { createMockApi } from "./test/api";
+import { renderWithI18n } from "./test/render";
 import { useAgentPanelController } from "./useAgentPanelController";
 
 function deferred<T>() {
@@ -96,6 +98,12 @@ function previewFor(
     requires_codex_auth_approval: false,
     ...overrides,
   };
+}
+
+function oversizedJsonFile() {
+  const file = new File(["{}"], "config.json");
+  Object.defineProperty(file, "size", { value: 2 * 1024 * 1024 + 1 });
+  return file;
 }
 
 function readyApi(overrides: Partial<DesktopApi> = {}) {
@@ -212,6 +220,7 @@ function Harness({
       </button>
       <button onClick={() => void controller.generatePreview()}>preview</button>
       <button onClick={controller.returnToEditing}>return-edit</button>
+      <button onClick={controller.dismissResult}>dismiss-result</button>
       <button
         onClick={() =>
           void controller.write({
@@ -1342,6 +1351,27 @@ describe("useAgentPanelController", () => {
     expect(api.writeAgents).not.toHaveBeenCalled();
   });
 
+  it("rejects a blank preview revision before entering preview", async () => {
+    const api = readyApi({
+      previewAgents: vi.fn().mockResolvedValue(
+        previewFor(configs.claude, {
+          revision_token: "   ",
+        }),
+      ),
+    });
+    render(<Harness api={api} target="claude" />);
+    await waitFor(() => expect(phase().kind).toBe("editing"));
+    fireEvent.click(screen.getByRole("button", { name: "preview" }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("issue")).toHaveTextContent(
+        "MODEL_RESPONSE_INVALID",
+      ),
+    );
+    expect(phase().kind).toBe("editing");
+    expect(api.writeAgents).not.toHaveBeenCalled();
+  });
+
   it("requires approvals to exactly match the accepted preview", async () => {
     const approvedPreview = previewFor(configs.claude, {
       managed_config_drift: true,
@@ -1454,6 +1484,25 @@ describe("useAgentPanelController", () => {
         ],
       },
       "WRITE_FAILED",
+    ],
+    [
+      "foreign status",
+      {
+        transaction_id: "tx-foreign",
+        agents: [{ agent: "codex" as const, success: true }],
+      },
+      "INVALID_RESPONSE",
+    ],
+    [
+      "duplicate status",
+      {
+        transaction_id: "tx-duplicate",
+        agents: [
+          { agent: "claude" as const, success: true },
+          { agent: "claude" as const, success: true },
+        ],
+      },
+      "INVALID_RESPONSE",
     ],
   ] as const)(
     "treats resolved %s writes as consumed and reloads instead of reusing preview",
@@ -1747,5 +1796,408 @@ describe("useAgentPanelController", () => {
     expect(screen.getByTestId("flow")).toHaveTextContent(
       "flow-export-recovered",
     );
+  });
+});
+
+describe("AgentPanel integration", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps the disabled editor mounted beside preview and focuses its heading on mobile", async () => {
+    vi.stubGlobal("matchMedia", vi.fn().mockReturnValue({ matches: true }));
+    const pendingPreview = deferred<AgentPreview>();
+    const api = readyApi({
+      previewAgents: vi.fn(() => pendingPreview.promise),
+    });
+    const view = renderWithI18n(
+      <AgentPanel
+        api={api}
+        target="claude"
+        onBack={vi.fn()}
+        onDirtyChange={vi.fn()}
+        onNavigateToApiKeys={vi.fn()}
+      />,
+    );
+    const primary = await screen.findByLabelText(/^主模型$/);
+    fireEvent.click(screen.getByRole("button", { name: /生成写入预览/ }));
+
+    const editor = view.container.querySelector(".agent-panel__editor")!;
+    const rail = view.container.querySelector(".agent-panel__rail")!;
+    expect(editor).toBeVisible();
+    expect(
+      editor.compareDocumentPosition(rail) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(primary).toBeDisabled();
+    await act(async () => pendingPreview.resolve(previewFor(configs.claude)));
+
+    const previewHeading = view.container.querySelector(
+      ".agent-panel__preview > h3",
+    );
+    expect(view.container.querySelector(".agent-panel__editor")).toBeVisible();
+    expect(view.container.querySelector(".agent-panel__preview")).toBeVisible();
+    expect(primary).toBeDisabled();
+    expect(previewHeading).toHaveFocus();
+  });
+
+  it("sends the imperative field snapshot when preview is generated", async () => {
+    const api = readyApi({
+      previewAgents: vi
+        .fn()
+        .mockImplementation(async (_agents, _flow, _catalog, config) =>
+          previewFor(config),
+        ),
+    });
+    renderWithI18n(
+      <AgentPanel
+        api={api}
+        target="claude"
+        onBack={vi.fn()}
+        onDirtyChange={vi.fn()}
+        onNavigateToApiKeys={vi.fn()}
+      />,
+    );
+
+    const extra = await screen.findByLabelText(/Claude Code extra JSON/);
+    fireEvent.change(extra, { target: { value: '{"custom":"latest"}' } });
+    fireEvent.click(screen.getByRole("button", { name: /生成写入预览/ }));
+
+    await waitFor(() => expect(api.previewAgents).toHaveBeenCalledOnce());
+    expect(vi.mocked(api.previewAgents).mock.calls[0][3].claude?.extra).toEqual(
+      {
+        custom: "latest",
+      },
+    );
+  });
+
+  it("passes preview approvals through the controller to the write request", async () => {
+    const api = readyApi({
+      previewAgents: vi.fn().mockResolvedValue(
+        previewFor(configs.claude, {
+          managed_config_drift: true,
+          drifted_agents: ["claude"],
+          requires_codex_auth_approval: true,
+        }),
+      ),
+      writeAgents: vi.fn().mockResolvedValue({
+        transaction_id: "tx-panel",
+        agents: [{ agent: "claude", success: true }],
+      }),
+    });
+    renderWithI18n(
+      <AgentPanel
+        api={api}
+        target="claude"
+        onBack={vi.fn()}
+        onDirtyChange={vi.fn()}
+        onNavigateToApiKeys={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /生成写入预览/ }),
+    );
+    fireEvent.click(
+      await screen.findByRole("checkbox", {
+        name: /批准覆盖已漂移的托管命名空间/,
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: /批准 Codex 切换为文件型 API key 认证/,
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /写入所选 Agent/ }));
+
+    await waitFor(() => expect(api.writeAgents).toHaveBeenCalledOnce());
+    expect(vi.mocked(api.writeAgents).mock.calls[0].slice(5)).toEqual([
+      true,
+      true,
+      [],
+    ]);
+  });
+
+  it("shows a successful result with reloaded prefill and dismisses it without leaving", async () => {
+    const reloaded = {
+      ...configs.claude,
+      claude: {
+        ...configs.claude.claude!,
+        primary: { model: "preset-claude", name: "Reloaded" },
+      },
+    };
+    const onBack = vi.fn();
+    const onReloaded = vi.fn();
+    const api = readyApi({
+      discoverModels: vi
+        .fn()
+        .mockResolvedValueOnce(discoveryFor("flow-before", configs.claude))
+        .mockResolvedValueOnce(discoveryFor("flow-after", reloaded)),
+      previewAgents: vi.fn().mockResolvedValue(previewFor(reloaded)),
+      writeAgents: vi.fn().mockResolvedValue({
+        transaction_id: "tx-reloaded",
+        agents: [
+          {
+            agent: "claude",
+            success: true,
+            changed: ["/safe/claude/config.json"],
+          },
+        ],
+      }),
+    });
+    const view = renderWithI18n(
+      <AgentPanel
+        api={api}
+        target="claude"
+        onBack={onBack}
+        onReloaded={onReloaded}
+        onNavigateToApiKeys={vi.fn()}
+      />,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: /生成写入预览/ }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: /写入所选 Agent/ }),
+    );
+
+    expect(await screen.findByText("成功")).toBeVisible();
+    expect(screen.getByLabelText(/^主模型$/)).toHaveValue("preset-claude");
+    expect(screen.getByLabelText(/claude-primary 显示名称/)).toHaveValue(
+      "Reloaded",
+    );
+    expect(view.container.querySelector(".agent-panel__editor")).toBeVisible();
+    expect(onReloaded).toHaveBeenCalledWith(detection);
+
+    fireEvent.click(screen.getByRole("button", { name: /关闭结果并继续编辑/ }));
+    expect(screen.queryByText("成功")).not.toBeInTheDocument();
+    expect(view.container.querySelector(".agent-panel__editor")).toBeVisible();
+    expect(view.container.querySelector(".agent-panel__editor")).toHaveFocus();
+    expect(onBack).not.toHaveBeenCalled();
+  });
+
+  it("refreshes overview detection after dismissing a result before reload retry", async () => {
+    const onReloaded = vi.fn();
+    const api = readyApi({
+      detectAgents: vi
+        .fn()
+        .mockResolvedValueOnce(detection)
+        .mockRejectedValueOnce({ code: "AGENT_DETECT_IO" })
+        .mockResolvedValueOnce(detection),
+      discoverModels: vi
+        .fn()
+        .mockResolvedValueOnce(discoveryFor("flow-before", configs.claude))
+        .mockResolvedValueOnce(discoveryFor("flow-after", configs.claude)),
+      previewAgents: vi.fn().mockResolvedValue(previewFor(configs.claude)),
+      writeAgents: vi.fn().mockResolvedValue({
+        transaction_id: "tx-retry-after-dismiss",
+        agents: [{ agent: "claude", success: true }],
+      }),
+    });
+    renderWithI18n(
+      <AgentPanel
+        api={api}
+        target="claude"
+        onBack={vi.fn()}
+        onReloaded={onReloaded}
+        onNavigateToApiKeys={vi.fn()}
+      />,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: /生成写入预览/ }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: /写入所选 Agent/ }),
+    );
+    expect(await screen.findByText(/写入后重新加载失败/)).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: /关闭结果并继续编辑/ }));
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+
+    await waitFor(() => expect(onReloaded).toHaveBeenCalledWith(detection));
+  });
+
+  it("resynchronizes extra JSON after a clean external refresh", async () => {
+    const initial = {
+      ...configs.claude,
+      claude: { ...configs.claude.claude!, extra: { canonical: "old" } },
+    };
+    const refreshed = {
+      ...configs.claude,
+      claude: { ...configs.claude.claude!, extra: { canonical: "new" } },
+    };
+    const api = readyApi({
+      discoverModels: vi
+        .fn()
+        .mockResolvedValueOnce(discoveryFor("flow-before", initial))
+        .mockResolvedValueOnce(discoveryFor("flow-after", refreshed)),
+    });
+    renderWithI18n(
+      <AgentPanel
+        api={api}
+        target="claude"
+        onBack={vi.fn()}
+        onNavigateToApiKeys={vi.fn()}
+      />,
+    );
+    const extra = await screen.findByLabelText(/Claude Code extra JSON/);
+    expect(extra).toHaveValue(JSON.stringify({ canonical: "old" }, null, 2));
+
+    fireEvent.click(screen.getByRole("button", { name: /重新检测/ }));
+
+    await waitFor(() =>
+      expect(extra).toHaveValue(JSON.stringify({ canonical: "new" }, null, 2)),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /生成写入预览/ }));
+    await waitFor(() => expect(api.previewAgents).toHaveBeenCalledOnce());
+    expect(vi.mocked(api.previewAgents).mock.calls[0][3].claude?.extra).toEqual(
+      {
+        canonical: "new",
+      },
+    );
+  });
+
+  it("keeps invalid local text mounted while blocked and resets it on discard", async () => {
+    const rebuildDetection = {
+      agents: detection.agents.map((agent) =>
+        agent.agent === "claude"
+          ? {
+              ...agent,
+              invalid: true,
+              recovery: {
+                eligible: true,
+                files: [
+                  {
+                    role: "config",
+                    path: agent.path,
+                    format: agent.format,
+                    exists: true,
+                    reasons: ["syntax_invalid"],
+                  },
+                ],
+              },
+            }
+          : agent,
+      ),
+    };
+    const api = readyApi({
+      detectAgents: vi
+        .fn()
+        .mockResolvedValueOnce(detection)
+        .mockResolvedValue(rebuildDetection),
+      discoverModels: vi
+        .fn()
+        .mockResolvedValueOnce(discoveryFor("flow-merge", configs.claude))
+        .mockResolvedValue(discoveryFor("flow-rebuild", configs.claude)),
+    });
+    const view = renderWithI18n(
+      <AgentPanel
+        api={api}
+        target="claude"
+        onBack={vi.fn()}
+        onNavigateToApiKeys={vi.fn()}
+      />,
+    );
+    const extra = await screen.findByLabelText(/Claude Code extra JSON/);
+    fireEvent.change(extra, { target: { value: '{"broken":' } });
+    fireEvent.click(screen.getByRole("button", { name: /重新检测/ }));
+
+    await screen.findByText(/当前草稿无法继续编辑/);
+    expect(view.container.querySelector(".agent-panel__editor")).toBeVisible();
+    expect(extra).toHaveValue('{"broken":');
+    expect(extra).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: /放弃草稿/ }));
+    await waitFor(() =>
+      expect(screen.getByLabelText(/Claude Code extra JSON/)).toHaveValue(""),
+    );
+  });
+
+  it("shows readonly metadata and offers a real catalog session retry", async () => {
+    const onRetrySession = vi.fn();
+    const api = readyApi({
+      discoverModels: vi.fn().mockRejectedValue({
+        code: "MODEL_DISCOVERY_FAILED",
+        message: "secret upstream detail",
+      }),
+    });
+    renderWithI18n(
+      <AgentPanel
+        api={api}
+        target="claude"
+        onBack={vi.fn()}
+        onRetrySession={onRetrySession}
+        onNavigateToApiKeys={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByText("/safe/claude/config")).toBeVisible();
+    expect(screen.getByText("json")).toBeVisible();
+    expect(document.body).not.toHaveTextContent("secret upstream detail");
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    expect(onRetrySession).toHaveBeenCalledOnce();
+  });
+
+  it("shows readonly recovery reasons without attempting discovery", async () => {
+    const readonlyDetection = {
+      agents: detection.agents.map((agent) =>
+        agent.agent === "claude"
+          ? {
+              ...agent,
+              invalid: true,
+              writable: false,
+              recovery: {
+                eligible: false,
+                reasons: ["syntax_invalid"],
+                files: [],
+              },
+            }
+          : agent,
+      ),
+    };
+    const api = readyApi({
+      detectAgents: vi.fn().mockResolvedValue(readonlyDetection),
+    });
+    renderWithI18n(
+      <AgentPanel
+        api={api}
+        target="claude"
+        onBack={vi.fn()}
+        onNavigateToApiKeys={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByText("配置语法无效。")).toBeVisible();
+    expect(screen.getByText("/safe/claude/config")).toBeVisible();
+    expect(screen.getByText("不可写")).toBeVisible();
+    expect(screen.getByText("配置无效")).toBeVisible();
+    expect(screen.getByRole("button", { name: "重试" })).toBeVisible();
+    expect(api.discoverModels).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["wrong extension", new File(["{}"], "config.txt")],
+    ["oversized JSON", oversizedJsonFile()],
+  ])("rejects the %s import boundary before IPC", async (_, file) => {
+    const api = readyApi();
+    renderWithI18n(
+      <AgentPanel
+        api={api}
+        target="claude"
+        onBack={vi.fn()}
+        onNavigateToApiKeys={vi.fn()}
+      />,
+    );
+    const input = await waitFor(() => {
+      const value =
+        document.querySelector<HTMLInputElement>('input[type="file"]');
+      expect(value).not.toBeNull();
+      return value!;
+    });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "IMPORT_INVALID",
+    );
+    expect(api.importAgentModelConfig).not.toHaveBeenCalled();
   });
 });

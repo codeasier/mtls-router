@@ -1591,6 +1591,155 @@ main {
   background: var(--surface);
 }
 
+.agent-panel {
+  min-width: 0;
+}
+
+.agent-panel__header,
+.agent-panel__workspace,
+.agent-panel__rail,
+.agent-panel__actions,
+.agent-panel__state,
+.agent-panel__conflict,
+.agent-panel__preview,
+.agent-panel__editor {
+  min-width: 0;
+}
+
+.agent-panel__workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(310px, 0.38fr);
+  gap: 14px;
+  align-items: start;
+  padding: 14px;
+  background: var(--paper-deep);
+}
+
+.agent-panel__editor {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.28fr) minmax(0, 1fr);
+  min-height: 540px;
+}
+
+.agent-panel__rail {
+  position: sticky;
+  top: 14px;
+  display: grid;
+  gap: 12px;
+  max-height: calc(100dvh - 190px);
+  overflow: auto;
+}
+
+.agent-panel__rail .preview-layout {
+  display: block;
+  padding: 0;
+  background: transparent;
+}
+
+.agent-panel__rail .approval-rail {
+  margin-top: 12px;
+}
+
+.agent-panel__rail .preview-files,
+.agent-panel__rail .result-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.agent-panel__preview > h3 {
+  margin: 0 0 10px;
+  padding: 2px;
+  font-size: 18px;
+}
+
+.agent-panel__state {
+  display: grid;
+  gap: 12px;
+  justify-items: start;
+  padding: 24px;
+  background: var(--paper-deep);
+}
+
+.agent-panel__state p,
+.agent-panel__conflict p {
+  margin: 0;
+}
+
+.agent-panel__state--idle {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
+}
+
+.agent-panel__conflict {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid rgba(139, 91, 23, 0.3);
+  border-radius: var(--radius-control);
+  background: var(--warning-soft);
+}
+
+.agent-panel__conflict p {
+  flex: 1 1 320px;
+}
+
+.agent-panel__processing {
+  min-height: 220px;
+  margin: 0;
+}
+
+.agent-panel__metadata {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+}
+
+.agent-panel__metadata > div {
+  min-width: 0;
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+}
+
+.agent-panel__metadata dt {
+  color: var(--muted);
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+.agent-panel__metadata dd {
+  margin: 4px 0 0;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+.leave-dialog {
+  width: min(480px, calc(100vw - 32px));
+}
+
+@media (max-width: 900px) {
+  .agent-panel__workspace,
+  .agent-panel__editor,
+  .agent-panel .preview-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .agent-panel__rail {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .agent-panel .catalog-rail {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+}
+
 .agents-workbench__header {
   display: flex;
   justify-content: space-between;

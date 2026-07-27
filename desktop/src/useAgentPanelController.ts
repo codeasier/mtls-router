@@ -188,6 +188,7 @@ export interface AgentPanelController {
   resolveConflict(choice: "preserve" | "discard"): void;
   generatePreview(): Promise<void>;
   returnToEditing(): void;
+  dismissResult(): void;
   write(approvals: WriteApprovals): Promise<void>;
   importConfig(file: File): Promise<void>;
   exportConfig(): Promise<void>;
@@ -1123,6 +1124,14 @@ export function useAgentPanelController({
         result: null,
         issue: null,
         phase: { kind: "editing", refresh: { kind: "idle" } },
+      }));
+    },
+    dismissResult: () => {
+      if (!snapshotRef.current.result) return;
+      commitSnapshot((current) => ({
+        ...current,
+        result: null,
+        issue: current.issue?.kind === "success" ? null : current.issue,
       }));
     },
     write: async (approvals) => {

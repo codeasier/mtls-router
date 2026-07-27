@@ -238,11 +238,22 @@ function AgentPreviewPaneContent({
                   <code>{safe(path)}</code>
                 </div>
               ))}
+              {agent.error_code && (
+                <p className="result-path result-path--error">
+                  {t("agents.errorCode", { code: safe(agent.error_code) })}
+                </p>
+              )}
             </article>
           ))}
         </div>
+        {(result.state_change || result.state_backup) && (
+          <div className="preview-files result-state-effects">
+            {result.state_change && <FileEffect effect={result.state_change} />}
+            {result.state_backup && <FileEffect effect={result.state_backup} />}
+          </div>
+        )}
         <button className="control-button" disabled={busy} onClick={onFinish}>
-          {t("agents.finish")}
+          {t("agents.panel.continueEditing")}
         </button>
       </div>
     );
@@ -291,6 +302,9 @@ function AgentPreviewPaneContent({
               {preview.state_change && (
                 <FileEffect effect={preview.state_change} />
               )}
+              {preview.state_backup && (
+                <FileEffect effect={preview.state_backup} />
+              )}
             </div>
           </section>
         </div>
@@ -306,7 +320,7 @@ function AgentPreviewPaneContent({
               {safe(collision.action)}
             </p>
           ))}
-          {preview.managed_config_drift && (
+          {preview.drifted_agents.length > 0 && (
             <label className="approval-check">
               <input
                 type="checkbox"
@@ -331,7 +345,7 @@ function AgentPreviewPaneContent({
             className="control-button"
             disabled={
               busy ||
-              (preview.managed_config_drift && !approveDrift) ||
+              (preview.drifted_agents.length > 0 && !approveDrift) ||
               (preview.requires_codex_auth_approval && !approveAuth) ||
               !previewValid
             }
