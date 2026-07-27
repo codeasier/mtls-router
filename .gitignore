@@ -22,6 +22,9 @@ Thumbs.db
 .idea/
 .vscode/
 
+# Local design workflow artifacts
+/docs/superpowers/
+
 # Go
 /vendor/
 /go.work
