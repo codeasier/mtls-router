@@ -2,7 +2,24 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
+import type { AgentDetection } from "./ipc";
 import { createMockApi } from "./test/api";
+
+const detection: AgentDetection = {
+  agents: ["claude", "opencode", "codex"].map((agent) => ({
+    agent: agent as "claude" | "opencode" | "codex",
+    name: agent,
+    detected: true,
+    command: `/safe/bin/${agent}`,
+    path: `/safe/${agent}/config`,
+    format: agent === "codex" ? "toml" : "json",
+    exists: true,
+    writable: true,
+    configured: true,
+    invalid: false,
+    recovery: { eligible: false, files: [] },
+  })),
+};
 
 describe("App navigation", () => {
   beforeEach(() => {
@@ -81,6 +98,27 @@ describe("App navigation", () => {
       screen.getByRole("heading", { name: "API 密钥" }),
     ).toBeInTheDocument();
     expect(await screen.findByText("尚未配置")).toBeInTheDocument();
+  });
+
+  it("opens API key management from an Agent credential error", async () => {
+    const api = createMockApi({
+      detectAgents: vi.fn().mockResolvedValue(detection),
+      discoverModels: vi.fn().mockRejectedValue({
+        code: "CREDENTIAL_NOT_FOUND",
+        message: "credential is not configured",
+      }),
+    });
+    render(<App api={api} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Agent 配置" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "编辑 Claude Code 配置" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "前往 API 密钥" }),
+    );
+
+    expect(screen.getByRole("heading", { name: "API 密钥" })).toBeVisible();
   });
 
   it("uses document visibility only to coordinate native polling", () => {

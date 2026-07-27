@@ -153,39 +153,61 @@ describe("AgentOverview", () => {
     ).toBeDisabled();
   });
 
-  it("routes credential and retry issues to their explicit actions", () => {
+  it.each([
+    ["CREDENTIAL_NOT_FOUND", "credential", "前往 API 密钥"],
+    ["CREDENTIAL_INVALID", "credential", "前往 API 密钥"],
+    ["CREDENTIAL_IO_ERROR", "credential", "前往 API 密钥"],
+    ["CREDENTIAL_LOCK_TIMEOUT", "credential", "前往 API 密钥"],
+    ["MODEL_AUTH_FAILED", "auth", "更换 API 密钥"],
+  ] as const)("routes %s to API key management", (code, kind, action) => {
+    const props = callbacks();
+    render(
+      <AgentOverview
+        detection={detection}
+        refreshing={false}
+        stale={false}
+        issue={{ kind, code }}
+        {...props}
+      />,
+    );
+
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent(
+      kind === "auth"
+        ? "已保存的 API key 未通过模型服务认证"
+        : "尚未保存可用的 API key",
+    );
+    fireEvent.click(within(alert).getByRole("button", { name: action }));
+    expect(props.onNavigateToApiKeys).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["MODEL_DISCOVERY_FAILED", "暂时无法取得模型目录"],
+    ["MODEL_RESPONSE_INVALID", "暂时无法取得模型目录"],
+    ["MODEL_CATALOG_EMPTY", "暂时无法取得模型目录"],
+    ["OPERATION_TIMEOUT", "暂时无法取得模型目录"],
+    ["AGENT_OPERATION_BUSY", "暂时无法取得模型目录"],
+    ["MANAGER_FAILED", "本地 manager 暂时不可用"],
+    ["SIDECAR_MISSING", "本地 manager 暂时不可用"],
+    ["UNKNOWN_BACKEND_CODE", "无法开始配置（UNKNOWN_BACKEND_CODE）"],
+  ])("renders a stable action for %s", (code, message) => {
     const props = callbacks();
     const target = {
       agent: "opencode" as const,
       mode: "rebuild" as const,
       installedAtEntry: true,
     };
-    const view = render(
+    render(
       <AgentOverview
         detection={detection}
         refreshing={false}
         stale={false}
-        issue={{ kind: "credential", code: "CREDENTIAL_NOT_FOUND" }}
+        issue={{ kind: "retry", code, target }}
         {...props}
       />,
     );
 
-    const alert = screen.getByRole("alert");
-    expect(alert).toHaveTextContent("尚未保存可用的 API key");
-    fireEvent.click(
-      within(alert).getByRole("button", { name: "前往 API 密钥" }),
-    );
-    expect(props.onNavigateToApiKeys).toHaveBeenCalledOnce();
-
-    view.rerender(
-      <AgentOverview
-        detection={detection}
-        refreshing={false}
-        stale={false}
-        issue={{ kind: "retry", code: "MODEL_DISCOVERY_FAILED", target }}
-        {...props}
-      />,
-    );
+    expect(screen.getByRole("alert")).toHaveTextContent(message);
     fireEvent.click(screen.getByRole("button", { name: "重试 OpenCode" }));
     expect(props.onRetry).toHaveBeenCalledWith(target);
   });
