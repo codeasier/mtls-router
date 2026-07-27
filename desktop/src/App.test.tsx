@@ -121,6 +121,95 @@ describe("App navigation", () => {
     expect(screen.getByRole("heading", { name: "API 密钥" })).toBeVisible();
   });
 
+  it("writes configuration for an uninstalled Agent and keeps the install-later guidance", async () => {
+    const uninstalledDetection: AgentDetection = {
+      agents: detection.agents.map((agent) =>
+        agent.agent === "claude"
+          ? {
+              ...agent,
+              command: "",
+              exists: false,
+              configured: false,
+            }
+          : agent,
+      ),
+    };
+    const api = createMockApi({
+      detectAgents: vi.fn().mockResolvedValue(uninstalledDetection),
+      discoverModels: vi.fn().mockResolvedValue({
+        flow_id: "flow-uninstalled-claude",
+        models: ["model-a"],
+        catalog_token: "catalog-token",
+        router_base_url: "http://127.0.0.1:19099",
+        api_base_url: "http://127.0.0.1:19099/v1",
+        existing: {
+          model_config: {},
+          unavailable_models: {},
+          drifted_agents: [],
+        },
+        preset: { model_config: {}, unavailable_agents: {} },
+      }),
+      previewAgents: vi.fn().mockResolvedValue({
+        revision_token: "revision",
+        model_config: {
+          version: 1,
+          claude: {
+            primary: { model: "model-a" },
+            haiku: { inherit_primary: true },
+            sonnet: { inherit_primary: true },
+            opus: { inherit_primary: true },
+          },
+        },
+        fragments: [
+          {
+            agent: "claude",
+            role: "config",
+            path: "/safe/claude/settings.json",
+            format: "json",
+            content: "{}",
+          },
+        ],
+        files: [
+          {
+            agent: "claude",
+            mode: "merge",
+            path: "/safe/claude/settings.json",
+            role: "config",
+            format: "json",
+            operation: "replace",
+          },
+        ],
+        managed_config_drift: false,
+        drifted_agents: [],
+        managed_collisions: [],
+        requires_codex_auth_approval: false,
+      }),
+      writeAgents: vi.fn().mockResolvedValue({
+        transaction_id: "tx-uninstalled-claude",
+        agents: [{ agent: "claude", success: true }],
+      }),
+    });
+    render(<App api={api} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Agent 配置" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "生成 Claude Code 配置" }),
+    );
+    fireEvent.change(await screen.findByLabelText("主模型"), {
+      target: { value: "model-a" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "生成写入预览" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "写入所选 Agent" }),
+    );
+
+    expect(await screen.findByText("成功")).toBeVisible();
+    expect(screen.getByRole("note")).toHaveTextContent(
+      "配置已生成；安装 Claude Code 后即可使用。",
+    );
+    expect(api.writeAgents).toHaveBeenCalledOnce();
+  });
+
   it("uses document visibility only to coordinate native polling", () => {
     const api = createMockApi();
     render(<App api={api} />);

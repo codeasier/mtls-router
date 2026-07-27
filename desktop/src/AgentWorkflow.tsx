@@ -721,9 +721,12 @@ function validateRebuildPreview(
     )
   )
     return false;
+  if (preview.files.some((effect) => effect.agent !== target.agent))
+    return false;
   if (
-    preview.files.some(
-      (effect) => effect.agent && effect.agent !== target.agent,
+    [preview.state_change, preview.state_backup].some(
+      (effect) =>
+        effect && ((effect.agent ?? "") !== "" || (effect.mode ?? "") !== ""),
     )
   )
     return false;

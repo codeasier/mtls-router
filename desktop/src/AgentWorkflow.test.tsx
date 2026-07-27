@@ -504,6 +504,12 @@ describe("single-Agent workflow", () => {
         format: "json",
         operation: "replace",
       },
+      state_backup: {
+        path: "/safe/manager/state.json.bak",
+        role: "state_backup",
+        format: "json",
+        operation: "create",
+      },
     });
     const api = createMockApi({
       previewAgents: vi.fn().mockResolvedValue(rebuildPreview),
@@ -568,6 +574,32 @@ describe("single-Agent workflow", () => {
     [string, AgentTarget, Partial<AgentPreview>]
   > = [
     [
+      "an agentless regular merge effect",
+      targets.opencode,
+      {
+        files: [
+          {
+            ...opencodeRebuildEffect,
+            agent: undefined,
+            mode: "merge" as const,
+          },
+        ],
+      },
+    ],
+    [
+      "a regular merge effect for another Agent",
+      targets.opencode,
+      {
+        files: [
+          {
+            ...opencodeRebuildEffect,
+            agent: "codex" as const,
+            mode: "merge" as const,
+          },
+        ],
+      },
+    ],
+    [
       "a merge target with a rebuild effect",
       targets.opencode,
       { files: [opencodeRebuildEffect] },
@@ -617,6 +649,34 @@ describe("single-Agent workflow", () => {
             action: "replace",
           },
         ],
+      },
+    ],
+    [
+      "a state change claiming an Agent",
+      targets.rebuild,
+      {
+        files: [opencodeRebuildEffect],
+        state_change: {
+          agent: "codex" as const,
+          path: "/safe/manager/state.json",
+          role: "state",
+          format: "json",
+          operation: "replace",
+        },
+      },
+    ],
+    [
+      "a state backup claiming Agent mode",
+      targets.rebuild,
+      {
+        files: [opencodeRebuildEffect],
+        state_backup: {
+          mode: "rebuild" as const,
+          path: "/safe/manager/state.json.bak",
+          role: "state_backup",
+          format: "json",
+          operation: "create",
+        },
       },
     ],
   ];

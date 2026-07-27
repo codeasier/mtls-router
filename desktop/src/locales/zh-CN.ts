@@ -259,7 +259,12 @@ export const zhCN = {
   "agents.action.configure": "配置 {agent}",
   "agents.action.edit": "编辑 {agent} 配置",
   "agents.action.create": "生成 {agent} 配置",
-  "agents.issue.credential": "尚未保存可用的 API key。",
+  "agents.issue.credential.notFound": "尚未保存 API key。",
+  "agents.issue.credential.invalid": "已保存的 API key 格式无效，请重新保存。",
+  "agents.issue.credential.io": "凭据存储暂时不可用，请稍后重试。",
+  "agents.issue.credential.locked":
+    "凭据存储正在执行其他操作，请等待操作完成后重试。",
+  "agents.issue.credential.unavailable": "凭据存储暂时不可用，请稍后重试。",
   "agents.issue.auth": "已保存的 API key 未通过模型服务认证。",
   "agents.issue.discovery": "暂时无法取得模型目录，请重试。",
   "agents.issue.manager": "本地 manager 暂时不可用，请重试或重启应用。",

@@ -281,7 +281,15 @@ export const en: Record<TranslationKey, string> = {
   "agents.action.configure": "Configure {agent}",
   "agents.action.edit": "Edit {agent} configuration",
   "agents.action.create": "Generate {agent} configuration",
-  "agents.issue.credential": "No usable API key has been saved.",
+  "agents.issue.credential.notFound": "No API key has been saved.",
+  "agents.issue.credential.invalid":
+    "The saved API key is malformed. Save it again.",
+  "agents.issue.credential.io":
+    "Credential storage is unavailable. Try again later.",
+  "agents.issue.credential.locked":
+    "Credential storage is in use. Wait for the current operation to finish and try again.",
+  "agents.issue.credential.unavailable":
+    "Credential storage is unavailable. Try again later.",
   "agents.issue.auth": "The saved API key was rejected by the model service.",
   "agents.issue.discovery":
     "The model catalog is temporarily unavailable. Try again.",

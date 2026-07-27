@@ -172,33 +172,52 @@ describe("AgentOverview", () => {
   });
 
   it.each([
-    ["CREDENTIAL_NOT_FOUND", "credential", "前往 API 密钥"],
-    ["CREDENTIAL_INVALID", "credential", "前往 API 密钥"],
-    ["CREDENTIAL_IO_ERROR", "credential", "前往 API 密钥"],
-    ["CREDENTIAL_LOCK_TIMEOUT", "credential", "前往 API 密钥"],
-    ["MODEL_AUTH_FAILED", "auth", "更换 API 密钥"],
-  ] as const)("routes %s to API key management", (code, kind, action) => {
-    const props = callbacks();
-    render(
-      <AgentOverview
-        detection={detection}
-        refreshing={false}
-        stale={false}
-        issue={{ kind, code }}
-        {...props}
-      />,
-    );
+    ["CREDENTIAL_NOT_FOUND", "credential", "尚未保存 API key", "前往 API 密钥"],
+    [
+      "CREDENTIAL_INVALID",
+      "credential",
+      "已保存的 API key 格式无效，请重新保存",
+      "前往 API 密钥",
+    ],
+    [
+      "CREDENTIAL_IO_ERROR",
+      "credential",
+      "凭据存储暂时不可用",
+      "前往 API 密钥",
+    ],
+    [
+      "CREDENTIAL_LOCK_TIMEOUT",
+      "credential",
+      "凭据存储正在执行其他操作",
+      "前往 API 密钥",
+    ],
+    [
+      "MODEL_AUTH_FAILED",
+      "auth",
+      "已保存的 API key 未通过模型服务认证",
+      "更换 API 密钥",
+    ],
+  ] as const)(
+    "routes %s to API key management",
+    (code, kind, message, action) => {
+      const props = callbacks();
+      render(
+        <AgentOverview
+          detection={detection}
+          refreshing={false}
+          stale={false}
+          issue={{ kind, code }}
+          {...props}
+        />,
+      );
 
-    const alert = screen.getByRole("alert");
-    expect(alert).toHaveClass("agent-overview__error");
-    expect(alert).toHaveTextContent(
-      kind === "auth"
-        ? "已保存的 API key 未通过模型服务认证"
-        : "尚未保存可用的 API key",
-    );
-    fireEvent.click(within(alert).getByRole("button", { name: action }));
-    expect(props.onNavigateToApiKeys).toHaveBeenCalledOnce();
-  });
+      const alert = screen.getByRole("alert");
+      expect(alert).toHaveClass("agent-overview__error");
+      expect(alert).toHaveTextContent(message);
+      fireEvent.click(within(alert).getByRole("button", { name: action }));
+      expect(props.onNavigateToApiKeys).toHaveBeenCalledOnce();
+    },
+  );
 
   it.each([
     ["MODEL_DISCOVERY_FAILED", "暂时无法取得模型目录"],

@@ -109,6 +109,21 @@ function retryIssueMessage(code: string, t: Translator) {
   });
 }
 
+function credentialIssueMessage(code: string, t: Translator) {
+  switch (code) {
+    case "CREDENTIAL_NOT_FOUND":
+      return t("agents.issue.credential.notFound");
+    case "CREDENTIAL_INVALID":
+      return t("agents.issue.credential.invalid");
+    case "CREDENTIAL_IO_ERROR":
+      return t("agents.issue.credential.io");
+    case "CREDENTIAL_LOCK_TIMEOUT":
+      return t("agents.issue.credential.locked");
+    default:
+      return t("agents.issue.credential.unavailable");
+  }
+}
+
 function IssueNotice({
   issue,
   onRefresh,
@@ -125,11 +140,9 @@ function IssueNotice({
     return (
       <div className="agent-alert agent-overview__error" role="alert">
         <span>
-          {t(
-            issue.kind === "auth"
-              ? "agents.issue.auth"
-              : "agents.issue.credential",
-          )}
+          {issue.kind === "auth"
+            ? t("agents.issue.auth")
+            : credentialIssueMessage(issue.code, t)}
         </span>{" "}
         <button
           type="button"
