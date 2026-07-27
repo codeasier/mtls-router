@@ -24,7 +24,10 @@ React UI ──Tauri invoke──▶ Rust commands.rs ──stdin/stdout JSON─
 | `ipc.ts`                            | `DesktopApi` 接口 + `createDesktopApi()` —— 所有 Tauri 命令的类型化包装；`sanitizeSensitiveText()` 用于客户端脱敏 |
 | `App.tsx`                           | 根布局：侧边栏导航（Router/Agents/API 密钥/Logs/Settings）+ 区块渲染                                              |
 | `RouterPage.tsx`                    | router 状态、start/stop、health、占用者检查/终止                                                                  |
-| `AgentPage.tsx`                     | Agent 检测、使用全局凭据发现模型、配置预览/写入流程；不接触明文 API key                                           |
+| `AgentPage.tsx`                     | Agents 页面协调器：本地检测、单 Agent 模型加载、错误行动项、flow 生命周期与总览/工作流切换                        |
+| `AgentOverview.tsx`                 | Claude Code / OpenCode / Codex 总览；分别展示 CLI 安装与配置状态，不依赖模型上游                                  |
+| `AgentWorkflow.tsx`                 | 单 Agent 配置、导入导出、preview、审批与事务写入的过渡工作流；不接触明文 API key                                  |
+| `agentPresentation.tsx`             | Agent 名称/logo、完整 detection 校验、安装/配置状态与 recovery 文案的共享展示模型                                 |
 | `ApiKeysPage.tsx`                   | 全局 API key 保存、替换、删除及摘要展示；提交后清空输入，不提供明文回读                                           |
 | `LogsPage.tsx`                      | 有界的、安全过滤的 router 日志，手动刷新                                                                          |
 | `SettingsPage.tsx`                  | 自启动、诊断、卸载准备、语言                                                                                      |
