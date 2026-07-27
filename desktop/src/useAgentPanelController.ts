@@ -8,13 +8,20 @@ import {
 
 import type { AgentConfigDraftState } from "./AgentConfigFields";
 import {
+  validateAgentConfig,
+  validateSingleTargetConfig,
+} from "./AgentConfigFields";
+import { validateRebuildPreview } from "./AgentPreviewPane";
+import {
   createPanelBaselines,
   panelOperationAvailability,
   isConfigDirty,
   sameExternalSnapshot,
   targetMode,
   type PanelOperationAvailability,
+  type PanelIssue,
   type PanelPhase,
+  type WriteApprovals,
 } from "./agentPanelState";
 import { completeAgentDetection, type AgentTarget } from "./agentPresentation";
 import {
@@ -22,6 +29,8 @@ import {
   type AgentDetection,
   type AgentId,
   type AgentModelsResult,
+  type AgentPreview,
+  type AgentWriteResult,
   type CredentialSummary,
   type DesktopApi,
   type InitializationSource,
@@ -44,6 +53,12 @@ interface PendingFlowRef {
   current: OwnedFlow[];
 }
 
+interface AuxiliaryOperation {
+  kind: "import" | "export";
+  generation: number;
+  owner: OwnedFlow;
+}
+
 interface ControllerSnapshot {
   ownerApi: DesktopApi;
   ownerTarget: AgentId;
@@ -53,10 +68,13 @@ interface ControllerSnapshot {
   discovery: AgentModelsResult | null;
   target: AgentTarget | null;
   config: ModelConfig | null;
-  source: InitializationSource | null;
+  source: InitializationSource | "imported" | null;
   formBaseline: ModelConfig | null;
   externalBaseline: string | null;
   draftState: AgentConfigDraftState;
+  preview: AgentPreview | null;
+  result: AgentWriteResult | null;
+  issue: PanelIssue | null;
 }
 
 function emptySnapshot(
@@ -76,6 +94,9 @@ function emptySnapshot(
     formBaseline: null,
     externalBaseline: null,
     draftState: { error: "", hasLocalDraft: false },
+    preview: null,
+    result: null,
+    issue: null,
   };
 }
 
@@ -145,9 +166,6 @@ function snapshotDirty(snapshot: ControllerSnapshot) {
   );
 }
 
-type AgentPanelOperationPhase =
-  "preview-loading" | "previewing" | "writing" | "reloading";
-
 export interface AgentPanelController {
   phase: PanelPhase;
   detection: AgentDetection | null;
@@ -155,7 +173,10 @@ export interface AgentPanelController {
   discovery: AgentModelsResult | null;
   target: AgentTarget | null;
   config: ModelConfig | null;
-  source: InitializationSource | null;
+  source: InitializationSource | "imported" | null;
+  preview: AgentPreview | null;
+  result: AgentWriteResult | null;
+  issue: PanelIssue | null;
   dirty: boolean;
   operations: PanelOperationAvailability;
   draftState: AgentConfigDraftState;
@@ -165,8 +186,11 @@ export interface AgentPanelController {
   retryBlockedDraft(): Promise<void>;
   discardBlockedDraft(): Promise<void>;
   resolveConflict(choice: "preserve" | "discard"): void;
-  /** @internal Task 7 must replace this with real operation methods and delete it. */
-  __occupyOperationForTask7(phase: AgentPanelOperationPhase | null): void;
+  generatePreview(): Promise<void>;
+  returnToEditing(): void;
+  write(approvals: WriteApprovals): Promise<void>;
+  importConfig(file: File): Promise<void>;
+  exportConfig(): Promise<void>;
 }
 
 export interface AgentPanelControllerOptions {
@@ -184,6 +208,22 @@ function errorCode(error: unknown, fallback: string) {
     : fallback;
 }
 
+function validWriteResult(
+  value: unknown,
+  target: AgentId,
+): value is AgentWriteResult {
+  if (!value || typeof value !== "object") return false;
+  const agents = (value as { agents?: unknown }).agents;
+  if (!Array.isArray(agents) || agents.length !== 1) return false;
+  const status = agents[0];
+  return Boolean(
+    status &&
+    typeof status === "object" &&
+    (status as { agent?: unknown }).agent === target &&
+    typeof (status as { success?: unknown }).success === "boolean",
+  );
+}
+
 export function useAgentPanelController({
   api,
   target: targetId,
@@ -199,6 +239,7 @@ export function useAgentPanelController({
   const pendingDestroyRef = useRef<OwnedFlow[]>([]);
   const refreshInFlightRef = useRef<Promise<void> | null>(null);
   const refreshPendingRef = useRef(false);
+  const auxiliaryOperationRef = useRef<AuxiliaryOperation | null>(null);
   const lastCandidateStartedAtRef = useRef<number | null>(null);
   const committedStartRefreshRef = useRef<
     (manual: boolean, blockedRetry?: boolean) => Promise<void>
@@ -215,6 +256,7 @@ export function useAgentPanelController({
 
   useLayoutEffect(() => {
     const generation = ++generationRef.current;
+    auxiliaryOperationRef.current = null;
     let mounted = true;
     const current = () => mounted && generation === generationRef.current;
     const publish = (next: ControllerSnapshot) => {
@@ -368,7 +410,13 @@ export function useAgentPanelController({
         source: initialized.sources[targetId],
         formBaseline: baselines.form,
         externalBaseline: baselines.external,
-        draftState: { error: "", hasLocalDraft: false },
+        draftState: {
+          error: validateAgentConfig(baselines.form, targetId),
+          hasLocalDraft: false,
+        },
+        preview: null,
+        result: null,
+        issue: null,
       });
     })();
 
@@ -386,6 +434,10 @@ export function useAgentPanelController({
     manual: boolean,
     blockedRetry = false,
   ): Promise<void> => {
+    if (auxiliaryOperationRef.current !== null) {
+      refreshPendingRef.current = true;
+      return Promise.resolve();
+    }
     const before = snapshotRef.current;
     const normalEditing = before.phase.kind === "editing";
     if (!normalEditing) {
@@ -477,6 +529,7 @@ export function useAgentPanelController({
               canExport: activeFlowRef.current !== null,
               errorCode: null,
             },
+            preview: null,
           }));
           return;
         }
@@ -494,6 +547,8 @@ export function useAgentPanelController({
             formBaseline: null,
             externalBaseline: null,
             draftState: { error: "", hasLocalDraft: false },
+            preview: null,
+            result: null,
             phase: {
               kind: "readonly",
               reason: {
@@ -517,6 +572,8 @@ export function useAgentPanelController({
           formBaseline: null,
           externalBaseline: null,
           draftState: { error: "", hasLocalDraft: false },
+          preview: null,
+          result: null,
         }));
       }
 
@@ -623,6 +680,7 @@ export function useAgentPanelController({
             installedAtEntry: Boolean(targetState.command?.trim()),
           },
           externalBaseline: baselines.external,
+          preview: null,
         };
         if (!latestDirty) {
           return {
@@ -631,7 +689,10 @@ export function useAgentPanelController({
             config: baselines.form,
             source: initialized.sources[targetId],
             formBaseline: baselines.form,
-            draftState: { error: "", hasLocalDraft: false },
+            draftState: {
+              error: validateAgentConfig(baselines.form, targetId),
+              hasLocalDraft: false,
+            },
           };
         }
         if (!externalChanged) {
@@ -662,6 +723,113 @@ export function useAgentPanelController({
     });
     refreshInFlightRef.current = request;
     return request;
+  };
+
+  const recoverOperation = async (code: string, abandonOwner: boolean) => {
+    refreshPendingRef.current = false;
+    if (abandonOwner) {
+      const abandoned = activeFlowRef.current;
+      activeFlowRef.current = null;
+      if (abandoned) destroyOwnedFlow(abandoned, pendingDestroyRef);
+    }
+    commitSnapshot((current) => ({
+      ...current,
+      preview: null,
+      result: null,
+      issue: { kind: "operation", code },
+      phase: { kind: "editing", refresh: { kind: "idle" } },
+    }));
+    await startRefresh(true);
+  };
+
+  const reloadAfterWrite = async () => {
+    const generation = generationRef.current;
+    commitSnapshot((current) =>
+      current.phase.kind === "reload-failed"
+        ? { ...current, phase: { kind: "reloading" } }
+        : current,
+    );
+
+    let detected: AgentDetection | null = null;
+    let summary: CredentialSummary | null = null;
+    try {
+      const complete = completeAgentDetection(await api.detectAgents());
+      if (!complete) throw { code: "AGENT_DETECT_FAILED" };
+      detected = complete;
+      if (generation !== generationRef.current) return;
+
+      summary = await api.getCredential();
+      if (generation !== generationRef.current) return;
+      if (!summary.present) throw { code: "CREDENTIAL_NOT_FOUND" };
+
+      const state = detected.agents.find((agent) => agent.agent === targetId)!;
+      const mode = targetMode(state);
+      if (!mode) {
+        throw {
+          code: state.invalid ? "AGENT_NOT_RECOVERABLE" : "CONFIG_NOT_WRITABLE",
+        };
+      }
+
+      retryPendingFlows(pendingDestroyRef);
+      const discovered = await api.discoverModels([targetId]);
+      const flowId = discovered.flow_id.trim();
+      if (!flowId) throw { code: "MODEL_RESPONSE_INVALID" };
+      const candidate: OwnedFlow = {
+        api,
+        id: flowId,
+        destroying: false,
+        attempts: 0,
+        retryTimer: null,
+      };
+      candidateFlowRef.current = candidate;
+      if (generation !== generationRef.current) {
+        candidateFlowRef.current = null;
+        destroyOwnedFlow(candidate, pendingDestroyRef);
+        return;
+      }
+
+      const baselines = createPanelBaselines(targetId, detected, discovered);
+      const initialized = initializeAgentConfig(
+        [targetId],
+        discovered.existing.model_config,
+        discovered.preset.model_config,
+      );
+      activeFlowRef.current = candidate;
+      candidateFlowRef.current = null;
+      refreshPendingRef.current = false;
+      commitSnapshot((current) => ({
+        ...current,
+        detection: detected,
+        credential: summary,
+        discovery: discovered,
+        target: {
+          agent: targetId,
+          mode,
+          installedAtEntry: Boolean(state.command?.trim()),
+        },
+        config: baselines.form,
+        source: initialized.sources[targetId],
+        formBaseline: baselines.form,
+        externalBaseline: baselines.external,
+        draftState: {
+          error: validateAgentConfig(baselines.form, targetId),
+          hasLocalDraft: false,
+        },
+        preview: null,
+        phase: { kind: "editing", refresh: { kind: "idle" } },
+      }));
+    } catch (error) {
+      if (generation !== generationRef.current) return;
+      commitSnapshot((current) => ({
+        ...current,
+        detection: detected ?? current.detection,
+        credential: summary ?? current.credential,
+        phase: {
+          kind: "reload-failed",
+          code: errorCode(error, "MODEL_DISCOVERY_FAILED"),
+        },
+      }));
+    }
   };
 
   useLayoutEffect(() => {
@@ -719,21 +887,38 @@ export function useAgentPanelController({
     target: visible.target,
     config: visible.config,
     source: visible.source,
+    preview: visible.preview,
+    result: visible.result,
+    issue: visible.issue,
     dirty,
     operations,
     draftState: visible.draftState,
     setConfig: (config) => {
       if (
+        auxiliaryOperationRef.current !== null ||
         !panelOperationAvailability(
           snapshotRef.current.phase,
           activeFlowRef.current !== null,
         ).edit
       )
         return;
-      commitSnapshot((current) => ({ ...current, config }));
+      commitSnapshot((current) => ({
+        ...current,
+        config,
+        preview: null,
+        result: null,
+        issue: null,
+        draftState: current.draftState.hasLocalDraft
+          ? current.draftState
+          : {
+              error: validateAgentConfig(config, targetId),
+              hasLocalDraft: false,
+            },
+      }));
     },
     setDraftState: (draftState) => {
       if (
+        auxiliaryOperationRef.current !== null ||
         !panelOperationAvailability(
           snapshotRef.current.phase,
           activeFlowRef.current !== null,
@@ -742,7 +927,10 @@ export function useAgentPanelController({
         return;
       commitSnapshot((current) => ({ ...current, draftState }));
     },
-    refresh: () => committedStartRefreshRef.current(true),
+    refresh: () =>
+      snapshotRef.current.phase.kind === "reload-failed"
+        ? reloadAfterWrite()
+        : committedStartRefreshRef.current(true),
     retryBlockedDraft: () => committedStartRefreshRef.current(true, true),
     discardBlockedDraft: async () => {
       const current = snapshotRef.current;
@@ -764,6 +952,8 @@ export function useAgentPanelController({
           formBaseline: null,
           externalBaseline: null,
           draftState: { error: "", hasLocalDraft: false },
+          preview: null,
+          result: null,
           phase: {
             kind: "readonly",
             reason: {
@@ -776,8 +966,15 @@ export function useAgentPanelController({
       commitSnapshot((latest) => ({
         ...latest,
         config: latest.formBaseline,
-        draftState: { error: "", hasLocalDraft: false },
+        draftState: {
+          error: latest.formBaseline
+            ? validateAgentConfig(latest.formBaseline, targetId)
+            : "",
+          hasLocalDraft: false,
+        },
         phase: { kind: "editing", refresh: { kind: "idle" } },
+        preview: null,
+        result: null,
       }));
       await committedStartRefreshRef.current(true);
     },
@@ -800,6 +997,7 @@ export function useAgentPanelController({
           formBaseline: baselines.form,
           externalBaseline: candidate.externalBaseline,
           phase: { kind: "editing", refresh: { kind: "idle" } },
+          preview: null,
         }));
         return;
       }
@@ -820,32 +1018,364 @@ export function useAgentPanelController({
         formBaseline: baselines.form,
         externalBaseline: baselines.external,
         source: initialized.sources[targetId],
-        draftState: { error: "", hasLocalDraft: false },
+        draftState: {
+          error: validateAgentConfig(baselines.form, targetId),
+          hasLocalDraft: false,
+        },
         phase: { kind: "editing", refresh: { kind: "idle" } },
+        preview: null,
       }));
     },
-    __occupyOperationForTask7: (phase) => {
+    generatePreview: async () => {
       const current = snapshotRef.current;
-      if (phase === null) {
+      const owner = activeFlowRef.current;
+      if (
+        auxiliaryOperationRef.current !== null ||
+        current.phase.kind !== "editing" ||
+        current.phase.refresh.kind !== "idle" ||
+        !owner ||
+        !current.discovery ||
+        !current.config ||
+        !current.target
+      )
+        return;
+      const validation =
+        current.draftState.error ||
+        validateAgentConfig(current.config, targetId);
+      if (validation) {
+        commitSnapshot((latest) => ({
+          ...latest,
+          draftState: { ...latest.draftState, error: validation },
+        }));
+        return;
+      }
+      const generation = generationRef.current;
+      const discovery = current.discovery;
+      const config = current.config;
+      const target = current.target;
+      commitSnapshot((latest) => ({
+        ...latest,
+        preview: null,
+        result: null,
+        issue: null,
+        phase: { kind: "preview-loading" },
+      }));
+      try {
+        retryPendingFlows(pendingDestroyRef);
+        const value = await api.previewAgents(
+          [targetId],
+          owner.id,
+          discovery.catalog_token,
+          config,
+          { [targetId]: target.mode },
+        );
         if (
-          current.phase.kind === "preview-loading" ||
-          current.phase.kind === "previewing" ||
-          current.phase.kind === "writing" ||
-          current.phase.kind === "reloading"
+          generation !== generationRef.current ||
+          snapshotRef.current.phase.kind !== "preview-loading" ||
+          activeFlowRef.current !== owner
+        )
+          return;
+        if (
+          !validateRebuildPreview(value, target) ||
+          !value.revision_token.trim()
         ) {
           commitSnapshot((latest) => ({
             ...latest,
+            issue: { kind: "operation", code: "MODEL_RESPONSE_INVALID" },
             phase: { kind: "editing", refresh: { kind: "idle" } },
           }));
+          return;
         }
+        commitSnapshot((latest) => ({
+          ...latest,
+          config: value.model_config,
+          draftState: {
+            error: validateAgentConfig(value.model_config, targetId),
+            hasLocalDraft: false,
+          },
+          preview: value,
+          phase: { kind: "previewing" },
+        }));
+      } catch (error) {
+        if (generation !== generationRef.current) return;
+        const code = errorCode(error, "PREVIEW_FAILED");
+        if (
+          code === "PREVIEW_STALE" ||
+          code === "MODEL_FLOW_EXPIRED" ||
+          code === "MODEL_CATALOG_STALE"
+        ) {
+          await recoverOperation(code, code !== "PREVIEW_STALE");
+          return;
+        }
+        commitSnapshot((latest) => ({
+          ...latest,
+          preview: null,
+          issue: { kind: "operation", code },
+          phase: { kind: "editing", refresh: { kind: "idle" } },
+        }));
+      }
+    },
+    returnToEditing: () => {
+      if (snapshotRef.current.phase.kind !== "previewing") return;
+      commitSnapshot((current) => ({
+        ...current,
+        preview: null,
+        result: null,
+        issue: null,
+        phase: { kind: "editing", refresh: { kind: "idle" } },
+      }));
+    },
+    write: async (approvals) => {
+      const current = snapshotRef.current;
+      const owner = activeFlowRef.current;
+      if (
+        auxiliaryOperationRef.current !== null ||
+        current.phase.kind !== "previewing" ||
+        !owner ||
+        !current.discovery ||
+        !current.config ||
+        !current.preview ||
+        !current.target ||
+        !validateRebuildPreview(current.preview, current.target)
+      )
+        return;
+      const generation = generationRef.current;
+      const preview = current.preview;
+      const discovery = current.discovery;
+      const config = current.config;
+      const expectedApprovals: WriteApprovals = {
+        managedOverwrite: preview.drifted_agents.length > 0,
+        codexAuthChange: preview.requires_codex_auth_approval,
+        rebuild: current.target.mode === "rebuild" ? [targetId] : [],
+      };
+      if (
+        approvals.managedOverwrite !== expectedApprovals.managedOverwrite ||
+        approvals.codexAuthChange !== expectedApprovals.codexAuthChange ||
+        approvals.rebuild.length !== expectedApprovals.rebuild.length ||
+        approvals.rebuild.some(
+          (agent, index) => agent !== expectedApprovals.rebuild[index],
+        )
+      ) {
+        commitSnapshot((latest) => ({
+          ...latest,
+          issue: { kind: "operation", code: "APPROVAL_MISMATCH" },
+        }));
         return;
       }
+      commitSnapshot((latest) => ({
+        ...latest,
+        issue: null,
+        phase: { kind: "writing" },
+      }));
+      try {
+        retryPendingFlows(pendingDestroyRef);
+        const value = await api.writeAgents(
+          [targetId],
+          owner.id,
+          discovery.catalog_token,
+          config,
+          preview.revision_token,
+          approvals.managedOverwrite,
+          approvals.codexAuthChange,
+          approvals.rebuild,
+        );
+        if (activeFlowRef.current === owner) activeFlowRef.current = null;
+        if (
+          generation !== generationRef.current ||
+          snapshotRef.current.phase.kind !== "writing"
+        )
+          return;
+        if (!validWriteResult(value, targetId)) {
+          commitSnapshot((latest) => ({
+            ...latest,
+            preview: null,
+            result: null,
+            issue: { kind: "operation", code: "INVALID_RESPONSE" },
+            phase: { kind: "reloading" },
+          }));
+          await reloadAfterWrite();
+          return;
+        }
+        if (!value.agents[0].success) {
+          commitSnapshot((latest) => ({
+            ...latest,
+            preview: null,
+            result: value,
+            issue: {
+              kind: "operation",
+              code: value.agents[0].error_code || "WRITE_FAILED",
+            },
+            phase: { kind: "reloading" },
+          }));
+          await reloadAfterWrite();
+          return;
+        }
+
+        commitSnapshot((latest) => ({
+          ...latest,
+          config,
+          formBaseline: config,
+          draftState: { error: "", hasLocalDraft: false },
+          preview: null,
+          result: value,
+          issue: { kind: "success" },
+          phase: { kind: "reloading" },
+        }));
+        await reloadAfterWrite();
+      } catch (error) {
+        if (generation !== generationRef.current) return;
+        const code = errorCode(error, "WRITE_FAILED");
+        await recoverOperation(code, code !== "PREVIEW_STALE");
+      }
+    },
+    importConfig: async (file) => {
+      const current = snapshotRef.current;
+      const owner = activeFlowRef.current;
       if (
-        current.phase.kind === "editing" &&
-        (current.phase.refresh.kind === "idle" ||
-          current.phase.refresh.kind === "failed")
+        auxiliaryOperationRef.current !== null ||
+        !panelOperationAvailability(current.phase, owner !== null).import ||
+        !owner
+      )
+        return;
+      if (
+        file.size > 2 * 1024 * 1024 ||
+        !file.name.toLowerCase().endsWith(".json")
       ) {
-        commitSnapshot((latest) => ({ ...latest, phase: { kind: phase } }));
+        commitSnapshot((latest) => ({
+          ...latest,
+          issue: { kind: "operation", code: "IMPORT_INVALID" },
+        }));
+        return;
+      }
+      const operation: AuxiliaryOperation = {
+        kind: "import",
+        generation: generationRef.current,
+        owner,
+      };
+      auxiliaryOperationRef.current = operation;
+      let recoveryCode: string | null = null;
+      try {
+        retryPendingFlows(pendingDestroyRef);
+        const value = await api.importAgentModelConfig(
+          await file.text(),
+          [targetId],
+          owner.id,
+        );
+        if (
+          auxiliaryOperationRef.current !== operation ||
+          operation.generation !== generationRef.current ||
+          activeFlowRef.current !== owner
+        )
+          return;
+        if (!validateSingleTargetConfig(value, targetId))
+          throw { code: "IMPORT_INVALID" };
+        commitSnapshot((latest) => ({
+          ...latest,
+          config: value,
+          source: "imported",
+          draftState: {
+            error: validateAgentConfig(value, targetId),
+            hasLocalDraft: false,
+          },
+          preview: null,
+          result: null,
+          issue: null,
+        }));
+      } catch (error) {
+        if (
+          auxiliaryOperationRef.current !== operation ||
+          operation.generation !== generationRef.current
+        )
+          return;
+        const code = errorCode(error, "IMPORT_FAILED");
+        if (code === "MODEL_FLOW_EXPIRED" || code === "MODEL_CATALOG_STALE") {
+          recoveryCode = code;
+        } else {
+          commitSnapshot((latest) => ({
+            ...latest,
+            issue: { kind: "operation", code },
+          }));
+        }
+      } finally {
+        if (auxiliaryOperationRef.current === operation) {
+          auxiliaryOperationRef.current = null;
+          if (recoveryCode) {
+            await recoverOperation(recoveryCode, true);
+          } else if (refreshPendingRef.current) {
+            refreshPendingRef.current = false;
+            await committedStartRefreshRef.current(true);
+          }
+        }
+      }
+    },
+    exportConfig: async () => {
+      const current = snapshotRef.current;
+      const owner = activeFlowRef.current;
+      if (
+        auxiliaryOperationRef.current !== null ||
+        !panelOperationAvailability(current.phase, owner !== null).export ||
+        !owner ||
+        !current.config ||
+        current.draftState.error ||
+        validateAgentConfig(current.config, targetId)
+      )
+        return;
+      const operation: AuxiliaryOperation = {
+        kind: "export",
+        generation: generationRef.current,
+        owner,
+      };
+      auxiliaryOperationRef.current = operation;
+      let recoveryCode: string | null = null;
+      try {
+        retryPendingFlows(pendingDestroyRef);
+        const content = await api.exportAgentModelConfig(
+          current.config,
+          [targetId],
+          owner.id,
+        );
+        if (
+          auxiliaryOperationRef.current !== operation ||
+          operation.generation !== generationRef.current ||
+          activeFlowRef.current !== owner
+        )
+          return;
+        const url = URL.createObjectURL(
+          new Blob([content], { type: "application/json" }),
+        );
+        try {
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = "mtls-router-model-config.json";
+          link.click();
+        } finally {
+          URL.revokeObjectURL(url);
+        }
+      } catch (error) {
+        if (
+          auxiliaryOperationRef.current !== operation ||
+          operation.generation !== generationRef.current
+        )
+          return;
+        const code = errorCode(error, "EXPORT_FAILED");
+        if (code === "MODEL_FLOW_EXPIRED" || code === "MODEL_CATALOG_STALE") {
+          recoveryCode = code;
+        } else {
+          commitSnapshot((latest) => ({
+            ...latest,
+            issue: { kind: "operation", code },
+          }));
+        }
+      } finally {
+        if (auxiliaryOperationRef.current === operation) {
+          auxiliaryOperationRef.current = null;
+          if (recoveryCode) {
+            await recoverOperation(recoveryCode, true);
+          } else if (refreshPendingRef.current) {
+            refreshPendingRef.current = false;
+            await committedStartRefreshRef.current(true);
+          }
+        }
       }
     },
   };

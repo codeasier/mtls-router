@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   AgentId,
   AgentModelsResult,
+  AgentPreview,
   DesktopApi,
   ModelConfig,
 } from "./ipc";
@@ -80,6 +81,23 @@ function discoveryFor(
   };
 }
 
+function previewFor(
+  config: ModelConfig,
+  overrides: Partial<AgentPreview> = {},
+): AgentPreview {
+  return {
+    revision_token: "revision",
+    model_config: config,
+    fragments: [],
+    files: [],
+    managed_config_drift: false,
+    drifted_agents: [],
+    managed_collisions: [],
+    requires_codex_auth_approval: false,
+    ...overrides,
+  };
+}
+
 function readyApi(overrides: Partial<DesktopApi> = {}) {
   return createMockApi({
     detectAgents: vi.fn().mockResolvedValue(detection),
@@ -117,6 +135,13 @@ function Harness({
         {JSON.stringify(controller.operations)}
       </output>
       <output data-testid="draft-error">{controller.draftState.error}</output>
+      <output data-testid="preview">
+        {controller.preview?.revision_token ?? ""}
+      </output>
+      <output data-testid="result">
+        {controller.result?.transaction_id ?? ""}
+      </output>
+      <output data-testid="issue">{JSON.stringify(controller.issue)}</output>
       <output data-testid="same-refresh-promise">
         {String(sameRefreshPromise)}
       </output>
@@ -185,19 +210,56 @@ function Harness({
       <button onClick={() => void controller.retryBlockedDraft()}>
         retry-blocked
       </button>
-      {(["preview-loading", "previewing", "writing", "reloading"] as const).map(
-        (operation) => (
-          <button
-            key={operation}
-            onClick={() => controller.__occupyOperationForTask7(operation)}
-          >
-            occupy-{operation}
-          </button>
-        ),
-      )}
-      <button onClick={() => controller.__occupyOperationForTask7(null)}>
-        finish-operation
+      <button onClick={() => void controller.generatePreview()}>preview</button>
+      <button onClick={controller.returnToEditing}>return-edit</button>
+      <button
+        onClick={() =>
+          void controller.write({
+            managedOverwrite: Boolean(
+              controller.preview?.drifted_agents.length,
+            ),
+            codexAuthChange: Boolean(
+              controller.preview?.requires_codex_auth_approval,
+            ),
+            rebuild: controller.target?.mode === "rebuild" ? [target] : [],
+          })
+        }
+      >
+        write
       </button>
+      <button
+        onClick={() =>
+          void controller.write({
+            managedOverwrite: !controller.preview?.drifted_agents.length,
+            codexAuthChange: !controller.preview?.requires_codex_auth_approval,
+            rebuild: [target],
+          })
+        }
+      >
+        write-invalid-approvals
+      </button>
+      <button
+        onClick={() =>
+          void controller.importConfig(
+            new File(
+              [
+                JSON.stringify({
+                  version: 1,
+                  claude: {
+                    ...configs.claude.claude,
+                    primary: { model: "imported" },
+                  },
+                }),
+              ],
+              "config.json",
+              { type: "application/json" },
+            ),
+          )
+        }
+      >
+        import
+      </button>
+      <button onClick={() => void controller.exportConfig()}>export</button>
       <button onClick={() => controller.setConfig(configs.claude)}>
         restore
       </button>
@@ -925,22 +987,765 @@ describe("useAgentPanelController", () => {
     },
   );
 
-  it.each(["preview-loading", "previewing", "writing", "reloading"] as const)(
-    "coalesces one pending refresh while %s owns the panel",
-    async (operation) => {
-      const api = readyApi();
+  it("binds preview to the active flow, keeps normalization dirty, and drains one pending refresh after return", async () => {
+    const normalized = {
+      ...configs.claude,
+      claude: {
+        ...configs.claude.claude!,
+        primary: { model: "existing-claude", name: "Normalized" },
+      },
+    };
+    const pendingPreview = deferred<AgentPreview>();
+    const api = readyApi({
+      previewAgents: vi.fn(() => pendingPreview.promise),
+    });
+    render(<Harness api={api} target="claude" />);
+    await waitFor(() => expect(phase().kind).toBe("editing"));
+
+    fireEvent.click(screen.getByRole("button", { name: "preview" }));
+    expect(phase().kind).toBe("preview-loading");
+    fireEvent.click(screen.getByRole("button", { name: "preview" }));
+    fireEvent.click(screen.getByRole("button", { name: "refresh" }));
+    fireEvent.click(screen.getByRole("button", { name: "refresh" }));
+    expect(api.previewAgents).toHaveBeenCalledTimes(1);
+    expect(api.previewAgents).toHaveBeenCalledWith(
+      ["claude"],
+      "flow-claude",
+      "catalog-flow-claude",
+      configs.claude,
+      { claude: "merge" },
+    );
+    expect(api.discoverModels).toHaveBeenCalledTimes(1);
+
+    await act(async () => pendingPreview.resolve(previewFor(normalized)));
+    expect(phase().kind).toBe("previewing");
+    expect(screen.getByTestId("preview")).toHaveTextContent("revision");
+    expect(screen.getByTestId("config")).toHaveTextContent("Normalized");
+    expect(screen.getByTestId("dirty")).toHaveTextContent("true");
+    expect(api.discoverModels).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "return-edit" }));
+    expect(screen.getByTestId("preview")).toHaveTextContent("");
+    expect(screen.getByTestId("config")).toHaveTextContent("Normalized");
+    await waitFor(() => expect(api.discoverModels).toHaveBeenCalledTimes(2));
+  });
+
+  it("validates typed drafts synchronously and invalidates preview on field changes", async () => {
+    const api = readyApi({
+      previewAgents: vi.fn().mockResolvedValue(previewFor(configs.claude)),
+    });
+    render(<Harness api={api} target="claude" />);
+    await waitFor(() => expect(phase().kind).toBe("editing"));
+
+    fireEvent.click(screen.getByRole("button", { name: "change" }));
+    expect(screen.getByTestId("draft-error")).not.toHaveTextContent("");
+    fireEvent.click(screen.getByRole("button", { name: "preview" }));
+    expect(api.previewAgents).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "restore" }));
+    expect(screen.getByTestId("draft-error")).toHaveTextContent("");
+    fireEvent.click(screen.getByRole("button", { name: "preview" }));
+    await waitFor(() => expect(phase().kind).toBe("previewing"));
+    fireEvent.click(screen.getByRole("button", { name: "return-edit" }));
+    fireEvent.click(screen.getByRole("button", { name: "change-to-draft-b" }));
+    expect(screen.getByTestId("preview")).toHaveTextContent("");
+  });
+
+  it("imports only the current Agent without rebasing and exports without changing panel state", async () => {
+    const createObjectURL = vi.fn().mockReturnValue("blob:safe");
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: createObjectURL,
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: revokeObjectURL,
+    });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(
+      () => undefined,
+    );
+    const api = readyApi({
+      importAgentModelConfig: vi.fn().mockResolvedValue({
+        ...configs.claude,
+        claude: {
+          ...configs.claude.claude!,
+          primary: { model: "imported" },
+        },
+      }),
+      exportAgentModelConfig: vi.fn().mockResolvedValue('{"safe":true}'),
+    });
+    render(<Harness api={api} target="claude" />);
+    await waitFor(() => expect(phase().kind).toBe("editing"));
+
+    fireEvent.click(screen.getByRole("button", { name: "import" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("source")).toHaveTextContent("imported"),
+    );
+    expect(api.importAgentModelConfig).toHaveBeenCalledWith(
+      expect.any(String),
+      ["claude"],
+      "flow-claude",
+    );
+    expect(screen.getByTestId("dirty")).toHaveTextContent("true");
+    const stateBeforeExport = document.body.textContent;
+
+    fireEvent.click(screen.getByRole("button", { name: "export" }));
+    await waitFor(() => expect(api.exportAgentModelConfig).toHaveBeenCalled());
+    expect(api.exportAgentModelConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ claude: expect.any(Object) }),
+      ["claude"],
+      "flow-claude",
+    );
+    expect(document.body.textContent).toBe(stateBeforeExport);
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:safe");
+  });
+
+  it("marks an equal import as imported but clean and rejects cross-Agent output", async () => {
+    const api = readyApi({
+      importAgentModelConfig: vi
+        .fn()
+        .mockResolvedValueOnce(configs.claude)
+        .mockResolvedValueOnce({
+          ...configs.claude,
+          codex: configs.codex.codex,
+        }),
+    });
+    render(<Harness api={api} target="claude" />);
+    await waitFor(() => expect(phase().kind).toBe("editing"));
+
+    fireEvent.click(screen.getByRole("button", { name: "import" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("source")).toHaveTextContent("imported"),
+    );
+    expect(screen.getByTestId("dirty")).toHaveTextContent("false");
+
+    fireEvent.click(screen.getByRole("button", { name: "import" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("issue")).toHaveTextContent("IMPORT_INVALID"),
+    );
+    expect(screen.getByTestId("config")).not.toHaveTextContent("codex");
+  });
+
+  it.each([
+    "PREVIEW_STALE",
+    "MODEL_FLOW_EXPIRED",
+    "MODEL_CATALOG_STALE",
+  ] as const)(
+    "recovers %s inside the panel while preserving the draft",
+    async (code) => {
+      const rediscovery = deferred<AgentModelsResult>();
+      const api = readyApi({
+        discoverModels: vi
+          .fn()
+          .mockResolvedValueOnce(discoveryFor("flow-claude", configs.claude))
+          .mockImplementationOnce(() => rediscovery.promise),
+        previewAgents: vi.fn().mockRejectedValue({
+          code,
+          message: "sk-canary-secret",
+        }),
+      });
       render(<Harness api={api} target="claude" />);
       await waitFor(() => expect(phase().kind).toBe("editing"));
       fireEvent.click(
-        screen.getByRole("button", { name: `occupy-${operation}` }),
+        screen.getByRole("button", { name: "change-to-draft-b" }),
       );
+      fireEvent.click(screen.getByRole("button", { name: "preview" }));
+
+      await waitFor(() => expect(api.discoverModels).toHaveBeenCalledTimes(2));
+      expect(screen.getByTestId("config")).toHaveTextContent("draft-b");
+      expect(screen.getByTestId("preview")).toHaveTextContent("");
+      expect(document.body).not.toHaveTextContent("canary-secret");
+      if (code !== "PREVIEW_STALE") {
+        expect(
+          JSON.parse(screen.getByTestId("operations").textContent ?? "{}")
+            .export,
+        ).toBe(false);
+        fireEvent.click(screen.getByRole("button", { name: "export" }));
+        expect(api.exportAgentModelConfig).not.toHaveBeenCalled();
+        expect(api.destroyAgentModelFlow).toHaveBeenCalledWith("flow-claude");
+      }
+
+      await act(async () =>
+        rediscovery.resolve(discoveryFor(`flow-${code}`, configs.claude)),
+      );
+      expect(phase()).toEqual({ kind: "editing", refresh: { kind: "idle" } });
+      expect(screen.getByTestId("config")).toHaveTextContent("draft-b");
+    },
+  );
+
+  it("shows write success before a complete clean reload and does not destroy the consumed flow", async () => {
+    const reloadDetection = deferred<typeof detection>();
+    const api = readyApi({
+      detectAgents: vi
+        .fn()
+        .mockResolvedValueOnce(detection)
+        .mockImplementationOnce(() => reloadDetection.promise),
+      discoverModels: vi
+        .fn()
+        .mockResolvedValueOnce(discoveryFor("flow-claude", configs.claude))
+        .mockResolvedValueOnce(
+          discoveryFor("flow-after-write", configs.claude),
+        ),
+      previewAgents: vi.fn().mockResolvedValue(previewFor(configs.claude)),
+      writeAgents: vi.fn().mockResolvedValue({
+        transaction_id: "tx-success",
+        agents: [{ agent: "claude", success: true }],
+      }),
+    });
+    render(<Harness api={api} target="claude" />);
+    await waitFor(() => expect(phase().kind).toBe("editing"));
+    fireEvent.click(screen.getByRole("button", { name: "preview" }));
+    await waitFor(() => expect(phase().kind).toBe("previewing"));
+    fireEvent.click(screen.getByRole("button", { name: "write" }));
+
+    await waitFor(() => expect(phase().kind).toBe("reloading"));
+    expect(api.writeAgents).toHaveBeenCalledWith(
+      ["claude"],
+      "flow-claude",
+      "catalog-flow-claude",
+      configs.claude,
+      "revision",
+      false,
+      false,
+      [],
+    );
+    expect(screen.getByTestId("result")).toHaveTextContent("tx-success");
+    expect(screen.getByTestId("issue")).toHaveTextContent("success");
+    expect(api.destroyAgentModelFlow).not.toHaveBeenCalledWith("flow-claude");
+    expect(api.getCredential).toHaveBeenCalledTimes(1);
+
+    await act(async () => reloadDetection.resolve(detection));
+    await waitFor(() => expect(phase().kind).toBe("editing"));
+    expect(api.getCredential).toHaveBeenCalledTimes(2);
+    expect(api.discoverModels).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId("flow")).toHaveTextContent("flow-after-write");
+    expect(screen.getByTestId("dirty")).toHaveTextContent("false");
+    expect(screen.getByTestId("issue")).toHaveTextContent("success");
+  });
+
+  it("coalesces refreshes during writing and reloading into the complete post-write reload", async () => {
+    const pendingWrite =
+      deferred<Awaited<ReturnType<DesktopApi["writeAgents"]>>>();
+    const reloadDetection = deferred<typeof detection>();
+    const api = readyApi({
+      detectAgents: vi
+        .fn()
+        .mockResolvedValueOnce(detection)
+        .mockImplementationOnce(() => reloadDetection.promise),
+      discoverModels: vi
+        .fn()
+        .mockResolvedValueOnce(discoveryFor("flow-claude", configs.claude))
+        .mockResolvedValueOnce(discoveryFor("flow-reloaded", configs.claude)),
+      previewAgents: vi.fn().mockResolvedValue(previewFor(configs.claude)),
+      writeAgents: vi.fn(() => pendingWrite.promise),
+    });
+    render(<Harness api={api} target="claude" />);
+    await waitFor(() => expect(phase().kind).toBe("editing"));
+    fireEvent.click(screen.getByRole("button", { name: "preview" }));
+    await waitFor(() => expect(phase().kind).toBe("previewing"));
+    fireEvent.click(screen.getByRole("button", { name: "write" }));
+    expect(phase().kind).toBe("writing");
+    fireEvent.click(screen.getByRole("button", { name: "refresh" }));
+    fireEvent.click(screen.getByRole("button", { name: "refresh" }));
+    expect(api.detectAgents).toHaveBeenCalledTimes(1);
+
+    await act(async () =>
+      pendingWrite.resolve({
+        transaction_id: "tx-pending-refresh",
+        agents: [{ agent: "claude", success: true }],
+      }),
+    );
+    expect(phase().kind).toBe("reloading");
+    fireEvent.click(screen.getByRole("button", { name: "refresh" }));
+    fireEvent.click(screen.getByRole("button", { name: "refresh" }));
+    expect(api.detectAgents).toHaveBeenCalledTimes(2);
+
+    await act(async () => reloadDetection.resolve(detection));
+    await waitFor(() => expect(phase().kind).toBe("editing"));
+    expect(api.detectAgents).toHaveBeenCalledTimes(2);
+    expect(api.getCredential).toHaveBeenCalledTimes(2);
+    expect(api.discoverModels).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId("flow")).toHaveTextContent("flow-reloaded");
+  });
+
+  it("retains write success when reload fails and retries the full entry sequence", async () => {
+    const api = readyApi({
+      detectAgents: vi
+        .fn()
+        .mockResolvedValueOnce(detection)
+        .mockRejectedValueOnce({ code: "AGENT_DETECT_IO", message: "secret" })
+        .mockResolvedValueOnce(detection),
+      discoverModels: vi
+        .fn()
+        .mockResolvedValueOnce(discoveryFor("flow-claude", configs.claude))
+        .mockResolvedValueOnce(discoveryFor("flow-retry", configs.claude)),
+      previewAgents: vi.fn().mockResolvedValue(previewFor(configs.claude)),
+      writeAgents: vi.fn().mockResolvedValue({
+        transaction_id: "tx-success",
+        agents: [{ agent: "claude", success: true }],
+      }),
+    });
+    render(<Harness api={api} target="claude" />);
+    await waitFor(() => expect(phase().kind).toBe("editing"));
+    fireEvent.click(screen.getByRole("button", { name: "preview" }));
+    await waitFor(() => expect(phase().kind).toBe("previewing"));
+    fireEvent.click(screen.getByRole("button", { name: "write" }));
+
+    await waitFor(() =>
+      expect(phase()).toEqual({
+        kind: "reload-failed",
+        code: "AGENT_DETECT_IO",
+      }),
+    );
+    expect(screen.getByTestId("result")).toHaveTextContent("tx-success");
+    expect(screen.getByTestId("issue")).toHaveTextContent("success");
+
+    fireEvent.click(screen.getByRole("button", { name: "refresh" }));
+    await waitFor(() => expect(phase().kind).toBe("editing"));
+    expect(api.detectAgents).toHaveBeenCalledTimes(3);
+    expect(api.getCredential).toHaveBeenCalledTimes(2);
+    expect(api.discoverModels).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId("flow")).toHaveTextContent("flow-retry");
+    expect(screen.getByTestId("issue")).toHaveTextContent("success");
+  });
+
+  it("rejects cross-Agent preview metadata before entering preview", async () => {
+    const api = readyApi({
+      previewAgents: vi.fn().mockResolvedValue(
+        previewFor(configs.claude, {
+          files: [
+            {
+              agent: "codex",
+              mode: "merge",
+              path: "/safe/codex/config.toml",
+              role: "config",
+              format: "toml",
+              operation: "replace",
+            },
+          ],
+        }),
+      ),
+    });
+    render(<Harness api={api} target="claude" />);
+    await waitFor(() => expect(phase().kind).toBe("editing"));
+    fireEvent.click(screen.getByRole("button", { name: "preview" }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("issue")).toHaveTextContent(
+        "MODEL_RESPONSE_INVALID",
+      ),
+    );
+    expect(phase().kind).toBe("editing");
+    expect(screen.getByTestId("preview")).toHaveTextContent("");
+    expect(api.writeAgents).not.toHaveBeenCalled();
+  });
+
+  it("requires approvals to exactly match the accepted preview", async () => {
+    const approvedPreview = previewFor(configs.claude, {
+      managed_config_drift: true,
+      drifted_agents: ["claude"],
+      requires_codex_auth_approval: true,
+    });
+    const api = readyApi({
+      previewAgents: vi.fn().mockResolvedValue(approvedPreview),
+      writeAgents: vi.fn().mockResolvedValue({
+        transaction_id: "tx-approved",
+        agents: [{ agent: "claude", success: true }],
+      }),
+    });
+    render(<Harness api={api} target="claude" />);
+    await waitFor(() => expect(phase().kind).toBe("editing"));
+    fireEvent.click(screen.getByRole("button", { name: "preview" }));
+    await waitFor(() => expect(phase().kind).toBe("previewing"));
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "write-invalid-approvals" }),
+    );
+    expect(api.writeAgents).not.toHaveBeenCalled();
+    expect(screen.getByTestId("issue")).toHaveTextContent("APPROVAL_MISMATCH");
+    expect(phase().kind).toBe("previewing");
+
+    fireEvent.click(screen.getByRole("button", { name: "write" }));
+    await waitFor(() => expect(api.writeAgents).toHaveBeenCalledTimes(1));
+    expect(api.writeAgents).toHaveBeenCalledWith(
+      ["claude"],
+      "flow-claude",
+      "catalog-flow-claude",
+      configs.claude,
+      "revision",
+      true,
+      true,
+      [],
+    );
+  });
+
+  it("requires the exact target-only rebuild approval emitted by the pane", async () => {
+    const rebuildDetection = {
+      agents: detection.agents.map((state) =>
+        state.agent === "claude"
+          ? {
+              ...state,
+              invalid: true,
+              recovery: { eligible: true, files: [] },
+            }
+          : state,
+      ),
+    };
+    const api = readyApi({
+      detectAgents: vi.fn().mockResolvedValue(rebuildDetection),
+      previewAgents: vi.fn().mockResolvedValue(
+        previewFor(configs.claude, {
+          files: [
+            {
+              agent: "claude",
+              mode: "rebuild",
+              path: "/safe/claude/config",
+              role: "config",
+              format: "json",
+              operation: "replace",
+            },
+          ],
+        }),
+      ),
+      writeAgents: vi.fn().mockResolvedValue({
+        transaction_id: "tx-rebuild",
+        agents: [{ agent: "claude", success: true }],
+      }),
+    });
+    render(<Harness api={api} target="claude" />);
+    await waitFor(() =>
+      expect(screen.getByTestId("mode")).toHaveTextContent("rebuild"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "preview" }));
+    await waitFor(() => expect(phase().kind).toBe("previewing"));
+    fireEvent.click(screen.getByRole("button", { name: "write" }));
+
+    await waitFor(() => expect(api.writeAgents).toHaveBeenCalledTimes(1));
+    expect(api.writeAgents).toHaveBeenCalledWith(
+      ["claude"],
+      "flow-claude",
+      "catalog-flow-claude",
+      configs.claude,
+      "revision",
+      false,
+      false,
+      ["claude"],
+    );
+  });
+
+  it.each([
+    [
+      "malformed",
+      { transaction_id: "tx-malformed", agents: [] },
+      "INVALID_RESPONSE",
+    ],
+    [
+      "explicit failure",
+      {
+        transaction_id: "tx-failed",
+        agents: [
+          {
+            agent: "claude" as const,
+            success: false,
+            error_code: "WRITE_FAILED",
+          },
+        ],
+      },
+      "WRITE_FAILED",
+    ],
+  ] as const)(
+    "treats resolved %s writes as consumed and reloads instead of reusing preview",
+    async (_name, writeResult, expectedIssue) => {
+      const reloadDetection = deferred<typeof detection>();
+      const api = readyApi({
+        detectAgents: vi
+          .fn()
+          .mockResolvedValueOnce(detection)
+          .mockImplementationOnce(() => reloadDetection.promise),
+        discoverModels: vi
+          .fn()
+          .mockResolvedValueOnce(discoveryFor("flow-claude", configs.claude))
+          .mockResolvedValueOnce(discoveryFor("flow-resolved", configs.claude)),
+        previewAgents: vi.fn().mockResolvedValue(previewFor(configs.claude)),
+        writeAgents: vi.fn().mockResolvedValue(writeResult),
+      });
+      render(<Harness api={api} target="claude" />);
+      await waitFor(() => expect(phase().kind).toBe("editing"));
+      fireEvent.click(screen.getByRole("button", { name: "preview" }));
+      await waitFor(() => expect(phase().kind).toBe("previewing"));
+      fireEvent.click(screen.getByRole("button", { name: "write" }));
+
+      await waitFor(() => expect(phase().kind).toBe("reloading"));
+      expect(screen.getByTestId("preview")).toHaveTextContent("");
+      expect(screen.getByTestId("issue")).toHaveTextContent(expectedIssue);
+      expect(
+        JSON.parse(screen.getByTestId("operations").textContent ?? "{}").export,
+      ).toBe(false);
+      expect(api.destroyAgentModelFlow).not.toHaveBeenCalledWith("flow-claude");
+      if (_name === "explicit failure") {
+        expect(screen.getByTestId("result")).toHaveTextContent("tx-failed");
+      } else {
+        expect(screen.getByTestId("result")).toHaveTextContent("");
+      }
+
+      await act(async () => reloadDetection.resolve(detection));
+      await waitFor(() => expect(phase().kind).toBe("editing"));
+      expect(screen.getByTestId("flow")).toHaveTextContent("flow-resolved");
+      expect(screen.getByTestId("issue")).toHaveTextContent(expectedIssue);
+    },
+  );
+
+  it.each([
+    "PREVIEW_STALE",
+    "MODEL_FLOW_EXPIRED",
+    "MODEL_CATALOG_STALE",
+    "ROLLBACK_FAILED",
+    "UNKNOWN_WRITE_FAILURE",
+  ] as const)(
+    "recovers rejected write %s with the correct old-flow ownership",
+    async (code) => {
+      const rediscovery = deferred<AgentModelsResult>();
+      const api = readyApi({
+        discoverModels: vi
+          .fn()
+          .mockResolvedValueOnce(discoveryFor("flow-claude", configs.claude))
+          .mockImplementationOnce(() => rediscovery.promise),
+        previewAgents: vi
+          .fn()
+          .mockImplementation(async (_agents, _flow, _catalog, config) =>
+            previewFor(config),
+          ),
+        writeAgents: vi.fn().mockRejectedValue({
+          code,
+          message: "sk-write-canary-secret",
+        }),
+      });
+      render(<Harness api={api} target="claude" />);
+      await waitFor(() => expect(phase().kind).toBe("editing"));
+      fireEvent.click(
+        screen.getByRole("button", { name: "change-to-draft-b" }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "preview" }));
+      await waitFor(() => expect(phase().kind).toBe("previewing"));
+      fireEvent.click(screen.getByRole("button", { name: "write" }));
+
+      await waitFor(() => expect(api.discoverModels).toHaveBeenCalledTimes(2));
+      expect(screen.getByTestId("config")).toHaveTextContent("draft-b");
+      expect(screen.getByTestId("preview")).toHaveTextContent("");
+      expect(screen.getByTestId("issue")).toHaveTextContent(code);
+      expect(document.body).not.toHaveTextContent("canary-secret");
+      expect(
+        JSON.parse(screen.getByTestId("operations").textContent ?? "{}").export,
+      ).toBe(code === "PREVIEW_STALE");
+      if (code === "PREVIEW_STALE") {
+        expect(api.destroyAgentModelFlow).not.toHaveBeenCalledWith(
+          "flow-claude",
+        );
+      } else {
+        expect(api.destroyAgentModelFlow).toHaveBeenCalledWith("flow-claude");
+      }
+
+      await act(async () =>
+        rediscovery.resolve(discoveryFor(`flow-${code}`, configs.claude)),
+      );
+      await waitFor(() => expect(phase().kind).toBe("editing"));
+      expect(screen.getByTestId("config")).toHaveTextContent("draft-b");
+      if (code === "PREVIEW_STALE") {
+        expect(api.destroyAgentModelFlow).toHaveBeenCalledWith("flow-claude");
+      }
+    },
+  );
+
+  it("commits a dirty successful write as clean before a failed reload", async () => {
+    const api = readyApi({
+      detectAgents: vi
+        .fn()
+        .mockResolvedValueOnce(detection)
+        .mockRejectedValueOnce({ code: "AGENT_DETECT_IO" }),
+      previewAgents: vi
+        .fn()
+        .mockImplementation(async (_agents, _flow, _catalog, config) =>
+          previewFor(config),
+        ),
+      writeAgents: vi.fn().mockResolvedValue({
+        transaction_id: "tx-dirty-success",
+        agents: [{ agent: "claude", success: true }],
+      }),
+    });
+    render(<Harness api={api} target="claude" />);
+    await waitFor(() => expect(phase().kind).toBe("editing"));
+    fireEvent.click(screen.getByRole("button", { name: "change-to-draft-b" }));
+    expect(screen.getByTestId("dirty")).toHaveTextContent("true");
+    fireEvent.click(screen.getByRole("button", { name: "preview" }));
+    await waitFor(() => expect(phase().kind).toBe("previewing"));
+    fireEvent.click(screen.getByRole("button", { name: "write" }));
+
+    await waitFor(() => expect(phase().kind).toBe("reload-failed"));
+    expect(screen.getByTestId("config")).toHaveTextContent("draft-b");
+    expect(screen.getByTestId("dirty")).toHaveTextContent("false");
+    expect(screen.getByTestId("result")).toHaveTextContent("tx-dirty-success");
+    expect(screen.getByTestId("issue")).toHaveTextContent("success");
+  });
+
+  it.each(["import", "export"] as const)(
+    "drains exactly one pending refresh after %s finishes",
+    async (operation) => {
+      const pendingImport = deferred<ModelConfig>();
+      const pendingExport = deferred<string>();
+      Object.defineProperty(URL, "createObjectURL", {
+        configurable: true,
+        value: vi.fn().mockReturnValue("blob:pending"),
+      });
+      Object.defineProperty(URL, "revokeObjectURL", {
+        configurable: true,
+        value: vi.fn(),
+      });
+      vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(
+        () => undefined,
+      );
+      const api = readyApi({
+        importAgentModelConfig: vi.fn(() => pendingImport.promise),
+        exportAgentModelConfig: vi.fn(() => pendingExport.promise),
+      });
+      render(<Harness api={api} target="claude" />);
+      await waitFor(() => expect(phase().kind).toBe("editing"));
+      fireEvent.click(screen.getByRole("button", { name: operation }));
       fireEvent.click(screen.getByRole("button", { name: "refresh" }));
       fireEvent.click(screen.getByRole("button", { name: "refresh" }));
       expect(api.discoverModels).toHaveBeenCalledTimes(1);
 
-      fireEvent.click(screen.getByRole("button", { name: "finish-operation" }));
+      await act(async () => {
+        if (operation === "import") pendingImport.resolve(configs.claude);
+        else pendingExport.resolve('{"safe":true}');
+      });
       await waitFor(() => expect(api.discoverModels).toHaveBeenCalledTimes(2));
-      expect(api.discoverModels).toHaveBeenLastCalledWith(["claude"]);
+      expect(api.discoverModels).toHaveBeenCalledTimes(2);
     },
   );
+
+  it("ignores old auxiliary results after a target switch without clearing the new owner", async () => {
+    const oldExport = deferred<string>();
+    const newExport = deferred<string>();
+    const createObjectURL = vi.fn().mockReturnValue("blob:new-target");
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: createObjectURL,
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(
+      () => undefined,
+    );
+    const api = readyApi({
+      discoverModels: vi.fn(async (agents: AgentId[]) =>
+        discoveryFor(`flow-${agents[0]}`, configs[agents[0]]),
+      ),
+      exportAgentModelConfig: vi
+        .fn()
+        .mockImplementationOnce(() => oldExport.promise)
+        .mockImplementationOnce(() => newExport.promise),
+    });
+    const view = render(<Harness api={api} target="claude" />);
+    await waitFor(() => expect(phase().kind).toBe("editing"));
+    fireEvent.click(screen.getByRole("button", { name: "export" }));
+
+    view.rerender(<Harness api={api} target="codex" />);
+    await waitFor(() =>
+      expect(screen.getByTestId("flow")).toHaveTextContent("flow-codex"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "export" }));
+    await act(async () => oldExport.resolve("old-target"));
+    expect(createObjectURL).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "refresh" }));
+    expect(api.discoverModels).toHaveBeenCalledTimes(2);
+
+    await act(async () => newExport.resolve("new-target"));
+    await waitFor(() => expect(api.discoverModels).toHaveBeenCalledTimes(3));
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a late import after switching targets", async () => {
+    const oldImport = deferred<ModelConfig>();
+    const api = readyApi({
+      discoverModels: vi.fn(async (agents: AgentId[]) =>
+        discoveryFor(`flow-${agents[0]}`, configs[agents[0]]),
+      ),
+      importAgentModelConfig: vi.fn(() => oldImport.promise),
+    });
+    const view = render(<Harness api={api} target="claude" />);
+    await waitFor(() => expect(phase().kind).toBe("editing"));
+    fireEvent.click(screen.getByRole("button", { name: "import" }));
+    view.rerender(<Harness api={api} target="codex" />);
+    await waitFor(() =>
+      expect(screen.getByTestId("flow")).toHaveTextContent("flow-codex"),
+    );
+
+    await act(async () => oldImport.resolve(configs.claude));
+    expect(screen.getByTestId("config")).toHaveTextContent("existing-codex");
+    expect(screen.getByTestId("source")).not.toHaveTextContent("imported");
+  });
+
+  it("reports a stable export error without changing the draft", async () => {
+    const api = readyApi({
+      exportAgentModelConfig: vi.fn().mockRejectedValue({
+        code: "EXPORT_IO_ERROR",
+        message: "sk-export-canary-secret",
+      }),
+    });
+    render(<Harness api={api} target="claude" />);
+    await waitFor(() => expect(phase().kind).toBe("editing"));
+    fireEvent.click(screen.getByRole("button", { name: "change-to-draft-b" }));
+    fireEvent.click(screen.getByRole("button", { name: "export" }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("issue")).toHaveTextContent("EXPORT_IO_ERROR"),
+    );
+    expect(screen.getByTestId("config")).toHaveTextContent("draft-b");
+    expect(screen.getByTestId("dirty")).toHaveTextContent("true");
+    expect(screen.getByTestId("preview")).toHaveTextContent("");
+    expect(document.body).not.toHaveTextContent("canary-secret");
+  });
+
+  it("foreground-recovers an expired flow reported by export", async () => {
+    const rediscovery = deferred<AgentModelsResult>();
+    const expiredExport = deferred<string>();
+    const api = readyApi({
+      discoverModels: vi
+        .fn()
+        .mockResolvedValueOnce(discoveryFor("flow-claude", configs.claude))
+        .mockImplementationOnce(() => rediscovery.promise),
+      exportAgentModelConfig: vi.fn(() => expiredExport.promise),
+    });
+    render(<Harness api={api} target="claude" />);
+    await waitFor(() => expect(phase().kind).toBe("editing"));
+    fireEvent.click(screen.getByRole("button", { name: "change-to-draft-b" }));
+    fireEvent.click(screen.getByRole("button", { name: "export" }));
+    fireEvent.click(screen.getByRole("button", { name: "refresh" }));
+    fireEvent.click(screen.getByRole("button", { name: "refresh" }));
+    expect(api.discoverModels).toHaveBeenCalledTimes(1);
+    await act(async () => expiredExport.reject({ code: "MODEL_FLOW_EXPIRED" }));
+
+    await waitFor(() => expect(api.discoverModels).toHaveBeenCalledTimes(2));
+    expect(api.discoverModels).toHaveBeenCalledTimes(2);
+    expect(api.destroyAgentModelFlow).toHaveBeenCalledWith("flow-claude");
+    expect(screen.getByTestId("config")).toHaveTextContent("draft-b");
+    expect(screen.getByTestId("issue")).toHaveTextContent("MODEL_FLOW_EXPIRED");
+    expect(
+      JSON.parse(screen.getByTestId("operations").textContent ?? "{}").export,
+    ).toBe(false);
+
+    await act(async () =>
+      rediscovery.resolve(
+        discoveryFor("flow-export-recovered", configs.claude),
+      ),
+    );
+    await waitFor(() => expect(phase().kind).toBe("editing"));
+    expect(screen.getByTestId("flow")).toHaveTextContent(
+      "flow-export-recovered",
+    );
+  });
 });
