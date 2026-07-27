@@ -684,6 +684,33 @@ describe("single-Agent workflow", () => {
     expect(document.body.textContent).not.toContain("sk-stale-canary-secret");
   });
 
+  it("rejects a blank preview revision before write and preserves parent cleanup ownership", async () => {
+    const api = createMockApi({
+      previewAgents: vi.fn().mockResolvedValue({
+        ...previewFor("claude", claudeConfig),
+        revision_token: "   ",
+      }),
+    });
+    const callbacks = renderWorkflow({
+      api,
+      discovery: {
+        ...baseDiscovery,
+        existing: { ...baseDiscovery.existing, model_config: claudeConfig },
+      },
+    });
+    generatePreview();
+
+    await waitFor(() =>
+      expect(callbacks.onReturnToOverview).toHaveBeenCalledWith({
+        kind: "retry",
+        code: "MODEL_RESPONSE_INVALID",
+        target: targets.claude,
+      }),
+    );
+    expect(callbacks.onFlowConsumed).not.toHaveBeenCalled();
+    expect(api.writeAgents).not.toHaveBeenCalled();
+  });
+
   it("returns stale and expired previews with stable retry issues", async () => {
     const codes = ["MODEL_CATALOG_STALE", "MODEL_FLOW_EXPIRED"] as const;
     for (const code of codes) {
@@ -715,7 +742,7 @@ describe("single-Agent workflow", () => {
   });
 
   it.each(["BACKUP_FAILED", "WRITE_FAILED"] as const)(
-    "invalidates the flow before returning safe %s handling",
+    "returns safe %s handling without consuming the flow",
     async (code) => {
       const api = createMockApi({
         previewAgents: vi
@@ -747,10 +774,7 @@ describe("single-Agent workflow", () => {
           target: targets.claude,
         }),
       );
-      expect(callbacks.onFlowConsumed).toHaveBeenCalledTimes(1);
-      expect(callbacks.onFlowConsumed.mock.invocationCallOrder[0]).toBeLessThan(
-        callbacks.onReturnToOverview.mock.invocationCallOrder[0],
-      );
+      expect(callbacks.onFlowConsumed).not.toHaveBeenCalled();
       expect(document.body.textContent).not.toContain("canary-secret");
     },
   );
@@ -785,7 +809,7 @@ describe("single-Agent workflow", () => {
         target: targets.claude,
       }),
     );
-    expect(callbacks.onFlowConsumed).toHaveBeenCalledTimes(1);
+    expect(callbacks.onFlowConsumed).not.toHaveBeenCalled();
     expect(refreshDetection).toHaveBeenCalledTimes(1);
     expect(refreshDetection.mock.invocationCallOrder[0]).toBeLessThan(
       callbacks.onReturnToOverview.mock.invocationCallOrder[0],
@@ -827,7 +851,7 @@ describe("single-Agent workflow", () => {
       expect.objectContaining({ kind: "retry" }),
     );
     expect(refreshDetection).toHaveBeenCalledTimes(1);
-    expect(callbacks.onFlowConsumed).toHaveBeenCalledTimes(1);
+    expect(callbacks.onFlowConsumed).not.toHaveBeenCalled();
   });
 
   it("requires detection recovery instead of stale retry when rollback refresh fails", async () => {
@@ -864,9 +888,50 @@ describe("single-Agent workflow", () => {
     expect(callbacks.onReturnToOverview).not.toHaveBeenCalledWith(
       expect.objectContaining({ kind: "retry" }),
     );
-    expect(callbacks.onFlowConsumed).toHaveBeenCalledTimes(1);
+    expect(callbacks.onFlowConsumed).not.toHaveBeenCalled();
     expect(document.body.textContent).not.toContain("canary-secret");
   });
+
+  it.each([
+    ["CREDENTIAL_NOT_FOUND", "credential"],
+    ["CREDENTIAL_INVALID", "credential"],
+    ["CREDENTIAL_IO_ERROR", "credential"],
+    ["CREDENTIAL_LOCK_TIMEOUT", "credential"],
+    ["MODEL_AUTH_FAILED", "auth"],
+  ] as const)(
+    "classifies write-time %s without consuming or exposing messages",
+    async (code, kind) => {
+      const secret = `sk-${code}-write-secret`;
+      const api = createMockApi({
+        previewAgents: vi
+          .fn()
+          .mockResolvedValue(previewFor("claude", claudeConfig)),
+        writeAgents: vi.fn().mockRejectedValue({ code, message: secret }),
+      });
+      const callbacks = renderWorkflow({
+        api,
+        discovery: {
+          ...baseDiscovery,
+          existing: { ...baseDiscovery.existing, model_config: claudeConfig },
+        },
+      });
+      generatePreview();
+      fireEvent.click(
+        await screen.findByRole("button", {
+          name: /写入所选 Agent|Write selected Agents/,
+        }),
+      );
+
+      await waitFor(() =>
+        expect(callbacks.onReturnToOverview).toHaveBeenCalledWith({
+          kind,
+          code,
+        }),
+      );
+      expect(callbacks.onFlowConsumed).not.toHaveBeenCalled();
+      expect(document.body.textContent).not.toContain(secret);
+    },
+  );
 
   it("returns to overview when stale detection makes the target ineligible or fails", async () => {
     for (const refreshDetection of [
@@ -954,7 +1019,7 @@ describe("single-Agent workflow", () => {
           target: targets.claude,
         }),
       );
-      expect(callbacks.onFlowConsumed).toHaveBeenCalledTimes(1);
+      expect(callbacks.onFlowConsumed).not.toHaveBeenCalled();
       expect(
         screen.queryByText(/Agent 配置结果|Agent configuration result/),
       ).not.toBeInTheDocument();
@@ -992,7 +1057,7 @@ describe("single-Agent workflow", () => {
     );
 
     expect(await screen.findByText(/^失败$|^Failure$/)).toBeVisible();
-    expect(callbacks.onFlowConsumed).toHaveBeenCalledTimes(1);
+    expect(callbacks.onFlowConsumed).not.toHaveBeenCalled();
     expect(callbacks.onReturnToOverview).not.toHaveBeenCalled();
   });
 

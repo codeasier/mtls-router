@@ -274,7 +274,7 @@ export function AgentOverview({
                     ? "agent-rebuild-toggle"
                     : "control-button"
                 }
-                disabled={configuration.action === "disabled"}
+                disabled={refreshing || configuration.action === "disabled"}
                 onClick={() => onConfigure(target)}
               >
                 {label}

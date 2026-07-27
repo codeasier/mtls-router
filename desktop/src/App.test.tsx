@@ -19,7 +19,9 @@ describe("App navigation", () => {
       screen.getByRole("heading", { name: "Agent 配置" }),
     ).toBeInTheDocument();
     expect(screen.getByText("模型配置工作台")).toBeInTheDocument();
-    expect(await screen.findAllByText("未返回检测结果")).toHaveLength(3);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Agent 检测失败",
+    );
   });
 
   it("opens runtime logs from startup failure diagnostics", async () => {

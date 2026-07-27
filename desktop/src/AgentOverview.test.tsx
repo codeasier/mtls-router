@@ -145,6 +145,12 @@ describe("AgentOverview", () => {
     );
     expect(screen.getByRole("status")).toHaveTextContent("正在重新检测");
     expect(screen.getByRole("button", { name: "正在重新检测" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "生成 Claude Code 配置" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "备份并重建 OpenCode" }),
+    ).toBeDisabled();
   });
 
   it("routes credential and retry issues to their explicit actions", () => {

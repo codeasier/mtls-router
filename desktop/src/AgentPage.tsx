@@ -62,6 +62,7 @@ export function AgentPage({
   const flowRef = useRef("");
   const flowApiRef = useRef<DesktopApi | null>(null);
   const requestRef = useRef(0);
+  const detectionGenerationRef = useRef(0);
   const startingRef = useRef(false);
 
   const destroyFlow = useCallback(async () => {
@@ -79,12 +80,22 @@ export function AgentPage({
     flowApiRef.current = null;
   }
 
-  async function refreshDetection() {
-    const value = requireCompleteDetection(await api.detectAgents());
-    setDetection(value);
-    setStale(false);
-    return value;
-  }
+  const refreshDetection = useCallback(async () => {
+    const generation = ++detectionGenerationRef.current;
+    try {
+      const value = requireCompleteDetection(await api.detectAgents());
+      if (generation === detectionGenerationRef.current) {
+        setDetection(value);
+        setStale(false);
+      }
+      return value;
+    } catch (error) {
+      if (generation !== detectionGenerationRef.current) {
+        throw { code: "REQUEST_SUPERSEDED" };
+      }
+      throw error;
+    }
+  }, [api]);
 
   useEffect(() => {
     let active = true;
@@ -98,14 +109,12 @@ export function AgentPage({
         setSession(null);
         setIssue(null);
         setStale(false);
-        return api.detectAgents();
+        return refreshDetection();
       })
-      .then(requireCompleteDetection)
-      .then((value) => {
-        if (active) setDetection(value);
-      })
-      .catch(() => {
-        if (active) setIssue({ kind: "detect", code: "AGENT_DETECT_FAILED" });
+      .catch((error) => {
+        if (active && errorCode(error) !== "REQUEST_SUPERSEDED") {
+          setIssue({ kind: "detect", code: "AGENT_DETECT_FAILED" });
+        }
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -113,10 +122,11 @@ export function AgentPage({
     return () => {
       active = false;
       requestRef.current += 1;
+      detectionGenerationRef.current += 1;
       startingRef.current = false;
       void destroyFlow();
     };
-  }, [api, destroyFlow]);
+  }, [destroyFlow, refreshDetection]);
 
   async function refreshOverview() {
     if (refreshing) return;
@@ -125,6 +135,7 @@ export function AgentPage({
     try {
       await refreshDetection();
     } catch (error) {
+      if (errorCode(error) === "REQUEST_SUPERSEDED") return;
       setStale(Boolean(detection));
       setIssue({
         kind: "detect",
@@ -132,6 +143,17 @@ export function AgentPage({
       });
     } finally {
       setRefreshing(false);
+    }
+  }
+
+  async function refreshWorkflowDetection() {
+    try {
+      return await refreshDetection();
+    } catch (error) {
+      if (errorCode(error) !== "REQUEST_SUPERSEDED") {
+        setStale(Boolean(detection));
+      }
+      throw error;
     }
   }
 
@@ -184,7 +206,7 @@ export function AgentPage({
         onBack={() => returnToOverview()}
         onFlowConsumed={consumeFlow}
         onReturnToOverview={returnToOverview}
-        refreshDetection={refreshDetection}
+        refreshDetection={refreshWorkflowDetection}
       />
     );
   }

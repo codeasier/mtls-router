@@ -57,6 +57,21 @@ function retryIssue(code: string, target: AgentTarget): OverviewIssue {
   return { kind: "retry", code: code || "UNKNOWN", target };
 }
 
+function writeIssue(code: string, target: AgentTarget): OverviewIssue {
+  if (
+    [
+      "CREDENTIAL_NOT_FOUND",
+      "CREDENTIAL_INVALID",
+      "CREDENTIAL_IO_ERROR",
+      "CREDENTIAL_LOCK_TIMEOUT",
+    ].includes(code)
+  ) {
+    return { kind: "credential", code };
+  }
+  if (code === "MODEL_AUTH_FAILED") return { kind: "auth", code };
+  return retryIssue(code, target);
+}
+
 function targetIsReusable(detection: AgentDetection, target: AgentTarget) {
   const state = detection.agents.find((agent) => agent.agent === target.agent);
   return target.mode === "rebuild"
@@ -884,6 +899,10 @@ export function AgentWorkflow({
         onReturnToOverview(retryIssue("MODEL_RESPONSE_INVALID", target));
         return;
       }
+      if (!value.revision_token.trim()) {
+        onReturnToOverview(retryIssue("MODEL_RESPONSE_INVALID", target));
+        return;
+      }
       resetApprovals();
       setPreview(value);
       setConfig(value.model_config);
@@ -944,11 +963,11 @@ export function AgentWorkflow({
         approveAuth,
         approveRebuild,
       );
-      onFlowConsumed();
       if (!validateWriteResult(value, target.agent)) {
         onReturnToOverview(retryIssue("INVALID_RESPONSE", target));
         return;
       }
+      if (value.agents[0].success) onFlowConsumed();
       setResult(value);
       setStage("result");
     } catch (error) {
@@ -956,7 +975,6 @@ export function AgentWorkflow({
       if (code === "PREVIEW_STALE") {
         await recoverStalePreview();
       } else {
-        onFlowConsumed();
         if (code === "ROLLBACK_FAILED") {
           try {
             const detection = await refreshDetection();
@@ -967,7 +985,7 @@ export function AgentWorkflow({
             onReturnToOverview({ kind: "detect", code });
           }
         } else {
-          onReturnToOverview(retryIssue(code, target));
+          onReturnToOverview(writeIssue(code, target));
         }
       }
     } finally {
