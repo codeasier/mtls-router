@@ -2,6 +2,25 @@
 
 [中文](zh-CN/CHANGELOG.md)
 
+## v0.3.1 - 2026-07-28
+
+This release improves desktop layout density and status clarity, removes unreliable Agent CLI installation probing, and makes authenticated model discovery visibly responsive.
+
+### Changed
+
+- Removed Agent CLI installation probing and its desktop status; protocol v4 keeps the compatibility fields and returns fixed `detected=true` and `command=""` values.
+- Tightened desktop spacing across supported viewport sizes, simplified section headers, and replaced the router status code dial with a traffic-light indicator.
+
+### Fixed
+
+- Displayed an in-progress state while an Agent panel initializes authenticated model discovery instead of leaving the panel apparently idle.
+
+### Tests
+
+- Updated manager and desktop coverage for fixed Agent compatibility fields, model discovery progress, responsive layout density, router status indicators, and occupant focus restoration.
+
+---
+
 ## v0.3.0 - 2026-07-28
 
 This release introduces persistent desktop Agent credentials, an Agent status overview, and durable single-Agent configuration panels. It also advances the management contract to protocol v4 and hardens router startup and privilege-aware port-conflict recovery.
@@ -9,13 +28,12 @@ This release introduces persistent desktop Agent credentials, an Agent status ov
 ### Added
 
 - Added an API Keys page backed by a private desktop credential store for one global Agent API key. The webview can read only a summary; Rust loads the plaintext on demand for authenticated discovery and reloads it immediately before writes.
-- Added an Agent overview with separate Claude Code, OpenCode, and Codex cards that report configuration existence, writability, validity, configured state, and recovery eligibility.
+- Added an Agent overview with separate Claude Code, OpenCode, and Codex cards that report CLI installation independently from configuration existence, writability, and validity, while still allowing writable preinstallation configuration.
 - Added persistent single-Agent panels that stay open after successful writes, protect unsaved drafts, refresh external state on demand or throttled native focus, and require explicit conflict resolution without polling or background file rewrites.
 
 ### Changed
 
 - Advanced the matched router, manager, setup, release metadata, and desktop management contract to protocol v4; mixed generations remain rejected.
-- Removed Agent CLI installation probing and its desktop status; protocol v4 keeps the compatibility fields and returns fixed `detected=true` and `command=""` values.
 - Reworked port-conflict handling around structured recovery actions and reasons, bounded Windows Service/Linux systemd supervisor identifiers, explicit manual guidance, and sampled post-termination observation for reoccupation.
 
 ### Fixed
