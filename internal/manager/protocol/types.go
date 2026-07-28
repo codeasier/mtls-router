@@ -240,7 +240,7 @@ type AgentState struct {
 	Agent      string             `json:"agent"`
 	Name       string             `json:"name"`
 	Detected   bool               `json:"detected"`
-	Command    string             `json:"command,omitempty"`
+	Command    string             `json:"command"`
 	Path       string             `json:"path"`
 	AuthPath   string             `json:"auth_path,omitempty"`
 	Format     string             `json:"format"`

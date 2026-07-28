@@ -2,7 +2,6 @@ package agent
 
 import (
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,12 +21,6 @@ func TestDetectReturnsAllAgentsAndRespectsEnvironmentPaths(t *testing.T) {
 	detector := Detector{
 		HomeDir: home,
 		Getenv:  func(key string) string { return env[key] },
-		LookPath: func(name string) (string, error) {
-			if name == "codex" {
-				return "", errors.New("not found")
-			}
-			return filepath.Join(home, "bin", name), nil
-		},
 	}
 	states, err := detector.Detect()
 	if err != nil {
@@ -65,14 +58,19 @@ func TestDetectReturnsAllAgentsAndRespectsEnvironmentPaths(t *testing.T) {
 	if string(gotJSON) != string(wantJSON) {
 		t.Fatalf("override provenance changed serialized state: got %s want %s", gotJSON, wantJSON)
 	}
-	if !states[2].Detected || states[2].Command != "" || states[2].Path != filepath.Join(codexHome, "config.toml") {
+	for _, state := range states {
+		if !state.Detected || state.Command != "" {
+			t.Fatalf("protocol compatibility fields = %#v", state)
+		}
+	}
+	if states[2].Path != filepath.Join(codexHome, "config.toml") {
 		t.Fatalf("Codex state = %#v", states[2])
 	}
 }
 
-func TestDetectTreatsSupportedAgentsAsConfigurableWithoutCLIOrConfig(t *testing.T) {
+func TestDetectTreatsSupportedAgentsAsConfigurableWithoutConfig(t *testing.T) {
 	home := t.TempDir()
-	states := mustDetect(t, testDetector(home, nil))
+	states := mustDetect(t, testDetector(home))
 
 	for _, state := range states {
 		if !state.Detected || state.Command != "" || state.Exists || !state.Writable {
@@ -86,13 +84,13 @@ func TestDetectClaudeConfiguredInvalidAndMissing(t *testing.T) {
 	path := filepath.Join(home, ".claude", "settings.json")
 	writeFile(t, path, `{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:19443","ANTHROPIC_AUTH_TOKEN":"claude-secret-canary","ANTHROPIC_MODEL":"dynamic-main","ANTHROPIC_DEFAULT_HAIKU_MODEL":"dynamic-main","ANTHROPIC_DEFAULT_SONNET_MODEL":"dynamic-sonnet","ANTHROPIC_DEFAULT_OPUS_MODEL":"dynamic-main"}}`)
 
-	states := mustDetect(t, testDetector(home, map[string]bool{"claude": true}))
+	states := mustDetect(t, testDetector(home))
 	if !states[0].Exists || !states[0].Writable || !states[0].Configured || states[0].Invalid {
 		t.Fatalf("configured Claude state = %#v", states[0])
 	}
 
 	writeFile(t, path, `{"env":`)
-	states = mustDetect(t, testDetector(home, map[string]bool{"claude": true}))
+	states = mustDetect(t, testDetector(home))
 	if !states[0].Invalid || states[0].Configured {
 		t.Fatalf("invalid Claude state = %#v", states[0])
 	}
@@ -100,7 +98,7 @@ func TestDetectClaudeConfiguredInvalidAndMissing(t *testing.T) {
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
-	states = mustDetect(t, testDetector(home, map[string]bool{"claude": true}))
+	states = mustDetect(t, testDetector(home))
 	if states[0].Exists || states[0].Configured || states[0].Invalid || !states[0].Writable {
 		t.Fatalf("missing Claude state = %#v", states[0])
 	}
@@ -111,7 +109,7 @@ func TestDetectClaudeAcceptsUTF8BOM(t *testing.T) {
 	path := filepath.Join(home, ".claude", "settings.json")
 	writeFile(t, path, "\xef\xbb\xbf"+`{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:19443","ANTHROPIC_AUTH_TOKEN":"claude-secret-canary","ANTHROPIC_MODEL":"dynamic-main","ANTHROPIC_DEFAULT_HAIKU_MODEL":"dynamic-main","ANTHROPIC_DEFAULT_SONNET_MODEL":"dynamic-sonnet","ANTHROPIC_DEFAULT_OPUS_MODEL":"dynamic-main"}}`)
 
-	state := mustDetect(t, testDetector(home, map[string]bool{"claude": true}))[0]
+	state := mustDetect(t, testDetector(home))[0]
 	if !state.Exists || !state.Writable || !state.Configured || state.Invalid {
 		t.Fatalf("BOM-prefixed Claude state = %#v", state)
 	}
@@ -124,19 +122,19 @@ func TestDetectClassifiesRecoveryEligibility(t *testing.T) {
 	home := t.TempDir()
 	path := filepath.Join(home, ".claude", "settings.json")
 	writeFile(t, path, `{"env":`)
-	state := mustDetect(t, testDetector(home, nil))[0]
+	state := mustDetect(t, testDetector(home))[0]
 	if !state.Invalid || !state.Recovery.Eligible || !hasRecoveryReason(state.Recovery.Files[0].Reasons, RecoverySyntaxInvalid) {
 		t.Fatalf("syntax-invalid recovery = %#v", state)
 	}
 
 	writeFile(t, path, `[]`)
-	state = mustDetect(t, testDetector(home, nil))[0]
+	state = mustDetect(t, testDetector(home))[0]
 	if !state.Invalid || state.Recovery.Eligible || !hasRecoveryReason(state.Recovery.Reasons, RecoveryUnsupportedStructure) {
 		t.Fatalf("unsupported recovery = %#v", state)
 	}
 
 	writeFile(t, path, `{"env":[]}`)
-	state = mustDetect(t, testDetector(home, nil))[0]
+	state = mustDetect(t, testDetector(home))[0]
 	if state.Invalid || state.Recovery.Eligible || !hasRecoveryReason(state.Recovery.Reasons, RecoveryUnsupportedStructure) {
 		t.Fatalf("unsupported nested recovery = %#v", state)
 	}
@@ -151,7 +149,7 @@ func TestDetectRecoveryRejectsOversizedNonRegularAndLinkedTargets(t *testing.T) 
 	if err := os.WriteFile(path, make([]byte, maxConfigSize+1), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	state := mustDetect(t, testDetector(home, nil))[0]
+	state := mustDetect(t, testDetector(home))[0]
 	if state.Recovery.Eligible || !hasRecoveryReason(state.Recovery.Reasons, RecoveryOversized) {
 		t.Fatalf("oversized recovery = %#v", state.Recovery)
 	}
@@ -162,7 +160,7 @@ func TestDetectRecoveryRejectsOversizedNonRegularAndLinkedTargets(t *testing.T) 
 	if err := os.Mkdir(path, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	state = mustDetect(t, testDetector(home, nil))[0]
+	state = mustDetect(t, testDetector(home))[0]
 	if state.Recovery.Eligible || !hasRecoveryReason(state.Recovery.Reasons, RecoveryNonRegular) {
 		t.Fatalf("non-regular recovery = %#v", state.Recovery)
 	}
@@ -175,7 +173,7 @@ func TestDetectRecoveryRejectsOversizedNonRegularAndLinkedTargets(t *testing.T) 
 	if err := os.Symlink(target, path); err != nil {
 		t.Skipf("symlink unavailable: %v", err)
 	}
-	state = mustDetect(t, testDetector(home, nil))[0]
+	state = mustDetect(t, testDetector(home))[0]
 	if state.Invalid || state.Recovery.Eligible || !hasRecoveryReason(state.Recovery.Reasons, RecoveryLinked) {
 		t.Fatalf("linked recovery = %#v", state.Recovery)
 	}
@@ -195,19 +193,19 @@ func TestDetectOpenCodeJSONCConfiguredAndProviderInvalid(t *testing.T) {
     },
   },
 }`)
-	states := mustDetect(t, testDetector(home, map[string]bool{"opencode": true}))
+	states := mustDetect(t, testDetector(home))
 	if states[1].Format != FormatJSONC || states[1].Configured || states[1].Invalid {
 		t.Fatalf("nonmatching JSONC state = %#v", states[1])
 	}
 
 	writeFile(t, path, `{"model":"mtls-router/dynamic-main","provider":{"mtls-router":{"npm":"@ai-sdk/openai-compatible","name":"mtls-router","options":{"baseURL":"http://127.0.0.1:19443/v1","apiKey":"open-code-secret-canary"},"models":{"dynamic-main":{"name":"dynamic-main"}}}}}`)
-	states = mustDetect(t, testDetector(home, map[string]bool{"opencode": true}))
+	states = mustDetect(t, testDetector(home))
 	if !states[1].Configured || states[1].Invalid {
 		t.Fatalf("configured JSONC state = %#v", states[1])
 	}
 
 	writeFile(t, path, `{"provider":"invalid"}`)
-	states = mustDetect(t, testDetector(home, map[string]bool{"opencode": true}))
+	states = mustDetect(t, testDetector(home))
 	if !states[1].Invalid || states[1].Configured {
 		t.Fatalf("invalid provider state = %#v", states[1])
 	}
@@ -236,7 +234,7 @@ base_url = "http://127.0.0.1:19099/v1"
 js_repl = false
 `)
 	writeFile(t, authPath, `{"OPENAI_API_KEY":"codex-secret-canary"}`)
-	states := mustDetect(t, testDetector(home, nil))
+	states := mustDetect(t, testDetector(home))
 	if !states[2].Detected || states[2].Configured || !states[2].Migratable || states[2].Invalid || !states[2].Writable {
 		t.Fatalf("migratable Codex state = %#v", states[2])
 	}
@@ -252,13 +250,13 @@ requires_openai_auth = true
 base_url = "http://127.0.0.1:19443/v1"
 `)
 	writeFile(t, authPath, `{"auth_mode":"apikey","OPENAI_API_KEY":"codex-secret-canary"}`)
-	states = mustDetect(t, testDetector(home, nil))
+	states = mustDetect(t, testDetector(home))
 	if !states[2].Configured || states[2].Migratable || states[2].Invalid {
 		t.Fatalf("configured Codex v2 state = %#v", states[2])
 	}
 
 	writeFile(t, configPath, "model =\n")
-	states = mustDetect(t, testDetector(home, nil))
+	states = mustDetect(t, testDetector(home))
 	if !states[2].Invalid || states[2].Configured {
 		t.Fatalf("invalid Codex state = %#v", states[2])
 	}
@@ -267,7 +265,7 @@ base_url = "http://127.0.0.1:19443/v1"
 		t.Fatal(err)
 	}
 	writeFile(t, authPath, `{"OPENAI_API_KEY":`)
-	states = mustDetect(t, testDetector(home, nil))
+	states = mustDetect(t, testDetector(home))
 	if states[2].Exists || !states[2].Invalid || states[2].Configured {
 		t.Fatalf("invalid auth-only Codex state = %#v", states[2])
 	}
@@ -294,7 +292,7 @@ trust_level = "trusted"
 `)
 	writeFile(t, filepath.Join(codexHome, "auth.json"), `{"auth_mode":"apikey","OPENAI_API_KEY":"codex-secret-canary"}`)
 
-	state := mustDetect(t, testDetector(home, map[string]bool{"codex": true}))[2]
+	state := mustDetect(t, testDetector(home))[2]
 	if !state.Exists || !state.Writable || !state.Configured || state.Invalid {
 		t.Fatalf("Codex state with quoted dotted key = %#v", state)
 	}
@@ -310,7 +308,7 @@ func TestDetectCodexRecoveryRequiresCompleteSafeFileSet(t *testing.T) {
 	authPath := filepath.Join(codexHome, "auth.json")
 	writeFile(t, configPath, "model =\n")
 	writeFile(t, authPath, `{"OPENAI_API_KEY":"secret"}`)
-	state := mustDetect(t, testDetector(home, nil))[2]
+	state := mustDetect(t, testDetector(home))[2]
 	if !state.Recovery.Eligible || len(state.Recovery.Files) != 2 || !hasRecoveryReason(state.Recovery.Files[0].Reasons, RecoverySyntaxInvalid) {
 		t.Fatalf("Codex complete recovery = %#v", state.Recovery)
 	}
@@ -321,7 +319,7 @@ func TestDetectCodexRecoveryRequiresCompleteSafeFileSet(t *testing.T) {
 	if err := os.Mkdir(authPath, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	state = mustDetect(t, testDetector(home, nil))[2]
+	state = mustDetect(t, testDetector(home))[2]
 	if state.Recovery.Eligible || !hasRecoveryReason(state.Recovery.Files[1].Reasons, RecoveryNonRegular) {
 		t.Fatalf("unsafe Codex companion recovery = %#v", state.Recovery)
 	}
@@ -331,7 +329,7 @@ func TestDetectCodexRejectsDuplicateTOMLKeys(t *testing.T) {
 	home := t.TempDir()
 	writeFile(t, filepath.Join(home, ".codex", "config.toml"), "model = \"first\"\nmodel = \"second\"\n")
 
-	state := mustDetect(t, testDetector(home, map[string]bool{"codex": true}))[2]
+	state := mustDetect(t, testDetector(home))[2]
 	if !state.Invalid || state.Configured {
 		t.Fatalf("Codex state with duplicate TOML key = %#v", state)
 	}
@@ -352,7 +350,7 @@ requires_openai_auth = true
 base_url = "http://127.0.0.1:19099/v1"`)
 	writeFile(t, filepath.Join(home, ".codex", "auth.json"), `{"OPENAI_API_KEY":"`+canaries[2]+`"}`)
 
-	states := mustDetect(t, testDetector(home, map[string]bool{"claude": true, "opencode": true, "codex": true}))
+	states := mustDetect(t, testDetector(home))
 	encoded, err := json.Marshal(states)
 	if err != nil {
 		t.Fatal(err)
@@ -364,16 +362,10 @@ base_url = "http://127.0.0.1:19099/v1"`)
 	}
 }
 
-func testDetector(home string, commands map[string]bool) Detector {
+func testDetector(home string) Detector {
 	return Detector{
 		HomeDir: home,
 		Getenv:  func(string) string { return "" },
-		LookPath: func(name string) (string, error) {
-			if commands[name] {
-				return filepath.Join(home, "bin", name), nil
-			}
-			return "", errors.New("not found")
-		},
 	}
 }
 

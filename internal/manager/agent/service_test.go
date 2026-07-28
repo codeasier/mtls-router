@@ -48,7 +48,7 @@ func TestRebuildWritesManagedOnlyAndRequiresExactApproval(t *testing.T) {
 	claudePath := filepath.Join(home, ".claude", "settings.json")
 	marker := "MALFORMED-SOURCE-MARKER"
 	writeFile(t, claudePath, `{`+marker)
-	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true}, nil)
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
 	preview, catalogToken, modelConfig := rebuildLegacyPreview(t, service, ClaudeCode)
 	if preview.Agents[0].Mode != ConfigModeRebuild || len(preview.Agents[0].Files) != 1 {
 		t.Fatalf("rebuild preview = %#v", preview)
@@ -89,7 +89,7 @@ func TestRebuildOpenCodeJSONCInPlaceAndCodexPlansCompleteSet(t *testing.T) {
 		home := t.TempDir()
 		path := filepath.Join(home, ".config", "opencode", "opencode.jsonc")
 		writeFile(t, path, `{"unterminated":`)
-		service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"opencode": true}, nil)
+		service := newTestService(t, filepath.Join(home, "state"), home, nil)
 		preview, _, _ := rebuildLegacyPreview(t, service, OpenCode)
 		file := preview.Agents[0].Files[0]
 		if file.Path != path || file.SourcePath != "" || file.Format != FormatJSON {
@@ -102,7 +102,7 @@ func TestRebuildOpenCodeJSONCInPlaceAndCodexPlansCompleteSet(t *testing.T) {
 		authPath := filepath.Join(home, ".codex", "auth.json")
 		writeFile(t, configPath, `invalid = [`)
 		writeFile(t, authPath, `{"unrelated":"discard"}`)
-		service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"codex": true}, nil)
+		service := newTestService(t, filepath.Join(home, "state"), home, nil)
 		preview, _, _ := rebuildLegacyPreview(t, service, Codex)
 		if len(preview.Agents[0].Files) != 2 || preview.Agents[0].Files[0].Role != "config" || preview.Agents[0].Files[1].Role != "auth" || !preview.Agents[0].Files[0].Backup.Required || !preview.Agents[0].Files[1].Backup.Required {
 			t.Fatalf("Codex rebuild files = %#v", preview.Agents[0].Files)
@@ -114,7 +114,7 @@ func TestRebuildRejectsRepairedSourceAsStale(t *testing.T) {
 	home := t.TempDir()
 	path := filepath.Join(home, ".claude", "settings.json")
 	writeFile(t, path, `{broken`)
-	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true}, nil)
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
 	preview, catalogToken, modelConfig := rebuildLegacyPreview(t, service, ClaudeCode)
 	writeFile(t, path, `{}`)
 	_, err := service.Write(context.Background(), WriteRequest{
@@ -130,7 +130,7 @@ func TestMixedMergeAndRebuildCommitsAtomically(t *testing.T) {
 	openCodePath := filepath.Join(home, ".config", "opencode", "opencode.json")
 	writeFile(t, claudePath, `{"theme":"keep"}`)
 	writeFile(t, openCodePath, `{malformed`)
-	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true, "opencode": true}, nil)
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
 	preview, token, raw := previewWithModes(t, service, []Kind{ClaudeCode, OpenCode}, map[Kind]ConfigMode{ClaudeCode: ConfigModeMerge, OpenCode: ConfigModeRebuild})
 	if preview.Agents[0].Mode != ConfigModeMerge || preview.Agents[1].Mode != ConfigModeRebuild {
 		t.Fatalf("mixed preview = %#v", preview.Agents)
@@ -160,7 +160,7 @@ func TestCodexRebuildAuthOnlyMalformedWritesCompleteManagedSet(t *testing.T) {
 	authPath := filepath.Join(home, ".codex", "auth.json")
 	writeFile(t, configPath, "unrelated = \"discard\"\n")
 	writeFile(t, authPath, `{malformed-auth`)
-	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"codex": true}, nil)
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
 	preview, token, raw := previewWithModes(t, service, []Kind{Codex}, map[Kind]ConfigMode{Codex: ConfigModeRebuild})
 	if len(preview.Agents[0].Files) != 2 {
 		t.Fatalf("Codex preview = %#v", preview.Agents[0].Files)
@@ -190,7 +190,7 @@ func TestCodexRebuildConcurrentCompanionChangeRollsBack(t *testing.T) {
 	originalAuth := `{"old":"auth"}`
 	writeFile(t, configPath, originalConfig)
 	writeFile(t, authPath, originalAuth)
-	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"codex": true}, nil)
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
 	preview, token, raw := previewWithModes(t, service, []Kind{Codex}, map[Kind]ConfigMode{Codex: ConfigModeRebuild})
 	concurrentAuth := `{"repaired":"concurrently"}`
 	service.hooks.afterReplace = func(path string) {
@@ -237,7 +237,7 @@ func TestRebuildEveryBackupStageFailureChangesNoTarget(t *testing.T) {
 			path := filepath.Join(home, ".claude", "settings.json")
 			original := `{malformed`
 			writeFile(t, path, original)
-			service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true}, nil)
+			service := newTestService(t, filepath.Join(home, "state"), home, nil)
 			preview, token, raw := previewWithModes(t, service, []Kind{ClaudeCode}, map[Kind]ConfigMode{ClaudeCode: ConfigModeRebuild})
 			service.hooks.backupStage = func(current backupStage, _ string) error {
 				if current == stage {
@@ -262,7 +262,7 @@ func TestRebuildRollbackFailureDisablesWritesAndEligibility(t *testing.T) {
 	home := t.TempDir()
 	path := filepath.Join(home, ".claude", "settings.json")
 	writeFile(t, path, `{malformed`)
-	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true}, nil)
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
 	preview, token, raw := previewWithModes(t, service, []Kind{ClaudeCode}, map[Kind]ConfigMode{ClaudeCode: ConfigModeRebuild})
 	service.hooks.afterReplace = func(string) { service.hooks.afterReplace = nil }
 	service.hooks.beforeRollback = func(string) error { return errors.New("injected rollback failure") }
@@ -296,7 +296,7 @@ func TestRebuildRejectsPendingAndWritesDisabledState(t *testing.T) {
 			home := t.TempDir()
 			stateDir := filepath.Join(home, "state")
 			writeFile(t, filepath.Join(home, ".claude", "settings.json"), `{malformed`)
-			service := newTestService(t, stateDir, home, map[string]bool{"claude": true}, nil)
+			service := newTestService(t, stateDir, home, nil)
 			_, token, raw := previewWithModes(t, service, []Kind{ClaudeCode}, map[Kind]ConfigMode{ClaudeCode: ConfigModeRebuild})
 			if state == "pending" {
 				writeFile(t, service.journalPath(), `{}`)
@@ -313,7 +313,7 @@ func TestMergePreviewTokenCannotAuthorizeRebuild(t *testing.T) {
 	home := t.TempDir()
 	path := filepath.Join(home, ".claude", "settings.json")
 	writeFile(t, path, `{}`)
-	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true}, nil)
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
 	merge, token, raw := previewWithModes(t, service, []Kind{ClaudeCode}, nil)
 	writeFile(t, path, `{malformed`)
 	_, err := service.Write(context.Background(), WriteRequest{
@@ -327,7 +327,7 @@ func TestPreviewExistingSidecarReportsBackupPlanWithoutArtifactPath(t *testing.T
 	home := t.TempDir()
 	path := filepath.Join(home, ".claude", "settings.json")
 	writeFile(t, path, `{}`)
-	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true}, nil)
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
 	first := mustPreview(t, service, []Kind{ClaudeCode})
 	if _, err := service.Write(context.Background(), WriteRequest{Agents: []Kind{ClaudeCode}, RevisionToken: first.RevisionToken, APIKey: testAPIKey}); err != nil {
 		t.Fatal(err)
@@ -346,7 +346,7 @@ func TestRebuildReplacementFailureRollsBackAgentAndSidecar(t *testing.T) {
 	path := filepath.Join(home, ".claude", "settings.json")
 	stateDir := filepath.Join(home, "state")
 	writeFile(t, path, `{}`)
-	service := newTestService(t, stateDir, home, map[string]bool{"claude": true}, nil)
+	service := newTestService(t, stateDir, home, nil)
 	first := mustPreview(t, service, []Kind{ClaudeCode})
 	if _, err := service.Write(context.Background(), WriteRequest{Agents: []Kind{ClaudeCode}, RevisionToken: first.RevisionToken, APIKey: testAPIKey}); err != nil {
 		t.Fatal(err)
@@ -387,7 +387,7 @@ func TestPreviewIsStructuredKeyFreeAndDoesNotWrite(t *testing.T) {
 	writeFile(t, codexConfig, "approval_policy = \"on-request\"\n")
 	writeFile(t, codexAuth, `{"OPENAI_API_KEY":"stored-codex-canary","extra":"drop"}`)
 
-	service := newTestService(t, stateDir, home, map[string]bool{"claude": true, "opencode": true, "codex": true}, nil)
+	service := newTestService(t, stateDir, home, nil)
 	assertOnlyLockState(t, stateDir)
 	preview, err := service.Preview(context.Background(), []Kind{Codex, ClaudeCode, OpenCode})
 	if err != nil {
@@ -443,7 +443,7 @@ trust_level = "trusted"
 trust_level = "trusted"
 `)
 
-	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true, "codex": true}, nil)
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
 	preview, err := service.Preview(context.Background(), []Kind{ClaudeCode, Codex})
 	if err != nil {
 		t.Fatal(err)
@@ -478,7 +478,7 @@ func TestV2PreviewAcceptsReportedClaudeConfigurationWithoutFable(t *testing.T) {
 	stateDir := filepath.Join(home, "manager-state")
 	claudePath := filepath.Join(home, ".claude", "settings.json")
 	writeFile(t, claudePath, `{"theme":"dark","env":{"ANTHROPIC_MODEL":"old-model"}}`)
-	service := newTestService(t, stateDir, home, map[string]bool{"claude": true}, nil)
+	service := newTestService(t, stateDir, home, nil)
 	models := []string{"gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"}
 	discovery, err := service.DiscoverModels(context.Background(), []Kind{ClaudeCode}, models, modelconfig.CatalogClaims{
 		Models: models, Agents: []modelconfig.Agent{modelconfig.Claude}, Owner: "desktop",
@@ -509,7 +509,7 @@ func TestV2PreviewAcceptsReportedClaudeConfigurationWithoutFable(t *testing.T) {
 func TestV2PreviewRejectsModelOutsideCatalogWithoutTransactionArtifacts(t *testing.T) {
 	home := t.TempDir()
 	stateDir := filepath.Join(home, "manager-state")
-	service, err := NewService(Options{StateDir: stateDir, Detector: testServiceDetector(home, map[string]bool{"claude": true}, nil)})
+	service, err := NewService(Options{StateDir: stateDir, Detector: testServiceDetector(home, nil)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -538,7 +538,7 @@ func TestV2PreviewRejectsModelOutsideCatalogWithoutTransactionArtifacts(t *testi
 func TestCatalogTokensBindSimplifyAcrossServiceProcesses(t *testing.T) {
 	home := t.TempDir()
 	stateDir := filepath.Join(home, "manager-state")
-	detector := testServiceDetector(home, map[string]bool{"claude": true}, nil)
+	detector := testServiceDetector(home, nil)
 	full, err := NewService(Options{StateDir: stateDir, Detector: detector})
 	if err != nil {
 		t.Fatal(err)
@@ -594,7 +594,7 @@ func TestCurrentServiceRejectsSignedProtocolV3CatalogForRenderAndPreview(t *test
 	const mismatchedProtocolV3 = "3"
 
 	home := t.TempDir()
-	service := newTestService(t, filepath.Join(home, "manager-state"), home, map[string]bool{"claude": true}, nil)
+	service := newTestService(t, filepath.Join(home, "manager-state"), home, nil)
 	if err := service.ensureSigner(); err != nil {
 		t.Fatal(err)
 	}
@@ -625,7 +625,7 @@ func TestCurrentServiceRejectsSignedProtocolV3CatalogForRenderAndPreview(t *test
 func TestRevisionTokenSurvivesOneRequestManagerProcesses(t *testing.T) {
 	home := t.TempDir()
 	stateDir := filepath.Join(home, "manager-state")
-	detector := testServiceDetector(home, map[string]bool{"claude": true}, nil)
+	detector := testServiceDetector(home, nil)
 
 	previewService, err := NewService(Options{StateDir: stateDir, Detector: detector, LegacyRenderInput: legacyTestRenderInput()})
 	if err != nil {
@@ -649,9 +649,9 @@ func TestRevisionTokenSurvivesOneRequestManagerProcesses(t *testing.T) {
 }
 
 func TestPreviewMissingInvalidConflictAndAlreadyConfigured(t *testing.T) {
-	t.Run("missing CLIs and configurations are ready to create", func(t *testing.T) {
+	t.Run("missing configurations are ready to create", func(t *testing.T) {
 		home := t.TempDir()
-		service := newTestService(t, filepath.Join(home, "state"), home, nil, nil)
+		service := newTestService(t, filepath.Join(home, "state"), home, nil)
 		preview, err := service.Preview(context.Background(), []Kind{ClaudeCode, OpenCode, Codex})
 		if err != nil {
 			t.Fatal(err)
@@ -671,7 +671,7 @@ func TestPreviewMissingInvalidConflictAndAlreadyConfigured(t *testing.T) {
 	t.Run("invalid JSON", func(t *testing.T) {
 		home := t.TempDir()
 		writeFile(t, filepath.Join(home, ".claude", "settings.json"), `{"env":`)
-		service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true}, nil)
+		service := newTestService(t, filepath.Join(home, "state"), home, nil)
 		_, err := service.Preview(context.Background(), []Kind{ClaudeCode})
 		assertCode(t, err, CodeConfigInvalid)
 		assertNoBackupFiles(t, home)
@@ -680,7 +680,7 @@ func TestPreviewMissingInvalidConflictAndAlreadyConfigured(t *testing.T) {
 	t.Run("invalid JSONC", func(t *testing.T) {
 		home := t.TempDir()
 		writeFile(t, filepath.Join(home, ".config", "opencode", "opencode.jsonc"), `{"provider": {/* unterminated`)
-		service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"opencode": true}, nil)
+		service := newTestService(t, filepath.Join(home, "state"), home, nil)
 		_, err := service.Preview(context.Background(), []Kind{OpenCode})
 		assertCode(t, err, CodeConfigInvalid)
 		assertNoBackupFiles(t, home)
@@ -689,7 +689,7 @@ func TestPreviewMissingInvalidConflictAndAlreadyConfigured(t *testing.T) {
 	t.Run("invalid TOML", func(t *testing.T) {
 		home := t.TempDir()
 		writeFile(t, filepath.Join(home, ".codex", "config.toml"), "model =\n")
-		service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"codex": true}, nil)
+		service := newTestService(t, filepath.Join(home, "state"), home, nil)
 		_, err := service.Preview(context.Background(), []Kind{Codex})
 		assertCode(t, err, CodeConfigInvalid)
 		assertNoBackupFiles(t, home)
@@ -699,7 +699,7 @@ func TestPreviewMissingInvalidConflictAndAlreadyConfigured(t *testing.T) {
 		home := t.TempDir()
 		writeFile(t, filepath.Join(home, ".codex", "config.toml"), "approval_policy = \"on-request\"\n")
 		writeFile(t, filepath.Join(home, ".codex", "auth.json"), `{"OPENAI_API_KEY":`)
-		service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"codex": true}, nil)
+		service := newTestService(t, filepath.Join(home, "state"), home, nil)
 		_, err := service.Preview(context.Background(), []Kind{Codex})
 		assertCode(t, err, CodeConfigInvalid)
 		assertNoBackupFiles(t, home)
@@ -721,7 +721,7 @@ func TestPreviewMissingInvalidConflictAndAlreadyConfigured(t *testing.T) {
 		writeFile(t, jsoncPath, original)
 		writeFile(t, jsonPath, sibling)
 		env := map[string]string{"OPENCODE_CONFIG": jsoncPath}
-		service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"opencode": true}, env)
+		service := newTestService(t, filepath.Join(home, "state"), home, env)
 		preview, err := service.Preview(context.Background(), []Kind{OpenCode})
 		if err != nil {
 			t.Fatal(err)
@@ -769,7 +769,7 @@ func TestPreviewMissingInvalidConflictAndAlreadyConfigured(t *testing.T) {
 	t.Run("already configured is replace with preserve details", func(t *testing.T) {
 		home := t.TempDir()
 		writeFile(t, filepath.Join(home, ".config", "opencode", "opencode.json"), `{"model":"keep","provider":{"mtls-router":{"options":{"apiKey":"old"}}}}`)
-		service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"opencode": true}, nil)
+		service := newTestService(t, filepath.Join(home, "state"), home, nil)
 		preview, err := service.Preview(context.Background(), []Kind{OpenCode})
 		if err != nil {
 			t.Fatal(err)
@@ -803,7 +803,7 @@ js_repl = false
 `)
 	writeFile(t, codexAuth, `{"OPENAI_API_KEY":"old","extra":"drop"}`)
 
-	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true, "opencode": true, "codex": true}, nil)
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
 	selected := []Kind{ClaudeCode, OpenCode, Codex}
 	preview, err := service.Preview(context.Background(), selected)
 	if err != nil {
@@ -865,7 +865,7 @@ js_repl = false
 
 func TestWriteCreatesMissingConfigurationsWithoutBackups(t *testing.T) {
 	home := t.TempDir()
-	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true, "opencode": true, "codex": true}, nil)
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
 	selected := []Kind{ClaudeCode, OpenCode, Codex}
 	preview, err := service.Preview(context.Background(), selected)
 	if err != nil {
@@ -909,7 +909,7 @@ func TestWriteMigratesJSONCAndRetainsSensitiveBackup(t *testing.T) {
  "model": "keep",
  "provider": {"anthropic": {"options": {"literal": "/* value */"}}},
 }`)
-	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"opencode": true}, nil)
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
 	preview, err := service.Preview(context.Background(), []Kind{OpenCode})
 	if err != nil {
 		t.Fatal(err)
@@ -936,7 +936,7 @@ func TestOpenCodeMissingJSONCOverrideCreatesExactPath(t *testing.T) {
 	jsonPath := filepath.Join(dir, "opencode.json")
 	sibling := `{"sentinel":"existing-json"}`
 	writeFile(t, jsonPath, sibling)
-	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"opencode": true}, map[string]string{"OPENCODE_CONFIG": jsoncPath})
+	service := newTestService(t, filepath.Join(home, "state"), home, map[string]string{"OPENCODE_CONFIG": jsoncPath})
 	preview, err := service.Preview(context.Background(), []Kind{OpenCode})
 	if err != nil {
 		t.Fatal(err)
@@ -969,7 +969,7 @@ func TestOpenCodeExplicitJSONCRejectsStalePreview(t *testing.T) {
 	dir := filepath.Join(home, "custom-opencode")
 	jsoncPath := filepath.Join(dir, "profile.jsonc")
 	writeFile(t, jsoncPath, "{\n  // preview bytes\n  \"sentinel\": \"before\",\n}\n")
-	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"opencode": true}, map[string]string{"OPENCODE_CONFIG": jsoncPath})
+	service := newTestService(t, filepath.Join(home, "state"), home, map[string]string{"OPENCODE_CONFIG": jsoncPath})
 	preview, err := service.Preview(context.Background(), []Kind{OpenCode})
 	if err != nil {
 		t.Fatal(err)
@@ -988,7 +988,7 @@ func TestWriteRejectsStalePreviewBeforeBackupOrMutation(t *testing.T) {
 	home := t.TempDir()
 	path := filepath.Join(home, ".claude", "settings.json")
 	writeFile(t, path, `{"sentinel":"preview"}`)
-	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true}, nil)
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
 	preview, err := service.Preview(context.Background(), []Kind{ClaudeCode})
 	if err != nil {
 		t.Fatal(err)
@@ -1007,7 +1007,7 @@ func TestWriteBackupFailureDoesNotMutate(t *testing.T) {
 	path := filepath.Join(home, ".claude", "settings.json")
 	original := `{"sentinel":"keep"}`
 	writeFile(t, path, original)
-	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true}, nil)
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
 	preview, err := service.Preview(context.Background(), []Kind{ClaudeCode})
 	if err != nil {
 		t.Fatal(err)
@@ -1029,7 +1029,7 @@ func TestLaterBackupFailureCleansEarlierBackupsWithoutMutation(t *testing.T) {
 	openCodeOriginal := `{"sentinel":"opencode"}`
 	writeFile(t, claudePath, claudeOriginal)
 	writeFile(t, openCodePath, openCodeOriginal)
-	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true, "opencode": true}, nil)
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
 	selected := []Kind{ClaudeCode, OpenCode}
 	preview, err := service.Preview(context.Background(), selected)
 	if err != nil {
@@ -1060,7 +1060,7 @@ func TestWriteFailureRollsBackAllAgentsAndRetainsBackups(t *testing.T) {
 	openCodeOriginal := `{"sentinel":"opencode-original"}`
 	writeFile(t, claudePath, claudeOriginal)
 	writeFile(t, openCodePath, openCodeOriginal)
-	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true, "opencode": true}, nil)
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
 	selected := []Kind{ClaudeCode, OpenCode}
 	preview, err := service.Preview(context.Background(), selected)
 	if err != nil {
@@ -1100,7 +1100,7 @@ func TestCodexAuthFailureRollsBackConfigAndAuthWithoutTouchingKeyring(t *testing
 	authOriginal := `{"auth_mode":"chatgpt","tokens":{"access_token":"old"},"metadata":{"keyring_id":"untouched"}}`
 	writeFile(t, configPath, configOriginal)
 	writeFile(t, authPath, authOriginal)
-	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"codex": true}, nil)
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
 	preview, err := service.Preview(context.Background(), []Kind{Codex})
 	if err != nil {
 		t.Fatal(err)
@@ -1130,7 +1130,7 @@ func TestRollbackFailureDisablesWrites(t *testing.T) {
 	openCodePath := filepath.Join(home, ".config", "opencode", "opencode.json")
 	writeFile(t, claudePath, `{"sentinel":"claude"}`)
 	writeFile(t, openCodePath, `{"sentinel":"opencode"}`)
-	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true, "opencode": true}, nil)
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
 	selected := []Kind{ClaudeCode, OpenCode}
 	preview, err := service.Preview(context.Background(), selected)
 	if err != nil {
@@ -1166,7 +1166,7 @@ func TestDeadlineAfterFirstReplacementRollsBack(t *testing.T) {
 	openCodeOriginal := `{"sentinel":"opencode"}`
 	writeFile(t, claudePath, claudeOriginal)
 	writeFile(t, openCodePath, openCodeOriginal)
-	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true, "opencode": true}, nil)
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
 	selected := []Kind{ClaudeCode, OpenCode}
 	preview, err := service.Preview(context.Background(), selected)
 	if err != nil {
@@ -1190,7 +1190,7 @@ func TestJournalExistsWithoutKeyBeforeWriteAndTracksPerFileProgress(t *testing.T
 	openCodePath := filepath.Join(home, ".config", "opencode", "opencode.json")
 	writeFile(t, claudePath, `{}`)
 	writeFile(t, openCodePath, `{}`)
-	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true, "opencode": true}, nil)
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
 	selected := []Kind{ClaudeCode, OpenCode}
 	preview, err := service.Preview(context.Background(), selected)
 	if err != nil {
@@ -1238,7 +1238,7 @@ func TestStartupRecoversManagerCrashAfterReplacement(t *testing.T) {
 	path := filepath.Join(home, ".claude", "settings.json")
 	original := `{"sentinel":"before-crash"}`
 	writeFile(t, path, original)
-	service := newTestService(t, stateDir, home, map[string]bool{"claude": true}, nil)
+	service := newTestService(t, stateDir, home, nil)
 	preview, err := service.Preview(context.Background(), []Kind{ClaudeCode})
 	if err != nil {
 		t.Fatal(err)
@@ -1265,7 +1265,7 @@ func TestStartupRecoversManagerCrashAfterReplacement(t *testing.T) {
 	}
 	backupPath := journal.Entries[0].BackupPath
 
-	recovered, err := NewService(Options{StateDir: stateDir, Detector: testServiceDetector(home, map[string]bool{"claude": true}, nil), LegacyRenderInput: legacyTestRenderInput()})
+	recovered, err := NewService(Options{StateDir: stateDir, Detector: testServiceDetector(home, nil), LegacyRenderInput: legacyTestRenderInput()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1306,7 +1306,7 @@ func TestStartupDiscardsDurablyCommittedJournalWithoutRollback(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(stateDir, journalFileName), content, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	service, err := NewService(Options{StateDir: stateDir, Detector: testServiceDetector(home, map[string]bool{"claude": true}, nil)})
+	service, err := NewService(Options{StateDir: stateDir, Detector: testServiceDetector(home, nil)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1327,7 +1327,7 @@ func TestStartupRecoveryFailureReturnsDisabledService(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(stateDir, journalFileName), []byte(`{"api_key":"`+testAPIKey+`"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	service, err := NewService(Options{StateDir: stateDir, Detector: testServiceDetector(home, nil, nil)})
+	service, err := NewService(Options{StateDir: stateDir, Detector: testServiceDetector(home, nil)})
 	assertCode(t, err, CodeRollbackFailed)
 	if service == nil || !service.WritesDisabled() || CodeOf(service.RecoveryError()) != CodeRollbackFailed {
 		t.Fatalf("recovery state = service=%#v err=%v", service, err)
@@ -1376,7 +1376,7 @@ func TestStartupRecoveryFailsClosedOnUnrelatedPendingEdit(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFile(t, path, concurrent)
-	service, err := NewService(Options{StateDir: stateDir, Detector: testServiceDetector(home, map[string]bool{"claude": true}, nil)})
+	service, err := NewService(Options{StateDir: stateDir, Detector: testServiceDetector(home, nil)})
 	assertCode(t, err, CodeRollbackFailed)
 	if service == nil || !service.WritesDisabled() {
 		t.Fatal("recovery conflict did not disable writes")
@@ -1419,7 +1419,7 @@ func TestRollbackRestoresTransactionFilesBeforeFailingOnConcurrentEdit(t *testin
 	if err := os.WriteFile(filepath.Join(stateDir, journalFileName), content, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	service, err := NewService(Options{StateDir: stateDir, Detector: testServiceDetector(home, map[string]bool{"claude": true, "opencode": true}, nil)})
+	service, err := NewService(Options{StateDir: stateDir, Detector: testServiceDetector(home, nil)})
 	assertCode(t, err, CodeRollbackFailed)
 	if service == nil || !service.WritesDisabled() {
 		t.Fatal("conflicted recovery did not fail closed")
@@ -1442,7 +1442,7 @@ func TestBackupsAreCollisionResistantPrivateAndTargetsPreserveMode(t *testing.T)
 	if err := os.Chmod(path, 0o666); err != nil {
 		t.Fatal(err)
 	}
-	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true}, nil)
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
 	first := writeOneClaude(t, service)
 	second := writeOneClaude(t, service)
 	if first == second {
@@ -1476,7 +1476,7 @@ func TestPreviewRejectsNonWritableConfig(t *testing.T) {
 	if err := os.Chmod(path, 0o400); err != nil {
 		t.Fatal(err)
 	}
-	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true}, nil)
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
 	_, err := service.Preview(context.Background(), []Kind{ClaudeCode})
 	assertCode(t, err, CodeConfigNotWritable)
 }
@@ -1493,7 +1493,7 @@ func TestRollbackBackupIsUserPrivate(t *testing.T) {
 	if err := os.Chmod(claudePath, 0o666); err != nil {
 		t.Fatal(err)
 	}
-	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true, "opencode": true}, nil)
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
 	selected := []Kind{ClaudeCode, OpenCode}
 	preview, err := service.Preview(context.Background(), selected)
 	if err != nil {
@@ -1530,9 +1530,9 @@ func writeOneClaude(t *testing.T, service *Service) string {
 	return result.Agents[0].Backups[0]
 }
 
-func newTestService(t *testing.T, stateDir, home string, commands map[string]bool, env map[string]string) *Service {
+func newTestService(t *testing.T, stateDir, home string, env map[string]string) *Service {
 	t.Helper()
-	service, err := NewService(Options{StateDir: stateDir, Detector: testServiceDetector(home, commands, env), LegacyRenderInput: legacyTestRenderInput()})
+	service, err := NewService(Options{StateDir: stateDir, Detector: testServiceDetector(home, env), LegacyRenderInput: legacyTestRenderInput()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1591,16 +1591,10 @@ func legacyTestRenderInput() *LegacyRenderInput {
 	}
 }
 
-func testServiceDetector(home string, commands map[string]bool, env map[string]string) Detector {
+func testServiceDetector(home string, env map[string]string) Detector {
 	return Detector{
 		HomeDir: home,
 		Getenv:  func(key string) string { return env[key] },
-		LookPath: func(name string) (string, error) {
-			if commands[name] {
-				return filepath.Join(home, "bin", name), nil
-			}
-			return "", errors.New("not found")
-		},
 	}
 }
 

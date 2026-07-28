@@ -314,6 +314,7 @@ func TestServeWiresEveryMethodSequentiallyAndSanitizesOutput(t *testing.T) {
 		t.Fatalf("response lines = %d, want %d: %s", len(lines), len(requests), output.String())
 	}
 	wantIDs := []string{"1", "2", "3", "4", "5", "6", "7", "8", "9"}
+	responses := make(map[string]protocol.Response, len(lines))
 	for index, line := range lines {
 		var response protocol.Response
 		if err := json.Unmarshal([]byte(line), &response); err != nil {
@@ -323,6 +324,17 @@ func TestServeWiresEveryMethodSequentiallyAndSanitizesOutput(t *testing.T) {
 		if response.ID == nil || *response.ID != wantID || response.Error != nil {
 			t.Fatalf("response %d = %#v, want ID %q", index, response, wantID)
 		}
+		responses[wantID] = response
+	}
+	var detectResponse struct {
+		Agents []map[string]json.RawMessage `json:"agents"`
+	}
+	if err := json.Unmarshal(responses["9"].Result, &detectResponse); err != nil {
+		t.Fatal(err)
+	}
+	command, ok := detectResponse.Agents[0]["command"]
+	if !ok || string(command) != `""` {
+		t.Fatalf("agent.detect command compatibility field = %s, present = %t", command, ok)
 	}
 	if !strings.Contains(output.String(), "[REDACTED") || !strings.Contains(output.String(), `"commit":"abc123"`) {
 		t.Fatalf("output lacks sanitized logs or version metadata: %s", output.String())

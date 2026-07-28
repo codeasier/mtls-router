@@ -26,7 +26,7 @@ func TestDiscoverModelsReturnsTypedPrefillUnavailableDriftAndNoSecrets(t *testin
 	writeModelFixture(t, filepath.Join(home, ".codex", "auth.json"), `{"OPENAI_API_KEY":"`+modelsSecretCanary+`"}`)
 
 	service, err := NewService(Options{StateDir: filepath.Join(home, "transactions"), Detector: Detector{
-		HomeDir: home, Getenv: func(string) string { return "" }, LookPath: func(string) (string, error) { return "", os.ErrNotExist },
+		HomeDir: home, Getenv: func(string) string { return "" },
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -68,7 +68,7 @@ func TestDiscoverModelsReturnsTypedPrefillUnavailableDriftAndNoSecrets(t *testin
 func TestDiscoverModelsNoStateReturnsEmptyKeyFreeResult(t *testing.T) {
 	home := t.TempDir()
 	service, err := NewService(Options{StateDir: filepath.Join(home, "transactions"), Detector: Detector{
-		HomeDir: home, Getenv: func(string) string { return "" }, LookPath: func(string) (string, error) { return "", os.ErrNotExist },
+		HomeDir: home, Getenv: func(string) string { return "" },
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +89,7 @@ func TestDiscoverModelsAuthoritativelySignsServiceSimplifyPolicy(t *testing.T) {
 	for _, simplify := range []bool{false, true} {
 		home := t.TempDir()
 		service, err := NewService(Options{StateDir: filepath.Join(home, "transactions"), Simplify: simplify, Detector: Detector{
-			HomeDir: home, Getenv: func(string) string { return "" }, LookPath: func(string) (string, error) { return "", os.ErrNotExist },
+			HomeDir: home, Getenv: func(string) string { return "" },
 		}})
 		if err != nil {
 			t.Fatal(err)
@@ -116,7 +116,7 @@ func TestDiscoverModelsReportsFilteredExistingAndPresetModelsUnavailable(t *test
 		t.Fatal(err)
 	}
 	service, err := NewService(Options{StateDir: filepath.Join(home, "transactions"), Preset: preset, Detector: Detector{
-		HomeDir: home, Getenv: func(string) string { return "" }, LookPath: func(string) (string, error) { return "", os.ErrNotExist },
+		HomeDir: home, Getenv: func(string) string { return "" },
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -146,7 +146,7 @@ func TestDiscoverModelsReportsFilteredExistingAndPresetModelsUnavailable(t *test
 func TestDiscoverModelsPresetNoPresetReturnsEmptyObjects(t *testing.T) {
 	home := t.TempDir()
 	service, err := NewService(Options{StateDir: filepath.Join(home, "transactions"), Detector: Detector{
-		HomeDir: home, Getenv: func(string) string { return "" }, LookPath: func(string) (string, error) { return "", os.ErrNotExist },
+		HomeDir: home, Getenv: func(string) string { return "" },
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -170,7 +170,7 @@ func TestDiscoverModelsPresetSelectedScopeAndMixedValidity(t *testing.T) {
 		t.Fatal(err)
 	}
 	service, err := NewService(Options{StateDir: filepath.Join(home, "transactions"), Preset: presetConfig, Detector: Detector{
-		HomeDir: home, Getenv: func(string) string { return "" }, LookPath: func(string) (string, error) { return "", os.ErrNotExist },
+		HomeDir: home, Getenv: func(string) string { return "" },
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -222,7 +222,7 @@ func TestDiscoverModelsFablePresetAvailabilityIsClaudeAtomic(t *testing.T) {
 		t.Fatal(err)
 	}
 	service, err := NewService(Options{StateDir: filepath.Join(home, "transactions"), Preset: presetConfig, Detector: Detector{
-		HomeDir: home, Getenv: func(string) string { return "" }, LookPath: func(string) (string, error) { return "", os.ErrNotExist },
+		HomeDir: home, Getenv: func(string) string { return "" },
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -252,7 +252,7 @@ func TestDiscoverModelsPresetReportsCompleteBoundedUnavailableModels(t *testing.
 		Models:       models,
 	}}
 	service, err := NewService(Options{StateDir: filepath.Join(home, "transactions"), Preset: presetConfig, Detector: Detector{
-		HomeDir: home, Getenv: func(string) string { return "" }, LookPath: func(string) (string, error) { return "", os.ErrNotExist },
+		HomeDir: home, Getenv: func(string) string { return "" },
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -278,7 +278,7 @@ func TestDiscoverModelsProjectsClaudeContextNameAndInheritance(t *testing.T) {
 	path := filepath.Join(home, ".claude", "settings.json")
 	writeModelFixture(t, path, `{"env":{"ANTHROPIC_MODEL":"primary[1m]","ANTHROPIC_CUSTOM_MODEL_OPTION_NAME":"Primary","ANTHROPIC_DEFAULT_FABLE_MODEL":"primary[1m]","ANTHROPIC_DEFAULT_FABLE_MODEL_NAME":"Primary","ANTHROPIC_DEFAULT_HAIKU_MODEL":"primary[1m]","ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME":"Primary","ANTHROPIC_DEFAULT_SONNET_MODEL":"primary","ANTHROPIC_DEFAULT_SONNET_MODEL_NAME":"Primary","ANTHROPIC_DEFAULT_OPUS_MODEL":"primary[1m]","ANTHROPIC_DEFAULT_OPUS_MODEL_NAME":"Different"}}`)
 	service, err := NewService(Options{StateDir: filepath.Join(home, "transactions"), Detector: Detector{
-		HomeDir: home, Getenv: func(string) string { return "" }, LookPath: func(string) (string, error) { return "", os.ErrNotExist },
+		HomeDir: home, Getenv: func(string) string { return "" },
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -318,9 +318,6 @@ func TestDiscoverModelsProjectsUppercaseClaudeContextSuffix(t *testing.T) {
 	service, err := NewService(Options{StateDir: filepath.Join(home, "transactions"), Detector: Detector{
 		HomeDir: home,
 		Getenv:  func(string) string { return "" },
-		LookPath: func(string) (string, error) {
-			return "", os.ErrNotExist
-		},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -387,7 +384,7 @@ func TestDiscoverModelsProjectsClaudeBudgets(t *testing.T) {
 	path := filepath.Join(home, ".claude", "settings.json")
 	writeModelFixture(t, path, `{"env":{"ANTHROPIC_MODEL":"primary","ANTHROPIC_DEFAULT_HAIKU_MODEL":"primary","ANTHROPIC_DEFAULT_SONNET_MODEL":"primary","ANTHROPIC_DEFAULT_OPUS_MODEL":"primary","CLAUDE_CODE_MAX_CONTEXT_TOKENS":"353400","CLAUDE_CODE_MAX_OUTPUT_TOKENS":"100000"}}`)
 	service, err := NewService(Options{StateDir: filepath.Join(home, "transactions"), Detector: Detector{
-		HomeDir: home, Getenv: func(string) string { return "" }, LookPath: func(string) (string, error) { return "", os.ErrNotExist },
+		HomeDir: home, Getenv: func(string) string { return "" },
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -444,7 +441,7 @@ func TestDiscoverModelsRejectsInvalidClaudeBudgets(t *testing.T) {
 			path := filepath.Join(home, ".claude", "settings.json")
 			writeModelFixture(t, path, string(content))
 			service, err := NewService(Options{StateDir: filepath.Join(home, "transactions"), Detector: Detector{
-				HomeDir: home, Getenv: func(string) string { return "" }, LookPath: func(string) (string, error) { return "", os.ErrNotExist },
+				HomeDir: home, Getenv: func(string) string { return "" },
 			}})
 			if err != nil {
 				t.Fatal(err)
@@ -472,7 +469,7 @@ func TestDiscoverModelsProjectsOnlyTypedOpenCodeOptionsAndVariants(t *testing.T)
 	path := filepath.Join(home, ".config", "opencode", "opencode.json")
 	writeModelFixture(t, path, `{"model":"mtls-router/model-a","headers":{"Authorization":"secret"},"provider":{"mtls-router":{"npm":"unsafe","name":"unsafe","options":{"baseURL":"https://secret","apiKey":"secret"},"models":{"model-a":{"name":"Safe","options":{"reasoningEffort":"high"},"variants":{"medium":{"reasoningEffort":"medium"}},"extra":{"secret":"drop"},"provider":"drop","auth":"drop","url":"drop","headers":{"Authorization":"drop"}}}}}}`)
 	service, err := NewService(Options{StateDir: filepath.Join(home, "transactions"), Detector: Detector{
-		HomeDir: home, Getenv: func(string) string { return "" }, LookPath: func(string) (string, error) { return "", os.ErrNotExist },
+		HomeDir: home, Getenv: func(string) string { return "" },
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -509,7 +506,7 @@ func TestDiscoverModelsRoundTripsRenderedOpenCodeVariantShapes(t *testing.T) {
 			path := filepath.Join(home, ".config", "opencode", "opencode.json")
 			writeModelFixture(t, path, `{"model":"mtls-router/model-a","provider":{"mtls-router":{"models":{"model-a":{"name":"Safe","variants":`+test.variants+`,"extra":{"secret":"drop"},"connection":{"token":"drop"}}}}}}`)
 			service, err := NewService(Options{StateDir: filepath.Join(home, "transactions"), Detector: Detector{
-				HomeDir: home, Getenv: func(string) string { return "" }, LookPath: func(string) (string, error) { return "", os.ErrNotExist },
+				HomeDir: home, Getenv: func(string) string { return "" },
 			}})
 			if err != nil {
 				t.Fatal(err)
@@ -580,7 +577,7 @@ func TestDiscoverModelsClaudeSuffixProjectionIsExact(t *testing.T) {
 			path := filepath.Join(home, ".claude", "settings.json")
 			writeModelFixture(t, path, `{"env":{"ANTHROPIC_MODEL":"`+test.value+`","ANTHROPIC_DEFAULT_HAIKU_MODEL":"`+test.value+`","ANTHROPIC_DEFAULT_SONNET_MODEL":"`+test.value+`","ANTHROPIC_DEFAULT_OPUS_MODEL":"`+test.value+`"}}`)
 			service, err := NewService(Options{StateDir: filepath.Join(home, "transactions"), Detector: Detector{
-				HomeDir: home, Getenv: func(string) string { return "" }, LookPath: func(string) (string, error) { return "", os.ErrNotExist },
+				HomeDir: home, Getenv: func(string) string { return "" },
 			}})
 			if err != nil {
 				t.Fatal(err)

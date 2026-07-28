@@ -1933,7 +1933,6 @@ main {
   background: var(--paper-deep);
 }
 
-.agent-state--installed,
 .agent-state--configured {
   color: var(--good);
   border-color: rgba(83, 109, 59, 0.24);
@@ -1953,8 +1952,7 @@ main {
   background: var(--signal-soft);
 }
 
-.agent-state--readonly,
-.agent-state--not-installed {
+.agent-state--readonly {
   color: var(--muted);
   border-color: var(--line-strong);
   background: var(--paper-deep);
@@ -2304,17 +2302,6 @@ main {
   margin: 0;
   color: var(--muted);
   font-size: 11px;
-}
-
-.result-install-note {
-  margin: 12px 0 0;
-  padding: 11px 13px;
-  color: var(--good);
-  border-left: 3px solid var(--good);
-  background: var(--good-soft);
-  font-size: 12px;
-  font-weight: 750;
-  line-height: 1.55;
 }
 
 .result-grid {

@@ -56,15 +56,15 @@ Router 页面会区分本地进程和上游健康。运行中的进程可能处�
 
 ## 配置 Agent
 
-Agent 总览始终以独立卡片展示 Claude Code、OpenCode 和 Codex。每张卡片根据命令查找结果显示 CLI 安装状态，并独立显示配置文件是否存在、是否可写以及已配置或无效状态。检测只返回元数据，绝不返回已保存的 API key 明文。检测遵循 `CLAUDE_CONFIG_DIR`、`OPENCODE_CONFIG` 和 `CODEX_HOME`；Codex home 目录存在时可以定位 Codex 配置，但这本身不表示 Codex CLI 命令已安装。
+Agent 总览始终以独立卡片展示 Claude Code、OpenCode 和 Codex。每张卡片只显示配置文件是否存在、是否可写、是否有效、是否已配置以及恢复资格。检测只返回元数据，绝不返回已保存的 API key 明文，也不在 `PATH` 中查找或依赖 Agent CLI 命令。检测遵循 `CLAUDE_CONFIG_DIR`、`OPENCODE_CONFIG` 和 `CODEX_HOME`。
 
-CLI 未安装时，只要目标路径可写，仍可生成配置。预安装配置写入成功仍属于成功，并会说明必须安装 CLI 后才能使用该配置。每张卡片只会为对应的一个 Agent 打开持续面板；写入成功后编辑器仍然可用，可以反复维护配置。桌面端不会在同一面板中选择或批量处理多个 Agent。
+只要目标路径可写，每个受支持 Agent 都始终可以进入配置管理。每张卡片只会为对应的一个 Agent 打开持续面板；写入成功后编辑器仍然可用，可以反复维护配置。桌面端不会安装、启动或调用 Agent CLI，也不会在同一面板中选择或批量处理多个 Agent。
 
 正常**合并**会保留受支持的无关配置。**备份并重建**是独立的破坏性恢复操作，只会为符合条件的语法无效文件显示。它会用纯托管输出替换完整的已批准 Agent 文件集；无关设置、注释、格式以及有效伴随文件中的元数据都会丢失。备份可能包含 API key。继续前必须确认这些损失并保护每个备份。
 
 Agent 配置采用以下单 Agent 流程：
 
-1. 打开卡片。面板始终重新执行 `agent.detect`，只读取凭据摘要；存在 key 且目标可编辑时，再为该 Agent 调用 `agent.models`。有效且可写的 Agent 使用**合并**；无效 Agent 只有在检测标记为符合条件时才能使用**备份并重建**，其他无效配置必须手工修复。CLI 安装状态不会阻止这两种操作。
+1. 打开卡片。面板始终重新执行 `agent.detect`，只读取凭据摘要；存在 key 且目标可编辑时，再为该 Agent 调用 `agent.models`。有效且可写的 Agent 使用**合并**；无效 Agent 只有在检测标记为符合条件时才能使用**备份并重建**，其他无效配置必须手工修复。
 2. Rust 会加载由 API 密钥页面管理的全局 API key，并通过可信本地 router 仅为该 Agent 发现 manager 经过认证和构建过滤的模型目录。总览既不加载模型，也不使用凭据。初次或完整 reload discovery 没有 key、认证失败或目录不可用时，面板会保持打开，只展示安全检测 metadata 和恢复操作，不展示字段级配置。该边界是因为 render 和 preview 都需要由已认证 `agent.models` discovery 签发的 catalog token。后台刷新失败时则保留已有草稿与 active flow，提示无法验证外部状态，并继续允许仍然安全的操作。Webview 绝不会收到 key。
 3. 默认会排除包含 ASCII `/` 的有效模型 ID；使用 `SIMPLIFY=False` 构建的 release 会保留它们。该过滤目录是目标 Agent、导入配置、preset、预览和刷新的权威依据。这是不可变的 manager 构建策略，不是运行时偏好，也不是对 proxy 路由支持的限制。桌面端绝不会选择第一个模型、按模型名称或能力推断选择，也不会替换模型。可见的构建 preset 只有在 manager 根据该目录验证该 section 的全部精确 ID 后，才能提供该 section 作为可编辑初始值。
 4. 目标 Agent 采用 `existing > preset > empty` 初始化；界面会标明其 section 来自 existing 配置还是推荐 preset，并为不可用的完整 preset section 列出缺失 base ID。配置 Agent 原生选择：Claude 主模型/角色继承以及可选显示名称和 Standard/1M context、OpenCode 模型子集/默认/选项，或一个 Codex 模型/选项。Claude 提供本地化的**启用 Fable**控件。空 Claude 表单默认禁用 Fable；启用时创建 inherit-primary 选择，并显示与现有角色相同的继承/显式模型、显示名称和 Standard/1M 控件；禁用时删除完整 Fable 选择及其 metadata。Existing Claude 作为完整 section 优先于 preset Claude，因此不会把 preset Fable 合并进省略 Fable 的 existing Claude section。Preset 值始终可编辑且不代表任何批准。未设置的可选字段保持省略。可以导入或导出无 key 的规范 model config；导入会完整替换当前表单，而不是与 existing 或 preset 值合并，并在导出、预览与写入中精确保留已启用或省略的 Fable。

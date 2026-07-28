@@ -13,7 +13,7 @@ import (
 
 func TestRenderCanonicalFragmentsAreRedactedDynamicAndFileIndependent(t *testing.T) {
 	home := t.TempDir()
-	service := newTestService(t, filepath.Join(home, "state"), home, nil, nil)
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
 	for _, path := range []string{filepath.Join(home, ".claude", "settings.json"), filepath.Join(home, ".config", "opencode", "opencode.json"), filepath.Join(home, ".codex", "config.toml")} {
 		writeFile(t, path, "invalid-existing-secret-canary")
 	}
@@ -412,7 +412,7 @@ func TestCodexAuthPolicyAndKeyringPermutations(t *testing.T) {
 
 func TestRenderRejectsTokenScopeConfigAndUnsafePath(t *testing.T) {
 	home := t.TempDir()
-	service := newTestService(t, filepath.Join(home, "state"), home, nil, nil)
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
 	token := renderCatalogToken(t, service, []Kind{ClaudeCode}, []string{"model-primary", "model-sonnet"}, "http://127.0.0.1:19443")
 	_, err := service.Render(context.Background(), []Kind{OpenCode}, token, fullRenderConfig(t))
 	if CodeOf(err) != CodeModelCatalogStale {
@@ -457,7 +457,7 @@ func claudeOnlyConfig() json.RawMessage {
 func TestRenderCreatesNoAgentFiles(t *testing.T) {
 	home := t.TempDir()
 	stateDir := filepath.Join(home, "state")
-	service := newTestService(t, stateDir, home, nil, nil)
+	service := newTestService(t, stateDir, home, nil)
 	token := renderCatalogToken(t, service, []Kind{ClaudeCode}, []string{"model-primary", "model-sonnet"}, "http://127.0.0.1:19443")
 	if _, err := service.Render(context.Background(), []Kind{ClaudeCode}, token, claudeOnlyConfig()); err != nil {
 		t.Fatal(err)

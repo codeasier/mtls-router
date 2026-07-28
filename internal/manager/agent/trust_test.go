@@ -15,7 +15,7 @@ import (
 func TestSigningKeyIsPrivateRandomAndSharedAcrossServices(t *testing.T) {
 	home := t.TempDir()
 	stateDir := filepath.Join(home, "state")
-	detector := testServiceDetector(home, map[string]bool{"claude": true}, nil)
+	detector := testServiceDetector(home, nil)
 	first, err := NewService(Options{StateDir: stateDir, Detector: detector, LegacyRenderInput: legacyTestRenderInput()})
 	if err != nil {
 		t.Fatal(err)
@@ -44,7 +44,7 @@ func TestSigningKeyIsPrivateRandomAndSharedAcrossServices(t *testing.T) {
 func TestConcurrentSigningKeyCreationConverges(t *testing.T) {
 	home := t.TempDir()
 	stateDir := filepath.Join(home, "state")
-	detector := testServiceDetector(home, map[string]bool{"claude": true}, nil)
+	detector := testServiceDetector(home, nil)
 	services := make([]*Service, 2)
 	for i := range services {
 		var err error
@@ -79,7 +79,7 @@ func TestSigningKeyCorruptionPermissionsAndLossFailClosed(t *testing.T) {
 	t.Run("corruption", func(t *testing.T) {
 		home := t.TempDir()
 		stateDir := filepath.Join(home, "state")
-		service := newTestService(t, stateDir, home, map[string]bool{"claude": true}, nil)
+		service := newTestService(t, stateDir, home, nil)
 		if _, err := service.Preview(context.Background(), []Kind{ClaudeCode}); err != nil {
 			t.Fatal(err)
 		}
@@ -97,7 +97,7 @@ func TestSigningKeyCorruptionPermissionsAndLossFailClosed(t *testing.T) {
 	t.Run("loss with owned state", func(t *testing.T) {
 		home := t.TempDir()
 		stateDir := filepath.Join(home, "state")
-		service := newTestService(t, stateDir, home, map[string]bool{"claude": true}, nil)
+		service := newTestService(t, stateDir, home, nil)
 		if _, err := service.Preview(context.Background(), []Kind{ClaudeCode}); err != nil {
 			t.Fatal(err)
 		}
@@ -119,7 +119,7 @@ func TestSigningKeyCorruptionPermissionsAndLossFailClosed(t *testing.T) {
 		t.Run("permissions", func(t *testing.T) {
 			home := t.TempDir()
 			stateDir := filepath.Join(home, "state")
-			service := newTestService(t, stateDir, home, map[string]bool{"claude": true}, nil)
+			service := newTestService(t, stateDir, home, nil)
 			if _, err := service.Preview(context.Background(), []Kind{ClaudeCode}); err != nil {
 				t.Fatal(err)
 			}
@@ -141,7 +141,7 @@ func TestNewJournalUsesKeyedContextSeparatedRevisions(t *testing.T) {
 	path := filepath.Join(home, ".claude", "settings.json")
 	original := []byte(`{"sentinel":"secret-bearing"}`)
 	writeFile(t, path, string(original))
-	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true}, nil)
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
 	preview, err := service.Preview(context.Background(), []Kind{ClaudeCode})
 	if err != nil {
 		t.Fatal(err)

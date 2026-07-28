@@ -405,7 +405,6 @@ export function useAgentPanelController({
         target: {
           agent: targetId,
           mode,
-          installedAtEntry: Boolean(state.command?.trim()),
         },
         config: baselines.form,
         source: initialized.sources[targetId],
@@ -678,7 +677,6 @@ export function useAgentPanelController({
           target: {
             agent: targetId,
             mode: candidateMode!,
-            installedAtEntry: Boolean(targetState.command?.trim()),
           },
           externalBaseline: baselines.external,
           preview: null,
@@ -806,7 +804,6 @@ export function useAgentPanelController({
         target: {
           agent: targetId,
           mode,
-          installedAtEntry: Boolean(state.command?.trim()),
         },
         config: baselines.form,
         source: initialized.sources[targetId],

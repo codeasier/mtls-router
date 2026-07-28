@@ -42,6 +42,7 @@
 - **写入是事务性的**：受限权限的同目录临时文件（`os.CreateTemp` + `restrictPrivate`）→ `replaceAtomic` 原子重命名；替换前的原始字节进入事务备份。defer 中的 `os.Remove(tmpPath)` 只在 replace 失败的路径上生效。
 - **备份可能含旧 key**：`*.bak-*` / `*.rollback-*` 与源文件同目录、权限受限（`0o600` / DACL），内容是替换前的原始字节。
 - **key 明文落盘仅限 Agent 凭据文件**（见上表）。key 绝不进入环境变量、CLI 参数、model config、日志或 journal。
+- **检测不探测 CLI 安装**：`agent.detect` 只检查配置文件；protocol v4 兼容字段固定返回 `detected=true`、`command=""`，不读取进程 `PATH`。
 - **JSONC 会丢失注释与格式**：默认路径下 `opencode.jsonc` 被迁移为 `opencode.json`；`OPENCODE_CONFIG` 指向 JSONC 时就地规范化为严格 JSON。两种情形都在预览阶段给出警告。
 - 只改写受管键：Claude 的受管 env key、Codex 的受管 root key 集合是显式白名单，用户其余配置原样保留。
 - 预览与写入之间必须一致 —— `ValidatePreview` 检出漂移时返回 `PREVIEW_STALE`，绝不带着过期计划写入。

@@ -76,7 +76,7 @@ describe("AgentConfigFields", () => {
       renderWithI18n(
         <AgentConfigFields
           ref={ref}
-          target={{ agent, mode: "merge", installedAtEntry: true }}
+          target={{ agent, mode: "merge" }}
           discovery={discovery}
           config={initial}
           disabled={false}
@@ -104,7 +104,6 @@ describe("AgentConfigFields", () => {
     const target = {
       agent: "claude",
       mode: "merge",
-      installedAtEntry: true,
     } as const;
     const initial: ModelConfig = {
       version: 1,
@@ -158,7 +157,7 @@ describe("AgentConfigFields", () => {
     renderWithI18n(
       <AgentConfigFields
         ref={ref}
-        target={{ agent: "opencode", mode: "merge", installedAtEntry: true }}
+        target={{ agent: "opencode", mode: "merge" }}
         discovery={discovery}
         config={config}
         disabled={false}
@@ -189,7 +188,7 @@ describe("AgentConfigFields", () => {
   it("does not lose invalid ObjectField text when a sibling changes", () => {
     renderWithI18n(
       <AgentConfigFields
-        target={{ agent: "opencode", mode: "merge", installedAtEntry: true }}
+        target={{ agent: "opencode", mode: "merge" }}
         discovery={discovery}
         config={config}
         disabled={false}
@@ -222,7 +221,7 @@ describe("AgentConfigFields", () => {
     renderWithI18n(
       <ControlledFields
         fieldsRef={ref}
-        target={{ agent: "claude", mode: "merge", installedAtEntry: true }}
+        target={{ agent: "claude", mode: "merge" }}
         initial={claude}
       />,
     );
@@ -248,7 +247,7 @@ describe("AgentConfigFields", () => {
     renderWithI18n(
       <ControlledFields
         fieldsRef={ref}
-        target={{ agent: "opencode", mode: "merge", installedAtEntry: true }}
+        target={{ agent: "opencode", mode: "merge" }}
         initial={config}
       />,
     );
@@ -270,7 +269,7 @@ describe("AgentConfigFields", () => {
     renderWithI18n(
       <ControlledFields
         fieldsRef={ref}
-        target={{ agent: "codex", mode: "merge", installedAtEntry: true }}
+        target={{ agent: "codex", mode: "merge" }}
         initial={codex}
       />,
     );

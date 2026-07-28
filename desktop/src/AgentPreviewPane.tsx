@@ -194,24 +194,12 @@ function AgentPreviewPaneContent({
   }
 
   if (result) {
-    const targetResult = result.agents.find(
-      (agent) => agent.agent === target.agent,
-    );
-    const showInstallLater =
-      !target.installedAtEntry && targetResult?.success === true;
     return (
       <div className="agent-results">
         <div className="result-banner">
           <span>{t("agents.transactionComplete")}</span>
           <h3>{t("agents.resultHeading")}</h3>
         </div>
-        {showInstallLater && (
-          <p className="result-install-note" role="note">
-            {t("agents.result.installLater", {
-              agent: agentNames[target.agent],
-            })}
-          </p>
-        )}
         <div className="result-grid">
           {result.agents.map((agent) => (
             <article key={agent.agent}>
