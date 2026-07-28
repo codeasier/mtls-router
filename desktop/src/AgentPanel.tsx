@@ -85,6 +85,8 @@ export function AgentPanel({
     controller.target && controller.discovery && controller.config,
   );
   const showProcessing = controller.phase.kind === "loading" || busy;
+  const showWorkspaceProcessing = showProcessing && !hasFields;
+  const showRailProcessing = showProcessing && hasFields;
   const showIdle = controller.phase.kind === "editing" && !controller.result;
   const showPreview =
     controller.phase.kind === "previewing" && Boolean(controller.target);
@@ -99,8 +101,9 @@ export function AgentPanel({
     showIdle ||
     showReadonly ||
     showBlocked ||
-    showReloadFailed;
-  const statusOnly = showProcessing && !hasFields && !showRail;
+    showReloadFailed ||
+    showRailProcessing;
+  const statusOnly = showWorkspaceProcessing && !showRail;
   const fieldResetToken =
     resetToken +
     (controller.preview ? 100_000 : 0) +
@@ -341,7 +344,7 @@ export function AgentPanel({
           </div>
         )}
 
-        {showProcessing && (
+        {showWorkspaceProcessing && (
           <div
             className="processing-stage agent-panel__processing"
             role="status"
@@ -363,6 +366,15 @@ export function AgentPanel({
                       code: sanitizeSensitiveText(controller.issue.code),
                     })}
               </p>
+            )}
+
+            {showRailProcessing && (
+              <div
+                className="processing-stage agent-panel__processing"
+                role="status"
+              >
+                <h3>{t(phaseMessage(controller.phase.kind))}</h3>
+              </div>
             )}
 
             {showResult && controller.target && controller.result && (

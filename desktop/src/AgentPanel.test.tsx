@@ -1849,7 +1849,7 @@ describe("AgentPanel integration", () => {
     expect(await screen.findByLabelText(/^主模型$/)).toBeVisible();
   });
 
-  it("centers execution status outside the rail without decorative protocol badges", async () => {
+  it("keeps execution status in the rail without decorative protocol badges", async () => {
     const pendingPreview = deferred<AgentPreview>();
     const api = readyApi({
       previewAgents: vi.fn(() => pendingPreview.promise),
@@ -1867,15 +1867,17 @@ describe("AgentPanel integration", () => {
     fireEvent.click(screen.getByRole("button", { name: /生成写入预览/ }));
 
     const status = screen.getByRole("status");
+    const rail = view.container.querySelector(".agent-panel__rail");
     expect(status).toHaveClass("agent-panel__processing");
     expect(status.textContent).not.toMatch(/\b(?:GET|TX)\b/);
     expect(view.container.querySelector(".instrument__dial")).toBeNull();
-    expect(view.container.querySelector(".agent-panel__rail")).toBeNull();
+    expect(rail).not.toBeNull();
+    expect(rail?.contains(status)).toBe(true);
     expect(
       view.container.querySelector(
         ".agent-panel__workspace > .agent-panel__processing",
       ),
-    ).toBe(status);
+    ).toBeNull();
     expect(view.container.querySelector(".agent-panel__editor")).toBeVisible();
 
     await act(async () => pendingPreview.resolve(previewFor(configs.claude)));
