@@ -292,13 +292,23 @@ pub fn setup(
 }
 
 pub fn handle_window_event<R: Runtime>(window: &tauri::Window<R>, event: &WindowEvent) {
-    if should_hide_on_close(
+    let Some(plan) = close_to_tray_plan(
         window.label(),
         matches!(event, WindowEvent::CloseRequested { .. }),
-    ) {
-        if let WindowEvent::CloseRequested { api, .. } = event {
+        cfg!(target_os = "macos"),
+    ) else {
+        return;
+    };
+    if let WindowEvent::CloseRequested { api, .. } = event {
+        if plan.prevent_close {
             api.prevent_close();
+        }
+        if plan.hide_window {
             let _ = window.hide();
+        }
+        #[cfg(target_os = "macos")]
+        if plan.hide_app {
+            let _ = window.app_handle().hide();
         }
     }
 }
@@ -381,11 +391,22 @@ fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, event: tauri::menu::MenuEve
     }
 }
 
-fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
+pub(crate) fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
+    let plan = activate_main_window_plan(cfg!(target_os = "macos"));
+    #[cfg(target_os = "macos")]
+    if plan.unhide_app {
+        let _ = app.show();
+    }
     if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
-        let _ = window.show();
-        let _ = window.unminimize();
-        let _ = window.set_focus();
+        if plan.show_window {
+            let _ = window.show();
+        }
+        if plan.unminimize {
+            let _ = window.unminimize();
+        }
+        if plan.set_focus {
+            let _ = window.set_focus();
+        }
     }
 }
 
@@ -539,6 +560,41 @@ pub(crate) fn execute_quit<R: Runtime>(app: AppHandle<R>) {
 
 fn should_hide_on_close(label: &str, close_requested: bool) -> bool {
     label == MAIN_WINDOW && close_requested
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CloseToTrayPlan {
+    prevent_close: bool,
+    hide_window: bool,
+    hide_app: bool,
+}
+
+fn close_to_tray_plan(label: &str, close_requested: bool, macos: bool) -> Option<CloseToTrayPlan> {
+    if !should_hide_on_close(label, close_requested) {
+        return None;
+    }
+    Some(CloseToTrayPlan {
+        prevent_close: true,
+        hide_window: true,
+        hide_app: macos,
+    })
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ActivateMainWindowPlan {
+    unhide_app: bool,
+    show_window: bool,
+    unminimize: bool,
+    set_focus: bool,
+}
+
+fn activate_main_window_plan(macos: bool) -> ActivateMainWindowPlan {
+    ActivateMainWindowPlan {
+        unhide_app: macos,
+        show_window: true,
+        unminimize: true,
+        set_focus: true,
+    }
 }
 
 fn apply_error<R: Runtime>(app: &AppHandle<R>) {
@@ -1079,6 +1135,80 @@ mod tests {
         assert!(should_hide_on_close("main", true));
         assert!(!should_hide_on_close("other", true));
         assert!(!should_hide_on_close("main", false));
+    }
+
+    #[test]
+    fn macos_close_to_tray_hides_window_and_app() {
+        assert_eq!(
+            close_to_tray_plan("main", true, true),
+            Some(CloseToTrayPlan {
+                prevent_close: true,
+                hide_window: true,
+                hide_app: true,
+            })
+        );
+    }
+
+    #[test]
+    fn non_macos_close_to_tray_hides_window_only() {
+        assert_eq!(
+            close_to_tray_plan("main", true, false),
+            Some(CloseToTrayPlan {
+                prevent_close: true,
+                hide_window: true,
+                hide_app: false,
+            })
+        );
+        assert_eq!(close_to_tray_plan("other", true, true), None);
+        assert_eq!(close_to_tray_plan("main", false, true), None);
+    }
+
+    #[test]
+    fn macos_activation_unhides_app_before_window_focus() {
+        assert_eq!(
+            activate_main_window_plan(true),
+            ActivateMainWindowPlan {
+                unhide_app: true,
+                show_window: true,
+                unminimize: true,
+                set_focus: true,
+            }
+        );
+    }
+
+    #[test]
+    fn non_macos_activation_focuses_window_without_app_unhide() {
+        assert_eq!(
+            activate_main_window_plan(false),
+            ActivateMainWindowPlan {
+                unhide_app: false,
+                show_window: true,
+                unminimize: true,
+                set_focus: true,
+            }
+        );
+    }
+
+    #[test]
+    fn runtime_close_and_activation_plans_match_host_platform() {
+        let macos = cfg!(target_os = "macos");
+        assert_eq!(
+            close_to_tray_plan("main", true, macos),
+            Some(CloseToTrayPlan {
+                prevent_close: true,
+                hide_window: true,
+                hide_app: macos,
+            })
+        );
+        assert_eq!(
+            activate_main_window_plan(macos),
+            ActivateMainWindowPlan {
+                unhide_app: macos,
+                show_window: true,
+                unminimize: true,
+                set_focus: true,
+            }
+        );
     }
 
     #[test]
