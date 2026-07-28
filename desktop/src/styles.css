@@ -1756,6 +1756,16 @@ main {
   border-width: 0 0 1px;
 }
 
+.leave-blocked-notice {
+  position: sticky;
+  z-index: 9;
+  top: 0;
+  margin-inline: -34px;
+  color: var(--warning);
+  border-color: rgba(139, 91, 23, 0.28);
+  background: var(--warning-soft);
+}
+
 .agent-toolbar,
 .agent-footer-action {
   display: flex;
@@ -3045,6 +3055,10 @@ main {
 
   .main-scroll {
     padding: 0 18px 22px;
+  }
+
+  .leave-blocked-notice {
+    margin-inline: -18px;
   }
 
   .topbar {

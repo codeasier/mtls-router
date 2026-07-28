@@ -429,17 +429,24 @@ describe("App navigation", () => {
       expect(api.setAgentDraftDirty).toHaveBeenLastCalledWith(true),
     );
 
+    fireEvent.click(screen.getByRole("button", { name: "返回 Agent 概览" }));
     expect(
-      screen.getByRole("button", { name: "返回 Agent 概览" }),
-    ).toBeDisabled();
+      screen.getByText("Agent 配置操作正在进行。请等待操作完成后再离开。"),
+    ).toHaveAttribute("role", "status");
     fireEvent.click(screen.getByRole("button", { name: "系统设置" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Agent 配置操作正在进行。请等待操作完成后再离开。"),
+    ).toHaveAttribute("role", "status");
     expect(
       screen.getByRole("heading", { level: 2, name: "Claude Code" }),
     ).toBeVisible();
 
     act(() => quitRequest.current?.());
     expect(api.resolveAppQuit).toHaveBeenLastCalledWith(false);
+    expect(
+      screen.getByText("Agent 配置操作正在进行。请等待操作完成后再离开。"),
+    ).toHaveAttribute("role", "status");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
     await act(async () =>

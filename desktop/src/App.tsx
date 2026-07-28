@@ -85,6 +85,7 @@ function AppContent({ api }: { api: DesktopApi }) {
   const [sidebarCollapsed, setSidebarCollapsed] =
     useState(readSidebarCollapsed);
   const [agentExitGuarded, setAgentExitGuarded] = useState(false);
+  const [blockedLeaveAttempt, setBlockedLeaveAttempt] = useState(0);
   const [pendingLeave, setPendingLeave] = useState<{
     kind: "navigation" | "native-quit";
     confirm(): void;
@@ -121,9 +122,11 @@ function AppContent({ api }: { api: DesktopApi }) {
       }
       const decision = leaveGuardRef.current?.() ?? "allow";
       if (decision === "block") {
+        setBlockedLeaveAttempt((attempt) => attempt + 1);
         cancel();
         return;
       }
+      setBlockedLeaveAttempt(0);
       if (decision === "allow") {
         action();
         return;
@@ -180,6 +183,12 @@ function AppContent({ api }: { api: DesktopApi }) {
     },
     [api],
   );
+
+  useEffect(() => {
+    if (!blockedLeaveAttempt) return;
+    const timeout = window.setTimeout(() => setBlockedLeaveAttempt(0), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [blockedLeaveAttempt]);
 
   useEffect(() => {
     let disposed = false;
@@ -335,6 +344,15 @@ function AppContent({ api }: { api: DesktopApi }) {
         </header>
 
         <div className="main-scroll">
+          {blockedLeaveAttempt > 0 && (
+            <p
+              key={blockedLeaveAttempt}
+              className="agent-alert leave-blocked-notice"
+              role="status"
+            >
+              {t("agents.leave.busy")}
+            </p>
+          )}
           <div className="content-intro">
             <p>{t(`${sectionKey}.description` as TranslationKey)}</p>
             <span aria-hidden="true">

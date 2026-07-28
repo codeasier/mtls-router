@@ -306,12 +306,7 @@ export function AgentPanel({
           <p className="overline">{t("agents.overline")}</p>
           <h2 id="agent-panel-heading">{agentNames[target]}</h2>
         </div>
-        <button
-          type="button"
-          className="text-button"
-          disabled={busy}
-          onClick={onBack}
-        >
+        <button type="button" className="text-button" onClick={onBack}>
           {t("agents.panel.back")}
         </button>
       </header>

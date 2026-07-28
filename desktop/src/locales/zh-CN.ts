@@ -525,6 +525,7 @@ export const zhCN = {
   "agents.leave.title": "放弃更改并离开？",
   "agents.leave.description":
     "当前 Agent 配置包含未保存更改。离开后这些更改将丢失。",
+  "agents.leave.busy": "Agent 配置操作正在进行。请等待操作完成后再离开。",
   "agents.leave.cancel": "继续编辑",
   "agents.leave.confirm": "放弃并离开",
 } as const;

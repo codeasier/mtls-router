@@ -594,6 +594,8 @@ export const en: Record<TranslationKey, string> = {
   "agents.leave.title": "Discard changes and leave?",
   "agents.leave.description":
     "This Agent configuration has unsaved changes. They will be lost if you leave.",
+  "agents.leave.busy":
+    "An Agent configuration operation is in progress. Wait for it to finish before leaving.",
   "agents.leave.cancel": "Keep editing",
   "agents.leave.confirm": "Discard and leave",
 };
