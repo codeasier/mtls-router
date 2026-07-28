@@ -1401,7 +1401,7 @@ describe("RouterPage occupant recovery", () => {
         screen.queryByRole("button", { name: "强制终止占用进程" }),
       ).not.toBeInTheDocument();
       const retry = screen.getByRole("button", { name: "重试检查" });
-      expect(retry).toHaveFocus();
+      await waitFor(() => expect(retry).toHaveFocus());
       fireEvent.click(retry);
       expect(
         await screen.findByRole("button", { name: "强制终止占用进程" }),
