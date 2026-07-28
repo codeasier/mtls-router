@@ -9,8 +9,6 @@ export const en: Record<TranslationKey, string> = {
   "app.sidebarCollapse": "Collapse sidebar",
   "app.sidebarExpand": "Expand sidebar",
   "app.sidebarExpandShort": "Expand",
-  "app.ui": "UI",
-  "app.phase": "Phase 4.2",
   "nav.router": "Router control",
   "nav.routerShort": "Router",
   "nav.agents": "Agent configuration",
@@ -21,26 +19,11 @@ export const en: Record<TranslationKey, string> = {
   "nav.logsShort": "Logs",
   "nav.settings": "Settings",
   "nav.settingsShort": "Settings",
-  "section.router.eyebrow": "ROUTER / LOCAL RELAY",
   "section.router.title": "Router control",
-  "section.router.description":
-    "Monitor the local process and upstream mTLS health independently, and safely control the desktop-managed router.",
-  "section.agents.eyebrow": "AGENT / CONFIGURATION",
   "section.agents.title": "Agent configuration",
-  "section.agents.description":
-    "Detect and configure Claude Code, OpenCode, and Codex.",
-  "section.apiKeys.eyebrow": "CREDENTIAL / LOCAL STORE",
   "section.apiKeys.title": "API key",
-  "section.apiKeys.description":
-    "Keep the single access credential used for model discovery and Agent configuration writes.",
-  "section.logs.eyebrow": "SYSTEM / EVENT STREAM",
   "section.logs.title": "Runtime logs",
-  "section.logs.description":
-    "View a bounded range of safely filtered logs or copy a credential-free diagnostic summary.",
-  "section.settings.eyebrow": "DESKTOP / PREFERENCES",
   "section.settings.title": "Settings",
-  "section.settings.description":
-    "Manage current-user startup behavior and interface language, and inspect components and storage locations.",
   "placeholder.overline": "STABLE MODULE BOUNDARY",
   "placeholder.heading": "Module not connected",
   "placeholder.description":

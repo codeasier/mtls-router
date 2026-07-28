@@ -745,14 +745,8 @@ export function RouterPage({
 
   return (
     <div className={`panel-grid panel-grid--${copy.tone}`}>
-      <section className="primary-panel" aria-labelledby="router-state-heading">
-        <div className="panel-heading">
-          <div>
-            <p className="overline">{t("router.panelOverline")}</p>
-            <h2 id="router-state-heading">{copy.title}</h2>
-          </div>
-          <span className={`signal signal--${copy.tone}`}>{copy.signal}</span>
-        </div>
+      <aside className="router-rail" aria-label={t("router.actionsAria")}>
+        <span className={`signal signal--${copy.tone}`}>{copy.signal}</span>
 
         <div className="instrument">
           <div className="instrument__dial" aria-hidden="true">
@@ -761,6 +755,53 @@ export function RouterPage({
           <div>
             <p>{copy.detail}</p>
             <span>{t("router.instrumentNote")}</span>
+          </div>
+        </div>
+
+        <div className="action-row">
+          <button
+            ref={startRouterRef}
+            type="button"
+            className="control-button"
+            onClick={start}
+            disabled={!canStart}
+          >
+            {t("router.start")}
+          </button>
+          <button
+            type="button"
+            className="control-button control-button--stop"
+            onClick={stop}
+            disabled={!canStop}
+          >
+            {t("router.stop")}
+          </button>
+          <button
+            type="button"
+            className="text-button"
+            onClick={retryHealth}
+            disabled={!canRetryHealth}
+          >
+            {t("router.retryHealth")}
+          </button>
+        </div>
+
+        <div className="router-next">
+          <div>
+            <p className="overline">{t("router.next")}</p>
+            <p>{t("router.agentNotice")}</p>
+          </div>
+          <button type="button" onClick={onNavigateToAgents}>
+            {t("router.goToAgents")}
+          </button>
+        </div>
+      </aside>
+
+      <section className="primary-panel" aria-labelledby="router-state-heading">
+        <div className="panel-heading">
+          <div>
+            <p className="overline">{t("router.panelOverline")}</p>
+            <h2 id="router-state-heading">{copy.title}</h2>
           </div>
         </div>
 
@@ -973,44 +1014,6 @@ export function RouterPage({
             )}
           </section>
         )}
-
-        <div className="action-row" aria-label={t("router.actionsAria")}>
-          <button
-            ref={startRouterRef}
-            type="button"
-            className="control-button"
-            onClick={start}
-            disabled={!canStart}
-          >
-            {t("router.start")}
-          </button>
-          <button
-            type="button"
-            className="control-button control-button--stop"
-            onClick={stop}
-            disabled={!canStop}
-          >
-            {t("router.stop")}
-          </button>
-          <button
-            type="button"
-            className="text-button"
-            onClick={retryHealth}
-            disabled={!canRetryHealth}
-          >
-            {t("router.retryHealth")}
-          </button>
-        </div>
-
-        <div className="router-next">
-          <div>
-            <p className="overline">{t("router.next")}</p>
-            <p>{t("router.agentNotice")}</p>
-          </div>
-          <button type="button" onClick={onNavigateToAgents}>
-            {t("router.goToAgents")}
-          </button>
-        </div>
       </section>
       {occupantDialogOpen &&
         occupant?.recovery.action === "force_terminate" && (
