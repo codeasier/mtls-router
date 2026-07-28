@@ -1812,7 +1812,7 @@ describe("AgentPanel integration", () => {
       discoverModels: vi.fn(() => pendingDiscovery.promise),
     });
 
-    renderWithI18n(
+    const view = renderWithI18n(
       <AgentPanel
         api={api}
         target="claude"
@@ -1825,9 +1825,16 @@ describe("AgentPanel integration", () => {
     await waitFor(() =>
       expect(api.discoverModels).toHaveBeenCalledWith(["claude"]),
     );
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "正在通过可信本地路由发现模型...",
-    );
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("正在通过可信本地路由发现模型...");
+    expect(status.textContent).not.toMatch(/\b(?:GET|TX)\b/);
+    expect(view.container.querySelector(".instrument__dial")).toBeNull();
+    expect(view.container.querySelector(".agent-panel__rail")).toBeNull();
+    expect(
+      view.container.querySelector(
+        ".agent-panel__workspace--status > .agent-panel__processing",
+      ),
+    ).toBe(status);
     expect(onGuardStateChange).toHaveBeenLastCalledWith({
       dirty: false,
       busy: false,
@@ -1840,6 +1847,42 @@ describe("AgentPanel integration", () => {
       pendingDiscovery.resolve(discoveryFor("flow-loading", configs.claude)),
     );
     expect(await screen.findByLabelText(/^主模型$/)).toBeVisible();
+  });
+
+  it("centers execution status outside the rail without decorative protocol badges", async () => {
+    const pendingPreview = deferred<AgentPreview>();
+    const api = readyApi({
+      previewAgents: vi.fn(() => pendingPreview.promise),
+    });
+    const view = renderWithI18n(
+      <AgentPanel
+        api={api}
+        target="claude"
+        onBack={vi.fn()}
+        onNavigateToApiKeys={vi.fn()}
+      />,
+    );
+
+    await screen.findByLabelText(/^主模型$/);
+    fireEvent.click(screen.getByRole("button", { name: /生成写入预览/ }));
+
+    const status = screen.getByRole("status");
+    expect(status).toHaveClass("agent-panel__processing");
+    expect(status.textContent).not.toMatch(/\b(?:GET|TX)\b/);
+    expect(view.container.querySelector(".instrument__dial")).toBeNull();
+    expect(view.container.querySelector(".agent-panel__rail")).toBeNull();
+    expect(
+      view.container.querySelector(
+        ".agent-panel__workspace > .agent-panel__processing",
+      ),
+    ).toBe(status);
+    expect(view.container.querySelector(".agent-panel__editor")).toBeVisible();
+
+    await act(async () => pendingPreview.resolve(previewFor(configs.claude)));
+    expect(
+      await screen.findByRole("button", { name: /写入所选 Agent/ }),
+    ).toBeVisible();
+    expect(view.container.querySelector(".agent-panel__preview")).toBeVisible();
   });
 
   it("keeps the disabled editor mounted beside preview and focuses its heading on mobile", async () => {
@@ -1861,19 +1904,19 @@ describe("AgentPanel integration", () => {
     fireEvent.click(screen.getByRole("button", { name: /生成写入预览/ }));
 
     const editor = view.container.querySelector(".agent-panel__editor")!;
-    const rail = view.container.querySelector(".agent-panel__rail")!;
     expect(editor).toBeVisible();
-    expect(
-      editor.compareDocumentPosition(rail) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
     expect(primary).toBeDisabled();
     await act(async () => pendingPreview.resolve(previewFor(configs.claude)));
 
+    const rail = view.container.querySelector(".agent-panel__rail")!;
     const previewHeading = view.container.querySelector(
       ".agent-panel__preview > h3",
     );
     expect(view.container.querySelector(".agent-panel__editor")).toBeVisible();
     expect(view.container.querySelector(".agent-panel__preview")).toBeVisible();
+    expect(
+      editor.compareDocumentPosition(rail) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     expect(primary).toBeDisabled();
     expect(previewHeading).toHaveFocus();
   });

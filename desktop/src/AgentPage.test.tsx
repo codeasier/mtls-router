@@ -80,6 +80,27 @@ function setup() {
 }
 
 describe("AgentPage", () => {
+  it("shows overview detection status without decorative protocol badges", async () => {
+    const pending = new Promise<AgentDetection>(() => undefined);
+    const api = createMockApi({
+      detectAgents: vi.fn(() => pending),
+    });
+    const { container } = renderWithI18n(
+      <AgentPage
+        api={api}
+        onNavigateToApiKeys={vi.fn()}
+        onRequestLeave={(action) => action()}
+        onDirtyChange={vi.fn()}
+        registerLeaveGuard={() => undefined}
+      />,
+    );
+
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("检测中...");
+    expect(status.textContent).not.toMatch(/\b(?:GET|TX)\b/);
+    expect(container.querySelector(".instrument__dial")).toBeNull();
+  });
+
   it("keeps the overview detection-only and lets AgentPanel own discovery", async () => {
     const { api } = setup();
     await screen.findByText("/safe/claude/config");
