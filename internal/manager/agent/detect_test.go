@@ -2,7 +2,6 @@ package agent
 
 import (
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,12 +21,6 @@ func TestDetectReturnsAllAgentsAndRespectsEnvironmentPaths(t *testing.T) {
 	detector := Detector{
 		HomeDir: home,
 		Getenv:  func(key string) string { return env[key] },
-		LookPath: func(name string) (string, error) {
-			if name == "codex" {
-				return "", errors.New("not found")
-			}
-			return filepath.Join(home, "bin", name), nil
-		},
 	}
 	states, err := detector.Detect()
 	if err != nil {
@@ -65,12 +58,17 @@ func TestDetectReturnsAllAgentsAndRespectsEnvironmentPaths(t *testing.T) {
 	if string(gotJSON) != string(wantJSON) {
 		t.Fatalf("override provenance changed serialized state: got %s want %s", gotJSON, wantJSON)
 	}
-	if !states[2].Detected || states[2].Command != "" || states[2].Path != filepath.Join(codexHome, "config.toml") {
+	for _, state := range states {
+		if !state.Detected || state.Command != "" {
+			t.Fatalf("protocol compatibility fields = %#v", state)
+		}
+	}
+	if states[2].Path != filepath.Join(codexHome, "config.toml") {
 		t.Fatalf("Codex state = %#v", states[2])
 	}
 }
 
-func TestDetectTreatsSupportedAgentsAsConfigurableWithoutCLIOrConfig(t *testing.T) {
+func TestDetectTreatsSupportedAgentsAsConfigurableWithoutConfig(t *testing.T) {
 	home := t.TempDir()
 	states := mustDetect(t, testDetector(home, nil))
 
@@ -364,16 +362,10 @@ base_url = "http://127.0.0.1:19099/v1"`)
 	}
 }
 
-func testDetector(home string, commands map[string]bool) Detector {
+func testDetector(home string, _ map[string]bool) Detector {
 	return Detector{
 		HomeDir: home,
 		Getenv:  func(string) string { return "" },
-		LookPath: func(name string) (string, error) {
-			if commands[name] {
-				return filepath.Join(home, "bin", name), nil
-			}
-			return "", errors.New("not found")
-		},
 	}
 }
 

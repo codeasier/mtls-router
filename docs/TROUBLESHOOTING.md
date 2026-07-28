@@ -90,7 +90,7 @@ do not patch the sidecar or add `SIMPLIFY` to router runtime configuration.
 ## Agent configuration is unavailable or not writable
 
 - Claude Code, opencode, and Codex are always available as supported configuration targets; the desktop does not install or launch their CLIs.
-- An empty `command` means only that the manager process cannot find the Agent CLI. It does not prevent creating or updating the configuration.
+- Agent detection does not search `PATH` or report CLI installation. Protocol v4 retains `detected=true` and an empty `command` only for response-shape compatibility.
 - Confirm `CLAUDE_CONFIG_DIR`, `OPENCODE_CONFIG`, or `CODEX_HOME` points to the intended current-user location before launching the desktop.
 - Restore current-user write access to the configuration file and its directory. Do not run the desktop as administrator or root to bypass ownership problems.
 

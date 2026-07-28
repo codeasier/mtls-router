@@ -4,7 +4,6 @@ import {
   agentNames,
   agentOrder,
   configurationPresentation,
-  installationPresentation,
   recoveryReason,
   recoveryReasons,
   type AgentTarget,
@@ -242,19 +241,12 @@ export function AgentOverview({
         {agentOrder.map((id) => {
           const agent = byAgent.get(id);
           if (!agent) return null;
-          const installation = installationPresentation(agent);
           const configuration = configurationPresentation(agent);
-          const installationLabel = t(
-            installation.state === "installed"
-              ? "agents.installation.installed"
-              : "agents.installation.notInstalled",
-          );
           const reasons = recoveryReasons(agent);
           const label = actionLabel(agent, configuration, t);
           const target: AgentTarget = {
             agent: id,
             mode: configuration.action === "rebuild" ? "rebuild" : "merge",
-            installedAtEntry: installation.state === "installed",
           };
 
           return (
@@ -264,12 +256,6 @@ export function AgentOverview({
                 <h3>{agentNames[id]}</h3>
               </div>
               <div className="agent-card__states">
-                <span
-                  className={`agent-state agent-state--installation agent-state--${installation.state.replace("_", "-")}`}
-                  aria-label={`CLI: ${installationLabel}`}
-                >
-                  {installationLabel}
-                </span>
                 <span
                   className={`agent-state agent-state--configuration agent-state--${configuration.state}`}
                   aria-label={`${t("agents.stage.configure")}: ${configurationLabel(configuration.state, t)}`}

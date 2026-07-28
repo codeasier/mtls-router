@@ -5,7 +5,6 @@ import {
   agentOrder,
   completeAgentDetection,
   configurationPresentation,
-  installationPresentation,
 } from "./agentPresentation";
 
 const base: AgentState = {
@@ -23,15 +22,6 @@ const base: AgentState = {
 };
 
 describe("Agent presentation state", () => {
-  it.each([
-    ["/safe/bin/claude", "installed"],
-    ["", "not_installed"],
-    ["   ", "not_installed"],
-    [undefined, "not_installed"],
-  ] as const)("derives installation from command %s", (command, state) => {
-    expect(installationPresentation({ ...base, command }).state).toBe(state);
-  });
-
   it.each([
     [
       { invalid: true, writable: false, configured: true },

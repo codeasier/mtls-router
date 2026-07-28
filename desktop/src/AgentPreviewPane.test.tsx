@@ -29,7 +29,7 @@ function preview(revision: string): AgentPreview {
 }
 
 const props = {
-  target: { agent: "claude", mode: "merge", installedAtEntry: true } as const,
+  target: { agent: "claude", mode: "merge" } as const,
   result: null,
   busy: false,
   onGenerate: vi.fn(),
@@ -43,17 +43,17 @@ describe("AgentPreviewPane", () => {
   it.each([
     [
       "a merge target with a rebuild effect",
-      { agent: "opencode", mode: "merge", installedAtEntry: true } as const,
+      { agent: "opencode", mode: "merge" } as const,
       { agent: "opencode", mode: "rebuild" } as const,
     ],
     [
       "a rebuild target with a cross-Agent effect",
-      { agent: "opencode", mode: "rebuild", installedAtEntry: true } as const,
+      { agent: "opencode", mode: "rebuild" } as const,
       { agent: "codex", mode: "rebuild" } as const,
     ],
     [
       "a rebuild target with a mixed merge effect",
-      { agent: "opencode", mode: "rebuild", installedAtEntry: true } as const,
+      { agent: "opencode", mode: "rebuild" } as const,
       { agent: "opencode", mode: "merge" } as const,
     ],
   ])("fails closed for %s", (_name, target, effect) => {
@@ -85,7 +85,6 @@ describe("AgentPreviewPane", () => {
     const target = {
       agent: "opencode",
       mode: "rebuild",
-      installedAtEntry: true,
     } as const;
     const base: AgentPreview = {
       ...preview("invalid-metadata"),
@@ -259,7 +258,6 @@ describe("AgentPreviewPane", () => {
         target={{
           agent: "opencode",
           mode: "rebuild",
-          installedAtEntry: true,
         }}
         preview={rebuildPreview}
         onWrite={onWrite}

@@ -324,6 +324,18 @@ func TestServeWiresEveryMethodSequentiallyAndSanitizesOutput(t *testing.T) {
 			t.Fatalf("response %d = %#v, want ID %q", index, response, wantID)
 		}
 	}
+	var detectResponse struct {
+		Result struct {
+			Agents []map[string]json.RawMessage `json:"agents"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(lines[8]), &detectResponse); err != nil {
+		t.Fatal(err)
+	}
+	command, ok := detectResponse.Result.Agents[0]["command"]
+	if !ok || string(command) != `""` {
+		t.Fatalf("agent.detect command compatibility field = %s, present = %t", command, ok)
+	}
 	if !strings.Contains(output.String(), "[REDACTED") || !strings.Contains(output.String(), `"commit":"abc123"`) {
 		t.Fatalf("output lacks sanitized logs or version metadata: %s", output.String())
 	}

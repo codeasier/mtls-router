@@ -271,8 +271,6 @@ export const en: Record<TranslationKey, string> = {
   "agents.overview.refresh": "Detect again",
   "agents.overview.refreshing": "Detecting again",
   "agents.overview.stale": "Status may be out of date. Detect again.",
-  "agents.installation.installed": "CLI installed",
-  "agents.installation.notInstalled": "CLI not installed",
   "agents.configuration.invalid": "Invalid configuration",
   "agents.configuration.readonly": "Not writable",
   "agents.configuration.configured": "Configured",
@@ -304,14 +302,11 @@ export const en: Record<TranslationKey, string> = {
   "agents.operation.preserve": "Preserve unmanaged configuration",
   "agents.mode.merge": "Merge",
   "agents.mode.rebuild": "Rebuild",
-  "agents.detection.absent": "Not detected",
   "agents.detection.invalid": "Invalid configuration",
   "agents.detection.readonly": "Not writable",
   "agents.detection.configured": "Configured",
   "agents.detection.ready": "Ready",
   "agents.detection.create": "Ready to create",
-  "agents.guidance.absent":
-    "Install or start this Agent, then refresh detection.",
   "agents.guidance.invalid": "Fix the {format} syntax in {path}, then refresh.",
   "agents.guidance.readonly":
     "Restore current-user write access to the configuration directory.",
@@ -554,8 +549,6 @@ export const en: Record<TranslationKey, string> = {
   "agents.resultHeading": "Agent configuration result",
   "agents.resultNote":
     "These paths come from the manager transaction result; no credential value is displayed.",
-  "agents.result.installLater":
-    "Configuration generated; install {agent} to use it.",
   "agents.success": "Success",
   "agents.failure": "Failed",
   "agents.rolledBack": "This change was rolled back",

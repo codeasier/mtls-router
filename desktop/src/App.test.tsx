@@ -170,8 +170,8 @@ describe("App navigation", () => {
     expect(screen.getByRole("heading", { name: "API 密钥" })).toBeVisible();
   });
 
-  it("writes configuration for an uninstalled Agent and keeps the install-later guidance", async () => {
-    const uninstalledDetection: AgentDetection = {
+  it("writes configuration without using the protocol command field", async () => {
+    const configurableDetection: AgentDetection = {
       agents: detection.agents.map((agent) =>
         agent.agent === "claude"
           ? {
@@ -184,7 +184,7 @@ describe("App navigation", () => {
       ),
     };
     const api = createMockApi({
-      detectAgents: vi.fn().mockResolvedValue(uninstalledDetection),
+      detectAgents: vi.fn().mockResolvedValue(configurableDetection),
       discoverModels: vi.fn().mockResolvedValue({
         flow_id: "flow-uninstalled-claude",
         models: ["model-a"],
@@ -253,9 +253,9 @@ describe("App navigation", () => {
     );
 
     expect(await screen.findByText("成功")).toBeVisible();
-    expect(screen.getByRole("note")).toHaveTextContent(
-      "配置已生成；安装 Claude Code 后即可使用。",
-    );
+    expect(
+      screen.queryByText("配置已生成；安装 Claude Code 后即可使用。"),
+    ).not.toBeInTheDocument();
     expect(api.writeAgents).toHaveBeenCalledOnce();
   });
 

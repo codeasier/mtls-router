@@ -9,12 +9,13 @@
 ### 新增
 
 - 新增由私有桌面凭据存储支持的 API 密钥页面，用于管理一个全局 Agent API key。Webview 只能读取摘要；Rust 仅在认证发现时按需加载明文，并在写入前立即重新加载。
-- 新增 Agent 总览，以独立卡片展示 Claude Code、OpenCode 和 Codex；CLI 安装状态与配置文件存在性、可写性和有效性分别呈现，同时允许在目标可写时预先生成配置。
+- 新增 Agent 总览，以独立卡片展示 Claude Code、OpenCode 和 Codex，并显示配置文件存在性、可写性、有效性、已配置状态与恢复资格。
 - 新增持续的单 Agent 面板：写入成功后保持打开，保护未保存草稿，支持手动或经原生 focus 节流触发的外部状态刷新，并要求显式解决冲突，不轮询或在后台重写文件。
 
 ### 变更
 
 - 将匹配的 router、manager、setup、release metadata 和桌面端管理契约推进到 protocol v4；仍拒绝混合 generation。
+- 移除 Agent CLI 安装探测及桌面状态；protocol v4 兼容字段固定保留为 `detected=true` 和空 `command`。
 - 围绕结构化恢复 action/reason 重构端口冲突处理，提供有界 Windows Service/Linux systemd supervisor 标识、明确的人工操作引导，以及终止后的重新占用采样观察。
 
 ### 修复

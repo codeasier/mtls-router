@@ -1591,16 +1591,10 @@ func legacyTestRenderInput() *LegacyRenderInput {
 	}
 }
 
-func testServiceDetector(home string, commands map[string]bool, env map[string]string) Detector {
+func testServiceDetector(home string, _ map[string]bool, env map[string]string) Detector {
 	return Detector{
 		HomeDir: home,
 		Getenv:  func(key string) string { return env[key] },
-		LookPath: func(name string) (string, error) {
-			if commands[name] {
-				return filepath.Join(home, "bin", name), nil
-			}
-			return "", errors.New("not found")
-		},
 	}
 }
 

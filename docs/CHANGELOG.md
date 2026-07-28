@@ -9,12 +9,13 @@ This release introduces persistent desktop Agent credentials, an Agent status ov
 ### Added
 
 - Added an API Keys page backed by a private desktop credential store for one global Agent API key. The webview can read only a summary; Rust loads the plaintext on demand for authenticated discovery and reloads it immediately before writes.
-- Added an Agent overview with separate Claude Code, OpenCode, and Codex cards that report CLI installation independently from configuration existence, writability, and validity, while still allowing writable preinstallation configuration.
+- Added an Agent overview with separate Claude Code, OpenCode, and Codex cards that report configuration existence, writability, validity, configured state, and recovery eligibility.
 - Added persistent single-Agent panels that stay open after successful writes, protect unsaved drafts, refresh external state on demand or throttled native focus, and require explicit conflict resolution without polling or background file rewrites.
 
 ### Changed
 
 - Advanced the matched router, manager, setup, release metadata, and desktop management contract to protocol v4; mixed generations remain rejected.
+- Removed Agent CLI installation probing and its desktop status; protocol v4 compatibility fields remain fixed at `detected=true` and an empty `command`.
 - Reworked port-conflict handling around structured recovery actions and reasons, bounded Windows Service/Linux systemd supervisor identifiers, explicit manual guidance, and sampled post-termination observation for reoccupation.
 
 ### Fixed

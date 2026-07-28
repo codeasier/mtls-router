@@ -12,25 +12,12 @@ export const agentNames: Record<AgentId, string> = {
 export interface AgentTarget {
   agent: AgentId;
   mode: AgentMode;
-  installedAtEntry: boolean;
 }
-
-export type InstallationPresentation = {
-  state: "installed" | "not_installed";
-};
 
 export type ConfigurationPresentation = {
   state: "invalid" | "readonly" | "configured" | "create" | "ready";
   action: "merge" | "rebuild" | "disabled";
 };
-
-export function installationPresentation(
-  agent: AgentState,
-): InstallationPresentation {
-  return {
-    state: agent.command?.trim() ? "installed" : "not_installed",
-  };
-}
 
 export function configurationPresentation(
   agent: AgentState,

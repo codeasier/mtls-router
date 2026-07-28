@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -30,7 +29,7 @@ type State struct {
 	Agent      Kind          `json:"agent"`
 	Name       string        `json:"name"`
 	Detected   bool          `json:"detected"`
-	Command    string        `json:"command,omitempty"`
+	Command    string        `json:"command"`
 	Path       string        `json:"path"`
 	AuthPath   string        `json:"auth_path,omitempty"`
 	Format     Format        `json:"format"`
@@ -79,16 +78,14 @@ type RecoveryState struct {
 	Files    []RecoveryFileState `json:"files"`
 }
 
-// Detector permits deterministic environment and executable lookup in tests.
-// Zero values use the current process environment and executable search path.
+// Detector permits deterministic environment lookup in tests.
+// Zero values use the current process environment.
 type Detector struct {
-	HomeDir  string
-	Getenv   func(string) string
-	LookPath func(string) (string, error)
+	HomeDir string
+	Getenv  func(string) string
 }
 
-// Detect inspects all supported agents. It returns one state for each agent,
-// including agents that are not installed, so callers can render stable cards.
+// Detect inspects all supported agents and returns one state for each agent.
 func Detect() ([]State, error) {
 	return Detector{}.Detect()
 }
@@ -107,35 +104,21 @@ func (d Detector) Detect() ([]State, error) {
 	if getenv == nil {
 		getenv = os.Getenv
 	}
-	lookPath := d.LookPath
-	if lookPath == nil {
-		lookPath = exec.LookPath
-	}
-
-	claudeCommand, _ := lookup(lookPath, "claude")
-	openCodeCommand, _ := lookup(lookPath, "opencode")
-	codexCommand, _ := lookup(lookPath, "codex")
-
 	claudePaths := ClaudePaths(home, getenv("CLAUDE_CONFIG_DIR"))
 	openCodeOverride := getenv("OPENCODE_CONFIG")
 	openCodePaths := OpenCodePaths(home, openCodeOverride)
 	codexPaths := CodexPaths(home, getenv("CODEX_HOME"))
 
-	claude := inspectJSONState(ClaudeCode, "Claude Code", true, claudeCommand, claudePaths, FormatJSON, inspectClaude)
+	claude := inspectJSONState(ClaudeCode, "Claude Code", true, "", claudePaths, FormatJSON, inspectClaude)
 	openCodeFormat := FormatJSON
 	if filepath.Ext(openCodePaths.ConfigPath) == ".jsonc" {
 		openCodeFormat = FormatJSONC
 	}
-	openCode := inspectJSONState(OpenCode, "opencode", true, openCodeCommand, openCodePaths, openCodeFormat, inspectOpenCode)
+	openCode := inspectJSONState(OpenCode, "opencode", true, "", openCodePaths, openCodeFormat, inspectOpenCode)
 	openCode.pathOverridden = openCodeOverride != ""
-	codex := inspectCodex(true, codexCommand, codexPaths)
+	codex := inspectCodex(true, "", codexPaths)
 
 	return []State{claude, openCode, codex}, nil
-}
-
-func lookup(lookPath func(string) (string, error), name string) (string, bool) {
-	path, err := lookPath(name)
-	return path, err == nil && path != ""
 }
 
 type jsonInspector func(map[string]json.RawMessage) (configured, invalid bool)

@@ -60,7 +60,7 @@ const callbacks = () => ({
 });
 
 describe("AgentOverview", () => {
-  it("renders fixed-order cards with independent installation and configuration states", () => {
+  it("renders fixed-order cards with configuration states only", () => {
     render(
       <AgentOverview
         detection={detection}
@@ -81,22 +81,15 @@ describe("AgentOverview", () => {
       expect.stringContaining("OpenCode"),
       expect.stringContaining("Codex"),
     ]);
-    expect(screen.getByText("CLI 未安装")).toBeVisible();
     expect(screen.getByText("等待创建")).toBeVisible();
-    expect(screen.getAllByText("CLI 已安装")).toHaveLength(2);
     expect(screen.getByText("配置无效")).toBeVisible();
     expect(screen.getByTitle("/safe/claude/settings.json")).toBeVisible();
     expect(screen.getByText("配置语法无效。")).toBeVisible();
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
 
-    const installationStates = screen.getAllByLabelText(/^CLI:/);
     const configurationStates = screen.getAllByLabelText(/^配置:/);
-    expect(installationStates).toHaveLength(3);
     expect(configurationStates).toHaveLength(3);
-    expect(installationStates[0]).toHaveClass(
-      "agent-state--installation",
-      "agent-state--not-installed",
-    );
+    expect(screen.queryByText(/CLI (?:已安装|未安装)/)).not.toBeInTheDocument();
     expect(configurationStates[0]).toHaveClass(
       "agent-state--configuration",
       "agent-state--create",
@@ -121,7 +114,6 @@ describe("AgentOverview", () => {
     expect(props.onConfigure).toHaveBeenCalledWith({
       agent: "claude",
       mode: "merge",
-      installedAtEntry: false,
     });
     fireEvent.click(
       screen.getByRole("button", { name: "备份并重建 OpenCode" }),
@@ -129,7 +121,6 @@ describe("AgentOverview", () => {
     expect(props.onConfigure).toHaveBeenLastCalledWith({
       agent: "opencode",
       mode: "rebuild",
-      installedAtEntry: true,
     });
     expect(screen.getByRole("button", { name: /Codex/ })).toBeDisabled();
   });
@@ -233,7 +224,6 @@ describe("AgentOverview", () => {
     const target = {
       agent: "opencode" as const,
       mode: "rebuild" as const,
-      installedAtEntry: true,
     };
     render(
       <AgentOverview
