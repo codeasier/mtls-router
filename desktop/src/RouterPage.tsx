@@ -45,84 +45,84 @@ type ViewState =
   | "stopping";
 
 interface StateCopy {
-  code: string;
   title: string;
   signal: string;
   detail: string;
   tone: "idle" | "active" | "warning" | "danger";
+  light: "off" | "green" | "yellow" | "red";
 }
 
 function getStateCopy(t: Translator): Record<ViewState, StateCopy> {
   return {
     "not-started": {
-      code: "00",
       title: t("router.state.notStarted.title"),
       signal: t("router.state.notStarted.signal"),
       detail: t("router.state.notStarted.detail"),
       tone: "idle",
+      light: "off",
     },
     starting: {
-      code: "01",
       title: t("router.state.starting.title"),
       signal: t("router.state.starting.signal"),
       detail: t("router.state.starting.detail"),
       tone: "active",
+      light: "yellow",
     },
     healthy: {
-      code: "10",
       title: t("router.state.healthy.title"),
       signal: t("router.state.healthy.signal"),
       detail: t("router.state.healthy.detail"),
       tone: "active",
+      light: "green",
     },
     degraded: {
-      code: "11",
       title: t("router.state.degraded.title"),
       signal: t("router.state.degraded.signal"),
       detail: t("router.state.degraded.detail"),
       tone: "warning",
+      light: "yellow",
     },
     external: {
-      code: "EX",
       title: t("router.state.external.title"),
       signal: t("router.state.external.signal"),
       detail: t("router.state.external.detail"),
       tone: "active",
+      light: "green",
     },
     occupied: {
-      code: "PC",
       title: t("router.state.occupied.title"),
       signal: t("router.state.occupied.signal"),
       detail: t("router.state.occupied.detail"),
       tone: "danger",
+      light: "red",
     },
     failed: {
-      code: "ER",
       title: t("router.state.failed.title"),
       signal: t("router.state.failed.signal"),
       detail: t("router.state.failed.detail"),
       tone: "danger",
+      light: "red",
     },
     unavailable: {
-      code: "NA",
       title: t("router.state.unavailable.title"),
       signal: t("router.state.unavailable.signal"),
       detail: t("router.state.unavailable.detail"),
       tone: "warning",
+      light: "yellow",
     },
     reinstall: {
-      code: "SC",
       title: t("router.state.reinstall.title"),
       signal: t("router.state.reinstall.signal"),
       detail: t("router.state.reinstall.detail"),
       tone: "danger",
+      light: "red",
     },
     stopping: {
-      code: "09",
       title: t("router.state.stopping.title"),
       signal: t("router.state.stopping.signal"),
       detail: t("router.state.stopping.detail"),
       tone: "warning",
+      light: "yellow",
     },
   };
 }
@@ -755,8 +755,14 @@ export function RouterPage({
         </div>
 
         <div className="instrument">
-          <div className="instrument__dial" aria-hidden="true">
-            <span>{copy.code}</span>
+          <div
+            className="traffic-light"
+            data-state={copy.light}
+            aria-hidden="true"
+          >
+            <span className="traffic-light__red" />
+            <span className="traffic-light__yellow" />
+            <span className="traffic-light__green" />
           </div>
           <div>
             <p>{copy.detail}</p>
