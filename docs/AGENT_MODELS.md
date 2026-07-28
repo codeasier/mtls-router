@@ -38,7 +38,7 @@ not a proxy capability restriction or runtime model preference.
 
 ## Interactive Flow
 
-The Shell, PowerShell, and desktop merge flows all use this order:
+The Shell, PowerShell, and desktop clients all preserve this protocol order:
 
 1. Detect and select Claude Code, opencode, and/or Codex.
 2. Read the API key without echo and establish a trusted protocol-v4 loopback router.
@@ -47,7 +47,17 @@ The Shell, PowerShell, and desktop merge flows all use this order:
 5. Render a redacted fragment for print, or preview exact file, backup, migration, ownership, and drift effects for write.
 6. Re-fetch the catalog with the transient key immediately before writing, then perform one atomic multi-file transaction.
 
-The Shell and PowerShell setup commands always omit recovery modes and therefore remain merge-only. The desktop can independently select `merge` for valid Agents and `rebuild` for eligible invalid Agents in the same transaction; rebuild follows the additional contract below.
+The Shell and PowerShell setup commands always omit recovery modes and therefore remain merge-only. The desktop opens one persistent single-Agent panel at a time and selects `merge` for a valid Agent or `rebuild` for an eligible invalid Agent. Each desktop preview and transaction contains exactly that Agent; rebuild follows the additional contract below. Management protocol v4 methods, parameters, results, and transaction semantics are unchanged.
+
+### Desktop persistent panel
+
+Every panel entry runs `agent.detect`, reads the desktop credential summary, and calls authenticated `agent.models` only when a key is present and the target is editable or recovery-eligible. The desktop initializes `existing > preset > empty`, keeps the editor and preview rail on the same page, requires a preview for the current draft before every write, and remains in the panel after the transaction. A successful write consumes its flow, reports success immediately, and then repeats detection, credential summary, and discovery to load the actual on-disk configuration into a new flow. Failure of this reload is a separate panel state and does not turn the completed write into a failure.
+
+During initial or full-reload discovery, a missing saved key, authentication failure, or catalog failure leaves the panel showing only key-free `agent.detect` metadata and recovery actions. It cannot safely show field-level prefill, import, export, render, or preview because those operations require a catalog token issued by authenticated `agent.models`. A failed background candidate refresh instead preserves the existing draft and active flow, reports that external state could not be verified, and keeps the operations that remain safe. The API key remains in Rust and the secret-bearing manager requests; it is not returned to the webview or placed in model config.
+
+An editable panel listens for native window-focus signals and starts at most one candidate discovery every 15 seconds; manual refresh bypasses the interval but not the single-flight rule. A clean panel adopts the candidate. A dirty panel keeps its form baseline and draft: unchanged external state replaces only the active discovery, while changed external state requires an explicit keep-draft or load-disk decision. If detection becomes incompatible or unwritable, editing, import, preview, and write are blocked; export remains available only while a valid active flow exists. There is no polling, automatic merge, cached-catalog fallback, or Agent-file rewrite during refresh.
+
+The frontend owns at most one active flow and one unresolved candidate request. A compatible successful candidate becomes active before the old flow is destroyed; a clean mode transition destroys the incompatible old flow before starting fresh discovery. Failed destroy requests remain deduplicated for retry. Obsolete, late, unmounted, or target-mismatched candidates are destroyed, and leaving or unmounting the panel destroys its active flow. A successful write consumes the active flow and is not destroyed again. `PREVIEW_STALE`, `MODEL_FLOW_EXPIRED`, and `MODEL_CATALOG_STALE` clear preview approvals, preserve the in-memory draft, and rediscover inside the panel; export stays disabled whenever no valid flow remains.
 
 Filtering occurs only after the complete response and all IDs pass validation.
 A malformed ID that contains ASCII `/` is therefore not hidden: the request
@@ -62,8 +72,10 @@ current catalog. It changes no Agent file, transaction journal, backup, or
 last-applied sidecar. Discovery may start the router and first use may create the
 private token-signing key.
 
-The catalog is a configuration-time snapshot. There is no background refresh or
-Agent-file rewrite. Re-enter configuration and supply a key to refresh it.
+The catalog is a configuration-time snapshot. Shell and PowerShell clients must
+re-enter configuration and supply a key to refresh it. The desktop may replace
+the snapshot through its explicit or throttled native-focus discovery described
+above; this does not poll or rewrite an Agent file.
 
 ### Build preset
 

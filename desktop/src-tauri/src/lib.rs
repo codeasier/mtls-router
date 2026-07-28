@@ -2,6 +2,7 @@ mod autostart;
 mod commands;
 mod credential;
 mod error;
+mod lifecycle;
 mod manager;
 mod model_config;
 mod orchestration;
@@ -151,8 +152,15 @@ pub fn run() {
                 }
                 let _ = observer_app.emit(POLL_SNAPSHOT_EVENT, snapshot);
             });
+            let lifecycle = Arc::new(lifecycle::LifecycleState::default());
             autostart::initialize_default(app)?;
-            tray::setup(app, manager.clone(), scheduler.clone(), &paths.log_file)?;
+            tray::setup(
+                app,
+                manager.clone(),
+                scheduler.clone(),
+                &paths.log_file,
+                lifecycle.clone(),
+            )?;
             app.manage(AppState {
                 manager: manager.clone(),
                 scheduler: scheduler.clone(),
@@ -160,12 +168,22 @@ pub fn run() {
                 model_flows: Default::default(),
                 pending_occupant: Default::default(),
                 credentials,
+                lifecycle: lifecycle.clone(),
             });
             scheduler.start();
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                if let Ok(status) = orchestration::first_launch(&manager, &scheduler).await {
+                let Some(output) = lifecycle
+                    .run_operation(orchestration::first_launch(&manager, &scheduler))
+                    .await
+                else {
+                    return;
+                };
+                if let Ok(status) = output.value {
                     tray::update_status(&app_handle, &status.into());
+                }
+                if output.quit_action == lifecycle::QuitAction::ExecuteQuit {
+                    tray::execute_quit(app_handle);
                 }
             });
             Ok(())
@@ -175,6 +193,12 @@ pub fn run() {
             match event {
                 WindowEvent::Focused(true) => {
                     window.state::<AppState>().scheduler.set_visible(true);
+                    if window.label() == "main" {
+                        let _ = tray::emit_main_window_event(
+                            window.app_handle(),
+                            tray::MainWindowEvent::Focused,
+                        );
+                    }
                 }
                 WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed => {
                     window.state::<AppState>().scheduler.set_visible(false);
@@ -212,9 +236,20 @@ pub fn run() {
             commands::desktop_paths,
             commands::window_visibility,
             commands::set_native_language,
+            commands::set_agent_draft_dirty,
+            commands::resolve_app_quit,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running mtls-router desktop");
+        .build(tauri::generate_context!())
+        .expect("error while building mtls-router desktop")
+        .run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                let lifecycle = &app.state::<AppState>().lifecycle;
+                if tray::should_prevent_exit(lifecycle) {
+                    api.prevent_exit();
+                    tray::request_quit(app.clone());
+                }
+            }
+        });
 }
 
 #[cfg(test)]

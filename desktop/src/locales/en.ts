@@ -565,4 +565,37 @@ export const en: Record<TranslationKey, string> = {
   "agents.none": "None",
   "agents.rollbackBackup": "Rollback diagnostic backups",
   "agents.finish": "Finish and refresh detection",
+  "agents.panel.back": "Back to Agent overview",
+  "agents.panel.previewLoading": "Generating write preview...",
+  "agents.panel.reloading": "Reloading Agent configuration...",
+  "agents.panel.readonly":
+    "This Agent configuration cannot be edited right now.",
+  "agents.panel.blockedDirty":
+    "External configuration state changed and this draft can no longer be edited. Export or discard it first.",
+  "agents.panel.retry": "Retry",
+  "agents.panel.discard": "Discard draft",
+  "agents.panel.reloadFailed": "Reload after write failed ({code}).",
+  "agents.panel.operationFailed": "Operation failed ({code}).",
+  "agents.panel.writeComplete": "Configuration was written successfully.",
+  "agents.panel.refreshFailed":
+    "Refresh failed ({code}); the current draft is preserved.",
+  "agents.panel.refreshConflict":
+    "The on-disk configuration changed. Keep this draft or load the on-disk configuration.",
+  "agents.panel.keepDraft": "Keep current draft",
+  "agents.panel.importedSource": "Imported configuration",
+  "agents.panel.continueEditing": "Dismiss result and continue editing",
+  "agents.panel.status": "PANEL STATUS",
+  "agents.panel.unsaved": "Unsaved changes",
+  "agents.panel.ready": "Configuration synchronized",
+  "agents.panel.previewSteps":
+    "Generate a preview, review file effects and approvals, then write the configuration.",
+  "agents.panel.configurationState": "Configuration state",
+  "agents.leave.overline": "UNSAVED AGENT DRAFT",
+  "agents.leave.title": "Discard changes and leave?",
+  "agents.leave.description":
+    "This Agent configuration has unsaved changes. They will be lost if you leave.",
+  "agents.leave.busy":
+    "An Agent configuration operation is in progress. Wait for it to finish before leaving.",
+  "agents.leave.cancel": "Keep editing",
+  "agents.leave.confirm": "Discard and leave",
 };

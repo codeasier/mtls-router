@@ -1,48 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AgentOverview, type OverviewIssue } from "./AgentOverview";
-import { AgentWorkflow } from "./AgentWorkflow";
+import { AgentPanel, type AgentPanelGuardState } from "./AgentPanel";
 import { completeAgentDetection, type AgentTarget } from "./agentPresentation";
 import { useI18n } from "./i18n";
-import type {
-  AgentDetection,
-  AgentId,
-  AgentModelsResult,
-  DesktopApi,
-} from "./ipc";
+import type { AgentDetection, AgentId, DesktopApi } from "./ipc";
 
-interface WorkflowSession {
-  target: AgentTarget;
-  discovery: AgentModelsResult;
+export type LeaveDecision = "allow" | "confirm" | "block";
+export type LeaveGuard = () => LeaveDecision;
+
+export interface AgentPageProps {
+  api: DesktopApi;
+  onNavigateToApiKeys(): void;
+  onRequestLeave?(action: () => void): void;
+  onDirtyChange?(dirty: boolean): void;
+  registerLeaveGuard?(guard: LeaveGuard | null): void;
 }
 
-function errorCode(error: unknown) {
-  return typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    typeof (error as { code?: unknown }).code === "string"
-    ? (error as { code: string }).code
-    : "";
-}
-
-function classifyStartError(
-  error: unknown,
-  target: AgentTarget,
-): OverviewIssue {
-  const code = errorCode(error);
-  if (
-    [
-      "CREDENTIAL_NOT_FOUND",
-      "CREDENTIAL_INVALID",
-      "CREDENTIAL_IO_ERROR",
-      "CREDENTIAL_LOCK_TIMEOUT",
-    ].includes(code)
-  ) {
-    return { kind: "credential", code };
-  }
-  if (code === "MODEL_AUTH_FAILED") return { kind: "auth", code };
-  return { kind: "retry", code: code || "UNKNOWN", target };
-}
+const requestLeaveDirectly = (action: () => void) => action();
+const ignoreDirtyChange = () => undefined;
+const ignoreLeaveGuard = () => undefined;
 
 function requireCompleteDetection(value: AgentDetection) {
   const complete = completeAgentDetection(value);
@@ -53,96 +30,78 @@ function requireCompleteDetection(value: AgentDetection) {
 export function AgentPage({
   api,
   onNavigateToApiKeys,
-}: {
-  api: DesktopApi;
-  onNavigateToApiKeys: () => void;
-}) {
+  onRequestLeave = requestLeaveDirectly,
+  onDirtyChange = ignoreDirtyChange,
+  registerLeaveGuard = ignoreLeaveGuard,
+}: AgentPageProps) {
   const { t } = useI18n();
   const [detection, setDetection] = useState<AgentDetection | null>(null);
-  const [session, setSession] = useState<WorkflowSession | null>(null);
+  const [target, setTarget] = useState<AgentTarget | null>(null);
   const [issue, setIssue] = useState<OverviewIssue | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [stale, setStale] = useState(false);
-  const flowRef = useRef("");
-  const flowApiRef = useRef<DesktopApi | null>(null);
+  const [panelSession, setPanelSession] = useState(0);
+  const guardStateRef = useRef<AgentPanelGuardState>({
+    dirty: false,
+    busy: false,
+  });
   const headingRef = useRef<HTMLHeadingElement>(null);
   const restoreFocusRef = useRef<AgentId | null>(null);
-  const requestRef = useRef(0);
   const detectionGenerationRef = useRef(0);
-  const startingRef = useRef(false);
-
-  const destroyFlow = useCallback(async () => {
-    const flow = flowRef.current;
-    const owner = flowApiRef.current;
-    flowRef.current = "";
-    flowApiRef.current = null;
-    if (flow && owner) {
-      await owner.destroyAgentModelFlow(flow).catch(() => undefined);
-    }
-  }, []);
-
-  function consumeFlow() {
-    flowRef.current = "";
-    flowApiRef.current = null;
-  }
 
   const refreshDetection = useCallback(async () => {
     const generation = ++detectionGenerationRef.current;
-    try {
-      const value = requireCompleteDetection(await api.detectAgents());
-      if (generation === detectionGenerationRef.current) {
-        setDetection(value);
-        setStale(false);
-      }
-      return value;
-    } catch (error) {
-      if (generation !== detectionGenerationRef.current) {
-        throw { code: "REQUEST_SUPERSEDED" };
-      }
-      throw error;
-    }
+    const value = requireCompleteDetection(await api.detectAgents());
+    if (generation !== detectionGenerationRef.current)
+      throw { code: "REQUEST_SUPERSEDED" };
+    setDetection(value);
+    setStale(false);
+    return value;
   }, [api]);
 
   useEffect(() => {
     let active = true;
-    requestRef.current += 1;
-    startingRef.current = false;
     void Promise.resolve()
       .then(() => {
-        if (!active) return Promise.reject({ code: "REQUEST_CANCELLED" });
+        if (!active) throw { code: "REQUEST_CANCELLED" };
         setLoading(true);
-        setDetection(null);
-        setSession(null);
         setIssue(null);
-        setStale(false);
         return refreshDetection();
       })
-      .catch((error) => {
-        if (active && errorCode(error) !== "REQUEST_SUPERSEDED") {
-          setIssue({ kind: "detect", code: "AGENT_DETECT_FAILED" });
-        }
+      .catch(() => {
+        if (active) setIssue({ kind: "detect", code: "AGENT_DETECT_FAILED" });
       })
       .finally(() => {
         if (active) setLoading(false);
       });
     return () => {
       active = false;
-      requestRef.current += 1;
       detectionGenerationRef.current += 1;
-      startingRef.current = false;
-      void destroyFlow();
     };
-  }, [destroyFlow, refreshDetection]);
+  }, [refreshDetection]);
+
+  useEffect(() => {
+    if (!target) return;
+    registerLeaveGuard(() => {
+      if (guardStateRef.current.busy) return "block";
+      return guardStateRef.current.dirty ? "confirm" : "allow";
+    });
+    return () => {
+      registerLeaveGuard(null);
+      guardStateRef.current = { dirty: false, busy: false };
+      onDirtyChange(false);
+    };
+  }, [onDirtyChange, registerLeaveGuard, target]);
 
   useEffect(() => {
     const agent = restoreFocusRef.current;
-    if (session || loading || !detection || !agent) return;
+    if (target || loading || !detection || !agent) return;
     restoreFocusRef.current = null;
     const action = document.getElementById(`agent-${agent}-action`);
     if (action instanceof HTMLButtonElement && !action.disabled) action.focus();
     else headingRef.current?.focus();
-  }, [detection, loading, session]);
+  }, [detection, loading, target]);
 
   async function refreshOverview() {
     if (refreshing) return;
@@ -150,76 +109,38 @@ export function AgentPage({
     setIssue(null);
     try {
       await refreshDetection();
-    } catch (error) {
-      if (errorCode(error) === "REQUEST_SUPERSEDED") return;
+    } catch {
       setStale(Boolean(detection));
     } finally {
       setRefreshing(false);
     }
   }
 
-  async function refreshWorkflowDetection() {
-    try {
-      return await refreshDetection();
-    } catch (error) {
-      if (errorCode(error) !== "REQUEST_SUPERSEDED") {
-        setStale(Boolean(detection));
-      }
-      throw error;
-    }
+  function leavePanel() {
+    if (!target) return;
+    const previous = target.agent;
+    onRequestLeave(() => {
+      restoreFocusRef.current = previous;
+      setTarget(null);
+    });
   }
 
-  async function startTarget(target: AgentTarget) {
-    if (startingRef.current) return;
-    startingRef.current = true;
-    const request = ++requestRef.current;
-    setIssue(null);
-    setLoading(true);
-    try {
-      const value = await api.discoverModels([target.agent]);
-      if (!value.flow_id.trim()) throw { code: "MODEL_RESPONSE_INVALID" };
-      if (request !== requestRef.current) {
-        await api.destroyAgentModelFlow(value.flow_id).catch(() => undefined);
-        return;
-      }
-      flowRef.current = value.flow_id;
-      flowApiRef.current = api;
-      setSession({ target, discovery: value });
-    } catch (error) {
-      if (request === requestRef.current) {
-        setIssue(classifyStartError(error, target));
-      }
-    } finally {
-      if (request === requestRef.current) {
-        startingRef.current = false;
-        setLoading(false);
-      }
-    }
-  }
-
-  function returnToOverview(nextIssue?: OverviewIssue) {
-    restoreFocusRef.current = session?.target.agent ?? null;
-    void destroyFlow();
-    setSession(null);
-    setIssue(nextIssue ?? null);
-  }
-
-  function navigateToApiKeys() {
-    void destroyFlow();
-    setSession(null);
-    onNavigateToApiKeys();
-  }
-
-  if (session) {
+  if (target) {
     return (
-      <AgentWorkflow
+      <AgentPanel
+        key={`${target.agent}:${panelSession}`}
         api={api}
-        target={session.target}
-        discovery={session.discovery}
-        onBack={() => returnToOverview()}
-        onFlowConsumed={consumeFlow}
-        onReturnToOverview={returnToOverview}
-        refreshDetection={refreshWorkflowDetection}
+        target={target.agent}
+        onBack={leavePanel}
+        onGuardStateChange={(state) => {
+          guardStateRef.current = state;
+          // Keep native quit routed through the live panel; its guard still skips
+          // the dialog for clean drafts and blocks active operations.
+          onDirtyChange(true);
+        }}
+        onNavigateToApiKeys={onNavigateToApiKeys}
+        onRetrySession={() => setPanelSession((value) => value + 1)}
+        onReloaded={setDetection}
       />
     );
   }
@@ -237,7 +158,7 @@ export function AgentPage({
       {loading ? (
         <div className="processing-stage" role="status">
           <span className="instrument__dial">GET</span>
-          <h3>{t("agents.discovering")}</h3>
+          <h3>{t("agents.detecting")}</h3>
         </div>
       ) : detection ? (
         <AgentOverview
@@ -246,9 +167,9 @@ export function AgentPage({
           stale={stale}
           issue={issue}
           onRefresh={() => void refreshOverview()}
-          onConfigure={(target) => void startTarget(target)}
-          onRetry={(target) => void startTarget(target)}
-          onNavigateToApiKeys={navigateToApiKeys}
+          onConfigure={setTarget}
+          onRetry={setTarget}
+          onNavigateToApiKeys={onNavigateToApiKeys}
         />
       ) : (
         <div className="agent-alert" role="alert">

@@ -1,6 +1,12 @@
-import { useEffect, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 
-import { AgentPage } from "./AgentPage";
+import { AgentPage, type LeaveGuard } from "./AgentPage";
 import { ApiKeysPage } from "./ApiKeysPage";
 import { I18nProvider, useI18n } from "./i18n";
 import { desktopApi, type DesktopApi } from "./ipc";
@@ -78,7 +84,83 @@ function AppContent({ api }: { api: DesktopApi }) {
   const [activeSection, setActiveSection] = useState<SectionId>("router");
   const [sidebarCollapsed, setSidebarCollapsed] =
     useState(readSidebarCollapsed);
+  const [agentExitGuarded, setAgentExitGuarded] = useState(false);
+  const [blockedLeaveAttempt, setBlockedLeaveAttempt] = useState(0);
+  const [pendingLeave, setPendingLeave] = useState<{
+    kind: "navigation" | "native-quit";
+    confirm(): void;
+    cancel(): void;
+    restoreFocus: HTMLElement | null;
+  } | null>(null);
+  const pendingLeaveRef = useRef<typeof pendingLeave>(null);
+  const leaveGuardRef = useRef<LeaveGuard | null>(null);
+  const leaveCancelRef = useRef<HTMLButtonElement>(null);
+  const leaveConfirmRef = useRef<HTMLButtonElement>(null);
+  const sectionHeadingRef = useRef<HTMLHeadingElement>(null);
+  const focusSectionHeadingRef = useRef(false);
   const sectionKey = sectionKeys[activeSection];
+
+  const registerLeaveGuard = useCallback((guard: LeaveGuard | null) => {
+    leaveGuardRef.current = guard;
+  }, []);
+
+  const requestLeave = useCallback(
+    (
+      action: () => void,
+      cancel = () => undefined,
+      restoreFocus?: HTMLElement,
+      kind: "navigation" | "native-quit" = "navigation",
+    ) => {
+      if (pendingLeaveRef.current) {
+        if (
+          kind === "native-quit" &&
+          pendingLeaveRef.current.kind !== "native-quit"
+        ) {
+          cancel();
+        }
+        return;
+      }
+      const decision = leaveGuardRef.current?.() ?? "allow";
+      if (decision === "block") {
+        setBlockedLeaveAttempt((attempt) => attempt + 1);
+        cancel();
+        return;
+      }
+      setBlockedLeaveAttempt(0);
+      if (decision === "allow") {
+        action();
+        return;
+      }
+      const pending = {
+        kind,
+        confirm: action,
+        cancel,
+        restoreFocus:
+          restoreFocus ??
+          (document.activeElement instanceof HTMLElement
+            ? document.activeElement
+            : null),
+      };
+      pendingLeaveRef.current = pending;
+      setPendingLeave(pending);
+    },
+    [],
+  );
+
+  const navigate = useCallback(
+    (section: SectionId, restoreFocus?: HTMLElement) => {
+      if (section === activeSection) return;
+      requestLeave(
+        () => {
+          focusSectionHeadingRef.current = true;
+          setActiveSection(section);
+        },
+        undefined,
+        restoreFocus,
+      );
+    },
+    [activeSection, requestLeave],
+  );
 
   useEffect(() => {
     function synchronizeVisibility() {
@@ -90,6 +172,84 @@ function AppContent({ api }: { api: DesktopApi }) {
     return () =>
       document.removeEventListener("visibilitychange", synchronizeVisibility);
   }, [api]);
+
+  useLayoutEffect(() => {
+    void api.setAgentDraftDirty(agentExitGuarded);
+  }, [agentExitGuarded, api]);
+
+  useEffect(
+    () => () => {
+      void api.setAgentDraftDirty(false);
+    },
+    [api],
+  );
+
+  useEffect(() => {
+    if (!blockedLeaveAttempt) return;
+    const timeout = window.setTimeout(() => setBlockedLeaveAttempt(0), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [blockedLeaveAttempt]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unsubscribe: (() => void) | null = null;
+    void api
+      .subscribeAgentDraftQuitRequested(() =>
+        requestLeave(
+          () => void api.resolveAppQuit(true),
+          () => void api.resolveAppQuit(false),
+          undefined,
+          "native-quit",
+        ),
+      )
+      .then((stop) => {
+        if (disposed) stop();
+        else unsubscribe = stop;
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+      unsubscribe?.();
+    };
+  }, [api, requestLeave]);
+
+  useEffect(() => {
+    if (!pendingLeave) return;
+    leaveCancelRef.current?.focus();
+    const pending = pendingLeave;
+    function escape(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      pendingLeaveRef.current = null;
+      setPendingLeave(null);
+      pending.cancel();
+      pending.restoreFocus?.focus();
+    }
+    window.addEventListener("keydown", escape);
+    return () => window.removeEventListener("keydown", escape);
+  }, [pendingLeave]);
+
+  useEffect(() => {
+    if (!focusSectionHeadingRef.current) return;
+    focusSectionHeadingRef.current = false;
+    sectionHeadingRef.current?.focus();
+  }, [activeSection]);
+
+  function cancelLeave() {
+    if (!pendingLeave) return;
+    const pending = pendingLeave;
+    pendingLeaveRef.current = null;
+    setPendingLeave(null);
+    pending.cancel();
+    pending.restoreFocus?.focus();
+  }
+
+  function confirmLeave() {
+    if (!pendingLeave) return;
+    const pending = pendingLeave;
+    pendingLeaveRef.current = null;
+    setPendingLeave(null);
+    pending.confirm();
+  }
 
   function toggleSidebar() {
     setSidebarCollapsed((current) => {
@@ -129,7 +289,7 @@ function AppContent({ api }: { api: DesktopApi }) {
               }
               aria-label={t(navigationKeys[item.id])}
               aria-current={activeSection === item.id ? "page" : undefined}
-              onClick={() => setActiveSection(item.id)}
+              onClick={(event) => navigate(item.id, event.currentTarget)}
             >
               <span>{item.index}</span>
               <strong className="nav-label--full">
@@ -173,7 +333,9 @@ function AppContent({ api }: { api: DesktopApi }) {
         <header className="topbar">
           <div>
             <p>{t(`${sectionKey}.eyebrow` as TranslationKey)}</p>
-            <h1>{t(`${sectionKey}.title` as TranslationKey)}</h1>
+            <h1 ref={sectionHeadingRef} tabIndex={-1}>
+              {t(`${sectionKey}.title` as TranslationKey)}
+            </h1>
           </div>
           <div className="build-badge">
             <span>{t("app.ui")}</span>
@@ -182,6 +344,15 @@ function AppContent({ api }: { api: DesktopApi }) {
         </header>
 
         <div className="main-scroll">
+          {blockedLeaveAttempt > 0 && (
+            <p
+              key={blockedLeaveAttempt}
+              className="agent-alert leave-blocked-notice"
+              role="status"
+            >
+              {t("agents.leave.busy")}
+            </p>
+          )}
           <div className="content-intro">
             <p>{t(`${sectionKey}.description` as TranslationKey)}</p>
             <span aria-hidden="true">
@@ -194,21 +365,73 @@ function AppContent({ api }: { api: DesktopApi }) {
           {activeSection === "router" && (
             <RouterPage
               api={api}
-              onNavigateToAgents={() => setActiveSection("agents")}
-              onNavigateToLogs={() => setActiveSection("logs")}
+              onNavigateToAgents={() => navigate("agents")}
+              onNavigateToLogs={() => navigate("logs")}
             />
           )}
           {activeSection === "logs" && <LogsPage api={api} />}
           {activeSection === "agents" && (
             <AgentPage
               api={api}
-              onNavigateToApiKeys={() => setActiveSection("api-keys")}
+              onNavigateToApiKeys={() => navigate("api-keys")}
+              onRequestLeave={requestLeave}
+              onDirtyChange={setAgentExitGuarded}
+              registerLeaveGuard={registerLeaveGuard}
             />
           )}
           {activeSection === "api-keys" && <ApiKeysPage api={api} />}
           {activeSection === "settings" && <SettingsPage api={api} />}
         </div>
       </main>
+      {pendingLeave && (
+        <div className="dialog-backdrop">
+          <section
+            className="danger-dialog leave-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="leave-dialog-title"
+            aria-describedby="leave-dialog-description"
+            onKeyDown={(event) => {
+              if (event.key !== "Tab") return;
+              if (
+                event.shiftKey &&
+                document.activeElement === leaveCancelRef.current
+              ) {
+                event.preventDefault();
+                leaveConfirmRef.current?.focus();
+              } else if (
+                !event.shiftKey &&
+                document.activeElement === leaveConfirmRef.current
+              ) {
+                event.preventDefault();
+                leaveCancelRef.current?.focus();
+              }
+            }}
+          >
+            <p className="overline">{t("agents.leave.overline")}</p>
+            <h2 id="leave-dialog-title">{t("agents.leave.title")}</h2>
+            <p id="leave-dialog-description">{t("agents.leave.description")}</p>
+            <div className="danger-dialog__actions">
+              <button
+                ref={leaveCancelRef}
+                type="button"
+                className="text-button"
+                onClick={cancelLeave}
+              >
+                {t("agents.leave.cancel")}
+              </button>
+              <button
+                ref={leaveConfirmRef}
+                type="button"
+                className="control-button control-button--danger"
+                onClick={confirmLeave}
+              >
+                {t("agents.leave.confirm")}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

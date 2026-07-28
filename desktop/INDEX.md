@@ -22,11 +22,14 @@ React UI ──Tauri invoke──▶ Rust commands.rs ──stdin/stdout JSON─
 | 文件                                | 职责                                                                                                              |
 | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | `ipc.ts`                            | `DesktopApi` 接口 + `createDesktopApi()` —— 所有 Tauri 命令的类型化包装；`sanitizeSensitiveText()` 用于客户端脱敏 |
-| `App.tsx`                           | 根布局：侧边栏导航（Router/Agents/API 密钥/Logs/Settings）+ 区块渲染                                              |
+| `App.tsx`                           | 根布局、区块导航与注册式 Agent leave guard；面板存续期同步原生退出保护并共用可访问确认框                          |
 | `RouterPage.tsx`                    | router 状态、start/stop、health、占用者检查/终止                                                                  |
-| `AgentPage.tsx`                     | Agents 页面协调器：本地检测、单 Agent 模型加载、错误行动项、flow 生命周期与总览/工作流切换                        |
+| `AgentPage.tsx`                     | Agents 页面协调器：仅负责本地检测总览、单 Agent 目标选择、离开 guard 注册与返回焦点恢复                           |
 | `AgentOverview.tsx`                 | Claude Code / OpenCode / Codex 总览；分别展示 CLI 安装与配置状态，不依赖模型上游                                  |
-| `AgentWorkflow.tsx`                 | 单 Agent 配置、导入导出、preview、审批与事务写入的过渡工作流；不接触明文 API key                                  |
+| `AgentPanel.tsx`                    | 持久单 Agent 面板：编辑器与 sticky preview/status rail 共存，覆盖导入导出、刷新冲突、写入、结果 dismiss 与 guard  |
+| `useAgentPanelController.ts`        | 单 Agent detection/discovery flow、草稿基线、刷新冲突、preview/write/reload 的持久状态机                          |
+| `AgentConfigFields.tsx`             | Claude Code / OpenCode / Codex 结构化配置字段；提供 imperative snapshot 以同步本地 JSON 草稿                      |
+| `AgentPreviewPane.tsx`              | 脱敏 preview、文件影响、漂移/auth 审批、rebuild 确认与写入结果                                                    |
 | `agentPresentation.tsx`             | Agent 名称/logo、完整 detection 校验、安装/配置状态与 recovery 文案的共享展示模型                                 |
 | `ApiKeysPage.tsx`                   | 全局 API key 保存、替换、删除及摘要展示；提交后清空输入，不提供明文回读                                           |
 | `LogsPage.tsx`                      | 有界的、安全过滤的 router 日志，手动刷新                                                                          |

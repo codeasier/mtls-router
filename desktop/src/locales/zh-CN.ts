@@ -499,6 +499,35 @@ export const zhCN = {
   "agents.none": "无",
   "agents.rollbackBackup": "回滚诊断备份",
   "agents.finish": "完成并刷新检测",
+  "agents.panel.back": "返回 Agent 概览",
+  "agents.panel.previewLoading": "正在生成写入预览...",
+  "agents.panel.reloading": "正在重新加载 Agent 配置...",
+  "agents.panel.readonly": "当前 Agent 配置暂时不可编辑。",
+  "agents.panel.blockedDirty":
+    "外部配置状态已改变，当前草稿无法继续编辑。请先导出或放弃草稿。",
+  "agents.panel.retry": "重试",
+  "agents.panel.discard": "放弃草稿",
+  "agents.panel.reloadFailed": "写入后重新加载失败（{code}）。",
+  "agents.panel.operationFailed": "操作失败（{code}）。",
+  "agents.panel.writeComplete": "配置已成功写入。",
+  "agents.panel.refreshFailed": "刷新失败（{code}），当前草稿仍保留。",
+  "agents.panel.refreshConflict":
+    "磁盘配置已变化。请选择保留当前草稿或加载磁盘配置。",
+  "agents.panel.keepDraft": "保留当前草稿",
+  "agents.panel.importedSource": "已导入配置",
+  "agents.panel.continueEditing": "关闭结果并继续编辑",
+  "agents.panel.status": "面板状态",
+  "agents.panel.unsaved": "有未保存更改",
+  "agents.panel.ready": "配置已同步",
+  "agents.panel.previewSteps": "生成预览、审查文件影响与批准项，然后写入配置。",
+  "agents.panel.configurationState": "配置状态",
+  "agents.leave.overline": "未保存的 Agent 草稿",
+  "agents.leave.title": "放弃更改并离开？",
+  "agents.leave.description":
+    "当前 Agent 配置包含未保存更改。离开后这些更改将丢失。",
+  "agents.leave.busy": "Agent 配置操作正在进行。请等待操作完成后再离开。",
+  "agents.leave.cancel": "继续编辑",
+  "agents.leave.confirm": "放弃并离开",
 } as const;
 
 export type TranslationKey = keyof typeof zhCN;
