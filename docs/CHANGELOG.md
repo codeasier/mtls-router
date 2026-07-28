@@ -15,7 +15,7 @@ This release introduces persistent desktop Agent credentials, an Agent status ov
 ### Changed
 
 - Advanced the matched router, manager, setup, release metadata, and desktop management contract to protocol v4; mixed generations remain rejected.
-- Removed Agent CLI installation probing and its desktop status; protocol v4 compatibility fields remain fixed at `detected=true` and an empty `command`.
+- Removed Agent CLI installation probing and its desktop status; protocol v4 keeps the compatibility fields and returns fixed `detected=true` and `command=""` values.
 - Reworked port-conflict handling around structured recovery actions and reasons, bounded Windows Service/Linux systemd supervisor identifiers, explicit manual guidance, and sampled post-termination observation for reoccupation.
 
 ### Fixed

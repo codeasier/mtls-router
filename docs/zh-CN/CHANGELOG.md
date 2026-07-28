@@ -15,7 +15,7 @@
 ### 变更
 
 - 将匹配的 router、manager、setup、release metadata 和桌面端管理契约推进到 protocol v4；仍拒绝混合 generation。
-- 移除 Agent CLI 安装探测及桌面状态；protocol v4 兼容字段固定保留为 `detected=true` 和空 `command`。
+- 移除 Agent CLI 安装探测及桌面状态；protocol v4 保留兼容字段，并固定返回 `detected=true` 和 `command=""`。
 - 围绕结构化恢复 action/reason 重构端口冲突处理，提供有界 Windows Service/Linux systemd supervisor 标识、明确的人工操作引导，以及终止后的重新占用采样观察。
 
 ### 修复

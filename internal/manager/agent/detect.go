@@ -109,22 +109,22 @@ func (d Detector) Detect() ([]State, error) {
 	openCodePaths := OpenCodePaths(home, openCodeOverride)
 	codexPaths := CodexPaths(home, getenv("CODEX_HOME"))
 
-	claude := inspectJSONState(ClaudeCode, "Claude Code", true, "", claudePaths, FormatJSON, inspectClaude)
+	claude := inspectJSONState(ClaudeCode, "Claude Code", claudePaths, FormatJSON, inspectClaude)
 	openCodeFormat := FormatJSON
 	if filepath.Ext(openCodePaths.ConfigPath) == ".jsonc" {
 		openCodeFormat = FormatJSONC
 	}
-	openCode := inspectJSONState(OpenCode, "opencode", true, "", openCodePaths, openCodeFormat, inspectOpenCode)
+	openCode := inspectJSONState(OpenCode, "opencode", openCodePaths, openCodeFormat, inspectOpenCode)
 	openCode.pathOverridden = openCodeOverride != ""
-	codex := inspectCodex(true, "", codexPaths)
+	codex := inspectCodex(codexPaths)
 
 	return []State{claude, openCode, codex}, nil
 }
 
 type jsonInspector func(map[string]json.RawMessage) (configured, invalid bool)
 
-func inspectJSONState(kind Kind, name string, detected bool, command string, paths Paths, format Format, inspect jsonInspector) State {
-	state := baseState(kind, name, detected, command, paths, format)
+func inspectJSONState(kind Kind, name string, paths Paths, format Format, inspect jsonInspector) State {
+	state := baseState(kind, name, paths, format)
 	file := &state.Recovery.Files[0]
 	if len(file.Reasons) != 0 {
 		state.Invalid = hasLegacyInvalidFileReason(file.Reasons)
@@ -172,7 +172,7 @@ func inspectJSONState(kind Kind, name string, detected bool, command string, pat
 	return state
 }
 
-func baseState(kind Kind, name string, detected bool, command string, paths Paths, format Format) State {
+func baseState(kind Kind, name string, paths Paths, format Format) State {
 	configFile := inspectRecoveryTarget("config", paths.ConfigPath, format)
 	exists := configFile.Exists
 	writable := pathWritable(paths.ConfigPath)
@@ -182,7 +182,7 @@ func baseState(kind Kind, name string, detected bool, command string, paths Path
 		files = append(files, inspectRecoveryTarget("auth", paths.AuthPath, FormatJSON))
 	}
 	return State{
-		Agent: kind, Name: name, Detected: detected, Command: command,
+		Agent: kind, Name: name, Detected: true, Command: "",
 		Path: paths.ConfigPath, AuthPath: paths.AuthPath, Format: format,
 		Exists: exists, Writable: writable,
 		Recovery: RecoveryState{Files: files},
@@ -250,8 +250,8 @@ func inspectOpenCode(root map[string]json.RawMessage) (bool, bool) {
 	return exists, false
 }
 
-func inspectCodex(detected bool, command string, paths Paths) State {
-	state := baseState(Codex, "Codex", detected, command, paths, FormatTOML)
+func inspectCodex(paths Paths) State {
+	state := baseState(Codex, "Codex", paths, FormatTOML)
 	configFile := &state.Recovery.Files[0]
 	authFile := &state.Recovery.Files[1]
 

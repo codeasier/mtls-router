@@ -15,7 +15,7 @@ import (
 
 func TestSidecarIsCanonicalPrivateAndPreservesUnselectedAgents(t *testing.T) {
 	home := t.TempDir()
-	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true, "opencode": true}, nil)
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
 	writeV2Legacy(t, service, []Kind{ClaudeCode, OpenCode})
 	path := service.sidecarPath()
 	first, err := os.ReadFile(path)
@@ -60,7 +60,7 @@ func TestClaudeBudgetOwnershipFollowsTypedConfiguration(t *testing.T) {
 	contextWindow, maxOutput := int64(353400), int64(100000)
 	input := legacyTestRenderInput()
 	service, err := NewService(Options{
-		StateDir: filepath.Join(home, "state"), Detector: testServiceDetector(home, map[string]bool{"claude": true}, nil), LegacyRenderInput: input,
+		StateDir: filepath.Join(home, "state"), Detector: testServiceDetector(home, nil), LegacyRenderInput: input,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -147,7 +147,7 @@ func TestClaudeFableOwnershipFollowsOptionalConfiguration(t *testing.T) {
 	writeFile(t, path, `{"theme":"dark","env":{"ANTHROPIC_DEFAULT_FABLE_MODEL":"manual","ANTHROPIC_DEFAULT_FABLE_MODEL_NAME":"Manual","UNRELATED":"keep"}}`)
 	input := legacyTestRenderInput()
 	service, err := NewService(Options{
-		StateDir: filepath.Join(home, "state"), Detector: testServiceDetector(home, map[string]bool{"claude": true}, nil), LegacyRenderInput: input,
+		StateDir: filepath.Join(home, "state"), Detector: testServiceDetector(home, nil), LegacyRenderInput: input,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -223,7 +223,7 @@ func TestClaudeFableOwnershipFollowsOptionalConfiguration(t *testing.T) {
 
 func TestJournalOrdersManagerStateLastAndRollbackRestoresItFirst(t *testing.T) {
 	home := t.TempDir()
-	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true}, nil)
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
 	writeV2Legacy(t, service, []Kind{ClaudeCode})
 	originalState := readString(t, service.sidecarPath())
 	preview, err := service.Preview(context.Background(), []Kind{ClaudeCode})
@@ -262,7 +262,7 @@ func TestJournalOrdersManagerStateLastAndRollbackRestoresItFirst(t *testing.T) {
 
 func TestCorruptSidecarFailsPreviewAndWriteWithoutArtifacts(t *testing.T) {
 	home := t.TempDir()
-	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true}, nil)
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
 	writeV2Legacy(t, service, []Kind{ClaudeCode})
 	writeFile(t, service.sidecarPath(), `{"version":1,"version":1}`)
 	_, err := service.Preview(context.Background(), []Kind{ClaudeCode})
@@ -291,7 +291,7 @@ func TestSidecarCorruptionAndPermissionMatrixFailsClosedWithoutArtifacts(t *test
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			home := t.TempDir()
-			service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true}, nil)
+			service := newTestService(t, filepath.Join(home, "state"), home, nil)
 			writeV2Legacy(t, service, []Kind{ClaudeCode})
 			if err := os.WriteFile(service.sidecarPath(), []byte(test.content), test.mode); err != nil {
 				t.Fatal(err)
@@ -311,7 +311,7 @@ func TestSidecarCorruptionAndPermissionMatrixFailsClosedWithoutArtifacts(t *test
 
 func TestSidecarAndJournalExcludeProhibitedDataAtEveryReplacePoint(t *testing.T) {
 	home := t.TempDir()
-	service := newTestService(t, filepath.Join(home, "state"), home, map[string]bool{"claude": true, "opencode": true}, nil)
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
 	preview, err := service.Preview(context.Background(), []Kind{ClaudeCode, OpenCode})
 	if err != nil {
 		t.Fatal(err)
@@ -349,7 +349,7 @@ func TestCrashAfterSidecarReplacementRecoversFilesAndStateTogether(t *testing.T)
 	claudePath := filepath.Join(home, ".claude", "settings.json")
 	original := `{"sentinel":"agent-before"}`
 	writeFile(t, claudePath, original)
-	service := newTestService(t, stateDir, home, map[string]bool{"claude": true}, nil)
+	service := newTestService(t, stateDir, home, nil)
 	writeV2Legacy(t, service, []Kind{ClaudeCode})
 	previousAgent := readString(t, claudePath)
 	previousSidecar := readString(t, service.sidecarPath())
@@ -377,7 +377,7 @@ func TestCrashAfterSidecarReplacementRecoversFilesAndStateTogether(t *testing.T)
 	if journal.Entries[len(journal.Entries)-1].Scope != scopeManagerState || journal.Entries[len(journal.Entries)-1].Progress != progressReplaced {
 		t.Fatalf("crash journal does not record sidecar last: %#v", journal.Entries)
 	}
-	recovered, err := NewService(Options{StateDir: stateDir, Detector: testServiceDetector(home, map[string]bool{"claude": true}, nil), LegacyRenderInput: legacyTestRenderInput()})
+	recovered, err := NewService(Options{StateDir: stateDir, Detector: testServiceDetector(home, nil), LegacyRenderInput: legacyTestRenderInput()})
 	if err != nil {
 		t.Fatal(err)
 	}

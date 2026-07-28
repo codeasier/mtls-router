@@ -77,7 +77,7 @@ Router 意外退出后不会进入无限重启循环。manager 退出时，桌�
 ## Agent 配置不可用或不可写
 
 - Claude Code、opencode 和 Codex 始终作为受支持的配置目标可用；桌面应用不会安装或启动它们的 CLI。
-- Agent 检测不会搜索 `PATH` 或报告 CLI 安装状态。Protocol v4 仅为响应形状兼容保留固定的 `detected=true` 和空 `command`。
+- Agent 检测不会搜索 `PATH` 或报告 CLI 安装状态。Protocol v4 保留兼容字段，并固定返回 `detected=true` 和 `command=""`。
 - 启动桌面应用前，确认 `CLAUDE_CONFIG_DIR`、`OPENCODE_CONFIG` 或 `CODEX_HOME` 指向预期的当前用户位置。
 - 恢复当前用户对配置文件及其目录的写权限。不要以 administrator 或 root 运行桌面应用来绕过所有权问题。
 
