@@ -392,7 +392,7 @@ export function AgentPanel({
             </div>
           )}
 
-          {busy && (
+          {(controller.phase.kind === "loading" || busy) && (
             <div
               className="processing-stage agent-panel__processing"
               role="status"

@@ -1804,6 +1804,44 @@ describe("AgentPanel integration", () => {
     vi.unstubAllGlobals();
   });
 
+  it("shows model discovery during initial loading without blocking return", async () => {
+    const pendingDiscovery = deferred<AgentModelsResult>();
+    const onBack = vi.fn();
+    const onGuardStateChange = vi.fn();
+    const api = readyApi({
+      discoverModels: vi.fn(() => pendingDiscovery.promise),
+    });
+
+    renderWithI18n(
+      <AgentPanel
+        api={api}
+        target="claude"
+        onBack={onBack}
+        onNavigateToApiKeys={vi.fn()}
+        onGuardStateChange={onGuardStateChange}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(api.discoverModels).toHaveBeenCalledWith(["claude"]),
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "正在通过可信本地路由发现模型...",
+    );
+    expect(onGuardStateChange).toHaveBeenLastCalledWith({
+      dirty: false,
+      busy: false,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /返回 Agent 概览/ }));
+    expect(onBack).toHaveBeenCalledOnce();
+
+    await act(async () =>
+      pendingDiscovery.resolve(discoveryFor("flow-loading", configs.claude)),
+    );
+    expect(await screen.findByLabelText(/^主模型$/)).toBeVisible();
+  });
+
   it("keeps the disabled editor mounted beside preview and focuses its heading on mobile", async () => {
     vi.stubGlobal("matchMedia", vi.fn().mockReturnValue({ matches: true }));
     const pendingPreview = deferred<AgentPreview>();
