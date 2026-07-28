@@ -50,7 +50,7 @@ See [Troubleshooting](TROUBLESHOOTING.md) for recovery steps.
 
 ## Tray, close, and quit
 
-Closing the main window hides it in the system tray and leaves the router unchanged. Use the tray icon to open the window, start or stop an eligible router, open logs, or quit.
+Closing the main window hides it in the system tray and leaves the router unchanged. On macOS the application also deactivates so the previously active app regains focus; the tray icon or a second launch reactivates and focuses the window. Use the tray icon to open the window, start or stop an eligible router, open logs, or quit.
 
 Quit is different from closing the window. Quit stops a verified desktop-owned router and exits the application. It never stops a compatible external router or an unverified process. The regular Stop action remains unavailable for an unknown occupant, and the tray provides no force-termination action; occupant termination is available only through explicit confirmation on the Router page. Launch-at-login starts the desktop application on the next user login and applies the same discovery and ownership rules; it never terminates an occupant or blindly starts a second router. Closing the title bar still only hides the window and preserves an in-memory Agent draft. Leaving an Agent panel inside the application or using any interceptable quit path asks before discarding an unsaved draft; preview, write, and post-write reload operations cannot be left while active.
 
