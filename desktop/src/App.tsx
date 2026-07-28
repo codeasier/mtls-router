@@ -331,16 +331,9 @@ function AppContent({ api }: { api: DesktopApi }) {
 
       <main id="main-content">
         <header className="topbar">
-          <div>
-            <p>{t(`${sectionKey}.eyebrow` as TranslationKey)}</p>
-            <h1 ref={sectionHeadingRef} tabIndex={-1}>
-              {t(`${sectionKey}.title` as TranslationKey)}
-            </h1>
-          </div>
-          <div className="build-badge">
-            <span>{t("app.ui")}</span>
-            <strong>{t("app.phase")}</strong>
-          </div>
+          <h1 ref={sectionHeadingRef} tabIndex={-1}>
+            {t(`${sectionKey}.title` as TranslationKey)}
+          </h1>
         </header>
 
         <div className="main-scroll">
@@ -353,14 +346,6 @@ function AppContent({ api }: { api: DesktopApi }) {
               {t("agents.leave.busy")}
             </p>
           )}
-          <div className="content-intro">
-            <p>{t(`${sectionKey}.description` as TranslationKey)}</p>
-            <span aria-hidden="true">
-              {navigationItems.findIndex((item) => item.id === activeSection) +
-                1}
-              /5
-            </span>
-          </div>
 
           {activeSection === "router" && (
             <RouterPage

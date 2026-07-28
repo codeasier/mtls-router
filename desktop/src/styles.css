@@ -328,7 +328,7 @@ main {
 .main-scroll {
   min-width: 0;
   min-height: 0;
-  padding: 0 34px 34px;
+  padding: 16px 20px 20px;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -337,17 +337,14 @@ main {
 .topbar {
   z-index: 10;
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  min-height: 91px;
-  padding-inline: 34px;
+  min-height: 56px;
+  padding-inline: 20px;
   border-bottom: 1px solid var(--line);
   background: rgba(247, 242, 234, 0.96);
-  box-shadow: 0 8px 18px rgba(76, 57, 43, 0.05);
   backdrop-filter: blur(10px);
 }
 
-.topbar p,
 .overline {
   margin: 0 0 7px;
   color: var(--muted);
@@ -359,47 +356,9 @@ main {
 
 .topbar h1 {
   margin: 0;
-  font-size: clamp(23px, 3vw, 30px);
-  line-height: 1.05;
-  letter-spacing: -0.02em;
-}
-
-.build-badge {
-  display: flex;
-  gap: 9px;
-  align-items: center;
-  padding: 7px 11px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--surface);
-  box-shadow: 0 4px 12px rgba(76, 57, 43, 0.04);
-  font-size: 9px;
-}
-
-.build-badge span {
-  color: var(--muted);
-}
-
-.content-intro {
-  display: flex;
-  justify-content: space-between;
-  gap: 24px;
-  align-items: flex-end;
-  min-height: 104px;
-}
-
-.content-intro p {
-  max-width: 620px;
-  margin: 0;
-  color: var(--muted);
-  font-size: 14px;
-  line-height: 1.7;
-}
-
-.content-intro > span {
-  color: #a59688;
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 11px;
+  font-size: clamp(17px, 2vw, 20px);
+  line-height: 1.1;
+  letter-spacing: -0.015em;
 }
 
 .panel-grid,
@@ -417,11 +376,15 @@ main {
 .panel-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
+  min-height: 100%;
 }
 
 .primary-panel {
+  display: flex;
   min-width: 0;
-  padding: 26px;
+  min-height: 0;
+  flex-direction: column;
+  padding: 18px 20px 20px;
 }
 
 .panel-heading {
@@ -429,13 +392,14 @@ main {
   justify-content: space-between;
   gap: 16px;
   align-items: flex-start;
+  margin-bottom: 14px;
 }
 
 .panel-heading h2,
 .placeholder-panel h2 {
   margin: 0;
-  font-size: clamp(24px, 4vw, 36px);
-  letter-spacing: -0.025em;
+  font-size: clamp(19px, 2.4vw, 26px);
+  letter-spacing: -0.02em;
 }
 
 .signal {
@@ -515,6 +479,59 @@ main {
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 14px;
   font-weight: 800;
+}
+
+.traffic-light {
+  display: grid;
+  flex: 0 0 30px;
+  gap: 5px;
+  padding: 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: #39332e;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.28);
+}
+
+.traffic-light span {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  opacity: 0.2;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.35);
+}
+
+.traffic-light__red {
+  background: #d84c3f;
+}
+
+.traffic-light__yellow {
+  background: #dca338;
+}
+
+.traffic-light__green {
+  background: #6f914e;
+}
+
+.traffic-light[data-state="red"] .traffic-light__red,
+.traffic-light[data-state="yellow"] .traffic-light__yellow,
+.traffic-light[data-state="green"] .traffic-light__green {
+  opacity: 1;
+  box-shadow:
+    0 0 0 4px rgba(255, 255, 255, 0.08),
+    0 0 10px currentColor,
+    inset 0 1px 3px rgba(255, 255, 255, 0.45);
+}
+
+.traffic-light[data-state="red"] .traffic-light__red {
+  color: #d84c3f;
+}
+
+.traffic-light[data-state="yellow"] .traffic-light__yellow {
+  color: #dca338;
+}
+
+.traffic-light[data-state="green"] .traffic-light__green {
+  color: #6f914e;
 }
 
 .instrument p {
@@ -995,7 +1012,7 @@ main {
   justify-content: space-between;
   gap: 20px;
   align-items: center;
-  margin-top: 26px;
+  margin-top: auto;
   padding: 16px 18px;
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -1038,7 +1055,7 @@ main {
   justify-content: space-between;
   gap: 20px;
   align-items: flex-end;
-  padding: 22px 24px;
+  padding: 14px 20px;
   background: var(--surface-raised);
 }
 
@@ -1046,8 +1063,8 @@ main {
 .settings-heading h2,
 .agents-workbench__header h2 {
   margin: 0;
-  font-size: clamp(23px, 4vw, 32px);
-  letter-spacing: -0.02em;
+  font-size: clamp(17px, 2vw, 20px);
+  letter-spacing: -0.015em;
 }
 
 .logs-actions {
@@ -1059,7 +1076,7 @@ main {
 
 .log-screen {
   min-height: 260px;
-  max-height: calc(100dvh - 340px);
+  max-height: calc(100dvh - 220px);
   overflow: auto;
   color: #eee6dc;
   border-block: 1px solid #403a34;
@@ -1169,19 +1186,26 @@ main {
 }
 
 .settings-heading {
-  margin-bottom: 14px;
-  padding: 2px 2px 12px;
+  margin-bottom: 10px;
+  padding: 2px 2px 8px;
+}
+
+.apikey-heading h2,
+.settings-heading h2 {
+  margin: 0;
+  font-size: clamp(17px, 2vw, 20px);
+  letter-spacing: -0.015em;
 }
 
 .settings-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.25fr) minmax(260px, 0.75fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
 }
 
 .settings-block {
   min-width: 0;
-  padding: 22px 24px;
+  padding: 16px 18px;
   border: 1px solid var(--line);
   border-radius: var(--radius-card);
   background: var(--surface);
@@ -1200,7 +1224,7 @@ main {
   justify-content: space-between;
   gap: 22px;
   align-items: center;
-  min-height: 82px;
+  min-height: 64px;
   border-top: 1px solid var(--line);
 }
 
@@ -1362,13 +1386,13 @@ main {
 }
 
 .apikey-heading {
-  margin-bottom: 14px;
-  padding: 2px 2px 12px;
+  margin-bottom: 10px;
+  padding: 2px 2px 8px;
 }
 
 .apikey-grid {
   display: grid;
-  grid-template-columns: minmax(260px, 0.72fr) minmax(0, 1.28fr);
+  grid-template-columns: minmax(280px, 0.42fr) minmax(0, 1fr);
   gap: 14px;
 }
 
@@ -1383,8 +1407,8 @@ main {
 
 .apikey-status-card {
   position: relative;
-  min-height: 270px;
-  padding: 24px;
+  min-height: 220px;
+  padding: 18px 20px;
   overflow: hidden;
 }
 
@@ -1411,8 +1435,8 @@ main {
   display: flex;
   gap: 10px;
   align-items: center;
-  margin: 38px 0 12px;
-  font-size: 20px;
+  margin: 22px 0 10px;
+  font-size: 18px;
 }
 
 .apikey-status-card__signal span {
@@ -1449,7 +1473,7 @@ main {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
-  margin: 28px 0 0;
+  margin: 18px 0 0;
 }
 
 .apikey-status-card dl > div {
@@ -1474,10 +1498,10 @@ main {
 
 .apikey-form {
   display: flex;
-  min-height: 270px;
+  min-height: 220px;
   flex-direction: column;
   justify-content: center;
-  padding: 30px;
+  padding: 22px 24px;
 }
 
 .apikey-form > label {
@@ -1530,14 +1554,14 @@ main {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0;
-  margin-top: 14px;
+  margin-top: 12px;
   overflow: hidden;
 }
 
 .apikey-explainer > div {
   position: relative;
   min-width: 0;
-  padding: 22px 24px 22px 64px;
+  padding: 16px 18px 16px 56px;
 }
 
 .apikey-explainer > div + div {
@@ -1546,8 +1570,8 @@ main {
 
 .apikey-explainer > div > span {
   position: absolute;
-  top: 22px;
-  left: 24px;
+  top: 16px;
+  left: 18px;
   display: grid;
   width: 24px;
   height: 24px;
@@ -1560,8 +1584,8 @@ main {
 }
 
 .apikey-explainer h3 {
-  margin: 3px 0 12px;
-  font-size: 12px;
+  margin: 3px 0 8px;
+  font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -1745,7 +1769,7 @@ main {
   justify-content: space-between;
   gap: 24px;
   align-items: flex-end;
-  padding: 22px 24px;
+  padding: 14px 20px;
   border-bottom: 1px solid var(--line);
   background: var(--surface-raised);
 }
@@ -1759,8 +1783,8 @@ main {
 .leave-blocked-notice {
   position: sticky;
   z-index: 9;
-  top: 0;
-  margin-inline: -34px;
+  top: -16px;
+  margin: -16px -20px 12px;
   color: var(--warning);
   border-color: rgba(139, 91, 23, 0.28);
   background: var(--warning-soft);
@@ -3002,6 +3026,16 @@ main {
   overflow-wrap: anywhere;
 }
 
+@media (max-width: 1200px) {
+  .settings-grid {
+    grid-template-columns: minmax(0, 1.25fr) minmax(260px, 0.75fr);
+  }
+
+  .settings-block--danger {
+    grid-column: 1 / -1;
+  }
+}
+
 @media (max-width: 800px) {
   .app-frame {
     grid-template-columns: 82px minmax(0, 1fr);
@@ -3041,15 +3075,16 @@ main {
   }
 
   .main-scroll {
-    padding: 0 18px 22px;
+    padding: 14px 16px 18px;
   }
 
   .leave-blocked-notice {
-    margin-inline: -18px;
+    top: -14px;
+    margin: -14px -16px 10px;
   }
 
   .topbar {
-    padding-inline: 18px;
+    padding-inline: 16px;
   }
 
   .panel-grid,
@@ -3119,7 +3154,7 @@ main {
   }
 
   .main-scroll {
-    padding: 0 12px 16px;
+    padding: 12px 12px 16px;
   }
 
   .topbar {
@@ -3135,22 +3170,6 @@ main {
     min-height: 46px;
     margin-inline: 5px;
     padding-inline: 2px;
-  }
-
-  .topbar {
-    min-height: 82px;
-  }
-
-  .build-badge {
-    display: none;
-  }
-
-  .content-intro {
-    min-height: 95px;
-  }
-
-  .content-intro > span {
-    display: none;
   }
 
   .panel-heading,

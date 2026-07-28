@@ -88,6 +88,22 @@ describe("application scroll boundary", () => {
   });
 });
 
+describe("router viewport layout", () => {
+  it("keeps one full-height content column with the next action at the bottom", () => {
+    const panel = compact(
+      extractBlock(css, /\.panel-grid\s*\{/, "router panel layout"),
+    );
+    const content = compact(findRuleDeclarations(css, ".primary-panel"));
+    const next = compact(findRuleDeclarations(css, ".router-next"));
+
+    expect(panel).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\);/);
+    expect(panel).toMatch(/min-height:\s*100%;/);
+    expect(content).toMatch(/display:\s*flex;/);
+    expect(content).toMatch(/flex-direction:\s*column;/);
+    expect(next).toMatch(/margin-top:\s*auto;/);
+  });
+});
+
 describe("responsive Claude role layout", () => {
   it("uses the model panel as an inline-size query container", () => {
     expect(compact(css)).toMatch(

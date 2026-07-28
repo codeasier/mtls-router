@@ -24,6 +24,7 @@ describe("RouterPage states", () => {
     heading: string;
     process: string;
     upstream: string;
+    light: "off" | "green" | "yellow" | "red";
   }>([
     {
       name: "not started",
@@ -31,6 +32,7 @@ describe("RouterPage states", () => {
       heading: "路由未启动",
       process: "未启动",
       upstream: "不可用",
+      light: "off",
     },
     {
       name: "starting",
@@ -38,6 +40,7 @@ describe("RouterPage states", () => {
       heading: "正在启动路由",
       process: "启动中",
       upstream: "不可用",
+      light: "yellow",
     },
     {
       name: "running and healthy",
@@ -46,6 +49,7 @@ describe("RouterPage states", () => {
       heading: "路由运行正常",
       process: "运行中",
       upstream: "健康",
+      light: "green",
     },
     {
       name: "running with unavailable upstream",
@@ -54,6 +58,7 @@ describe("RouterPage states", () => {
       heading: "上游连接不可用",
       process: "降级运行",
       upstream: "上游不可用",
+      light: "yellow",
     },
     {
       name: "external router running",
@@ -62,6 +67,7 @@ describe("RouterPage states", () => {
       heading: "外部路由正在运行",
       process: "外部托管",
       upstream: "健康",
+      light: "green",
     },
     {
       name: "port occupied",
@@ -69,6 +75,7 @@ describe("RouterPage states", () => {
       heading: "端口已被占用",
       process: "端口冲突",
       upstream: "不可用",
+      light: "red",
     },
     {
       name: "start failed",
@@ -76,6 +83,7 @@ describe("RouterPage states", () => {
       heading: "路由启动失败",
       process: "需要处理",
       upstream: "不可用",
+      light: "red",
     },
     {
       name: "stopping",
@@ -83,10 +91,11 @@ describe("RouterPage states", () => {
       heading: "正在停止路由",
       process: "停止中",
       upstream: "不可用",
+      light: "yellow",
     },
   ])(
     "renders $name",
-    async ({ status, health, heading, process, upstream }) => {
+    async ({ status, health, heading, process, upstream, light }) => {
       const api = createMockApi({
         getRouterStatus: vi.fn().mockResolvedValue(status),
         retryRouterHealth: vi.fn().mockResolvedValue(health ?? freshHealthy),
@@ -108,6 +117,10 @@ describe("RouterPage states", () => {
         .map((element) => element.textContent);
       expect(readouts).toContain(process);
       expect(readouts).toContain(upstream);
+      expect(document.querySelector(".traffic-light")).toHaveAttribute(
+        "data-state",
+        light,
+      );
     },
   );
 
@@ -1388,7 +1401,7 @@ describe("RouterPage occupant recovery", () => {
         screen.queryByRole("button", { name: "强制终止占用进程" }),
       ).not.toBeInTheDocument();
       const retry = screen.getByRole("button", { name: "重试检查" });
-      expect(retry).toHaveFocus();
+      await waitFor(() => expect(retry).toHaveFocus());
       fireEvent.click(retry);
       expect(
         await screen.findByRole("button", { name: "强制终止占用进程" }),
