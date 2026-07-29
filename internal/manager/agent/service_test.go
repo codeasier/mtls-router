@@ -834,7 +834,7 @@ js_repl = false
 	router := rawObject(t, providers["mtls-router"])
 	options := rawObject(t, router["options"])
 	models := rawObject(t, router["models"])
-	if jsonString(t, openCode["model"]) != "anthropic/keep" || jsonString(t, options["apiKey"]) != testAPIKey {
+	if jsonString(t, openCode["model"]) != "anthropic/keep" || jsonString(t, router["name"]) != "CodeasierRouter" || jsonString(t, options["apiKey"]) != testAPIKey {
 		t.Fatalf("opencode config = %s", readString(t, openCodePath))
 	}
 	if _, ok := providers["anthropic"]; !ok || len(models) != 2 || models["model-primary"] == nil || models["model-sonnet"] == nil {
@@ -844,7 +844,7 @@ js_repl = false
 	codex := readString(t, codexConfig)
 	for _, expected := range []string{
 		`model_provider = "mtls-router"`, `model = "model-primary"`, `cli_auth_credentials_store = "file"`,
-		`[model_providers.mtls-router]`, `name = "mtls-router"`, `approval_policy = "on-request"`, `[features]`, `js_repl = false`,
+		`[model_providers.mtls-router]`, `name = "CodeasierRouter"`, `approval_policy = "on-request"`, `[features]`, `js_repl = false`,
 	} {
 		if !strings.Contains(codex, expected) {
 			t.Fatalf("Codex config missing %q: %s", expected, codex)

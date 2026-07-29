@@ -235,7 +235,8 @@ func inspectOpenCode(root map[string]json.RawMessage) (bool, bool) {
 	if !ok || !validAPIBaseURL(base) || !hasNonemptyJSONString(options["apiKey"]) {
 		return false, false
 	}
-	if !jsonStringEquals(router["npm"], "@ai-sdk/openai-compatible") || !jsonStringEquals(router["name"], "mtls-router") {
+	name, nameOK := rawString(router["name"])
+	if !jsonStringEquals(router["npm"], "@ai-sdk/openai-compatible") || !nameOK || !isManagedProviderDisplayName(name) {
 		return false, false
 	}
 	models, valid := decodeObject(router["models"])
@@ -306,8 +307,9 @@ func inspectCodex(paths Paths) State {
 	provider, providerOK := tomlTable(values, "model_providers", "mtls-router")
 	model, modelOK := tomlString(values["model"])
 	store, storeOK := tomlString(values["cli_auth_credentials_store"])
+	providerName, _ := provider["name"].(string)
 	state.Configured = values["model_provider"] == "mtls-router" && modelOK && model != "" && storeOK && store == "file" &&
-		providerOK && provider["name"] == "mtls-router" && provider["wire_api"] == "responses" && provider["requires_openai_auth"] == true &&
+		providerOK && isManagedProviderDisplayName(providerName) && provider["wire_api"] == "responses" && provider["requires_openai_auth"] == true &&
 		validAPIValue(provider["base_url"]) && authConfigured && validCodexModelSettings(values)
 	state.Invalid = state.Invalid || hasLegacyInvalidFileReason(configFile.Reasons) || hasLegacyInvalidFileReason(authFile.Reasons)
 	finalizeRecovery(&state)

@@ -528,7 +528,7 @@ fn handle_quit_action<R: Runtime>(
         let delivered = emit_main_window_event(&app, MainWindowEvent::DraftQuitRequested).is_ok();
         record_confirmation_delivery(lifecycle, delivered);
         if !delivered {
-            eprintln!("mtls-router: cannot deliver draft quit confirmation request");
+            eprintln!("CodeasierRouter: cannot deliver draft quit confirmation request");
         }
     }
     if effects.execute_quit {

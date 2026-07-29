@@ -226,6 +226,9 @@ func TestOpenCodeExactSubsetTypedExtrasAndRootOwnership(t *testing.T) {
 	}
 	providers, _ := decodeObject(merged["provider"])
 	provider, _ := decodeObject(providers["mtls-router"])
+	if jsonString(t, provider["name"]) != "CodeasierRouter" {
+		t.Fatalf("provider display name = %s", provider["name"])
+	}
 	models, _ := decodeObject(provider["models"])
 	if len(models) != 1 || models["stale"] != nil {
 		t.Fatalf("selected subset not exact: %s", content)
@@ -312,6 +315,11 @@ func TestCodexEncodingMigrationAuthAndPolicy(t *testing.T) {
 	if !ok || decoded["model"] != config.Model || decoded["model_provider"] != "mtls-router" || decoded["disable_response_storage"] != nil {
 		t.Fatalf("Codex TOML round trip failed: %s", content)
 	}
+	providers := decoded["model_providers"].(map[string]any)
+	provider := providers["mtls-router"].(map[string]any)
+	if provider["name"] != "CodeasierRouter" {
+		t.Fatalf("provider display name = %#v", provider["name"])
+	}
 	auth, _ := decodeObject([]byte(`{"auth_mode":"chatgpt","tokens":{"access_token":"old"},"accepted_metadata":{"keep":true}}`))
 	authContent, err := renderCodexAuthFragment("secret", auth)
 	if err != nil {
@@ -342,6 +350,15 @@ base_url="http://127.0.0.1:19099/v1"`))
 	_, err = assessCodexMerge(map[string]any{"forced_login_method": "chatgpt"}, map[string]json.RawMessage{})
 	if CodeOf(err) != CodeCodexAuthUnsupported {
 		t.Fatalf("forced policy error = %v", err)
+	}
+	for _, name := range []string{"mtls-router", "CodeasierRouter"} {
+		managed := map[string]any{"model_providers": map[string]any{"mtls-router": map[string]any{
+			"name": name, "wire_api": "responses", "requires_openai_auth": true, "base_url": "http://127.0.0.1:19443/v1",
+		}}}
+		assessment, err = assessCodexMerge(managed, map[string]json.RawMessage{"auth_mode": json.RawMessage(`"apikey"`), "OPENAI_API_KEY": json.RawMessage(`"key"`)})
+		if err != nil || assessment.ManagedConfigCollision {
+			t.Fatalf("managed provider name %q assessed as collision: %#v err=%v", name, assessment, err)
+		}
 	}
 }
 

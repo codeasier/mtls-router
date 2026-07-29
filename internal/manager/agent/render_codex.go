@@ -40,7 +40,8 @@ func assessCodexMerge(config map[string]any, auth map[string]json.RawMessage) (C
 		return value, exists
 	}(); exists {
 		table, ok := provider.(map[string]any)
-		assessment.ManagedConfigCollision = !ok || table["name"] != "mtls-router" || table["wire_api"] != "responses" || table["requires_openai_auth"] != true || !validAPIValue(table["base_url"])
+		name, _ := table["name"].(string)
+		assessment.ManagedConfigCollision = !ok || !isManagedProviderDisplayName(name) || table["wire_api"] != "responses" || table["requires_openai_auth"] != true || !validAPIValue(table["base_url"])
 	}
 	mode, _ := rawString(auth["auth_mode"])
 	assessment.AuthCollision = mode != "apikey" || !hasNonemptyJSONString(auth["OPENAI_API_KEY"])
@@ -65,7 +66,7 @@ func codexManagedConfig(config *modelconfig.CodexConfig, apiBaseURL string) map[
 		"model_provider": "mtls-router", "model": config.Model,
 		"cli_auth_credentials_store": "file",
 		"model_providers": map[string]any{"mtls-router": map[string]any{
-			"name": "mtls-router", "wire_api": "responses", "requires_openai_auth": true, "base_url": apiBaseURL,
+			"name": providerDisplayName, "wire_api": "responses", "requires_openai_auth": true, "base_url": apiBaseURL,
 		}},
 	}
 	if config.ReasoningEffort != nil {

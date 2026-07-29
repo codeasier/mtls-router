@@ -16,6 +16,14 @@ HOOKS="$ROOT/desktop/src-tauri/windows/uninstall-hooks.nsh"
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 contains() { grep -Fq -- "$2" "$1" || fail "$(basename "$1") missing: $2"; }
 
+contains "$ROOT/desktop/src-tauri/Cargo.toml" 'description = "Desktop control panel for CodeasierRouter"'
+contains "$ROOT/desktop/src-tauri/Cargo.toml" 'authors = ["CodeasierRouter contributors"]'
+contains "$ROOT/desktop/src-tauri/tauri.conf.json" '"productName": "CodeasierRouter"'
+contains "$ROOT/desktop/src-tauri/src/lib.rs" 'CodeasierRouter: removing malformed credential file'
+contains "$ROOT/desktop/src-tauri/src/lib.rs" 'error while building CodeasierRouter desktop'
+contains "$ROOT/desktop/src-tauri/src/manager.rs" 'CodeasierRouter manager: {}'
+contains "$ROOT/desktop/src-tauri/src/tray.rs" 'CodeasierRouter: cannot deliver draft quit confirmation request'
+
 node - "$PACKAGE" "$LOCK" <<'NODE' || fail 'desktop package and lockfile metadata is inconsistent'
 const fs = require('node:fs');
 

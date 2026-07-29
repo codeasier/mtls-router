@@ -203,6 +203,11 @@ func TestDetectOpenCodeJSONCConfiguredAndProviderInvalid(t *testing.T) {
 	if !states[1].Configured || states[1].Invalid {
 		t.Fatalf("configured JSONC state = %#v", states[1])
 	}
+	writeFile(t, path, `{"model":"mtls-router/dynamic-main","provider":{"mtls-router":{"npm":"@ai-sdk/openai-compatible","name":"CodeasierRouter","options":{"baseURL":"http://127.0.0.1:19443/v1","apiKey":"open-code-secret-canary"},"models":{"dynamic-main":{"name":"dynamic-main"}}}}}`)
+	states = mustDetect(t, testDetector(home))
+	if !states[1].Configured || states[1].Invalid {
+		t.Fatalf("rebranded JSONC state = %#v", states[1])
+	}
 
 	writeFile(t, path, `{"provider":"invalid"}`)
 	states = mustDetect(t, testDetector(home))
@@ -253,6 +258,20 @@ base_url = "http://127.0.0.1:19443/v1"
 	states = mustDetect(t, testDetector(home))
 	if !states[2].Configured || states[2].Migratable || states[2].Invalid {
 		t.Fatalf("configured Codex v2 state = %#v", states[2])
+	}
+
+	writeFile(t, configPath, `model_provider = "mtls-router"
+model = "dynamic-main"
+cli_auth_credentials_store = "file"
+[model_providers.mtls-router]
+name = "CodeasierRouter"
+wire_api = "responses"
+requires_openai_auth = true
+base_url = "http://127.0.0.1:19443/v1"
+`)
+	states = mustDetect(t, testDetector(home))
+	if !states[2].Configured || states[2].Migratable || states[2].Invalid {
+		t.Fatalf("rebranded Codex state = %#v", states[2])
 	}
 
 	writeFile(t, configPath, "model =\n")

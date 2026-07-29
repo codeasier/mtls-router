@@ -326,6 +326,6 @@
   "required": [
     "version"
   ],
-  "title": "mtls-router canonical Agent model config v1",
+  "title": "CodeasierRouter canonical Agent model config v1",
   "type": "object"
 }

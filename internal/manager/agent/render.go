@@ -16,9 +16,15 @@ import (
 )
 
 const (
-	RedactedAPIKey = "<redacted-api-key>"
-	maxRenderSize  = 2 << 20
+	RedactedAPIKey            = "<redacted-api-key>"
+	providerDisplayName       = "CodeasierRouter"
+	legacyProviderDisplayName = "mtls-router"
+	maxRenderSize             = 2 << 20
 )
+
+func isManagedProviderDisplayName(name string) bool {
+	return name == providerDisplayName || name == legacyProviderDisplayName
+}
 
 // Fragment is one key-redacted manager-owned Agent configuration fragment.
 type Fragment struct {

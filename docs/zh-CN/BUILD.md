@@ -299,7 +299,7 @@ gh workflow run release.yml \
   -f upstream_url=https://router.example.com
 ```
 
-所选目标会同时生成 `mtls-router-cli-windows-amd64` 和 `mtls-router-desktop-windows-amd64`。省略 `upstream_url` 时使用仓库 `UPSTREAM_URL`；省略 `target` 时使用 `all`。Workflow input 在 GitHub Actions 元数据中可见，因此 override 不得包含凭据、token 或敏感 query parameter，并且必须兼容 repository Secrets 中的客户端证书和 upstream CA。
+所选目标会同时生成 `mtls-router-cli-windows-amd64` 和 `CodeasierRouter-desktop-windows-amd64`。省略 `upstream_url` 时使用仓库 `UPSTREAM_URL`；省略 `target` 时使用 `all`。Workflow input 在 GitHub Actions 元数据中可见，因此 override 不得包含凭据、token 或敏感 query parameter，并且必须兼容 repository Secrets 中的客户端证书和 upstream CA。
 
 审查所需目标平台启动证据后，通过推送版本 tag 发布 CLI 和桌面 release：
 

@@ -1071,9 +1071,12 @@ describe("useAgentPanelController", () => {
       configurable: true,
       value: revokeObjectURL,
     });
-    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(
-      () => undefined,
-    );
+    let downloadName = "";
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      downloadName = this.download;
+    });
     const api = readyApi({
       importAgentModelConfig: vi.fn().mockResolvedValue({
         ...configs.claude,
@@ -1108,6 +1111,7 @@ describe("useAgentPanelController", () => {
     );
     expect(document.body.textContent).toBe(stateBeforeExport);
     expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(downloadName).toBe("CodeasierRouter-model-config.json");
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:safe");
   });
 

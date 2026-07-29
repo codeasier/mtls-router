@@ -383,7 +383,7 @@ jobs:
           printf '%s\n' "$status" >desktop/release-artifacts/signing-status-${{ matrix.os }}-${{ matrix.arch }}.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: mtls-router-desktop-${{ matrix.os }}-${{ matrix.arch }}
+          name: CodeasierRouter-desktop-${{ matrix.os }}-${{ matrix.arch }}
           path: desktop/release-artifacts/*
           if-no-files-found: error
 
@@ -403,7 +403,7 @@ jobs:
       - name: Download all desktop packages
         uses: actions/download-artifact@v4
         with:
-          pattern: mtls-router-desktop-*
+          pattern: CodeasierRouter-desktop-*
           path: desktop-packages
           merge-multiple: true
       - name: Collect protocol metadata

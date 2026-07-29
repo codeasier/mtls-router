@@ -98,12 +98,12 @@ jobs:
             mtls-router-cli-darwin-arm64
             mtls-router-cli-windows-amd64
             mtls-router-cli-windows-arm64
-            mtls-router-desktop-windows-amd64
-            mtls-router-desktop-windows-arm64
-            mtls-router-desktop-darwin-amd64
-            mtls-router-desktop-darwin-arm64
-            mtls-router-desktop-linux-amd64
-            mtls-router-desktop-linux-arm64
+            CodeasierRouter-desktop-windows-amd64
+            CodeasierRouter-desktop-windows-arm64
+            CodeasierRouter-desktop-darwin-amd64
+            CodeasierRouter-desktop-darwin-arm64
+            CodeasierRouter-desktop-linux-amd64
+            CodeasierRouter-desktop-linux-arm64
           )
           test "$(printf '%s\n' "$artifacts" | wc -l)" -eq 12
           for name in "${expected_artifacts[@]}"; do
@@ -134,7 +134,7 @@ jobs:
       - name: Download all desktop packages from source run
         uses: actions/download-artifact@v4
         with:
-          pattern: mtls-router-desktop-*
+          pattern: CodeasierRouter-desktop-*
           path: desktop-packages
           merge-multiple: true
           run-id: ${{ inputs.source_run_id }}
