@@ -300,15 +300,17 @@ pub fn handle_window_event<R: Runtime>(window: &tauri::Window<R>, event: &Window
         return;
     };
     if let WindowEvent::CloseRequested { api, .. } = event {
-        if plan.prevent_close {
-            api.prevent_close();
-        }
-        if plan.hide_window {
-            let _ = window.hide();
-        }
-        #[cfg(target_os = "macos")]
-        if plan.hide_app {
-            let _ = window.app_handle().hide();
+        for action in plan {
+            match action {
+                CloseToTrayAction::PreventClose => api.prevent_close(),
+                CloseToTrayAction::HideApp => {
+                    #[cfg(target_os = "macos")]
+                    let _ = window.app_handle().hide();
+                }
+                CloseToTrayAction::HideWindow => {
+                    let _ = window.hide();
+                }
+            }
         }
     }
 }
@@ -563,21 +565,32 @@ fn should_hide_on_close(label: &str, close_requested: bool) -> bool {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct CloseToTrayPlan {
-    prevent_close: bool,
-    hide_window: bool,
-    hide_app: bool,
+enum CloseToTrayAction {
+    PreventClose,
+    HideApp,
+    HideWindow,
 }
 
-fn close_to_tray_plan(label: &str, close_requested: bool, macos: bool) -> Option<CloseToTrayPlan> {
+fn close_to_tray_plan(
+    label: &str,
+    close_requested: bool,
+    macos: bool,
+) -> Option<&'static [CloseToTrayAction]> {
     if !should_hide_on_close(label, close_requested) {
         return None;
     }
-    Some(CloseToTrayPlan {
-        prevent_close: true,
-        hide_window: true,
-        hide_app: macos,
-    })
+    if macos {
+        Some(&[
+            CloseToTrayAction::PreventClose,
+            CloseToTrayAction::HideApp,
+            CloseToTrayAction::HideWindow,
+        ])
+    } else {
+        Some(&[
+            CloseToTrayAction::PreventClose,
+            CloseToTrayAction::HideWindow,
+        ])
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1138,14 +1151,16 @@ mod tests {
     }
 
     #[test]
-    fn macos_close_to_tray_hides_window_and_app() {
+    fn macos_windowed_and_fullscreen_close_hide_app_before_window() {
         assert_eq!(
             close_to_tray_plan("main", true, true),
-            Some(CloseToTrayPlan {
-                prevent_close: true,
-                hide_window: true,
-                hide_app: true,
-            })
+            Some(
+                &[
+                    CloseToTrayAction::PreventClose,
+                    CloseToTrayAction::HideApp,
+                    CloseToTrayAction::HideWindow,
+                ][..]
+            )
         );
     }
 
@@ -1153,18 +1168,19 @@ mod tests {
     fn non_macos_close_to_tray_hides_window_only() {
         assert_eq!(
             close_to_tray_plan("main", true, false),
-            Some(CloseToTrayPlan {
-                prevent_close: true,
-                hide_window: true,
-                hide_app: false,
-            })
+            Some(
+                &[
+                    CloseToTrayAction::PreventClose,
+                    CloseToTrayAction::HideWindow,
+                ][..]
+            )
         );
         assert_eq!(close_to_tray_plan("other", true, true), None);
         assert_eq!(close_to_tray_plan("main", false, true), None);
     }
 
     #[test]
-    fn macos_activation_unhides_app_before_window_focus() {
+    fn macos_tray_reopen_and_second_instance_activation_unhide_before_focus() {
         assert_eq!(
             activate_main_window_plan(true),
             ActivateMainWindowPlan {
@@ -1194,11 +1210,22 @@ mod tests {
         let macos = cfg!(target_os = "macos");
         assert_eq!(
             close_to_tray_plan("main", true, macos),
-            Some(CloseToTrayPlan {
-                prevent_close: true,
-                hide_window: true,
-                hide_app: macos,
-            })
+            if macos {
+                Some(
+                    &[
+                        CloseToTrayAction::PreventClose,
+                        CloseToTrayAction::HideApp,
+                        CloseToTrayAction::HideWindow,
+                    ][..],
+                )
+            } else {
+                Some(
+                    &[
+                        CloseToTrayAction::PreventClose,
+                        CloseToTrayAction::HideWindow,
+                    ][..],
+                )
+            }
         );
         assert_eq!(
             activate_main_window_plan(macos),
