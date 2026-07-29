@@ -2,6 +2,21 @@
 
 [中文](zh-CN/CHANGELOG.md)
 
+## v0.3.2 - 2026-07-29
+
+This release restores expected macOS focus behavior when closing the desktop app to the tray and improves Agent configuration discovery and form readability.
+
+### Fixed
+
+- Deactivated the macOS application when the main window closes to the tray so the previous app regains focus, then reactivated it before restoring the window from the tray or a second launch.
+- Centered Agent discovery and execution status when no editor is visible, kept active editor operations in the sticky status rail, removed decorative request badges, and increased configuration typography for high-resolution displays.
+
+### Tests
+
+- Expanded native tray close and activation coverage plus frontend regression coverage for Agent status placement, responsive layout, badge removal, and configuration typography.
+
+---
+
 ## v0.3.1 - 2026-07-28
 
 This release improves desktop layout density and status clarity, removes unreliable Agent CLI installation probing, and makes authenticated model discovery visibly responsive.
