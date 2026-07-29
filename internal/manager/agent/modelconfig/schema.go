@@ -30,7 +30,7 @@ func GenerateSchema() ([]byte, error) {
 		claudeExtra["properties"].(map[string]any)[key] = map[string]any{"type": "string", "maxLength": 16384}
 	}
 	root := map[string]any{
-		"$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "https://github.com/codeasier/mtls-router/schema/model-config-v1.schema.json", "title": "mtls-router canonical Agent model config v1", "type": "object", "additionalProperties": false, "required": []string{"version"},
+		"$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "https://github.com/codeasier/mtls-router/schema/model-config-v1.schema.json", "title": "CodeasierRouter canonical Agent model config v1", "type": "object", "additionalProperties": false, "required": []string{"version"},
 		"properties": map[string]any{
 			"version":  map[string]any{"const": Version},
 			"claude":   map[string]any{"type": "object", "additionalProperties": false, "required": []string{"primary", "haiku", "sonnet", "opus"}, "properties": map[string]any{"primary": map[string]any{"$ref": "#/$defs/model"}, "fable": map[string]any{"$ref": "#/$defs/role"}, "haiku": map[string]any{"$ref": "#/$defs/role"}, "sonnet": map[string]any{"$ref": "#/$defs/role"}, "opus": map[string]any{"$ref": "#/$defs/role"}, "context_window": integer, "max_output_tokens": integer, "extra": claudeExtra}},

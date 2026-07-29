@@ -60,12 +60,12 @@ Defaults:
 
 Known artifact names:
 
-- `mtls-router-desktop-darwin-arm64`
-- `mtls-router-desktop-darwin-amd64`
-- `mtls-router-desktop-windows-arm64`
-- `mtls-router-desktop-windows-amd64`
-- `mtls-router-desktop-linux-arm64`
-- `mtls-router-desktop-linux-amd64`
+- `CodeasierRouter-desktop-darwin-arm64`
+- `CodeasierRouter-desktop-darwin-amd64`
+- `CodeasierRouter-desktop-windows-arm64`
+- `CodeasierRouter-desktop-windows-amd64`
+- `CodeasierRouter-desktop-linux-arm64`
+- `CodeasierRouter-desktop-linux-amd64`
 - `mtls-router-cli-darwin-arm64`
 - `mtls-router-cli-darwin-amd64`
 - `mtls-router-cli-windows-arm64`
@@ -82,7 +82,7 @@ Build macOS arm64 from a branch:
   --ref feature/agent-models-config \
   --version 0.1.0-agent-models.4 \
   --target darwin-arm64 \
-  --artifact mtls-router-desktop-darwin-arm64
+  --artifact CodeasierRouter-desktop-darwin-arm64
 ```
 
 Build Windows amd64 against a validation upstream:
@@ -94,7 +94,7 @@ Build Windows amd64 against a validation upstream:
   --target windows-amd64 \
   --upstream https://router.example.com \
   --artifact mtls-router-cli-windows-amd64 \
-  --artifact mtls-router-desktop-windows-amd64
+  --artifact CodeasierRouter-desktop-windows-amd64
 ```
 
 Build all packages from a tag without publishing that tag:
@@ -111,7 +111,7 @@ Build desktop artifacts from a commit into a custom directory:
 .agents/skills/mtls-router-github-test-build/scripts/build-and-download.sh \
   --ref 41e729e214553533988566a6a4b950723f916826 \
   --version 0.1.0-commit-validation.1 \
-  --artifact 'mtls-router-desktop-*' \
+  --artifact 'CodeasierRouter-desktop-*' \
   --output /tmp/mtls-router-validation
 ```
 

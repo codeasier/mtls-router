@@ -44,6 +44,7 @@
 - **key 明文落盘仅限 Agent 凭据文件**（见上表）。key 绝不进入环境变量、CLI 参数、model config、日志或 journal。
 - **检测不探测 CLI 安装**：`agent.detect` 只检查配置文件；protocol v4 兼容字段固定返回 `detected=true`、`command=""`，不读取进程 `PATH`。
 - **JSONC 会丢失注释与格式**：默认路径下 `opencode.jsonc` 被迁移为 `opencode.json`；`OPENCODE_CONFIG` 指向 JSONC 时就地规范化为严格 JSON。两种情形都在预览阶段给出警告。
+- OpenCode/Codex 的 provider key 与模型前缀固定为兼容标识 `mtls-router`；新写入的 provider 展示名是 `CodeasierRouter`，检测与合并同时接受旧展示名 `mtls-router`。
 - 只改写受管键：Claude 的受管 env key、Codex 的受管 root key 集合是显式白名单，用户其余配置原样保留。
 - 预览与写入之间必须一致 —— `ValidatePreview` 检出漂移时返回 `PREVIEW_STALE`，绝不带着过期计划写入。
 

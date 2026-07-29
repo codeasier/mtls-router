@@ -419,6 +419,9 @@ func TestSchemaIsCheckedIn(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := generatedValue.(map[string]any)
+	if root["title"] != "CodeasierRouter canonical Agent model config v1" {
+		t.Fatalf("schema title = %#v", root["title"])
+	}
 	claude := root["properties"].(map[string]any)["claude"].(map[string]any)
 	if _, ok := claude["properties"].(map[string]any)["fable"]; !ok {
 		t.Fatal("schema omits optional Claude Fable")

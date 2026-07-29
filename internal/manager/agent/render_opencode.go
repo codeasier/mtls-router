@@ -78,7 +78,7 @@ func openCodeProvider(config *modelconfig.OpenCodeConfig, apiBaseURL, key string
 		models[id] = modelconfig.DeepMerge(config.Extra, entry)
 	}
 	return map[string]any{
-		"npm": "@ai-sdk/openai-compatible", "name": "mtls-router",
+		"npm": "@ai-sdk/openai-compatible", "name": providerDisplayName,
 		"options": map[string]any{"baseURL": apiBaseURL, "apiKey": key},
 		"models":  models,
 	}

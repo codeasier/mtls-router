@@ -614,7 +614,10 @@ async fn read_response(events: &mut mpsc::Receiver<TransportEvent>, id: &str) ->
                 return Ok(response);
             }
             TransportEvent::Stderr(bytes) => {
-                eprintln!("mtls-router-manager: {}", String::from_utf8_lossy(&bytes));
+                eprintln!(
+                    "CodeasierRouter manager: {}",
+                    String::from_utf8_lossy(&bytes)
+                );
             }
             TransportEvent::Error | TransportEvent::Terminated => {
                 return Err(CommandError::manager_failed());

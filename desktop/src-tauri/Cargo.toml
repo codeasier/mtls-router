@@ -1,8 +1,8 @@
 [package]
 name = "mtls-router-desktop"
 version = "0.1.0"
-description = "Desktop control panel for mtls-router"
-authors = ["mtls-router contributors"]
+description = "Desktop control panel for CodeasierRouter"
+authors = ["CodeasierRouter contributors"]
 edition = "2021"
 rust-version = "1.77.2"
 

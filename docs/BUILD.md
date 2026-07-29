@@ -319,7 +319,7 @@ gh workflow run release.yml \
   -f upstream_url=https://router.example.com
 ```
 
-The selected target produces both `mtls-router-cli-windows-amd64` and `mtls-router-desktop-windows-amd64`. Omit `upstream_url` to use the repository `UPSTREAM_URL`; omit `target` to use `all`. Workflow inputs are visible in GitHub Actions metadata, so the override must not contain credentials, tokens, or sensitive query parameters. It must also be compatible with the client certificate and upstream CA stored in repository Secrets.
+The selected target produces both `mtls-router-cli-windows-amd64` and `CodeasierRouter-desktop-windows-amd64`. Omit `upstream_url` to use the repository `UPSTREAM_URL`; omit `target` to use `all`. Workflow inputs are visible in GitHub Actions metadata, so the override must not contain credentials, tokens, or sensitive query parameters. It must also be compatible with the client certificate and upstream CA stored in repository Secrets.
 
 Publish the CLI and desktop release by pushing a version tag only after the required target-platform launch evidence has been reviewed:
 

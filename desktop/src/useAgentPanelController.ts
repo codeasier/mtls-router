@@ -1346,7 +1346,7 @@ export function useAgentPanelController({
         try {
           const link = document.createElement("a");
           link.href = url;
-          link.download = "mtls-router-model-config.json";
+          link.download = "CodeasierRouter-model-config.json";
           link.click();
         } finally {
           URL.revokeObjectURL(url);

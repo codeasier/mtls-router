@@ -36,7 +36,7 @@ fn load_credentials(path: std::path::PathBuf) -> Arc<CredentialStore> {
     if let Err(CredentialError::InvalidFormat(_)) =
         tauri::async_runtime::block_on(credentials.read_summary())
     {
-        eprintln!("mtls-router: removing malformed credential file");
+        eprintln!("CodeasierRouter: removing malformed credential file");
         let _ = tauri::async_runtime::block_on(credentials.delete());
     }
     credentials
@@ -236,7 +236,7 @@ pub fn run() {
             commands::resolve_app_quit,
         ])
         .build(tauri::generate_context!())
-        .expect("error while building mtls-router desktop")
+        .expect("error while building CodeasierRouter desktop")
         .run(|app, event| {
             if let tauri::RunEvent::ExitRequested { api, .. } = event {
                 let lifecycle = &app.state::<AppState>().lifecycle;

@@ -97,7 +97,7 @@ desktop_upload_template="$(awk '
     exit
   }
 ' "$WORKFLOW")"
-[[ "$desktop_upload_template" == 'mtls-router-desktop-${{ matrix.os }}-${{ matrix.arch }}' ]] || \
+[[ "$desktop_upload_template" == 'CodeasierRouter-desktop-${{ matrix.os }}-${{ matrix.arch }}' ]] || \
   fail "desktop upload name template changed: $desktop_upload_template"
 
 desktop_download_glob="$(awk '
@@ -109,8 +109,8 @@ desktop_download_glob="$(awk '
     exit
   }
 ' "$WORKFLOW")"
-[[ "$desktop_download_glob" == 'mtls-router-desktop-*' ]] || \
-  fail "desktop aggregation glob is not mtls-router-desktop-*: $desktop_download_glob"
+[[ "$desktop_download_glob" == 'CodeasierRouter-desktop-*' ]] || \
+  fail "desktop aggregation glob is not CodeasierRouter-desktop-*: $desktop_download_glob"
 
 for os_arch in windows-amd64 windows-arm64 darwin-amd64 darwin-arm64 linux-amd64 linux-arm64; do
   os=${os_arch%-*}
@@ -121,14 +121,18 @@ for os_arch in windows-amd64 windows-arm64 darwin-amd64 darwin-arm64 linux-amd64
     gsub(/\$\{\{ matrix\.arch \}\}/, arch)
     print
   }')"
-  expected_name="mtls-router-desktop-${os}-${arch}"
+  expected_name="CodeasierRouter-desktop-${os}-${arch}"
   [[ "$producer_name" == "$expected_name" ]] || \
     fail "desktop upload template produced $producer_name, expected $expected_name"
   case "$producer_name" in
     $desktop_download_glob) ;;
     *) fail "desktop producer $producer_name does not match $desktop_download_glob" ;;
   esac
+  grep -Fq "CodeasierRouter-desktop-${os}-${arch}" "$RECOVERY" || \
+    fail "recovery workflow is missing CodeasierRouter desktop artifact $os-$arch"
 done
+grep -Fq 'pattern: CodeasierRouter-desktop-*' "$RECOVERY" || \
+  fail 'recovery workflow does not download CodeasierRouter desktop artifacts'
 [[ "$(grep -Fc 'matrix: ${{ fromJSON(needs.prepare.outputs.' "$WORKFLOW")" -eq 2 ]] || \
   fail 'release producer jobs must consume prepared dynamic matrices'
 grep -Fq 'SELECTED_TARGET: ${{ github.event_name == '\''workflow_dispatch'\'' && inputs.target || '\''all'\'' }}' "$WORKFLOW" || \
