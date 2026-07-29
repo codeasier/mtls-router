@@ -164,44 +164,63 @@ describe("responsive Claude role layout", () => {
 describe("model configuration typography", () => {
   it("keeps configuration labels and supporting text readable", () => {
     for (const selector of [
-      ".config-workbench label",
-      ".config-workbench legend",
-      ".config-workbench small",
-      ".config-workbench .option-field > span",
-      ".config-workbench .catalog-model code",
-      ".config-workbench .validation-path",
+      ".agent-panel label",
+      ".agent-panel legend",
+      ".agent-panel small",
+      ".agent-panel .option-field > span",
+      ".agent-panel .catalog-model code",
+      ".agent-panel .validation-path",
+      ".agent-panel .role-row > label",
+      ".agent-panel .context-selector legend",
+      ".agent-panel .context-selector label",
     ]) {
       const declarations = compact(findRuleDeclarations(css, selector));
-      expect(declarations).toMatch(/font-size:\s*12px;/);
+      expect(declarations).toMatch(/font-size:\s*13px;/);
       expect(declarations).toMatch(/line-height:\s*1\.5;/);
     }
   });
 
   it("uses readable text and height for configuration controls", () => {
     for (const selector of [
-      ".config-workbench .control-button",
-      ".config-workbench .text-button",
-      '.config-workbench input:not([type="checkbox"]):not([type="radio"]):not([type="file"])',
-      ".config-workbench select",
-      ".config-workbench textarea",
+      ".agent-panel .control-button",
+      ".agent-panel .text-button",
+      '.agent-panel input:not([type="checkbox"]):not([type="radio"]):not([type="file"])',
+      ".agent-panel select",
+      ".agent-panel textarea",
+      ".agent-panel .advanced-editor textarea",
     ]) {
       const declarations = compact(findRuleDeclarations(css, selector));
-      expect(declarations).toMatch(/font-size:\s*14px;/);
+      expect(declarations).toMatch(/font-size:\s*15px;/);
       expect(declarations).toMatch(/line-height:\s*1\.4;/);
     }
   });
 
   it("gives single-line configuration controls enough height", () => {
     for (const selector of [
-      ".config-workbench .control-button",
-      ".config-workbench .text-button",
-      '.config-workbench input:not([type="checkbox"]):not([type="radio"]):not([type="file"])',
-      ".config-workbench select",
+      ".agent-panel .control-button",
+      ".agent-panel .text-button",
+      '.agent-panel input:not([type="checkbox"]):not([type="radio"]):not([type="file"])',
+      ".agent-panel select",
     ]) {
       expect(compact(findRuleDeclarations(css, selector))).toMatch(
         /min-height:\s*42px;/,
       );
     }
+  });
+
+  it("centers discovery and execution status across the full workspace", () => {
+    const workspace = compact(
+      findRuleDeclarations(css, ".agent-panel__workspace--status"),
+    );
+    const processing = compact(
+      findRuleDeclarations(css, ".agent-panel__processing"),
+    );
+
+    expect(workspace).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\);/);
+    expect(workspace).toMatch(/align-items:\s*center;/);
+    expect(workspace).toMatch(/justify-items:\s*center;/);
+    expect(processing).toMatch(/grid-column:\s*1\s*\/\s*-1;/);
+    expect(processing).toMatch(/justify-self:\s*center;/);
   });
 });
 

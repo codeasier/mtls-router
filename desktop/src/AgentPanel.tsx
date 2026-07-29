@@ -84,6 +84,26 @@ export function AgentPanel({
   const hasFields = Boolean(
     controller.target && controller.discovery && controller.config,
   );
+  const showProcessing = controller.phase.kind === "loading" || busy;
+  const showWorkspaceProcessing = showProcessing && !hasFields;
+  const showRailProcessing = showProcessing && hasFields;
+  const showIdle = controller.phase.kind === "editing" && !controller.result;
+  const showPreview =
+    controller.phase.kind === "previewing" && Boolean(controller.target);
+  const showResult = Boolean(controller.result && controller.target);
+  const showReadonly = controller.phase.kind === "readonly";
+  const showBlocked = controller.phase.kind === "blocked-dirty";
+  const showReloadFailed = controller.phase.kind === "reload-failed";
+  const showRail =
+    Boolean(controller.issue) ||
+    showResult ||
+    showPreview ||
+    showIdle ||
+    showReadonly ||
+    showBlocked ||
+    showReloadFailed ||
+    showRailProcessing;
+  const statusOnly = showWorkspaceProcessing && !showRail;
   const fieldResetToken =
     resetToken +
     (controller.preview ? 100_000 : 0) +
@@ -311,229 +331,243 @@ export function AgentPanel({
         </button>
       </header>
 
-      <div className="agent-panel__workspace">
+      <div
+        className={
+          statusOnly
+            ? "agent-panel__workspace agent-panel__workspace--status"
+            : "agent-panel__workspace"
+        }
+      >
         {hasFields && (
           <div ref={editorRef} className="agent-panel__editor" tabIndex={-1}>
             {fields}
           </div>
         )}
 
-        <aside className="agent-panel__rail" aria-live="polite">
-          {controller.issue && (
-            <p
-              className={`agent-alert agent-panel__notice agent-panel__notice--${controller.issue.kind}`}
-              role={controller.issue.kind === "success" ? "status" : "alert"}
-            >
-              {controller.issue.kind === "success"
-                ? t("agents.panel.writeComplete")
-                : t("agents.panel.operationFailed", {
-                    code: sanitizeSensitiveText(controller.issue.code),
-                  })}
-            </p>
-          )}
+        {showWorkspaceProcessing && (
+          <div
+            className="processing-stage agent-panel__processing"
+            role="status"
+          >
+            <h3>{t(phaseMessage(controller.phase.kind))}</h3>
+          </div>
+        )}
 
-          {controller.result && controller.target && (
-            <AgentPreviewPane
-              target={controller.target}
-              preview={null}
-              result={controller.result}
-              busy={busy}
-              onGenerate={generatePreview}
-              onBackToEdit={controller.returnToEditing}
-              onWrite={(approvals) => void controller.write(approvals)}
-              onCancel={onBack}
-              onFinish={() => {
-                restoreEditorFocusRef.current = true;
-                controller.dismissResult();
-              }}
-            />
-          )}
+        {showRail && (
+          <aside className="agent-panel__rail" aria-live="polite">
+            {controller.issue && (
+              <p
+                className={`agent-alert agent-panel__notice agent-panel__notice--${controller.issue.kind}`}
+                role={controller.issue.kind === "success" ? "status" : "alert"}
+              >
+                {controller.issue.kind === "success"
+                  ? t("agents.panel.writeComplete")
+                  : t("agents.panel.operationFailed", {
+                      code: sanitizeSensitiveText(controller.issue.code),
+                    })}
+              </p>
+            )}
 
-          {controller.phase.kind === "previewing" && controller.target && (
-            <div className="agent-panel__preview">
-              <h3 ref={previewHeadingRef} tabIndex={-1}>
-                {t("agents.reviewScope")}
-              </h3>
+            {showRailProcessing && (
+              <div
+                className="processing-stage agent-panel__processing"
+                role="status"
+              >
+                <h3>{t(phaseMessage(controller.phase.kind))}</h3>
+              </div>
+            )}
+
+            {showResult && controller.target && controller.result && (
               <AgentPreviewPane
                 target={controller.target}
-                preview={controller.preview}
-                result={null}
-                busy={false}
+                preview={null}
+                result={controller.result}
+                busy={busy}
                 onGenerate={generatePreview}
                 onBackToEdit={controller.returnToEditing}
                 onWrite={(approvals) => void controller.write(approvals)}
                 onCancel={onBack}
-                onFinish={controller.dismissResult}
+                onFinish={() => {
+                  restoreEditorFocusRef.current = true;
+                  controller.dismissResult();
+                }}
               />
-            </div>
-          )}
+            )}
 
-          {controller.phase.kind === "editing" && !controller.result && (
-            <div
-              className="agent-panel__state agent-panel__state--idle"
-              role="status"
-            >
-              <p className="overline">{t("agents.panel.status")}</p>
-              <strong>
-                {dirty ? t("agents.panel.unsaved") : t("agents.panel.ready")}
-              </strong>
-              <p>{t("agents.panel.previewSteps")}</p>
-              <button
-                type="button"
-                className="control-button"
-                disabled={
-                  !controller.operations.preview ||
-                  Boolean(controller.draftState.error)
-                }
-                onClick={generatePreview}
+            {showPreview && controller.target && (
+              <div className="agent-panel__preview">
+                <h3 ref={previewHeadingRef} tabIndex={-1}>
+                  {t("agents.reviewScope")}
+                </h3>
+                <AgentPreviewPane
+                  target={controller.target}
+                  preview={controller.preview}
+                  result={null}
+                  busy={false}
+                  onGenerate={generatePreview}
+                  onBackToEdit={controller.returnToEditing}
+                  onWrite={(approvals) => void controller.write(approvals)}
+                  onCancel={onBack}
+                  onFinish={controller.dismissResult}
+                />
+              </div>
+            )}
+
+            {showIdle && (
+              <div
+                className="agent-panel__state agent-panel__state--idle"
+                role="status"
               >
-                {t("agents.generatePreview")}
-              </button>
-            </div>
-          )}
-
-          {(controller.phase.kind === "loading" || busy) && (
-            <div
-              className="processing-stage agent-panel__processing"
-              role="status"
-            >
-              <span className="instrument__dial" aria-hidden="true">
-                {controller.phase.kind === "writing" ? "TX" : "GET"}
-              </span>
-              <h3>{t(phaseMessage(controller.phase.kind))}</h3>
-            </div>
-          )}
-
-          {controller.phase.kind === "readonly" && (
-            <div className="agent-panel__state" role="alert">
-              <p>{t("agents.panel.readonly")}</p>
-              {targetState && (
-                <dl className="agent-panel__metadata">
-                  <div>
-                    <dt>{t("agents.effect.path")}</dt>
-                    <dd>{sanitizeSensitiveText(targetState.path)}</dd>
-                  </div>
-                  <div>
-                    <dt>{t("agents.format")}</dt>
-                    <dd>{sanitizeSensitiveText(targetState.format)}</dd>
-                  </div>
-                  <div>
-                    <dt>{t("agents.exists")}</dt>
-                    <dd>
-                      {targetState.exists
-                        ? t("agents.exists")
-                        : t("agents.pendingCreate")}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>{t("agents.panel.configurationState")}</dt>
-                    <dd>
-                      {t(
-                        `agents.configuration.${configurationPresentation(targetState).state}`,
-                      )}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>{t("agents.permission")}</dt>
-                    <dd>
-                      {targetState.writable
-                        ? t("agents.writable")
-                        : t("agents.configuration.readonly")}
-                    </dd>
-                  </div>
-                </dl>
-              )}
-              {targetState && recoveryReasons(targetState).length > 0 && (
-                <ul className="agent-recovery-reasons">
-                  {recoveryReasons(targetState).map((reason) => (
-                    <li key={reason}>{recoveryReason(reason, t)}</li>
-                  ))}
-                </ul>
-              )}
-              {"code" in controller.phase.reason && (
-                <p>
-                  {t("agents.panel.operationFailed", {
-                    code: sanitizeSensitiveText(controller.phase.reason.code),
-                  })}
-                </p>
-              )}
-              {readonlyCredential ? (
+                <p className="overline">{t("agents.panel.status")}</p>
+                <strong>
+                  {dirty ? t("agents.panel.unsaved") : t("agents.panel.ready")}
+                </strong>
+                <p>{t("agents.panel.previewSteps")}</p>
                 <button
                   type="button"
                   className="control-button"
-                  onClick={onNavigateToApiKeys}
+                  disabled={
+                    !controller.operations.preview ||
+                    Boolean(controller.draftState.error)
+                  }
+                  onClick={generatePreview}
                 >
-                  {t("agents.issue.toApiKeys")}
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  className="control-button"
-                  onClick={onRetrySession}
-                >
-                  {t("agents.panel.retry")}
-                </button>
-              )}
-              <button type="button" className="text-button" onClick={onBack}>
-                {t("agents.panel.back")}
-              </button>
-            </div>
-          )}
-
-          {controller.phase.kind === "blocked-dirty" && (
-            <div className="agent-panel__state" role="alert">
-              <p>{t("agents.panel.blockedDirty")}</p>
-              {controller.phase.errorCode && (
-                <p>
-                  {t("agents.panel.operationFailed", {
-                    code: sanitizeSensitiveText(controller.phase.errorCode),
-                  })}
-                </p>
-              )}
-              <div className="config-actions">
-                <button
-                  type="button"
-                  className="text-button"
-                  disabled={!controller.operations.export}
-                  onClick={() => void controller.exportConfig()}
-                >
-                  {t("agents.exportConfig")}
-                </button>
-                <button
-                  type="button"
-                  className="text-button"
-                  onClick={() => void controller.retryBlockedDraft()}
-                >
-                  {t("agents.panel.retry")}
-                </button>
-                <button
-                  type="button"
-                  className="control-button control-button--danger"
-                  onClick={() => void discardBlockedDraft()}
-                >
-                  {t("agents.panel.discard")}
+                  {t("agents.generatePreview")}
                 </button>
               </div>
-            </div>
-          )}
+            )}
 
-          {controller.phase.kind === "reload-failed" && (
-            <div className="agent-panel__state" role="alert">
-              <p>
-                {t("agents.panel.reloadFailed", {
-                  code: sanitizeSensitiveText(controller.phase.code),
-                })}
-              </p>
-              <button
-                type="button"
-                className="control-button"
-                onClick={() => void controller.refresh()}
-              >
-                {t("agents.panel.retry")}
-              </button>
-            </div>
-          )}
-        </aside>
+            {showReadonly && controller.phase.kind === "readonly" && (
+              <div className="agent-panel__state" role="alert">
+                <p>{t("agents.panel.readonly")}</p>
+                {targetState && (
+                  <dl className="agent-panel__metadata">
+                    <div>
+                      <dt>{t("agents.effect.path")}</dt>
+                      <dd>{sanitizeSensitiveText(targetState.path)}</dd>
+                    </div>
+                    <div>
+                      <dt>{t("agents.format")}</dt>
+                      <dd>{sanitizeSensitiveText(targetState.format)}</dd>
+                    </div>
+                    <div>
+                      <dt>{t("agents.exists")}</dt>
+                      <dd>
+                        {targetState.exists
+                          ? t("agents.exists")
+                          : t("agents.pendingCreate")}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>{t("agents.panel.configurationState")}</dt>
+                      <dd>
+                        {t(
+                          `agents.configuration.${configurationPresentation(targetState).state}`,
+                        )}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>{t("agents.permission")}</dt>
+                      <dd>
+                        {targetState.writable
+                          ? t("agents.writable")
+                          : t("agents.configuration.readonly")}
+                      </dd>
+                    </div>
+                  </dl>
+                )}
+                {targetState && recoveryReasons(targetState).length > 0 && (
+                  <ul className="agent-recovery-reasons">
+                    {recoveryReasons(targetState).map((reason) => (
+                      <li key={reason}>{recoveryReason(reason, t)}</li>
+                    ))}
+                  </ul>
+                )}
+                {"code" in controller.phase.reason && (
+                  <p>
+                    {t("agents.panel.operationFailed", {
+                      code: sanitizeSensitiveText(controller.phase.reason.code),
+                    })}
+                  </p>
+                )}
+                {readonlyCredential ? (
+                  <button
+                    type="button"
+                    className="control-button"
+                    onClick={onNavigateToApiKeys}
+                  >
+                    {t("agents.issue.toApiKeys")}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="control-button"
+                    onClick={onRetrySession}
+                  >
+                    {t("agents.panel.retry")}
+                  </button>
+                )}
+                <button type="button" className="text-button" onClick={onBack}>
+                  {t("agents.panel.back")}
+                </button>
+              </div>
+            )}
+
+            {showBlocked && controller.phase.kind === "blocked-dirty" && (
+              <div className="agent-panel__state" role="alert">
+                <p>{t("agents.panel.blockedDirty")}</p>
+                {controller.phase.errorCode && (
+                  <p>
+                    {t("agents.panel.operationFailed", {
+                      code: sanitizeSensitiveText(controller.phase.errorCode),
+                    })}
+                  </p>
+                )}
+                <div className="config-actions">
+                  <button
+                    type="button"
+                    className="text-button"
+                    disabled={!controller.operations.export}
+                    onClick={() => void controller.exportConfig()}
+                  >
+                    {t("agents.exportConfig")}
+                  </button>
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={() => void controller.retryBlockedDraft()}
+                  >
+                    {t("agents.panel.retry")}
+                  </button>
+                  <button
+                    type="button"
+                    className="control-button control-button--danger"
+                    onClick={() => void discardBlockedDraft()}
+                  >
+                    {t("agents.panel.discard")}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {showReloadFailed && controller.phase.kind === "reload-failed" && (
+              <div className="agent-panel__state" role="alert">
+                <p>
+                  {t("agents.panel.reloadFailed", {
+                    code: sanitizeSensitiveText(controller.phase.code),
+                  })}
+                </p>
+                <button
+                  type="button"
+                  className="control-button"
+                  onClick={() => void controller.refresh()}
+                >
+                  {t("agents.panel.retry")}
+                </button>
+              </div>
+            )}
+          </aside>
+        )}
       </div>
     </section>
   );

@@ -157,7 +157,6 @@ export function AgentPage({
       </header>
       {loading ? (
         <div className="processing-stage" role="status">
-          <span className="instrument__dial">GET</span>
           <h3>{t("agents.detecting")}</h3>
         </div>
       ) : detection ? (

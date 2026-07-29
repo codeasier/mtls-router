@@ -49,7 +49,7 @@ React UI ──Tauri invoke──▶ Rust commands.rs ──stdin/stdout JSON─
 | `scheduler.rs`        | `PollScheduler` —— 周期性 router 状态/健康轮询；推进端口释放观察；emit `router-poll-snapshot` 事件；可见性感知间隔                                |
 | `port_recovery.rs`    | `PortRecovery` —— manager session epoch 绑定的约 10 秒定期采样状态；区分 `observing`、`released`、`reoccupied`                                    |
 | `sidecar.rs`          | `SidecarPaths::resolve()` —— 在 app 二进制旁定位 `mtls-router[.exe]` 与 `mtls-router-manager[.exe]`（运行时纯名字）；校验 SHA-256 + 原生架构/格式 |
-| `tray.rs`             | 系统托盘图标/菜单；状态感知标签；关闭主窗口隐藏到托盘（macOS 同步 `AppHandle::hide` 让出前台）；托盘/二次实例共用激活路径                           |
+| `tray.rs`             | 系统托盘图标/菜单；状态感知标签；关闭主窗口隐藏到托盘（macOS 同步 `AppHandle::hide` 让出前台）；托盘/二次实例共用激活路径                         |
 | `orchestration.rs`    | `first_launch()` —— sidecar 有效且无 router 运行时自动启动 router                                                                                 |
 | `model_config.rs`     | model config 导入/导出 JSON 校验                                                                                                                  |
 | `paths.rs`            | 桌面数据目录解析（委托给 `MTLS_ROUTER_DESKTOP_DATA_DIR` 或 OS 默认），并派生 `credentials.json` 路径                                              |

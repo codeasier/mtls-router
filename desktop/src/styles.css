@@ -1639,6 +1639,13 @@ main {
   background: var(--paper-deep);
 }
 
+.agent-panel__workspace--status {
+  grid-template-columns: minmax(0, 1fr);
+  min-height: calc(100dvh - 190px);
+  align-items: center;
+  justify-items: center;
+}
+
 .agent-panel__editor {
   display: grid;
   grid-template-columns: minmax(220px, 0.28fr) minmax(0, 1fr);
@@ -1711,8 +1718,11 @@ main {
 }
 
 .agent-panel__processing {
+  grid-column: 1 / -1;
+  width: min(620px, 100%);
   min-height: 220px;
   margin: 0;
+  justify-self: center;
 }
 
 .agent-panel__metadata {
@@ -2837,34 +2847,39 @@ main {
   background: var(--warning-soft);
 }
 
-.config-workbench label,
-.config-workbench legend,
-.config-workbench summary,
-.config-workbench small,
-.config-workbench .overline,
-.config-workbench .source-note,
-.config-workbench .drift-note,
-.config-workbench .validation-path,
-.config-workbench .catalog-search > span,
-.config-workbench .option-field > span,
-.config-workbench .advanced-editor label > span,
-.config-workbench .catalog-model code {
-  font-size: 12px;
+.agent-panel label,
+.agent-panel legend,
+.agent-panel summary,
+.agent-panel small,
+.agent-panel .overline,
+.agent-panel .source-note,
+.agent-panel .drift-note,
+.agent-panel .validation-path,
+.agent-panel .catalog-search > span,
+.agent-panel .option-field > span,
+.agent-panel .advanced-editor label > span,
+.agent-panel .catalog-model code,
+.agent-panel .role-row > label,
+.agent-panel .optional-role-editor > label,
+.agent-panel .context-selector legend,
+.agent-panel .context-selector label {
+  font-size: 13px;
   line-height: 1.5;
 }
 
-.config-workbench .control-button,
-.config-workbench .text-button,
-.config-workbench
+.agent-panel .control-button,
+.agent-panel .text-button,
+.agent-panel
   input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
-.config-workbench select {
+.agent-panel select {
   min-height: 42px;
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1.4;
 }
 
-.config-workbench textarea {
-  font-size: 14px;
+.agent-panel textarea,
+.agent-panel .advanced-editor textarea {
+  font-size: 15px;
   line-height: 1.4;
 }
 
@@ -3092,10 +3107,14 @@ main {
   .apikey-grid,
   .apikey-explainer,
   .agent-card-grid,
-  .config-workbench,
+  .agent-panel__editor,
   .preview-layout,
   .result-grid {
     grid-template-columns: 1fr;
+  }
+
+  .agent-panel__workspace--status {
+    min-height: calc(100dvh - 160px);
   }
 
   .claude-selection-fields {
