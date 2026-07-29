@@ -306,6 +306,8 @@ pub fn handle_window_event<R: Runtime>(window: &tauri::Window<R>, event: &Window
                 CloseToTrayAction::HideApp => {
                     #[cfg(target_os = "macos")]
                     let _ = window.app_handle().hide();
+                    #[cfg(not(target_os = "macos"))]
+                    unreachable!("non-macOS close plans must not hide the application");
                 }
                 CloseToTrayAction::HideWindow => {
                     let _ = window.hide();
@@ -1180,7 +1182,7 @@ mod tests {
     }
 
     #[test]
-    fn macos_tray_reopen_and_second_instance_activation_unhide_before_focus() {
+    fn macos_tray_reopen_and_second_instance_activation_unhides_before_focus() {
         assert_eq!(
             activate_main_window_plan(true),
             ActivateMainWindowPlan {
