@@ -161,11 +161,26 @@ src-tauri/binaries/mtls-router-<target-triple>[.exe]
 
 `AGENT_MODEL_PRESET_BASE64` 只会转发给打包的 manager sidecar，不会注入 router sidecar，也不是桌面运行时设置。规范化后的 `SIMPLIFY` 同样只会转发给打包的 manager sidecar；release 构建会让 standalone 和 desktop manager 使用同一个值。
 
-本机开发启动：
+### 分层本地桌面开发
+
+按改动类型选择最短反馈循环。这些命令都不会绕过 sidecar 哈希校验、manager 握手、凭据隔离、preview/revision 校验或 Agent 事务写入保护。
+
+| 改动类型 | 命令 | 说明 |
+| --- | --- | --- |
+| 仅 React/UI | `cd desktop && npm run dev:mock` | 只跑 Vite + HMR。通过现有 `App` 边界注入内存 `DesktopApi`。绝不读写真实凭据或 Agent 配置。可选场景：`?mockScenario=success\|protocol-error\|preview-stale\|write-fail`（或 `window.__MTLS_MOCK_SCENARIO__`）。生产构建无法启用 mock（仅 `DEV && VITE_MOCK=true`）。 |
+| Rust/Tauri（sidecar 未变） | `cd desktop && npm run dev:tauri:reuse` | 启动 `tauri dev` 但不跑 `sidecars:build`。host target sidecar 缺失时 fail closed 并提示先完整准备。运行时仍校验嵌入哈希与 manager 握手。 |
+| 真实 Agent 链路（隔离路径） | `cd desktop && npm run dev:agent` | 显式覆盖 `MTLS_ROUTER_DESKTOP_DATA_DIR`、`CLAUDE_CONFIG_DIR`、`OPENCODE_CONFIG`、`CODEX_HOME` 到可丢弃根目录（或 `MTLS_ROUTER_DEV_AGENT_ROOT`），再包装 reuse。**不**隔离固定 router 端口 `127.0.0.1:19099`；请避免与日常 router 实例并行。 |
+| Manager/router、preset 或证书 | `npm run sidecars:build` 后 reuse 或 `npm run tauri -- dev` | Go sidecar 字节变化后必须重建，以便 Rust 重新嵌入 SHA-256。 |
+| 安装器 / 发布布局 | `make desktop-package-current` | 完整打包路径。 |
+
+首次本机准备与完整本地启动仍使用：
 
 ```bash
+cd desktop
 DEPLOYMENT_ID=dev VERSION=dev MANAGEMENT_PROTOCOL_VERSION=4 npm run tauri -- dev
 ```
+
+`npm run tauri` 始终先执行 `sidecars:build`。当 `src-tauri/binaries/` 下已有有效 host target sidecar 时，优先使用 `dev:tauri:reuse`。
 
 本机 bundle 构建需要显式设置 release 元数据：
 

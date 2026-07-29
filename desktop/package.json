@@ -9,6 +9,9 @@
   },
   "scripts": {
     "dev": "vite",
+    "dev:mock": "node ./scripts/dev-mock.mjs",
+    "dev:tauri:reuse": "node ./scripts/dev-tauri-reuse.mjs",
+    "dev:agent": "node ./scripts/dev-agent.mjs",
     "tauri": "npm run sidecars:build && tauri",
     "sidecars:build": "./scripts/build-sidecars.sh",
     "package:verify": "./scripts/verify-package.sh",
@@ -17,7 +20,7 @@
     "static:check": "eslint . && prettier --check .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && node ./scripts/verify-production-no-mock.mjs",
     "rust:format": "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check",
     "rust:test": "cargo test --manifest-path src-tauri/Cargo.toml --locked",
     "verify": "npm run static:check && npm run typecheck && npm test && npm run build && npm run rust:format && npm run rust:test"

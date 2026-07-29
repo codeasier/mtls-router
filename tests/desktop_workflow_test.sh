@@ -48,6 +48,89 @@ for command in 'npm run static:check' 'npm run typecheck' 'npm test' 'npm run bu
   'cargo test --manifest-path desktop/src-tauri/Cargo.toml --locked'; do
   contains "$CI" "$command"
 done
+
+# Layered local desktop debug commands (#153).
+node - "$PACKAGE" <<'NODE' || fail 'desktop package.json missing layered dev scripts'
+const fs = require('node:fs');
+const pkg = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const required = {
+  'dev:mock': 'node ./scripts/dev-mock.mjs',
+  'dev:tauri:reuse': 'node ./scripts/dev-tauri-reuse.mjs',
+  'dev:agent': 'node ./scripts/dev-agent.mjs',
+};
+for (const [name, value] of Object.entries(required)) {
+  if (pkg.scripts?.[name] !== value) {
+    throw new Error(`package.json scripts.${name} must be exactly ${value}`);
+  }
+}
+if (pkg.scripts?.tauri !== 'npm run sidecars:build && tauri') {
+  throw new Error('package.json scripts.tauri must still build sidecars first');
+}
+NODE
+contains "$ROOT/desktop/scripts/dev-tauri-reuse.mjs" 'run `npm run sidecars:build`'
+contains "$ROOT/desktop/scripts/dev-tauri-reuse.mjs" 'VITE_MOCK: "false"'
+contains "$ROOT/desktop/scripts/dev-tauri-reuse.mjs" 'shell: process.platform === "win32"'
+contains "$ROOT/desktop/scripts/dev-mock.mjs" 'VITE_MOCK: "true"'
+contains "$ROOT/desktop/scripts/dev-mock.mjs" 'shell: process.platform === "win32"'
+contains "$ROOT/desktop/scripts/dev-agent.mjs" 'MTLS_ROUTER_DESKTOP_DATA_DIR:'
+contains "$ROOT/desktop/scripts/dev-agent.mjs" 'CLAUDE_CONFIG_DIR:'
+contains "$ROOT/desktop/scripts/dev-agent.mjs" 'OPENCODE_CONFIG:'
+contains "$ROOT/desktop/scripts/dev-agent.mjs" 'CODEX_HOME:'
+contains "$ROOT/desktop/scripts/dev-agent.mjs" 'VITE_MOCK: "false"'
+contains "$ROOT/desktop/scripts/dev-agent.mjs" 'dev-tauri-reuse.mjs'
+contains "$ROOT/desktop/scripts/verify-production-no-mock.mjs" '__MTLS_BROWSER_MOCK__'
+contains "$ROOT/desktop/src/dev/resolveDesktopApi.ts" 'env.DEV === true && env.PROD !== true && env.VITE_MOCK === "true"'
+contains "$ROOT/desktop/src/main.tsx" 'import.meta.env.DEV'
+contains "$ROOT/desktop/src/main.tsx" 'import.meta.env.PROD'
+contains "$ROOT/desktop/src/main.tsx" 'import.meta.env.VITE_MOCK !== "true"'
+contains "$ROOT/desktop/src/main.tsx" 'await import("./dev/mockDesktopApi")'
+contains "$ROOT/docs/BUILD.md" 'npm run dev:mock'
+contains "$ROOT/docs/zh-CN/BUILD.md" 'npm run dev:mock'
+contains "$ROOT/desktop/INDEX.md" 'npm run dev:mock'
+
+node --input-type=module - \
+  "$ROOT/desktop/scripts/dev-agent.mjs" \
+  "$ROOT/desktop/scripts/dev-tauri-reuse.mjs" <<'NODE' || fail 'desktop dev isolation wrappers are unsafe'
+import { rmSync } from 'node:fs';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+const [agentPath, reusePath] = process.argv.slice(2);
+const { createAgentEnvironment } = await import(pathToFileURL(agentPath));
+const { reuseEnvironment } = await import(pathToFileURL(reusePath));
+const hostile = {
+  ...process.env,
+  VITE_MOCK: 'true',
+  MTLS_ROUTER_DESKTOP_DATA_DIR: '/daily/desktop',
+  CLAUDE_CONFIG_DIR: '/daily/claude',
+  OPENCODE_CONFIG: '/daily/opencode.json',
+  CODEX_HOME: '/daily/codex',
+};
+const isolated = createAgentEnvironment(hostile);
+try {
+  for (const name of [
+    'MTLS_ROUTER_DESKTOP_DATA_DIR',
+    'CLAUDE_CONFIG_DIR',
+    'OPENCODE_CONFIG',
+    'CODEX_HOME',
+  ]) {
+    const relative = path.relative(isolated.stateRoot, isolated.env[name]);
+    if (relative.startsWith('..') || path.isAbsolute(relative)) {
+      throw new Error(`${name} escaped the disposable root`);
+    }
+  }
+  if (isolated.env.VITE_MOCK !== 'false') {
+    throw new Error('dev:agent must disable browser mock mode');
+  }
+  if (reuseEnvironment(hostile).VITE_MOCK !== 'false') {
+    throw new Error('dev:tauri:reuse must disable browser mock mode');
+  }
+} finally {
+  if (isolated.temporary) {
+    rmSync(isolated.stateRoot, { recursive: true, force: true });
+  }
+}
+NODE
 contains "$CI" 'sudo apt-get install -y libappindicator3-dev librsvg2-dev libwebkit2gtk-4.1-dev xdg-utils'
 contains "$RELEASE" 'sudo apt-get install -y libappindicator3-dev librsvg2-dev libwebkit2gtk-4.1-dev xdg-utils'
 contains "$CI" 'npm exec tauri -- build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --no-sign --ci'

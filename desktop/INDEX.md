@@ -22,6 +22,9 @@ React UI ──Tauri invoke──▶ Rust commands.rs ──stdin/stdout JSON─
 | 文件                                | 职责                                                                                                              |
 | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | `ipc.ts`                            | `DesktopApi` 接口 + `createDesktopApi()` —— 所有 Tauri 命令的类型化包装；`sanitizeSensitiveText()` 用于客户端脱敏 |
+| `dev/fixtures.ts`                   | 与 Vitest 解耦的浏览器/单测共用 fixture 数据与 mock 场景解析                                                      |
+| `dev/mockDesktopApi.ts`             | 仅开发 mock 的内存 `DesktopApi`；不读写真实凭据或 Agent 配置                                                      |
+| `dev/resolveDesktopApi.ts`          | mock 入口门控：仅 `DEV && VITE_MOCK=true` 时启用；生产构建始终走真实 Tauri API                                    |
 | `App.tsx`                           | 根布局、区块导航与注册式 Agent leave guard；面板存续期同步原生退出保护并共用可访问确认框                          |
 | `RouterPage.tsx`                    | router 状态、start/stop、health、占用者检查/终止                                                                  |
 | `AgentPage.tsx`                     | Agents 页面协调器：仅负责本地检测总览、单 Agent 目标选择、离开 guard 注册与返回焦点恢复                           |
@@ -66,6 +69,20 @@ React UI ──Tauri invoke──▶ Rust commands.rs ──stdin/stdout JSON─
 - Webview 只能保存/删除 key，不能回读明文；Rust 单次调用使用 `Zeroizing<String>`，manager 请求 JSON 与序列化缓冲在发送后清零。
 - CSP：`default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost; style-src 'self' 'unsafe-inline'`。
 - manager 握手在启动时校验：version、management protocol v4、deployment ID；v4 occupant 响应枚举、字段组合、标识上限和 token 规则均 fail closed。
+
+## 分层本地开发
+
+按改动类型选择最短反馈循环（均不绕过 sidecar 哈希、manager 握手、preview/revision 或事务写入保护）：
+
+| 改动类型                    | 命令                                                                            | 说明                                                                                                                                          |
+| --------------------------- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| 仅 React/UI                 | `npm run dev:mock`                                                              | 只跑 Vite + HMR；注入内存 `DesktopApi`；可选 `?mockScenario=success\|protocol-error\|preview-stale\|write-fail`                               |
+| Rust/Tauri（sidecar 未变）  | `npm run dev:tauri:reuse`                                                       | 启动 `tauri dev` 但跳过 `sidecars:build`；sidecar 缺失则 fail closed                                                                          |
+| 真实 Agent 链路（隔离路径） | `npm run dev:agent`                                                             | 显式覆盖 `MTLS_ROUTER_DESKTOP_DATA_DIR` / `CLAUDE_CONFIG_DIR` / `OPENCODE_CONFIG` / `CODEX_HOME` 后走 reuse；不隔离固定端口 `127.0.0.1:19099` |
+| Manager/router 或嵌入元数据 | `npm run sidecars:build` 后 `npm run dev:tauri:reuse` 或 `npm run tauri -- dev` | Go sidecar 变化后必须重建；Rust 会重新嵌入哈希                                                                                                |
+| 安装器/发布验证             | `make desktop-package-current`                                                  | 完整打包                                                                                                                                      |
+
+`npm run tauri` 仍始终先执行 `sidecars:build`，适合首次准备与完整本地启动。
 
 ## 构建
 

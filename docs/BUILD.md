@@ -177,11 +177,26 @@ The normalized `SIMPLIFY` value is likewise forwarded only to the packaged
 manager sidecar; release builds use the same value for standalone and desktop
 managers.
 
-For a local native development launch:
+### Layered local desktop development
+
+Choose the shortest loop for the change type. None of these commands bypass sidecar hash checks, manager handshake checks, credential isolation, preview/revision checks, or Agent transactional writes.
+
+| Change type | Command | Notes |
+| --- | --- | --- |
+| React/UI only | `cd desktop && npm run dev:mock` | Vite + HMR only. Injects an in-memory `DesktopApi` through the existing `App` boundary. Never reads or writes real credentials or Agent config files. Optional scenarios: `?mockScenario=success\|protocol-error\|preview-stale\|write-fail` (or `window.__MTLS_MOCK_SCENARIO__`). Production builds cannot enable mock mode (`DEV && VITE_MOCK=true` only). |
+| Rust/Tauri with unchanged sidecars | `cd desktop && npm run dev:tauri:reuse` | Runs `tauri dev` without `sidecars:build`. Fails closed if host-target sidecars are missing and prompts for a full prepare. Runtime still validates embedded hashes and the manager handshake. |
+| Real Agent path against disposable dirs | `cd desktop && npm run dev:agent` | Explicitly overrides `MTLS_ROUTER_DESKTOP_DATA_DIR`, `CLAUDE_CONFIG_DIR`, `OPENCODE_CONFIG`, and `CODEX_HOME` to a disposable root (or `MTLS_ROUTER_DEV_AGENT_ROOT`), then wraps reuse. Does **not** isolate the fixed router port `127.0.0.1:19099`; avoid a concurrent daily router instance. |
+| Manager/router, presets, or certs | `npm run sidecars:build` then reuse or `npm run tauri -- dev` | Go sidecar byte changes require rebuild so Rust can re-embed SHA-256 values. |
+| Installer / release layout | `make desktop-package-current` | Full package path. |
+
+First-time native prepare and full local launch still use:
 
 ```bash
+cd desktop
 DEPLOYMENT_ID=dev VERSION=dev MANAGEMENT_PROTOCOL_VERSION=4 npm run tauri -- dev
 ```
+
+`npm run tauri` always runs `sidecars:build` first. Prefer `dev:tauri:reuse` once valid host-target sidecars already exist under `src-tauri/binaries/`.
 
 For a native bundle build, set release metadata explicitly:
 

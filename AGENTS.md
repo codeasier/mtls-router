@@ -79,6 +79,9 @@ bash tests/index_docs_test.sh          # 仅跑 INDEX 覆盖与链接校验
 
 ```bash
 cd desktop && npm ci
+npm run dev:mock                       # 仅 Vite + 浏览器 mock DesktopApi（无 Go/Cargo/Tauri）
+npm run dev:tauri:reuse                # tauri dev，复用已有 sidecar（缺失则 fail closed）
+npm run dev:agent                      # 隔离 Agent/桌面数据目录后走 reuse
 npm run static:check                   # eslint + prettier
 npm run typecheck                      # tsc --noEmit
 npm test                               # vitest run
@@ -86,6 +89,10 @@ npm run build                          # tsc + vite build
 npm run verify                         # 以上全部 + rust 格式 + rust 测试
 make desktop-verify                    # 同上，仓库根目录入口
 ```
+
+- 分层开发命令与边界见 [desktop/INDEX.md](desktop/INDEX.md) 与 [docs/BUILD.md](docs/BUILD.md)。
+- 不要为加速本地调试而绕过 sidecar 哈希、manager 握手、preview/revision 或事务写入保护。
+- `dev:mock` 仅允许 `import.meta.env.DEV && VITE_MOCK=true`；生产构建必须仍绑定真实 Tauri API。
 
 ### 桌面 Rust（desktop/src-tauri/）
 
