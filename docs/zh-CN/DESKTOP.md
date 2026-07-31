@@ -62,9 +62,9 @@ Agent 总览始终以独立卡片展示 Claude Code、OpenCode 和 Codex。每�
 
 当 `agent.detect` 确认该 Agent 存在有效的 last-applied sidecar 条目且 Agent 写入可用时，卡片还会提供**清理 CodeasierRouter 配置**。清理按单个 Agent 执行，不是批量操作；它不使用 router、模型目录、model flow 或全局 API key。所有权缺失、无效或因未解决事务恢复而受阻时，自动清理会安全失败，不会根据配置外观猜测所有权；应保留文件和备份，并且只在解决事务状态后手工处理托管字段。
 
-清理会先显示无 key 审阅，其中包含精确托管路径名称、文件 `replace` 或 `delete` 影响、计划的敏感备份以及 last-applied sidecar 变化。它只删除由 sidecar 和当前结构共同证明的所有权：Claude 的托管 `env.*` key；OpenCode 的 `provider.mtls-router`，以及在该根字段受管且当前值仍使用精确 `mtls-router/` 前缀时的根 `model`；Codex 的 `model_providers.mtls-router`、必需托管 model/auth-store 根字段、仅由已保存 Codex model config 表明曾生成的可选根字段，以及 `auth.json` 中的 `auth_mode` 和 `OPENAI_API_KEY`。其他 provider、设置和认证 metadata 会保留。Codex OS keyring 凭据不会删除，先前配置写入时被替换的 auth 字段也不会重建。
+清理会先显示无 key 审阅，其中包含精确托管路径名称、文件 `replace` 或 `delete` 影响、计划备份及其敏感性，以及 last-applied sidecar 变化。它只删除由 sidecar 和当前结构共同证明的所有权：Claude 的托管 `env.*` key；OpenCode 的 `provider.mtls-router`，以及在该根字段受管且当前值仍使用精确 `mtls-router/` 前缀时的根 `model`；Codex 的 `model_providers.mtls-router`、必需托管 model/auth-store 根字段、仅由已保存 Codex model config 表明曾生成的可选根字段，以及 `auth.json` 中的 `auth_mode` 和 `OPENAI_API_KEY`。其他 provider、设置和认证 metadata 会保留。Codex OS keyring 凭据不会删除，先前配置写入时被替换的 auth 字段也不会重建。
 
-即使只改变了无关字段，整文件 revision 漂移也需要单独确认。写入前会重新校验已签名 cleanup preview；`PREVIEW_STALE` 要求重新预览。修改前，每个受影响的现有 Agent 目标和 manager sidecar 都会创建并验证私有备份，然后在同一个 journal 事务中变更，sidecar 始终最后处理。只有删除托管字段后语义根为空时才删除文件；否则会用保留后的内容替换。移除最后一个 Agent 条目时会删除最终 sidecar。操作失败或中断时，rollback 和启动恢复会一起恢复 Agent 文件与 sidecar。
+即使只改变了无关字段，整文件 revision 漂移也需要单独确认。已记录但已经不存在的 Agent 目标会视为已清理并要求该确认；不会为它创建备份或执行修改，其他目标和 sidecar 仍会继续纳入事务。其他目标读取错误仍会 fail closed。已签名 cleanup preview 会在写入前和 journal 前重新校验；已缺失目标还会在每次修改前，以及 sidecar 变更后、commit 前立即再次校验。目标重新出现时返回 `PREVIEW_STALE`，回滚先前变更并保留 sidecar 所有权。修改前，每个受影响的现有 Agent 目标和 manager sidecar 都会创建并验证私有备份，然后在同一个 journal 事务中变更，sidecar 始终最后处理。所有 Agent 文件备份都标记为敏感，因为保留的用户字段可能含凭据；manager sidecar 备份不敏感。现存文件的语义根已经为空，或删除托管字段后变空时，都会先备份再删除；否则会用保留后的内容替换。移除最后一个 Agent 条目时会删除最终 sidecar。操作失败或中断时，rollback 和启动恢复会一起恢复 Agent 文件与 sidecar。
 
 清理会删除所选 Agent 文件中的托管认证字段，但绝不会删除桌面 `credentials.json` 中的全局 key，也不会删除任何历史 `*.bak-*` / `*.rollback-*` 文件。新生成的清理备份在成功后同样保留，并可能含 API key 或其他凭据。应把它们作为敏感恢复产物保护和审查；确认不再需要后再单独删除。
 

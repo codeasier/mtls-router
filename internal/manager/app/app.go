@@ -606,11 +606,7 @@ func (a *App) agentCleanupWrite(ctx context.Context, params json.RawMessage) (an
 	if err := protocol.DecodeParams(params, &request); err != nil {
 		return nil, err
 	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(params, &fields); err != nil {
-		return nil, invalidParams("invalid cleanup write parameters")
-	}
-	if _, ok := fields["approve_managed_overwrite"]; !ok {
+	if request.ApproveManagedOverwrite == nil {
 		return nil, invalidParams("approve_managed_overwrite is required")
 	}
 	kind, err := cleanupAgentKind(request.Agent)
@@ -624,9 +620,8 @@ func (a *App) agentCleanupWrite(ctx context.Context, params json.RawMessage) (an
 		return nil, &protocol.Error{Code: protocol.CodeWriteFailed, Message: "Agent cleanup is unavailable"}
 	}
 	result, writeErr := a.deps.agent.CleanupWrite(ctx, agent.CleanupWriteRequest{
-		Agent: kind, RevisionToken: request.RevisionToken, ApproveManagedOverwrite: request.ApproveManagedOverwrite,
+		Agent: kind, RevisionToken: request.RevisionToken, ApproveManagedOverwrite: *request.ApproveManagedOverwrite,
 	})
-	request.RevisionToken = ""
 	if writeErr != nil {
 		return nil, mapAgentError(writeErr)
 	}

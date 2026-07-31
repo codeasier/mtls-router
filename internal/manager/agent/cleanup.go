@@ -35,6 +35,7 @@ type CleanupPreview struct {
 type cleanupPlan struct {
 	writePlan
 	removedByPath  map[string][]string
+	tokenFiles     []modelconfig.CleanupRevisionFile
 	stateOperation Operation
 }
 
@@ -188,11 +189,19 @@ func (s *Service) buildCleanupPlan(kind Kind) (cleanupPlan, error) {
 		if drifted {
 			plan.drifted = []Kind{kind}
 		}
-		if len(removed) == 0 {
+		if !file.sourceRevision.Exists {
+			plan.tokenFiles = append(plan.tokenFiles, cleanupRevisionFile(file, nil))
+			plan.revisionGuards = append(plan.revisionGuards, plannedRevisionGuard{
+				path: file.sourcePath, revision: file.sourceRevision, scope: scopeAgent,
+			})
+			continue
+		}
+		if len(removed) == 0 && file.operation != OperationDelete {
 			continue
 		}
 		plan.files = append(plan.files, file)
 		plan.removedByPath[file.targetPath] = removed
+		plan.tokenFiles = append(plan.tokenFiles, cleanupRevisionFile(file, removed))
 	}
 	delete(state.Agents, kind)
 	plan.sidecar = state
@@ -235,7 +244,14 @@ func decodeCleanupModelConfig(kind Kind, raw json.RawMessage) (*modelconfig.Conf
 }
 
 func (s *Service) cleanupFilePlan(kind Kind, recorded lastAppliedFile, section lastAppliedAgent, saved *modelconfig.Config) (plannedFile, []string, bool, error) {
-	safety := inspectRecoveryTarget(recorded.Role, recorded.Path, cleanupFileFormat(kind, recorded))
+	format := cleanupFileFormat(kind, recorded)
+	safety := inspectRecoveryTarget(recorded.Role, recorded.Path, format)
+	if !safety.Exists && !containsRecoveryReason(safety.Reasons, RecoveryUnreadable) {
+		return plannedFile{
+			role: recorded.Role, format: format, sourcePath: recorded.Path, targetPath: recorded.Path,
+			operation: OperationDelete,
+		}, nil, true, nil
+	}
 	if len(safety.Reasons) != 0 {
 		if containsRecoveryReason(safety.Reasons, RecoveryNotWritable) || containsRecoveryReason(safety.Reasons, RecoveryParentUnavailable) {
 			return plannedFile{}, nil, false, operationError(CodeConfigNotWritable, agentName(kind)+" managed configuration is not writable")
@@ -243,14 +259,19 @@ func (s *Service) cleanupFilePlan(kind Kind, recorded lastAppliedFile, section l
 		return plannedFile{}, nil, false, operationError(CodeConfigInvalid, agentName(kind)+" managed configuration path is unsafe")
 	}
 	revision, content, mode, err := s.readKeyedRevision(recorded.Path, revisionContextAgentFile)
-	if err != nil || !revision.Exists {
+	if err != nil {
 		return plannedFile{}, nil, false, operationError(CodeConfigInvalid, agentName(kind)+" managed configuration cannot be read")
+	}
+	if !revision.Exists {
+		return plannedFile{
+			role: recorded.Role, format: format, sourcePath: recorded.Path, targetPath: recorded.Path,
+			operation: OperationDelete, sourceRevision: revision, targetRevision: revision,
+		}, nil, true, nil
 	}
 	if err := ensureWritable(recorded.Path); err != nil {
 		return plannedFile{}, nil, false, err
 	}
 	var transform cleanupTransform
-	format := FormatJSON
 	switch kind {
 	case ClaudeCode:
 		root, valid := decodeObject(content)
@@ -260,8 +281,7 @@ func (s *Service) cleanupFilePlan(kind Kind, recorded lastAppliedFile, section l
 		transform, err = cleanupClaude(root, section.OwnedPaths)
 	case OpenCode:
 		parsed := content
-		if filepath.Ext(recorded.Path) == ".jsonc" {
-			format = FormatJSONC
+		if format == FormatJSONC {
 			parsed, err = stripJSONC(content)
 			if err != nil {
 				return plannedFile{}, nil, false, operationError(CodeConfigInvalid, "opencode configuration is invalid JSONC")
@@ -274,7 +294,6 @@ func (s *Service) cleanupFilePlan(kind Kind, recorded lastAppliedFile, section l
 		transform, err = cleanupOpenCode(root, containsString(section.OwnedPaths, "model"))
 	case Codex:
 		if recorded.Role == "config" {
-			format = FormatTOML
 			transform, err = cleanupCodexConfig(content, saved.Codex)
 		} else {
 			root, valid := decodeObject(content)
@@ -319,22 +338,19 @@ func cleanupFileFormat(kind Kind, recorded lastAppliedFile) Format {
 func (p cleanupPlan) ManagedConfigDrift() bool { return len(p.drifted) != 0 }
 
 func (s *Service) cleanupTokenForPlan(plan cleanupPlan) (string, error) {
-	files := make([]modelconfig.CleanupRevisionFile, 0, len(plan.files)-1)
-	for _, file := range plan.files {
-		if file.scope == scopeManagerState {
-			continue
-		}
-		files = append(files, modelconfig.CleanupRevisionFile{
-			Role: file.role, SourcePath: filepath.Clean(file.sourcePath), TargetPath: filepath.Clean(file.targetPath),
-			Operation: string(file.operation), BackupRequired: file.backupRequired, BackupSource: file.backupSource,
-			SourceRevision: revisionClaim(file.sourceRevision), TargetRevision: revisionClaim(file.targetRevision),
-			RemovedPaths: append([]string(nil), plan.removedByPath[file.targetPath]...),
-		})
-	}
 	return s.signer.SignCleanupRevision(modelconfig.CleanupRevisionClaims{
-		Agent: modelAgent(plan.selected[0]), Files: files, StateOperation: string(plan.stateOperation),
+		Agent: modelAgent(plan.selected[0]), Files: plan.tokenFiles, StateOperation: string(plan.stateOperation),
 		StateRevision: revisionClaim(plan.sidecarRevision), ManagedConfigDrift: plan.ManagedConfigDrift(),
 	})
+}
+
+func cleanupRevisionFile(file plannedFile, removedPaths []string) modelconfig.CleanupRevisionFile {
+	return modelconfig.CleanupRevisionFile{
+		Role: file.role, SourcePath: filepath.Clean(file.sourcePath), TargetPath: filepath.Clean(file.targetPath),
+		Operation: string(file.operation), BackupRequired: file.backupRequired, BackupSource: file.backupSource,
+		SourceRevision: revisionClaim(file.sourceRevision), TargetRevision: revisionClaim(file.targetRevision),
+		RemovedPaths: append([]string(nil), removedPaths...),
+	}
 }
 
 func fileRevisionFromClaim(value modelconfig.RevisionState) fileRevision {
@@ -350,11 +366,11 @@ func (s *Service) cleanupPreviewForPlan(plan cleanupPlan) (CleanupPreview, error
 		RevisionToken: token, Agent: plan.selected[0], ManagedConfigDrift: plan.ManagedConfigDrift(),
 		StateChange: &FilePreview{
 			Role: "state", Path: s.sidecarPath(), Format: FormatJSON, Operation: plan.stateOperation,
-			Operations: []Operation{plan.stateOperation}, Backup: cleanupBackupPlan(s.sidecarPath()),
+			Operations: []Operation{plan.stateOperation}, Backup: cleanupBackupPlan(s.sidecarPath(), false),
 		},
 		StateBackup: &FilePreview{
 			Role: "state", Path: s.sidecarPath(), Format: FormatJSON, Operation: Operation("backup"),
-			Operations: []Operation{Operation("backup")}, Backup: cleanupBackupPlan(s.sidecarPath()),
+			Operations: []Operation{Operation("backup")}, Backup: cleanupBackupPlan(s.sidecarPath(), false),
 		},
 	}
 	for _, file := range plan.files {
@@ -366,21 +382,22 @@ func (s *Service) cleanupPreviewForPlan(plan cleanupPlan) (CleanupPreview, error
 		preview.Files = append(preview.Files, FilePreview{
 			Role: file.role, Path: file.targetPath, Format: file.format, Operation: file.operation,
 			Operations: []Operation{file.operation}, ContainsAPIKey: file.containsAPIKey,
-			Backup: cleanupBackupPlan(file.backupSource),
+			Backup: cleanupBackupPlan(file.backupSource, true),
 		})
 	}
 	sort.Strings(preview.RemovedPaths)
-	preview.RemovedPaths = uniqueSortedStrings(preview.RemovedPaths)
+	preview.RemovedPaths = deduplicateSortedStrings(preview.RemovedPaths)
 	return preview, nil
 }
 
-func cleanupBackupPlan(path string) BackupPlan {
+func cleanupBackupPlan(path string, sensitive bool) BackupPlan {
 	return BackupPlan{
-		Required: true, Sensitive: true, Pattern: path + ".bak-<timestamp>-<random>",
+		Required: true, Sensitive: sensitive, Pattern: path + ".bak-<timestamp>-<random>",
 	}
 }
 
-func uniqueSortedStrings(values []string) []string {
+// deduplicateSortedStrings removes adjacent duplicates from an already sorted slice.
+func deduplicateSortedStrings(values []string) []string {
 	if len(values) == 0 {
 		return values
 	}
@@ -401,12 +418,7 @@ type cleanupTransform struct {
 
 func newCleanupTransform(content []byte, empty bool, removed []string) cleanupTransform {
 	sort.Strings(removed)
-	unique := removed[:0]
-	for _, path := range removed {
-		if len(unique) == 0 || unique[len(unique)-1] != path {
-			unique = append(unique, path)
-		}
-	}
+	unique := deduplicateSortedStrings(removed)
 	if empty {
 		content = nil
 	}

@@ -590,7 +590,7 @@ export const en: Record<TranslationKey, string> = {
   "agents.cleanup.globalKeyRetained":
     "The global API key saved by the desktop will not be removed.",
   "agents.cleanup.backupsRetained":
-    "Historical backups remain in place; cleanup does not delete them.",
+    "Historical and new backups remain in place; cleanup does not delete them. Some Agent backups may contain credentials or old keys.",
   "agents.cleanup.approveDrift":
     "Approve cleanup of drifted managed namespaces",
   "agents.cleanup.write": "Back up and clean up",

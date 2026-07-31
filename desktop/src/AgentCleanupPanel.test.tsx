@@ -26,6 +26,7 @@ const preview: AgentCleanupPreview = {
       format: "json",
       operation: "replace",
       backup_required: true,
+      backup_sensitive: true,
       backup_pattern: "/safe/opencode/config.json.bak.*",
     },
     {
@@ -51,7 +52,7 @@ const preview: AgentCleanupPreview = {
     role: "manager_state_backup",
     format: "json",
     operation: "backup",
-    backup_sensitive: true,
+    backup_sensitive: false,
   },
 };
 
@@ -108,9 +109,11 @@ describe("AgentCleanupPanel", () => {
     expect(screen.getByText("替换")).toBeVisible();
     expect(screen.getAllByText("删除").length).toBeGreaterThan(0);
     expect(screen.getByText("备份")).toBeVisible();
+    expect(screen.getAllByText("SENSITIVE BACKUP")).toHaveLength(2);
     expect(screen.getByText(/Agent 文件中的认证设置会删除/)).toBeVisible();
     expect(screen.getByText(/桌面端保存的全局 API key 不会删除/)).toBeVisible();
-    expect(screen.getByText(/历史备份会保留/)).toBeVisible();
+    expect(screen.getByText(/历史和新生成的备份都会保留/)).toBeVisible();
+    expect(screen.getByText(/部分 Agent 备份可能含凭据/)).toBeVisible();
     expect(screen.getByText("/safe/opencode/config.json.bak.*")).toBeVisible();
     expect(document.body).not.toHaveTextContent(
       "all configuration outside the recorded managed paths",
@@ -253,7 +256,8 @@ describe("AgentCleanupPanel", () => {
     expect(await screen.findByText(/预览后文件发生变化/)).toBeVisible();
     expect(screen.getByText("provider.mtls-router")).toBeVisible();
     expect(screen.getByText("/safe/opencode/auth.json")).toBeVisible();
-    expect(screen.getByText(/历史备份会保留/)).toBeVisible();
+    expect(screen.getByText(/历史和新生成的备份都会保留/)).toBeVisible();
+    expect(screen.getByText(/部分 Agent 备份可能含凭据/)).toBeVisible();
     expect(
       screen.getByRole("checkbox", {
         name: /批准清理已漂移的托管命名空间/,

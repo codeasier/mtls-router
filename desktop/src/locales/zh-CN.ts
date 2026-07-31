@@ -520,7 +520,8 @@ export const zhCN = {
   "agents.cleanup.fileEffects": "文件、备份与状态影响",
   "agents.cleanup.authRemoved": "Agent 文件中的认证设置会删除。",
   "agents.cleanup.globalKeyRetained": "桌面端保存的全局 API key 不会删除。",
-  "agents.cleanup.backupsRetained": "历史备份会保留，清理不会删除它们。",
+  "agents.cleanup.backupsRetained":
+    "历史和新生成的备份都会保留，清理不会删除它们。部分 Agent 备份可能含凭据或旧密钥。",
   "agents.cleanup.approveDrift": "批准清理已漂移的托管命名空间",
   "agents.cleanup.write": "备份并清理",
   "agents.cleanup.writing": "正在备份并清理...",

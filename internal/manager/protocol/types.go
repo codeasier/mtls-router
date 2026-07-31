@@ -183,7 +183,7 @@ type AgentCleanupParams struct {
 type AgentCleanupWriteParams struct {
 	Agent                   string `json:"agent"`
 	RevisionToken           string `json:"revision_token"`
-	ApproveManagedOverwrite bool   `json:"approve_managed_overwrite"`
+	ApproveManagedOverwrite *bool  `json:"approve_managed_overwrite"`
 }
 
 type ManagerInfoResult struct {

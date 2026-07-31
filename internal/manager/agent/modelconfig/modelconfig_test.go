@@ -807,11 +807,65 @@ func TestCleanupRevisionRejectsInvalidClaims(t *testing.T) {
 		{name: "backup source", mutate: func(c *CleanupRevisionClaims) { c.Files[0].BackupSource = "/other" }},
 		{name: "unsorted removed paths", mutate: func(c *CleanupRevisionClaims) { c.Files[0].RemovedPaths = []string{"auth_mode", "OPENAI_API_KEY"} }},
 		{name: "duplicate removed paths", mutate: func(c *CleanupRevisionClaims) { c.Files[0].RemovedPaths = []string{"auth_mode", "auth_mode"} }},
-		{name: "empty removed paths", mutate: func(c *CleanupRevisionClaims) { c.Files[0].RemovedPaths = nil }},
+		{name: "empty removed paths on replace", mutate: func(c *CleanupRevisionClaims) { c.Files[1].RemovedPaths = nil }},
 		{name: "state operation", mutate: func(c *CleanupRevisionClaims) { c.StateOperation = "create" }},
 		{name: "state absent", mutate: func(c *CleanupRevisionClaims) { c.StateRevision = RevisionState{} }},
 	}
 	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			claims := cloneCleanupRevisionClaims(t, base)
+			test.mutate(&claims)
+			if _, err := signer.SignCleanupRevision(claims); !errors.Is(err, ErrTokenInvalid) {
+				t.Fatalf("SignCleanupRevision() error = %v, want ErrTokenInvalid", err)
+			}
+		})
+	}
+}
+
+func TestCleanupRevisionAllowsEmptyRemovedPathsOnlyForDelete(t *testing.T) {
+	signer, _ := NewTokenSigner(bytes.Repeat([]byte{0x46}, 32), "generation-cleanup")
+	existing := RevisionState{Exists: true, Size: 2, Mode: 0o600, Digest: "revision-mac"}
+	claims := CleanupRevisionClaims{
+		Agent: Claude,
+		Files: []CleanupRevisionFile{{
+			Role: "config", SourcePath: "/config", TargetPath: "/config", Operation: "delete",
+			BackupRequired: true, BackupSource: "/config", SourceRevision: existing, TargetRevision: existing,
+		}},
+		StateOperation: "delete", StateRevision: existing,
+	}
+	if _, err := signer.SignCleanupRevision(claims); err != nil {
+		t.Fatalf("delete with empty removed paths rejected: %v", err)
+	}
+	claims.Files[0].Operation = "replace"
+	if _, err := signer.SignCleanupRevision(claims); !errors.Is(err, ErrTokenInvalid) {
+		t.Fatalf("replace with empty removed paths error = %v, want ErrTokenInvalid", err)
+	}
+}
+
+func TestCleanupRevisionValidatesAbsentDeleteObservation(t *testing.T) {
+	signer, _ := NewTokenSigner(bytes.Repeat([]byte{0x47}, 32), "generation-cleanup")
+	existing := RevisionState{Exists: true, Size: 2, Mode: 0o600, Digest: "revision-mac"}
+	base := CleanupRevisionClaims{
+		Agent: OpenCode,
+		Files: []CleanupRevisionFile{{
+			Role: "config", SourcePath: "/config", TargetPath: "/config", Operation: "delete",
+		}},
+		StateOperation: "delete", StateRevision: existing, ManagedConfigDrift: true,
+	}
+	if _, err := signer.SignCleanupRevision(base); err != nil {
+		t.Fatalf("absent delete observation rejected: %v", err)
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*CleanupRevisionClaims)
+	}{
+		{name: "replace operation", mutate: func(c *CleanupRevisionClaims) { c.Files[0].Operation = "replace" }},
+		{name: "backup required", mutate: func(c *CleanupRevisionClaims) { c.Files[0].BackupRequired = true }},
+		{name: "backup source", mutate: func(c *CleanupRevisionClaims) { c.Files[0].BackupSource = "/config" }},
+		{name: "removed path", mutate: func(c *CleanupRevisionClaims) { c.Files[0].RemovedPaths = []string{"model"} }},
+		{name: "target exists", mutate: func(c *CleanupRevisionClaims) { c.Files[0].TargetRevision = existing }},
+		{name: "drift false", mutate: func(c *CleanupRevisionClaims) { c.ManagedConfigDrift = false }},
+	} {
 		t.Run(test.name, func(t *testing.T) {
 			claims := cloneCleanupRevisionClaims(t, base)
 			test.mutate(&claims)

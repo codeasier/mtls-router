@@ -469,13 +469,15 @@ func validateCleanupRevisionClaims(c CleanupRevisionClaims) error {
 	seen := make(map[string]bool, len(c.Files))
 	for _, file := range c.Files {
 		identity := file.Role + "\x00" + file.TargetPath
-		if seen[identity] || (file.Role != "config" && file.Role != "auth") ||
+		absentDelete := !file.SourceRevision.Exists && file.Operation == "delete" && !file.BackupRequired && file.BackupSource == "" && len(file.RemovedPaths) == 0
+		if (absentDelete && !c.ManagedConfigDrift) || seen[identity] || (file.Role != "config" && file.Role != "auth") ||
 			(file.Operation != "replace" && file.Operation != "delete") ||
 			!validAbsolutePath(file.SourcePath) || !validAbsolutePath(file.TargetPath) ||
 			file.SourcePath != file.TargetPath || file.SourceRevision != file.TargetRevision ||
-			!file.SourceRevision.Exists || !validRevisionState(file.SourceRevision) ||
-			!file.BackupRequired || file.BackupSource != file.SourcePath ||
-			!validSortedUniqueTokenFields(file.RemovedPaths) {
+			!validRevisionState(file.SourceRevision) ||
+			(!absentDelete && (!file.SourceRevision.Exists || !file.BackupRequired || file.BackupSource != file.SourcePath ||
+				(len(file.RemovedPaths) == 0 && file.Operation != "delete") ||
+				(len(file.RemovedPaths) != 0 && !validSortedUniqueTokenFields(file.RemovedPaths)))) {
 			return ErrTokenInvalid
 		}
 		seen[identity] = true
@@ -488,7 +490,7 @@ func validAbsolutePath(value string) bool {
 }
 
 func validSortedUniqueTokenFields(values []string) bool {
-	if len(values) == 0 || len(values) > 256 {
+	if len(values) > 256 {
 		return false
 	}
 	for i, value := range values {

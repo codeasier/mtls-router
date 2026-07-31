@@ -44,7 +44,7 @@
 - **删除与替换共用事务证据**：journal v3 为每项显式记录 `replace/delete`；delete 的 post revision 为不存在。Agent 文件先执行、manager sidecar 最后执行，回滚顺序相反；legacy v1/v2 journal 继续按隐式 replace 恢复。
 - **cleanup 必须有可信所有权**：只读取 sidecar 记录的绝对路径，不按当前环境重新推导；无条目返回 `AGENT_NOT_MANAGED`，sidecar/signing 状态无效返回 `MODEL_STATE_INVALID`，不按配置外观猜测。
 - **cleanup 不使用 key/router/catalog**：preview/write 不调用目录校验、router trust、普通 Render，也不创建 model flow；preview 不创建文件、目录、lock、备份或 journal，只打开并校验已存在的私有事务 lock。
-- **cleanup 删除范围按格式收窄**：Claude 只删记录的 `env.*`；OpenCode 只删 `provider.mtls-router` 及仍为精确 `mtls-router/` 前缀的已拥有根 model；Codex 可选 root 由已保存 model config 决定，auth 只删 `auth_mode` / `OPENAI_API_KEY`。语义根为空才删除文件。
+- **cleanup 删除范围按格式收窄**：Claude 只删记录的 `env.*`；OpenCode 只删 `provider.mtls-router` 及仍为精确 `mtls-router/` 前缀的已拥有根 model；Codex 可选 root 由已保存 model config 决定，auth 只删 `auth_mode` / `OPENAI_API_KEY`。已缺失的记录文件视为已清理但触发漂移批准且不产生文件备份/修改，并作为 absent revision guard 在 journal 前、每次修改前及 commit 前校验；现存文件语义根为空时仍会备份并删除。所有 Agent 文件备份都按敏感处理，manager sidecar 备份不敏感。
 - **备份可能含旧 key**：`*.bak-*` / `*.rollback-*` 与源文件同目录、权限受限（`0o600` / DACL），内容是替换前的原始字节。
 - **key 明文落盘仅限 Agent 凭据文件**（见上表）。key 绝不进入环境变量、CLI 参数、model config、日志或 journal。
 - **检测不探测 CLI 安装**：`agent.detect` 只检查配置文件；protocol v4 兼容字段固定返回 `detected=true`、`command=""`，不读取进程 `PATH`。

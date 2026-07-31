@@ -113,8 +113,12 @@ func TestAgentCleanupParamsAreStrictAndKeyFree(t *testing.T) {
 		t.Fatalf("preview params = %#v, error = %#v", preview, err)
 	}
 	var write AgentCleanupWriteParams
-	if err := DecodeParams(json.RawMessage(`{"agent":"opencode","revision_token":"revision","approve_managed_overwrite":false}`), &write); err != nil || write.Agent != "opencode" || write.RevisionToken != "revision" || write.ApproveManagedOverwrite {
+	if err := DecodeParams(json.RawMessage(`{"agent":"opencode","revision_token":"revision","approve_managed_overwrite":false}`), &write); err != nil || write.Agent != "opencode" || write.RevisionToken != "revision" || write.ApproveManagedOverwrite == nil || *write.ApproveManagedOverwrite {
 		t.Fatalf("write params = %#v, error = %#v", write, err)
+	}
+	var missingApproval AgentCleanupWriteParams
+	if err := DecodeParams(json.RawMessage(`{"agent":"opencode","revision_token":"revision"}`), &missingApproval); err != nil || missingApproval.ApproveManagedOverwrite != nil {
+		t.Fatalf("missing approval params = %#v, error = %#v", missingApproval, err)
 	}
 }
 

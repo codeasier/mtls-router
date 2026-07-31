@@ -125,7 +125,7 @@ Router 意外退出后不会进入无限重启循环。manager 退出时，桌�
 | `AGENT_OPERATION_BUSY` / `OPERATION_TIMEOUT` | 等待其他操作或有界 deadline 结束，刷新检测并重新预览。不要删除 lock 或事务状态。 |
 | `BACKUP_FAILED` / `WRITE_FAILED` / `ROLLBACK_FAILED` | 按[写入或回滚失败](#写入或回滚失败)处理。清理使用与配置写入相同的已验证备份、journal、rollback 和 fail-closed 恢复引擎。 |
 
-清理只删除所选 Agent 中已证明受管的 provider/model/认证路径。它有意保留桌面全局 API key、所有历史备份和新生成的清理备份。显示为 `delete` 的文件只会因为删除后语义根为空而被移除；`replace` 会保留剩余用户数据。备份可能含 key 或其他凭据，绝不能未经脱敏直接共享。对于 Codex，清理会删除文件认证字段，但不会删除 OS keyring 凭据，也不会重建先前写入时被替换的 auth 字段。
+清理只删除所选 Agent 中已证明受管的 provider/model/认证路径。它有意保留桌面全局 API key、所有历史备份和新生成的清理备份。已记录但已经不存在的文件会在漂移批准后视为已清理，不会创建备份或执行修改；其他读取错误仍为 `CONFIG_INVALID`。显示为 `delete` 的现存文件会先备份，再因语义根已经为空或删除托管字段后为空而被移除；`replace` 会保留剩余用户数据。备份可能含 key 或其他凭据，绝不能未经脱敏直接共享。对于 Codex，清理会删除文件认证字段，但不会删除 OS keyring 凭据，也不会重建先前写入时被替换的 auth 字段。
 
 ## 模型配置错误
 

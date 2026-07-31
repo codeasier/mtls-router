@@ -245,6 +245,348 @@ func TestCleanupServiceDriftApproval(t *testing.T) {
 	}
 }
 
+func TestCleanupServiceTreatsAbsentManagedFileAsCleaned(t *testing.T) {
+	t.Run("single file", func(t *testing.T) {
+		home := t.TempDir()
+		path := filepath.Join(home, ".config", "opencode", "opencode.json")
+		service := newTestService(t, filepath.Join(home, "state"), home, nil)
+		writeV2Legacy(t, service, []Kind{OpenCode})
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(filepath.Dir(path)); err != nil {
+			t.Fatal(err)
+		}
+		backupsBefore := backupFileCount(t, home)
+
+		preview, err := service.CleanupPreview(context.Background(), CleanupPreviewRequest{Agent: OpenCode})
+		if err != nil || !preview.ManagedConfigDrift || len(preview.Files) != 0 {
+			t.Fatalf("absent cleanup preview = %#v, %v", preview, err)
+		}
+		_, err = service.CleanupWrite(context.Background(), CleanupWriteRequest{Agent: OpenCode, RevisionToken: preview.RevisionToken})
+		assertCode(t, err, CodeManagedConfigDrift)
+		result, err := service.CleanupWrite(context.Background(), CleanupWriteRequest{Agent: OpenCode, RevisionToken: preview.RevisionToken, ApproveManagedOverwrite: true})
+		if err != nil || len(result.Agents) != 1 || !result.Agents[0].Success {
+			t.Fatalf("absent cleanup write = %#v, %v", result, err)
+		}
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("absent target was recreated: %v", err)
+		}
+		if matches, err := filepath.Glob(path + ".bak-*"); err != nil || len(matches) != 0 {
+			t.Fatalf("absent target backup artifacts = %#v, %v", matches, err)
+		}
+		if got := backupFileCount(t, home); got != backupsBefore+1 {
+			t.Fatalf("backup count = %d, want only sidecar backup", got)
+		}
+		if _, err := os.Stat(service.sidecarPath()); !os.IsNotExist(err) {
+			t.Fatalf("final sidecar still exists: %v", err)
+		}
+	})
+
+	t.Run("missing Codex companion", func(t *testing.T) {
+		home := t.TempDir()
+		service := newTestService(t, filepath.Join(home, "state"), home, nil)
+		writeV2Legacy(t, service, []Kind{Codex})
+		configPath := filepath.Join(home, ".codex", "config.toml")
+		authPath := filepath.Join(home, ".codex", "auth.json")
+		if err := os.Remove(authPath); err != nil {
+			t.Fatal(err)
+		}
+
+		preview, err := service.CleanupPreview(context.Background(), CleanupPreviewRequest{Agent: Codex})
+		if err != nil || !preview.ManagedConfigDrift || len(preview.Files) != 1 || preview.Files[0].Path != configPath {
+			t.Fatalf("Codex companion preview = %#v, %v", preview, err)
+		}
+		result, err := service.CleanupWrite(context.Background(), CleanupWriteRequest{Agent: Codex, RevisionToken: preview.RevisionToken, ApproveManagedOverwrite: true})
+		if err != nil || !result.Agents[0].Success {
+			t.Fatalf("Codex companion write = %#v, %v", result, err)
+		}
+		if matches, err := filepath.Glob(authPath + ".bak-*"); err != nil || len(matches) != 0 {
+			t.Fatalf("absent companion backup artifacts = %#v, %v", matches, err)
+		}
+		for _, path := range []string{configPath, authPath, service.sidecarPath()} {
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Fatalf("cleanup target still exists at %s: %v", path, err)
+			}
+		}
+	})
+
+	t.Run("appearing after preview is stale", func(t *testing.T) {
+		home := t.TempDir()
+		path := filepath.Join(home, ".config", "opencode", "opencode.json")
+		service := newTestService(t, filepath.Join(home, "state"), home, nil)
+		writeV2Legacy(t, service, []Kind{OpenCode})
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+		preview, err := service.CleanupPreview(context.Background(), CleanupPreviewRequest{Agent: OpenCode})
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, path, `{"user":"new"}`)
+
+		_, err = service.CleanupWrite(context.Background(), CleanupWriteRequest{Agent: OpenCode, RevisionToken: preview.RevisionToken, ApproveManagedOverwrite: true})
+		assertCode(t, err, CodePreviewStale)
+		if readString(t, path) != `{"user":"new"}` {
+			t.Fatal("stale cleanup mutated newly appeared target")
+		}
+	})
+
+	t.Run("non-regular target still fails closed", func(t *testing.T) {
+		home := t.TempDir()
+		path := filepath.Join(home, ".config", "opencode", "opencode.json")
+		service := newTestService(t, filepath.Join(home, "state"), home, nil)
+		writeV2Legacy(t, service, []Kind{OpenCode})
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := service.CleanupPreview(context.Background(), CleanupPreviewRequest{Agent: OpenCode})
+		assertCode(t, err, CodeConfigInvalid)
+	})
+}
+
+func TestCleanupServiceDeletesPresentSemanticallyEmptyManagedFiles(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		agent   Kind
+		path    func(string) string
+		content string
+	}{
+		{name: "Claude", agent: ClaudeCode, path: func(home string) string { return filepath.Join(home, ".claude", "settings.json") }, content: `{}`},
+		{name: "OpenCode", agent: OpenCode, path: func(home string) string { return filepath.Join(home, ".config", "opencode", "opencode.json") }, content: `{}`},
+		{name: "Codex config", agent: Codex, path: func(home string) string { return filepath.Join(home, ".codex", "config.toml") }, content: ``},
+		{name: "Codex auth", agent: Codex, path: func(home string) string { return filepath.Join(home, ".codex", "auth.json") }, content: `{}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			home := t.TempDir()
+			service := newTestService(t, filepath.Join(home, "state"), home, nil)
+			writeV2Legacy(t, service, []Kind{test.agent})
+			path := test.path(home)
+			if err := os.WriteFile(path, []byte(test.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			preview, err := service.CleanupPreview(context.Background(), CleanupPreviewRequest{Agent: test.agent})
+			if err != nil || !preview.ManagedConfigDrift {
+				t.Fatalf("empty cleanup preview = %#v, %v", preview, err)
+			}
+			var effect *FilePreview
+			for i := range preview.Files {
+				if preview.Files[i].Path == path {
+					effect = &preview.Files[i]
+				}
+			}
+			if effect == nil || effect.Operation != OperationDelete || !effect.Backup.Required {
+				t.Fatalf("empty file effect = %#v", effect)
+			}
+			claims, err := service.signer.VerifyCleanupRevision(preview.RevisionToken)
+			if err != nil {
+				t.Fatal(err)
+			}
+			foundEmptyDelete := false
+			for _, file := range claims.Files {
+				if file.TargetPath == path && file.Operation == string(OperationDelete) && len(file.RemovedPaths) == 0 {
+					foundEmptyDelete = true
+				}
+			}
+			if !foundEmptyDelete {
+				t.Fatalf("cleanup claims = %#v", claims.Files)
+			}
+
+			_, err = service.CleanupWrite(context.Background(), CleanupWriteRequest{Agent: test.agent, RevisionToken: preview.RevisionToken, ApproveManagedOverwrite: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Fatalf("empty managed file still exists: %v", err)
+			}
+			if matches, err := filepath.Glob(path + ".bak-*"); err != nil || len(matches) != 1 {
+				t.Fatalf("empty target backups = %#v, %v", matches, err)
+			}
+		})
+	}
+}
+
+func TestCleanupPreviewBackupSensitivity(t *testing.T) {
+	for _, kind := range []Kind{ClaudeCode, OpenCode, Codex} {
+		t.Run(string(kind), func(t *testing.T) {
+			home := t.TempDir()
+			service := newTestService(t, filepath.Join(home, "state"), home, nil)
+			writeV2Legacy(t, service, []Kind{kind})
+			preview, err := service.CleanupPreview(context.Background(), CleanupPreviewRequest{Agent: kind})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if preview.StateChange == nil || preview.StateChange.Backup.Sensitive || preview.StateBackup == nil || preview.StateBackup.Backup.Sensitive {
+				t.Fatalf("sidecar backup sensitivity = change %#v backup %#v", preview.StateChange, preview.StateBackup)
+			}
+			for _, file := range preview.Files {
+				if !file.Backup.Sensitive {
+					t.Fatalf("%s %s Agent backup is not sensitive", kind, file.Role)
+				}
+				if kind == Codex && file.Role == "config" && file.ContainsAPIKey {
+					t.Fatal("Codex config incorrectly claims a known managed API key")
+				}
+			}
+		})
+	}
+}
+
+func TestCleanupServiceGuardsAbsentCodexFilesForTransactionLifetime(t *testing.T) {
+	for _, role := range []string{"config", "auth"} {
+		for _, phase := range []string{"backup", "journal", "apply", "after-sidecar"} {
+			t.Run(role+"/"+phase, func(t *testing.T) {
+				home := t.TempDir()
+				service := newTestService(t, filepath.Join(home, "state"), home, nil)
+				writeV2Legacy(t, service, []Kind{Codex})
+				configPath := filepath.Join(home, ".codex", "config.toml")
+				authPath := filepath.Join(home, ".codex", "auth.json")
+				absentPath, companionPath := configPath, authPath
+				reappeared := "api_key = \"reappeared-secret\"\n"
+				if role == "auth" {
+					absentPath, companionPath = authPath, configPath
+					reappeared = `{"auth_mode":"apikey","OPENAI_API_KEY":"reappeared-secret"}`
+				}
+				companionBefore := readString(t, companionPath)
+				sidecarBefore := readString(t, service.sidecarPath())
+				if err := os.Remove(absentPath); err != nil {
+					t.Fatal(err)
+				}
+
+				preview, err := service.CleanupPreview(context.Background(), CleanupPreviewRequest{Agent: Codex})
+				if err != nil || !preview.ManagedConfigDrift {
+					t.Fatalf("cleanup preview = %#v, %v", preview, err)
+				}
+				claims, err := service.signer.VerifyCleanupRevision(preview.RevisionToken)
+				if err != nil {
+					t.Fatal(err)
+				}
+				boundAbsent := false
+				for _, file := range claims.Files {
+					if file.Role == role && file.SourcePath == absentPath && !file.SourceRevision.Exists && file.Operation == string(OperationDelete) && !file.BackupRequired {
+						boundAbsent = true
+					}
+				}
+				if !boundAbsent {
+					t.Fatalf("absent file is not bound exactly: %#v", claims.Files)
+				}
+
+				injected := false
+				inject := func() {
+					if injected {
+						return
+					}
+					injected = true
+					writeFile(t, absentPath, reappeared)
+				}
+				switch phase {
+				case "backup":
+					service.hooks.backupStage = func(stage backupStage, backupPath string) error {
+						if stage == backupStageContent && strings.HasPrefix(filepath.Base(backupPath), filepath.Base(companionPath)+".bak-") {
+							inject()
+						}
+						return nil
+					}
+				case "journal":
+					service.hooks.afterJournal = inject
+				case "apply":
+					service.hooks.afterReplace = func(path string) {
+						if path == companionPath {
+							inject()
+						}
+					}
+				case "after-sidecar":
+					service.hooks.afterReplace = func(path string) {
+						if path == service.sidecarPath() {
+							inject()
+						}
+					}
+				}
+
+				_, err = service.CleanupWrite(context.Background(), CleanupWriteRequest{Agent: Codex, RevisionToken: preview.RevisionToken, ApproveManagedOverwrite: true})
+				assertCode(t, err, CodePreviewStale)
+				if !injected {
+					t.Fatal("test hook did not recreate absent Codex file")
+				}
+				if readString(t, absentPath) != reappeared {
+					t.Fatal("cleanup mutated the guarded reappeared file")
+				}
+				if readString(t, companionPath) != companionBefore {
+					t.Fatal("cleanup did not roll back the previously changed companion")
+				}
+				if readString(t, service.sidecarPath()) != sidecarBefore {
+					t.Fatal("cleanup changed sidecar ownership after guard failure")
+				}
+				state, _, _, _, err := service.readSidecar()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, managed := state.Agents[Codex]; !managed {
+					t.Fatal("reappeared credentials were orphaned from sidecar ownership")
+				}
+				if matches, err := filepath.Glob(absentPath + ".bak-*"); err != nil || len(matches) != 0 {
+					t.Fatalf("guarded absent target backup artifacts = %#v, %v", matches, err)
+				}
+				if _, err := os.Stat(service.journalPath()); !os.IsNotExist(err) {
+					t.Fatalf("journal retained after guard rollback: %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestCleanupServiceGuardsAbsentSingleFileAfterSidecarMutation(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".config", "opencode", "opencode.json")
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
+	writeV2Legacy(t, service, []Kind{OpenCode})
+	sidecarBefore := readString(t, service.sidecarPath())
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	preview, err := service.CleanupPreview(context.Background(), CleanupPreviewRequest{Agent: OpenCode})
+	if err != nil || !preview.ManagedConfigDrift {
+		t.Fatalf("cleanup preview = %#v, %v", preview, err)
+	}
+	reappeared := `{"credentials":{"token":"reappeared-secret"}}`
+	injected := false
+	service.hooks.afterReplace = func(replacedPath string) {
+		if replacedPath == service.sidecarPath() {
+			injected = true
+			writeFile(t, path, reappeared)
+		}
+	}
+
+	_, err = service.CleanupWrite(context.Background(), CleanupWriteRequest{Agent: OpenCode, RevisionToken: preview.RevisionToken, ApproveManagedOverwrite: true})
+	assertCode(t, err, CodePreviewStale)
+	if !injected {
+		t.Fatal("test hook did not recreate absent file after sidecar mutation")
+	}
+	if readString(t, path) != reappeared {
+		t.Fatal("cleanup mutated the guarded reappeared file")
+	}
+	if readString(t, service.sidecarPath()) != sidecarBefore {
+		t.Fatal("cleanup did not restore sidecar ownership")
+	}
+	state, _, _, _, err := service.readSidecar()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, managed := state.Agents[OpenCode]; !managed {
+		t.Fatal("reappeared credentials were orphaned from sidecar ownership")
+	}
+	if matches, err := filepath.Glob(path + ".bak-*"); err != nil || len(matches) != 0 {
+		t.Fatalf("guarded absent target backup artifacts = %#v, %v", matches, err)
+	}
+	if _, err := os.Stat(service.journalPath()); !os.IsNotExist(err) {
+		t.Fatalf("journal retained after guard rollback: %v", err)
+	}
+}
+
 func TestCleanupServiceRejectsStalePreview(t *testing.T) {
 	t.Run("Agent file", func(t *testing.T) {
 		home := t.TempDir()

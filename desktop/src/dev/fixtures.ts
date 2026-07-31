@@ -202,6 +202,7 @@ export function cleanupPreviewFor(agent: AgentId): AgentCleanupPreview {
         format: agent === "codex" ? "toml" : "json",
         operation: "replace",
         backup_required: true,
+        backup_sensitive: true,
         backup_pattern: `/mock/${agent}/config.bak.*`,
       },
     ],
@@ -212,7 +213,7 @@ export function cleanupPreviewFor(agent: AgentId): AgentCleanupPreview {
       role: "manager_state_backup",
       format: "json",
       operation: "backup",
-      backup_sensitive: true,
+      backup_sensitive: false,
     },
   };
 }

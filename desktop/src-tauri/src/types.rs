@@ -1207,15 +1207,32 @@ mod tests {
                 "operation": "delete",
                 "backup_required": true,
                 "backup_pattern": "/home/example/.config/opencode/opencode.json.bak.*",
-                "backup_sensitive": false
+                "backup_sensitive": true
             }],
             "removed_paths": ["model", "provider.mtls-router"],
             "managed_config_drift": false,
-            "state_change": null,
-            "state_backup": null
+            "state_change": {
+                "path": "/home/example/state/last-applied-model-config.json",
+                "role": "state",
+                "format": "json",
+                "operation": "delete",
+                "backup_required": true,
+                "backup_pattern": "/home/example/state/last-applied-model-config.json.bak.*",
+                "backup_sensitive": false
+            },
+            "state_backup": {
+                "path": "/home/example/state/last-applied-model-config.json",
+                "role": "state",
+                "format": "json",
+                "operation": "backup",
+                "backup_sensitive": false
+            }
         });
         let preview: AgentCleanupPreview = serde_json::from_value(preview_json).unwrap();
         assert_eq!(preview.files[0].operation, "delete");
+        assert!(preview.files[0].backup_sensitive);
+        assert!(!preview.state_change.unwrap().backup_sensitive);
+        assert!(!preview.state_backup.unwrap().backup_sensitive);
 
         for mut invalid in [
             serde_json::json!({"managed": false, "available": false, "reason": "not_managed", "extra": true}),

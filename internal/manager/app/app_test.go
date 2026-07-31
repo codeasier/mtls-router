@@ -225,7 +225,7 @@ func TestAgentCleanupHandlersDispatchDirectlyAndMapSafeResults(t *testing.T) {
 					Preserves: []string{"unmanaged configuration"}, Backup: agent.BackupPlan{Required: true, Pattern: "/safe/opencode.json.bak-<timestamp>-<random>", Sensitive: true, Warning: "backup warning"},
 				}},
 				RemovedPaths: []string{"model", "provider.mtls-router"}, ManagedConfigDrift: true,
-				StateChange: &agent.FilePreview{Role: "state", Path: "/safe/state.json", Format: agent.FormatJSON, Operation: agent.OperationDelete, Backup: agent.BackupPlan{Required: true, Pattern: "/safe/state.json.bak-<timestamp>-<random>", Sensitive: true, Warning: "state warning"}},
+				StateChange: &agent.FilePreview{Role: "state", Path: "/safe/state.json", Format: agent.FormatJSON, Operation: agent.OperationDelete, Backup: agent.BackupPlan{Required: true, Pattern: "/safe/state.json.bak-<timestamp>-<random>", Sensitive: false, Warning: "state warning"}},
 				StateBackup: &agent.FilePreview{Role: "state", Path: "/safe/state.json", Format: agent.FormatJSON, Operation: agent.Operation("backup")},
 			}, nil
 		},
@@ -295,6 +295,9 @@ func TestAgentCleanupHandlersDispatchDirectlyAndMapSafeResults(t *testing.T) {
 	}
 	if len(preview.Files[0].Preserves) != 0 || preview.Files[0].Warning != "" || preview.StateChange.Warning != "" {
 		t.Fatalf("cleanup preview exposed manager prose = %#v", preview)
+	}
+	if !preview.Files[0].BackupSensitive || preview.StateChange.BackupSensitive || preview.StateBackup.BackupSensitive {
+		t.Fatalf("cleanup backup sensitivity = file %#v state %#v backup %#v", preview.Files[0], preview.StateChange, preview.StateBackup)
 	}
 	var write protocol.AgentWriteResult
 	if writeResponse.Error != nil || json.Unmarshal(writeResponse.Result, &write) != nil || len(write.Agents) != 1 || strings.Join(write.Agents[0].Changed, ",") != "/safe/opencode.json" || strings.Join(write.Agents[0].Backups, ",") != "/safe/opencode.json.bak" {

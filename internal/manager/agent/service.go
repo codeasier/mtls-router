@@ -335,6 +335,7 @@ type Service struct {
 type serviceHooks struct {
 	beforeBackup   func(string) error
 	backupStage    func(backupStage, string) error
+	afterJournal   func()
 	beforeReplace  func(string) error
 	afterReplace   func(string)
 	beforeRollback func(string) error
@@ -863,6 +864,9 @@ func (s *Service) executePlan(ctx context.Context, plan writePlan, key []byte) (
 		}
 		return preMutationFailure(failure)
 	}
+	if s.hooks.afterJournal != nil {
+		s.hooks.afterJournal()
+	}
 
 	replaced := false
 	rebuildReplaced := map[string]bool{}
@@ -891,6 +895,10 @@ func (s *Service) executePlan(ctx context.Context, plan writePlan, key []byte) (
 				failure := operationError(CodeWriteFailed, "could not replace an Agent configuration file")
 				return s.failAndRollback(ctx, &journal, result, failure, replaced)
 			}
+		}
+		if err := s.verifyRevisionGuards(plan.revisionGuards); err != nil {
+			failure := operationError(CodePreviewStale, "Agent configuration changed while writing")
+			return s.failAndRollback(ctx, &journal, result, failure, replaced)
 		}
 		output, err := s.applyPlannedFile(*file, key)
 		if err != nil {
@@ -924,6 +932,10 @@ func (s *Service) executePlan(ctx context.Context, plan writePlan, key []byte) (
 
 	if err := contextError(ctx); err != nil {
 		return s.failAndRollback(ctx, &journal, result, err, replaced)
+	}
+	if err := s.verifyRevisionGuards(plan.revisionGuards); err != nil {
+		failure := operationError(CodePreviewStale, "Agent configuration changed before transaction commit")
+		return s.failAndRollback(ctx, &journal, result, failure, replaced)
 	}
 	journal.Committed = true
 	if err := s.writeJournal(journal); err != nil {
@@ -1040,6 +1052,20 @@ func (s *Service) verifyPlanRevisionSet(plan writePlan) error {
 			if err := verify(file.targetPath, file.targetRevision, file.scope); err != nil {
 				return err
 			}
+		}
+	}
+	for _, guard := range plan.revisionGuards {
+		if err := verify(guard.path, guard.revision, guard.scope); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Service) verifyRevisionGuards(guards []plannedRevisionGuard) error {
+	for _, guard := range guards {
+		if err := s.verifyPlannedRevision(guard.path, guard.revision, guard.scope); err != nil {
+			return err
 		}
 	}
 	return nil
