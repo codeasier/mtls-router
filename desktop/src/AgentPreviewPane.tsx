@@ -16,16 +16,20 @@ function safe(value: string | undefined) {
   return sanitizeSensitiveText(value ?? "");
 }
 
-function FileEffect({ effect }: { effect: AgentFileEffect }) {
+export function AgentFileEffectCard({ effect }: { effect: AgentFileEffect }) {
   const { t } = useI18n();
   const operation =
     effect.operation === "create"
       ? t("agents.operation.create")
       : effect.operation === "replace"
         ? t("agents.operation.replace")
-        : effect.operation === "preserve"
-          ? t("agents.operation.preserve")
-          : safe(effect.operation);
+        : effect.operation === "delete"
+          ? t("agents.operation.delete")
+          : effect.operation === "backup"
+            ? t("agents.operation.backup")
+            : effect.operation === "preserve"
+              ? t("agents.operation.preserve")
+              : safe(effect.operation);
   return (
     <article
       className={`effect-card${effect.mode === "rebuild" ? " effect-card--rebuild" : ""}`}
@@ -236,8 +240,12 @@ function AgentPreviewPaneContent({
         </div>
         {(result.state_change || result.state_backup) && (
           <div className="preview-files result-state-effects">
-            {result.state_change && <FileEffect effect={result.state_change} />}
-            {result.state_backup && <FileEffect effect={result.state_backup} />}
+            {result.state_change && (
+              <AgentFileEffectCard effect={result.state_change} />
+            )}
+            {result.state_backup && (
+              <AgentFileEffectCard effect={result.state_backup} />
+            )}
           </div>
         )}
         <button className="control-button" disabled={busy} onClick={onFinish}>
@@ -282,16 +290,16 @@ function AgentPreviewPaneContent({
             </div>
             <div className="preview-files">
               {preview.files.map((effect) => (
-                <FileEffect
+                <AgentFileEffectCard
                   key={`${effect.path}-${effect.role}`}
                   effect={effect}
                 />
               ))}
               {preview.state_change && (
-                <FileEffect effect={preview.state_change} />
+                <AgentFileEffectCard effect={preview.state_change} />
               )}
               {preview.state_backup && (
-                <FileEffect effect={preview.state_backup} />
+                <AgentFileEffectCard effect={preview.state_backup} />
               )}
             </div>
           </section>

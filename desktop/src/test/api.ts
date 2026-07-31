@@ -1,6 +1,6 @@
 import { vi } from "vitest";
 
-import type { DesktopApi, PollSnapshot } from "../ipc";
+import type { AgentId, DesktopApi, PollSnapshot } from "../ipc";
 
 export function createMockApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
   const api: DesktopApi = {
@@ -79,6 +79,17 @@ export function createMockApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
       transaction_id: "transaction",
       agents: [],
     }),
+    previewAgentCleanup: vi.fn().mockImplementation(async (agent: AgentId) => ({
+      revision_token: `cleanup-revision-${agent}`,
+      agent,
+      files: [],
+      removed_paths: [],
+      managed_config_drift: false,
+    })),
+    writeAgentCleanup: vi.fn().mockImplementation(async (agent: AgentId) => ({
+      transaction_id: "cleanup-transaction",
+      agents: [{ agent, success: true }],
+    })),
     destroyAgentModelFlow: vi.fn().mockResolvedValue(undefined),
     importAgentModelConfig: vi
       .fn()

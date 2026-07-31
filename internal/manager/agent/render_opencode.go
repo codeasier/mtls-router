@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 
 	"github.com/codeasier/mtls-router/internal/manager/agent/modelconfig"
 )
@@ -39,6 +40,41 @@ func mergeOpenCode(root map[string]json.RawMessage, config *modelconfig.OpenCode
 		result["model"], _ = json.Marshal("mtls-router/" + config.DefaultModel)
 	}
 	return marshalObject(result)
+}
+
+func cleanupOpenCode(root map[string]json.RawMessage, ownsRootModel bool) (cleanupTransform, error) {
+	result := cloneRawObject(root)
+	removed := make([]string, 0, 2)
+	if raw, exists := result["provider"]; exists {
+		providers, valid := decodeObject(raw)
+		if !valid {
+			return cleanupTransform{}, operationError(CodeConfigInvalid, "opencode provider field is not an object")
+		}
+		if managed, exists := providers["mtls-router"]; exists {
+			if _, valid := decodeObject(managed); !valid {
+				return cleanupTransform{}, operationError(CodeConfigInvalid, "opencode managed provider is not an object")
+			}
+			delete(providers, "mtls-router")
+			removed = append(removed, "provider.mtls-router")
+		}
+		if len(providers) == 0 {
+			delete(result, "provider")
+		} else {
+			providerJSON, err := json.Marshal(providers)
+			if err != nil {
+				return cleanupTransform{}, err
+			}
+			result["provider"] = providerJSON
+		}
+	}
+	if ownsRootModel {
+		if model, ok := rawString(result["model"]); ok && strings.HasPrefix(model, "mtls-router/") {
+			delete(result, "model")
+			removed = append(removed, "model")
+		}
+	}
+	content, err := marshalCleanupJSON(result)
+	return newCleanupTransform(content, len(result) == 0, removed), err
 }
 
 func openCodeProvider(config *modelconfig.OpenCodeConfig, apiBaseURL, key string) map[string]any {

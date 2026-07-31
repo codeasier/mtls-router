@@ -120,6 +120,26 @@ Backups are sensitive and may contain API keys or other credentials. Never attac
 
 Return to configuration and generate a new preview from the retained key-free catalog/config when the client permits it. If the catalog token is also stale, enter the key and discover models again. For rebuild, a manually repaired source, changed companion existence, new blocker, or any path/revision change also makes the approval stale and may make rebuild ineligible. Do not retry with an old revision token or switch from merge to rebuild without a new preview and destructive confirmation.
 
+For cleanup, no key or catalog rediscovery is needed. Select **Repreview cleanup** to rebuild the plan from the current Agent files and sidecar. Do not retry the old cleanup token or replay a cleanup write after an ambiguous transport failure.
+
+## Managed cleanup is unavailable or failed
+
+Automatic cleanup is shown only for an Agent with a valid last-applied sidecar ownership entry. It never guesses ownership from a `mtls-router` provider name and never uses the router, model catalog, or global API key.
+
+| Code or state | Action |
+|---|---|
+| `not_managed` / `AGENT_NOT_MANAGED` | No trusted ownership entry exists. Do not create or edit the sidecar to enable cleanup. Stop the Agent, preserve current files and backups, then manually remove only fields whose ownership you can independently establish. |
+| `model_state_invalid` / `MODEL_STATE_INVALID` | Preserve the complete `agent-transactions` directory and Agent files. Resolve any journal/recovery problem; do not replace only the signing key or sidecar. |
+| `writes_disabled` / `ROLLBACK_FAILED` | Cleanup and normal writes remain blocked until transaction recovery is proven. Restarting or deleting the journal does not bypass the failure. |
+| `CONFIG_INVALID` | The recorded file, path identity, JSON/JSONC/TOML structure, or managed provider container cannot be cleaned safely. Repair it manually, refresh detection, and request a new cleanup preview. No backup or mutation begins. |
+| `CONFIG_NOT_WRITABLE` | Restore current-user write access to every recorded target and parent. Do not elevate the desktop application. |
+| `MANAGED_CONFIG_DRIFT` | Review the listed managed paths and file effects. Confirm the dedicated drift checkbox only if those namespaces should be removed; confirmation does not authorize unrelated deletion. |
+| `PREVIEW_STALE` | A recorded Agent file or the sidecar changed after preview. Repreview; do not reuse the token. |
+| `AGENT_OPERATION_BUSY` / `OPERATION_TIMEOUT` | Wait for the other operation or bounded deadline to finish, refresh detection, and preview again. Do not delete lock or transaction state. |
+| `BACKUP_FAILED` / `WRITE_FAILED` / `ROLLBACK_FAILED` | Follow [Write or rollback failed](#write-or-rollback-failed). Cleanup uses the same verified backup, journal, rollback, and fail-closed recovery engine as configuration writes. |
+
+Cleanup removes only the selected Agent's proven managed provider/model/authentication paths. It deliberately retains the desktop global API key, all historical backups, and new cleanup backups. A file shown as `delete` is removed only because its semantic root would otherwise be empty; a `replace` preserves remaining user data. Backups can contain keys or other credentials and must not be shared unredacted. For Codex, cleanup removes file authentication fields but does not remove OS-keyring credentials or reconstruct auth fields displaced by an earlier write.
+
 ## Model configuration errors
 
 All model errors fail closed: no Agent or last-applied sidecar file is changed,
@@ -183,7 +203,7 @@ require Claude Code 2.1.193 or newer and may be ignored by older versions.
 
 ## Write or rollback failed
 
-A multi-Agent merge/rebuild write is transactional:
+Agent merge/rebuild writes and per-Agent cleanup writes are transactional:
 
 - `BACKUP_FAILED` occurs before replacement. No target changed, created backup artifacts were cleaned up, and writes remain available after the underlying file/directory problem is corrected. If cleanup cannot be proven, the result is `ROLLBACK_FAILED` instead.
 - `WRITE_FAILED` with successful rollback means every changed target and manager sidecar was restored. Diagnostic and original backups remain for review.

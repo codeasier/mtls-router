@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -379,6 +380,87 @@ base_url = "http://127.0.0.1:19099/v1"`)
 			t.Fatalf("detection result exposed a stored key: %s", encoded)
 		}
 	}
+}
+
+func TestServiceDetectAnnotatesCleanupAvailability(t *testing.T) {
+	t.Run("not managed", func(t *testing.T) {
+		home := t.TempDir()
+		service := newTestService(t, filepath.Join(home, "state"), home, nil)
+		states, err := service.Detect(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, state := range states {
+			if state.Cleanup.Managed || state.Cleanup.Available || state.Cleanup.Reason != CleanupNotManaged {
+				t.Fatalf("cleanup state = %#v", state.Cleanup)
+			}
+		}
+	})
+
+	t.Run("managed and available", func(t *testing.T) {
+		home := t.TempDir()
+		service := newTestService(t, filepath.Join(home, "state"), home, nil)
+		writeV2Legacy(t, service, []Kind{OpenCode})
+		states, err := service.Detect(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !states[1].Cleanup.Managed || !states[1].Cleanup.Available || states[1].Cleanup.Reason != "" {
+			t.Fatalf("managed cleanup state = %#v", states[1].Cleanup)
+		}
+		if states[0].Cleanup.Reason != CleanupNotManaged || states[2].Cleanup.Reason != CleanupNotManaged {
+			t.Fatalf("unmanaged cleanup states = %#v %#v", states[0].Cleanup, states[2].Cleanup)
+		}
+		state, _, _, _, err := service.readSidecar()
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := json.Marshal(states)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, canary := range []string{"model-primary", testAPIKey, state.Agents[OpenCode].Files[0].RevisionMAC} {
+			if canary != "" && strings.Contains(string(encoded), canary) {
+				t.Fatalf("cleanup detection exposed managed state: %s", encoded)
+			}
+		}
+	})
+
+	t.Run("invalid sidecar preserves base detection", func(t *testing.T) {
+		home := t.TempDir()
+		writeFile(t, filepath.Join(home, ".claude", "settings.json"), `{"theme":"base-detection-canary"}`)
+		service := newTestService(t, filepath.Join(home, "state"), home, nil)
+		writeV2Legacy(t, service, []Kind{OpenCode})
+		if err := os.WriteFile(service.sidecarPath(), []byte(`{}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		states, err := service.Detect(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !states[0].Exists {
+			t.Fatalf("base detection was lost: %#v", states[0])
+		}
+		for _, state := range states {
+			if state.Cleanup.Managed || state.Cleanup.Available || state.Cleanup.Reason != CleanupModelStateInvalid {
+				t.Fatalf("invalid cleanup state = %#v", state.Cleanup)
+			}
+		}
+	})
+
+	t.Run("writes disabled", func(t *testing.T) {
+		home := t.TempDir()
+		service := newTestService(t, filepath.Join(home, "state"), home, nil)
+		writeV2Legacy(t, service, []Kind{OpenCode})
+		service.writesDisabled = true
+		states, err := service.Detect(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !states[1].Cleanup.Managed || states[1].Cleanup.Available || states[1].Cleanup.Reason != CleanupWritesDisabled {
+			t.Fatalf("disabled cleanup state = %#v", states[1].Cleanup)
+		}
+	})
 }
 
 func testDetector(home string) Detector {

@@ -18,7 +18,8 @@ func TestDeadlinesCoverEveryMethod(t *testing.T) {
 		MethodRouterInspectOccupant: 2 * time.Second, MethodRouterForceTerminateOccupant: 3 * time.Second,
 		MethodAgentDetect: 5 * time.Second, MethodAgentModels: 30 * time.Second,
 		MethodAgentRender: 5 * time.Second, MethodAgentPreview: 5 * time.Second,
-		MethodAgentWrite: 30 * time.Second,
+		MethodAgentWrite: 30 * time.Second, MethodAgentCleanupPreview: 5 * time.Second,
+		MethodAgentCleanupWrite: 30 * time.Second,
 	}
 	got := Deadlines()
 	if len(got) != len(want) {
@@ -81,6 +82,69 @@ func TestV2AgentParamsRejectMixedShapes(t *testing.T) {
 	}
 }
 
+func TestAgentCleanupParamsAreStrictAndKeyFree(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		raw    string
+		target any
+	}{
+		{name: "preview agents", raw: `{"agent":"opencode","agents":["opencode"]}`, target: &AgentCleanupParams{}},
+		{name: "preview api key", raw: `{"agent":"opencode","api_key":"secret"}`, target: &AgentCleanupParams{}},
+		{name: "preview catalog", raw: `{"agent":"opencode","catalog_token":"catalog"}`, target: &AgentCleanupParams{}},
+		{name: "preview model config", raw: `{"agent":"opencode","model_config":{}}`, target: &AgentCleanupParams{}},
+		{name: "preview flow", raw: `{"agent":"opencode","flow_id":"flow"}`, target: &AgentCleanupParams{}},
+		{name: "preview unknown", raw: `{"agent":"opencode","unknown":true}`, target: &AgentCleanupParams{}},
+		{name: "write agents", raw: `{"agent":"opencode","revision_token":"revision","approve_managed_overwrite":false,"agents":["opencode"]}`, target: &AgentCleanupWriteParams{}},
+		{name: "write api key", raw: `{"agent":"opencode","revision_token":"revision","approve_managed_overwrite":false,"api_key":"secret"}`, target: &AgentCleanupWriteParams{}},
+		{name: "write catalog", raw: `{"agent":"opencode","revision_token":"revision","approve_managed_overwrite":false,"catalog_token":"catalog"}`, target: &AgentCleanupWriteParams{}},
+		{name: "write model config", raw: `{"agent":"opencode","revision_token":"revision","approve_managed_overwrite":false,"model_config":{}}`, target: &AgentCleanupWriteParams{}},
+		{name: "write flow", raw: `{"agent":"opencode","revision_token":"revision","approve_managed_overwrite":false,"flow_id":"flow"}`, target: &AgentCleanupWriteParams{}},
+		{name: "write unknown", raw: `{"agent":"opencode","revision_token":"revision","approve_managed_overwrite":false,"unknown":true}`, target: &AgentCleanupWriteParams{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := DecodeParams(json.RawMessage(test.raw), test.target); err == nil || err.Code != CodeInvalidParams {
+				t.Fatalf("error = %#v", err)
+			}
+		})
+	}
+
+	var preview AgentCleanupParams
+	if err := DecodeParams(json.RawMessage(`{"agent":"opencode"}`), &preview); err != nil || preview.Agent != "opencode" {
+		t.Fatalf("preview params = %#v, error = %#v", preview, err)
+	}
+	var write AgentCleanupWriteParams
+	if err := DecodeParams(json.RawMessage(`{"agent":"opencode","revision_token":"revision","approve_managed_overwrite":false}`), &write); err != nil || write.Agent != "opencode" || write.RevisionToken != "revision" || write.ApproveManagedOverwrite {
+		t.Fatalf("write params = %#v, error = %#v", write, err)
+	}
+}
+
+func TestAgentCleanupParamsRejectDuplicateKeys(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		raw    string
+		target any
+	}{
+		{name: "preview duplicate agent", raw: `{"agent":"claude","agent":"opencode"}`, target: &AgentCleanupParams{}},
+		{name: "preview duplicate approval", raw: `{"agent":"opencode","approve_managed_overwrite":false,"approve_managed_overwrite":true}`, target: &AgentCleanupParams{}},
+		{name: "write duplicate agent", raw: `{"agent":"claude","agent":"opencode","revision_token":"revision","approve_managed_overwrite":false}`, target: &AgentCleanupWriteParams{}},
+		{name: "write duplicate approval", raw: `{"agent":"opencode","revision_token":"revision","approve_managed_overwrite":false,"approve_managed_overwrite":true}`, target: &AgentCleanupWriteParams{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := DecodeParams(json.RawMessage(test.raw), test.target); err == nil || err.Code != CodeInvalidParams {
+				t.Fatalf("error = %#v", err)
+			}
+		})
+	}
+}
+
+func TestDecodeParamsRejectsNestedDuplicateKeys(t *testing.T) {
+	var params AgentConfigParams
+	raw := json.RawMessage(`{"agents":["opencode"],"catalog_token":"catalog","model_config":{"version":1,"opencode":{"models":{"model-a":{"name":"first","name":"second"}}}}}`)
+	if err := DecodeParams(raw, &params); err == nil || err.Code != CodeInvalidParams {
+		t.Fatalf("error = %#v", err)
+	}
+}
+
 func TestProtocolResultJSONExactShapes(t *testing.T) {
 	expiresAt := time.Date(2026, 7, 25, 0, 0, 30, 0, time.UTC)
 	tests := []struct {
@@ -104,7 +168,15 @@ func TestProtocolResultJSONExactShapes(t *testing.T) {
 		{name: "models preset", value: AgentModelsPreset{ModelConfig: json.RawMessage(`{}`), UnavailableAgents: map[string]AgentPresetUnavailable{}}, keys: []string{"model_config", "unavailable_agents"}},
 		{name: "render", value: AgentRenderResult{}, keys: []string{"fragments", "model_config"}},
 		{name: "preview", value: AgentPreviewResult{}, keys: []string{"drifted_agents", "files", "fragments", "managed_collisions", "managed_config_drift", "model_config", "requires_codex_auth_approval", "revision_token"}},
+		{name: "cleanup state", value: AgentCleanupState{Managed: true, Available: false, Reason: "writes_disabled"}, want: `{"managed":true,"available":false,"reason":"writes_disabled"}`},
+		{name: "cleanup preview", value: AgentCleanupPreviewResult{
+			RevisionToken: "revision", Agent: "opencode", Files: []AgentFileEffect{{Path: "/config", Role: "config", Format: "json", Operation: "delete"}},
+			RemovedPaths: []string{"model", "provider.mtls-router"}, ManagedConfigDrift: true,
+			StateChange: &AgentFileEffect{Path: "/state", Role: "state", Format: "json", Operation: "delete"},
+			StateBackup: &AgentFileEffect{Path: "/state", Role: "state", Format: "json", Operation: "backup"},
+		}, want: `{"revision_token":"revision","agent":"opencode","files":[{"path":"/config","role":"config","format":"json","operation":"delete"}],"removed_paths":["model","provider.mtls-router"],"managed_config_drift":true,"state_change":{"path":"/state","role":"state","format":"json","operation":"delete"},"state_backup":{"path":"/state","role":"state","format":"json","operation":"backup"}}`},
 		{name: "write", value: AgentWriteResult{}, keys: []string{"agents", "transaction_id"}},
+		{name: "cleanup write paths only", value: AgentWriteResult{TransactionID: "transaction", Agents: []AgentWriteStatus{{Agent: "opencode", Success: true, Changed: []string{"/config"}, Backups: []string{"/config.bak"}}}, StateChange: &AgentFileEffect{Path: "/state", Role: "state", Format: "json", Operation: "delete"}, StateBackup: &AgentFileEffect{Path: "/state.bak", Role: "state", Format: "json", Operation: "backup"}}, want: `{"transaction_id":"transaction","agents":[{"agent":"opencode","success":true,"changed":["/config"],"backups":["/config.bak"]}],"state_change":{"path":"/state","role":"state","format":"json","operation":"delete"},"state_backup":{"path":"/state.bak","role":"state","format":"json","operation":"backup"}}`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -248,11 +320,15 @@ func TestServeAppliesMethodDeadline(t *testing.T) {
 	}
 }
 
-func TestDecodeParamsRejectsUnknownFields(t *testing.T) {
-	var params RouterStartParams
-	err := DecodeParams(json.RawMessage(`{"owner":"desktop","extra":true}`), &params)
-	if err == nil || err.Code != CodeInvalidParams {
-		t.Fatalf("error = %#v", err)
+func TestDecodeParamsPreservesUnknownAndTrailingRejection(t *testing.T) {
+	for _, raw := range []string{
+		`{"owner":"desktop","extra":true}`,
+		`{"owner":"desktop"} {"owner":"cli"}`,
+	} {
+		var params RouterStartParams
+		if err := DecodeParams(json.RawMessage(raw), &params); err == nil || err.Code != CodeInvalidParams {
+			t.Fatalf("DecodeParams(%s) error = %#v", raw, err)
+		}
 	}
 }
 

@@ -60,6 +60,14 @@ Agent 总览始终以独立卡片展示 Claude Code、OpenCode 和 Codex。每�
 
 只要目标路径可写，每个受支持 Agent 都始终可以进入配置管理。每张卡片只会为对应的一个 Agent 打开持续面板；写入成功后编辑器仍然可用，可以反复维护配置。桌面端不会安装、启动或调用 Agent CLI，也不会在同一面板中选择或批量处理多个 Agent。
 
+当 `agent.detect` 确认该 Agent 存在有效的 last-applied sidecar 条目且 Agent 写入可用时，卡片还会提供**清理 CodeasierRouter 配置**。清理按单个 Agent 执行，不是批量操作；它不使用 router、模型目录、model flow 或全局 API key。所有权缺失、无效或因未解决事务恢复而受阻时，自动清理会安全失败，不会根据配置外观猜测所有权；应保留文件和备份，并且只在解决事务状态后手工处理托管字段。
+
+清理会先显示无 key 审阅，其中包含精确托管路径名称、文件 `replace` 或 `delete` 影响、计划的敏感备份以及 last-applied sidecar 变化。它只删除由 sidecar 和当前结构共同证明的所有权：Claude 的托管 `env.*` key；OpenCode 的 `provider.mtls-router`，以及在该根字段受管且当前值仍使用精确 `mtls-router/` 前缀时的根 `model`；Codex 的 `model_providers.mtls-router`、必需托管 model/auth-store 根字段、仅由已保存 Codex model config 表明曾生成的可选根字段，以及 `auth.json` 中的 `auth_mode` 和 `OPENAI_API_KEY`。其他 provider、设置和认证 metadata 会保留。Codex OS keyring 凭据不会删除，先前配置写入时被替换的 auth 字段也不会重建。
+
+即使只改变了无关字段，整文件 revision 漂移也需要单独确认。写入前会重新校验已签名 cleanup preview；`PREVIEW_STALE` 要求重新预览。修改前，每个受影响的现有 Agent 目标和 manager sidecar 都会创建并验证私有备份，然后在同一个 journal 事务中变更，sidecar 始终最后处理。只有删除托管字段后语义根为空时才删除文件；否则会用保留后的内容替换。移除最后一个 Agent 条目时会删除最终 sidecar。操作失败或中断时，rollback 和启动恢复会一起恢复 Agent 文件与 sidecar。
+
+清理会删除所选 Agent 文件中的托管认证字段，但绝不会删除桌面 `credentials.json` 中的全局 key，也不会删除任何历史 `*.bak-*` / `*.rollback-*` 文件。新生成的清理备份在成功后同样保留，并可能含 API key 或其他凭据。应把它们作为敏感恢复产物保护和审查；确认不再需要后再单独删除。
+
 正常**合并**会保留受支持的无关配置。**备份并重建**是独立的破坏性恢复操作，只会为符合条件的语法无效文件显示。它会用纯托管输出替换完整的已批准 Agent 文件集；无关设置、注释、格式以及有效伴随文件中的元数据都会丢失。备份可能包含 API key。继续前必须确认这些损失并保护每个备份。
 
 Agent 配置采用以下单 Agent 流程：
@@ -91,7 +99,7 @@ Rebuild 输出有意只包含托管内容：Claude `settings.json` 只包含托�
 
 API 密钥页面会在桌面凭据存储中保存、替换或删除一个全局 API key；webview 只能读取摘要，绝不能回读明文。Agent 总览既不读取也不验证该 key。只有点击卡片操作后，Rust 才会按需为 `agent.models` 加载它，并在 `agent.write` 前再次加载当前保存值。桌面 `ModelFlow` 只包含 Agent、目录和预览模式状态，不包含 API key。Timeout、malformed response、manager restart 或 uncertain delivery 后，secret-bearing 调用绝不会自动 replay。除凭据存储以及 Agent 文件或已批准备份外，应用不会有意把 key 放入桌面或 manager 持久状态、进程参数、环境变量、日志、诊断、model config、catalog/revision token、预览响应或写入响应。
 
-目标 Agent 的配置文件仍需按该 Agent 的要求持久化 key。用户批准的恢复备份也可能持久化旧 key。Rust 每次按需使用 key 时都会把它保存在 zeroizing 内存中，但清除应用引用只是 best effort，不保证能从进程或操作系统内存中进行取证级擦除。
+在清理该 Agent 前，目标 Agent 的配置文件仍需按该 Agent 的要求持久化 key。单 Agent 清理会删除 Agent 文件中的托管凭据，但有意保留桌面全局 key。用户批准的恢复与清理备份也可能持久化旧 key。Rust 每次按需使用 key 时都会把它保存在 zeroizing 内存中，但清除应用引用只是 best effort，不保证能从进程或操作系统内存中进行取证级擦除。
 
 `MTLS_ROUTER_OPENAI_API_KEY` 已移除，不再提供 key。精确的非交互 manager 自动化见 [stdin manager 自动化](#stdin-manager-自动化)。
 

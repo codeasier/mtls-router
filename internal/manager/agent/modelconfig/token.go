@@ -8,18 +8,20 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"path/filepath"
 	"sort"
 	"strings"
 )
 
 const (
-	TokenVersion          = 1
-	CanonicalizationJCS1  = "jcs-rfc8785-v1"
-	MaxCatalogTokenSize   = 512 << 10
-	MaxRevisionTokenSize  = 128 << 10
-	maxTokenPayloadSize   = 384 << 10
-	maxTokenStringField   = 4096
-	maxCatalogTokenModels = 1000
+	TokenVersion                = 1
+	CanonicalizationJCS1        = "jcs-rfc8785-v1"
+	MaxCatalogTokenSize         = 512 << 10
+	MaxRevisionTokenSize        = 128 << 10
+	MaxCleanupRevisionTokenSize = 128 << 10
+	maxTokenPayloadSize         = 384 << 10
+	maxTokenStringField         = 4096
+	maxCatalogTokenModels       = 1000
 )
 
 var (
@@ -84,6 +86,35 @@ type RevisionFile struct {
 	SourceRevision  RevisionState `json:"source_revision"`
 	TargetRevision  RevisionState `json:"target_revision"`
 	CompanionExists bool          `json:"companion_exists,omitempty"`
+}
+
+// CleanupRevisionClaims bind one Agent cleanup plan without requiring model
+// catalog, router, or canonical model configuration claims.
+type CleanupRevisionClaims struct {
+	Agent              Agent                 `json:"agent"`
+	Files              []CleanupRevisionFile `json:"files"`
+	StateOperation     string                `json:"state_operation"`
+	StateRevision      RevisionState         `json:"state_revision"`
+	ManagedConfigDrift bool                  `json:"managed_config_drift"`
+}
+
+type CleanupRevisionFile struct {
+	Role           string        `json:"role"`
+	SourcePath     string        `json:"source_path"`
+	TargetPath     string        `json:"target_path"`
+	Operation      string        `json:"operation"`
+	BackupRequired bool          `json:"backup_required"`
+	BackupSource   string        `json:"backup_source,omitempty"`
+	SourceRevision RevisionState `json:"source_revision"`
+	TargetRevision RevisionState `json:"target_revision"`
+	RemovedPaths   []string      `json:"removed_paths"`
+}
+
+type cleanupRevisionEnvelope struct {
+	Version          int                   `json:"version"`
+	Canonicalization string                `json:"canonicalization"`
+	KeyGeneration    string                `json:"key_generation"`
+	Claims           CleanupRevisionClaims `json:"claims"`
 }
 
 // TokenSigner authenticates opaque cross-process tokens with a private
@@ -168,6 +199,28 @@ func (s *TokenSigner) VerifyRevision(token string) (RevisionClaims, error) {
 		return RevisionClaims{}, ErrTokenInvalid
 	}
 	return claims, nil
+}
+
+func (s *TokenSigner) SignCleanupRevision(claims CleanupRevisionClaims) (string, error) {
+	if err := validateCleanupRevisionClaims(claims); err != nil {
+		return "", err
+	}
+	envelope := cleanupRevisionEnvelope{
+		Version: TokenVersion, Canonicalization: CanonicalizationJCS1,
+		KeyGeneration: s.generation, Claims: claims,
+	}
+	return s.sign("cleanup-revision-token-v1", envelope, MaxCleanupRevisionTokenSize)
+}
+
+func (s *TokenSigner) VerifyCleanupRevision(token string) (CleanupRevisionClaims, error) {
+	var envelope cleanupRevisionEnvelope
+	if err := s.verify("cleanup-revision-token-v1", token, MaxCleanupRevisionTokenSize, &envelope); err != nil {
+		return CleanupRevisionClaims{}, err
+	}
+	if envelope.Version != TokenVersion || envelope.Canonicalization != CanonicalizationJCS1 || envelope.KeyGeneration != s.generation || validateCleanupRevisionClaims(envelope.Claims) != nil {
+		return CleanupRevisionClaims{}, ErrTokenInvalid
+	}
+	return envelope.Claims, nil
 }
 
 // RevisionMAC returns a context-separated keyed whole-file revision. Context
@@ -407,6 +460,43 @@ func validateRevisionClaims(c RevisionClaims) error {
 		return ErrTokenInvalid
 	}
 	return nil
+}
+
+func validateCleanupRevisionClaims(c CleanupRevisionClaims) error {
+	if !validAgents([]Agent{c.Agent}) || len(c.Files) > 16 || (c.StateOperation != "replace" && c.StateOperation != "delete") || !c.StateRevision.Exists || !validRevisionState(c.StateRevision) {
+		return ErrTokenInvalid
+	}
+	seen := make(map[string]bool, len(c.Files))
+	for _, file := range c.Files {
+		identity := file.Role + "\x00" + file.TargetPath
+		if seen[identity] || (file.Role != "config" && file.Role != "auth") ||
+			(file.Operation != "replace" && file.Operation != "delete") ||
+			!validAbsolutePath(file.SourcePath) || !validAbsolutePath(file.TargetPath) ||
+			file.SourcePath != file.TargetPath || file.SourceRevision != file.TargetRevision ||
+			!file.SourceRevision.Exists || !validRevisionState(file.SourceRevision) ||
+			!file.BackupRequired || file.BackupSource != file.SourcePath ||
+			!validSortedUniqueTokenFields(file.RemovedPaths) {
+			return ErrTokenInvalid
+		}
+		seen[identity] = true
+	}
+	return nil
+}
+
+func validAbsolutePath(value string) bool {
+	return validTokenField(value) && (filepath.IsAbs(value) || strings.HasPrefix(value, "/"))
+}
+
+func validSortedUniqueTokenFields(values []string) bool {
+	if len(values) == 0 || len(values) > 256 {
+		return false
+	}
+	for i, value := range values {
+		if !validTokenField(value) || (i > 0 && values[i-1] >= value) {
+			return false
+		}
+	}
+	return true
 }
 
 func validRevisionState(value RevisionState) bool {

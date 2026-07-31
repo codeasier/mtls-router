@@ -42,6 +42,27 @@ vi.mock("./AgentPanel", () => ({
   ),
 }));
 
+vi.mock("./AgentCleanupPanel", () => ({
+  AgentCleanupPanel: ({
+    agent,
+    onBack,
+    onBusyChange,
+    onComplete,
+  }: {
+    agent: string;
+    onBack(): void;
+    onBusyChange(busy: boolean): void;
+    onComplete(): void;
+  }) => (
+    <div aria-label={`cleanup-${agent}`}>
+      <button onClick={() => onBusyChange(true)}>cleanup busy</button>
+      <button onClick={() => onBusyChange(false)}>cleanup idle</button>
+      <button onClick={onComplete}>cleanup finish</button>
+      <button onClick={onBack}>cleanup back</button>
+    </div>
+  ),
+}));
+
 const detection: AgentDetection = {
   agents: ["claude", "opencode", "codex"].map((agent) => ({
     agent: agent as "claude" | "opencode" | "codex",
@@ -55,6 +76,7 @@ const detection: AgentDetection = {
     configured: true,
     invalid: false,
     recovery: { eligible: false, files: [] },
+    cleanup: { managed: true, available: true, reason: null },
   })),
 };
 
@@ -150,5 +172,65 @@ describe("AgentPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "panel back" }));
 
     expect(await screen.findByText("/reloaded/claude")).toBeVisible();
+  });
+
+  it("keeps cleanup independent, blocks only while busy, and restores focus", async () => {
+    const { getGuard, onDirtyChange } = setup();
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "清理 OpenCode 托管配置",
+      }),
+    );
+    expect(screen.getByLabelText("cleanup-opencode")).toBeVisible();
+    expect(getGuard()?.()).toBe("allow");
+    expect(onDirtyChange).not.toHaveBeenCalledWith(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "cleanup busy" }));
+    expect(getGuard()?.()).toBe("block");
+    fireEvent.click(screen.getByRole("button", { name: "cleanup idle" }));
+    expect(getGuard()?.()).toBe("allow");
+    fireEvent.click(screen.getByRole("button", { name: "cleanup back" }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "清理 OpenCode 托管配置" }),
+      ).toHaveFocus(),
+    );
+  });
+
+  it("refreshes only after explicit cleanup finish and falls back to configure focus", async () => {
+    const refreshed: AgentDetection = {
+      agents: detection.agents.map((agent) =>
+        agent.agent === "opencode"
+          ? {
+              ...agent,
+              cleanup: {
+                managed: false,
+                available: false,
+                reason: "not_managed",
+              },
+            }
+          : agent,
+      ),
+    };
+    const api = createMockApi({
+      detectAgents: vi
+        .fn()
+        .mockResolvedValueOnce(detection)
+        .mockResolvedValueOnce(refreshed),
+    });
+    renderWithI18n(<AgentPage api={api} onNavigateToApiKeys={vi.fn()} />);
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "清理 OpenCode 托管配置",
+      }),
+    );
+    expect(api.detectAgents).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: "cleanup finish" }));
+
+    await waitFor(() => expect(api.detectAgents).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /OpenCode/ })).toHaveFocus(),
+    );
   });
 });

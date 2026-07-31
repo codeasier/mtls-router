@@ -19,6 +19,7 @@ const base: AgentState = {
   configured: false,
   invalid: false,
   recovery: { eligible: false, files: [] },
+  cleanup: { managed: false, available: false, reason: "not_managed" },
 };
 
 describe("Agent presentation state", () => {

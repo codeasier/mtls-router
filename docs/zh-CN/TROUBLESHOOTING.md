@@ -107,6 +107,26 @@ Router 意外退出后不会进入无限重启循环。manager 退出时，桌�
 
 客户端允许时，请返回配置，使用保留的无 key 目录/config 生成新预览。如果 catalog token 同样 stale，则重新输入 key 并发现模型。对于 rebuild，手工修复源文件、伴随文件存在状态变化、新 blocker 或任意路径/revision 变化也会使批准 stale，并可能使重建不再符合条件。不要用旧 revision token 重试，也不能在没有新预览和破坏性确认时从 merge 切换到 rebuild。
 
+对于 cleanup，不需要 key 或重新发现目录。请选择**重新预览清理**，根据当前 Agent 文件和 sidecar 重建计划。不要重试旧 cleanup token，也不要在传输结果不明确后 replay cleanup write。
+
+## 托管清理不可用或失败
+
+只有 Agent 存在有效 last-applied sidecar 所有权条目时，界面才会提供自动清理。它绝不会根据 `mtls-router` provider 名称猜测所有权，也不使用 router、模型目录或全局 API key。
+
+| Code 或状态 | 处理方式 |
+|---|---|
+| `not_managed` / `AGENT_NOT_MANAGED` | 不存在可信所有权条目。不要通过创建或编辑 sidecar 来启用清理。停止 Agent，保留当前文件和备份，然后只手工删除能独立确认所有权的字段。 |
+| `model_state_invalid` / `MODEL_STATE_INVALID` | 保留完整 `agent-transactions` 目录和 Agent 文件。先解决 journal/recovery 问题；不要只替换 signing key 或 sidecar。 |
+| `writes_disabled` / `ROLLBACK_FAILED` | 在证明事务恢复完成前，清理和正常写入都会保持阻断。重启或删除 journal 不能绕过该失败。 |
+| `CONFIG_INVALID` | 记录文件、路径身份、JSON/JSONC/TOML 结构或托管 provider container 无法安全清理。应手工修复、刷新检测并请求新 cleanup preview。此错误不会开始备份或修改。 |
+| `CONFIG_NOT_WRITABLE` | 恢复当前用户对每个记录目标及父目录的写权限。不要提升桌面应用权限。 |
+| `MANAGED_CONFIG_DRIFT` | 检查列出的托管路径和文件影响。只有确实应删除这些 namespace 时才勾选专用漂移确认；该确认不授权删除无关内容。 |
+| `PREVIEW_STALE` | 记录的 Agent 文件或 sidecar 在预览后发生变化。重新预览，不要复用 token。 |
+| `AGENT_OPERATION_BUSY` / `OPERATION_TIMEOUT` | 等待其他操作或有界 deadline 结束，刷新检测并重新预览。不要删除 lock 或事务状态。 |
+| `BACKUP_FAILED` / `WRITE_FAILED` / `ROLLBACK_FAILED` | 按[写入或回滚失败](#写入或回滚失败)处理。清理使用与配置写入相同的已验证备份、journal、rollback 和 fail-closed 恢复引擎。 |
+
+清理只删除所选 Agent 中已证明受管的 provider/model/认证路径。它有意保留桌面全局 API key、所有历史备份和新生成的清理备份。显示为 `delete` 的文件只会因为删除后语义根为空而被移除；`replace` 会保留剩余用户数据。备份可能含 key 或其他凭据，绝不能未经脱敏直接共享。对于 Codex，清理会删除文件认证字段，但不会删除 OS keyring 凭据，也不会重建先前写入时被替换的 auth 字段。
+
 ## 模型配置错误
 
 所有模型错误都会安全失败：不会修改 Agent 或 last-applied sidecar 文件，也不会使用静态模型、缓存目录、现有模型或替代模型 fallback。
@@ -137,7 +157,7 @@ Fable 是可选的。启用时，其显式模型必须仍在认证目录中；Fa
 
 ## 写入或回滚失败
 
-多 Agent merge/rebuild 写入是事务性的：
+Agent merge/rebuild 写入和单 Agent cleanup 写入都是事务性的：
 
 - `BACKUP_FAILED` 发生在替换前，不会修改任何目标，已创建的备份产物已清理；修正底层文件/目录问题后仍可写入。如果无法证明清理完成，结果会改为 `ROLLBACK_FAILED`。
 - `WRITE_FAILED` 且成功 rollback 表示每个已修改目标和 manager sidecar 都已恢复。诊断备份和原始备份会保留以供检查。

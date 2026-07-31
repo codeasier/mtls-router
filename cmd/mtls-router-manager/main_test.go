@@ -89,6 +89,8 @@ func TestServeSubprocessContract(t *testing.T) {
 		`{"id":"first","method":"manager.info"}`,
 		`{"api_key":"` + subprocessKey,
 		`{"id":"sensitive","method":"agent.write","params":{"agents":["claude"],"revision_token":"missing","api_key":"` + subprocessKey + `"}}`,
+		`{"id":"cleanup-preview-sensitive","method":"agent.cleanup.preview","params":{"agent":"opencode","api_key":"` + subprocessKey + `"}}`,
+		`{"id":"cleanup-write-sensitive","method":"agent.cleanup.write","params":{"agent":"opencode","revision_token":"` + subprocessKey + `","approve_managed_overwrite":false}}`,
 		`{"id":"last","method":"manager.info","params":{}}`,
 	}, "\n") + "\n"
 	stdout, stderr, err := runManager(binary, dataDir, input)
@@ -99,7 +101,7 @@ func TestServeSubprocessContract(t *testing.T) {
 		t.Fatalf("sensitive input leaked: stdout=%s stderr=%s", stdout, stderr)
 	}
 	lines := strings.Split(strings.TrimSpace(stdout), "\n")
-	if len(lines) != 4 {
+	if len(lines) != 6 {
 		t.Fatalf("response lines = %d: %s", len(lines), stdout)
 	}
 	var responses []protocol.Response
@@ -119,8 +121,14 @@ func TestServeSubprocessContract(t *testing.T) {
 	if responses[2].ID == nil || *responses[2].ID != "sensitive" || responses[2].Error == nil {
 		t.Fatalf("sensitive response = %#v", responses[2])
 	}
-	if responses[3].ID == nil || *responses[3].ID != "last" || responses[3].Error != nil {
-		t.Fatalf("last response = %#v", responses[3])
+	if responses[3].ID == nil || *responses[3].ID != "cleanup-preview-sensitive" || responses[3].Error == nil || responses[3].Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("cleanup preview response = %#v", responses[3])
+	}
+	if responses[4].ID == nil || *responses[4].ID != "cleanup-write-sensitive" || responses[4].Error == nil || responses[4].Error.Code != protocol.CodeAgentNotManaged {
+		t.Fatalf("cleanup write response = %#v", responses[4])
+	}
+	if responses[5].ID == nil || *responses[5].ID != "last" || responses[5].Error != nil {
+		t.Fatalf("last response = %#v", responses[5])
 	}
 
 	var info protocol.ManagerInfoResult
@@ -131,6 +139,73 @@ func TestServeSubprocessContract(t *testing.T) {
 		t.Fatalf("manager info = %+v", info)
 	}
 	assertTreeExcludes(t, dataDir, subprocessKey)
+}
+
+func TestManagerSubprocessCleanupNeedsNoRouterOrAPIKey(t *testing.T) {
+	binary := buildManager(t)
+	dataDir := t.TempDir()
+	authority, requestLog := startTrustedRouter(t, dataDir, "")
+	openCodePath := filepath.Join(dataDir, "opencode.json")
+	if err := os.WriteFile(openCodePath, []byte(`{"theme":"keep"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	send, finish := startManagerSession(t, binary, dataDir, authority)
+
+	modelsResponse := send(map[string]any{"id": "models", "method": "agent.models", "params": map[string]any{"owner": "cli", "agents": []string{"opencode"}, "api_key": subprocessKey}})
+	if modelsResponse.Error != nil {
+		t.Fatalf("models error = %+v", modelsResponse.Error)
+	}
+	var models protocol.AgentModelsResult
+	if err := json.Unmarshal(modelsResponse.Result, &models); err != nil {
+		t.Fatal(err)
+	}
+	config := json.RawMessage(`{"version":1,"opencode":{"default_model":"model-a","models":{"model-a":{}}}}`)
+	previewResponse := send(map[string]any{"id": "preview", "method": "agent.preview", "params": map[string]any{"agents": []string{"opencode"}, "catalog_token": models.CatalogToken, "model_config": config}})
+	if previewResponse.Error != nil {
+		t.Fatalf("preview error = %+v", previewResponse.Error)
+	}
+	var preview protocol.AgentPreviewResult
+	if err := json.Unmarshal(previewResponse.Result, &preview); err != nil {
+		t.Fatal(err)
+	}
+	writeResponse := send(map[string]any{"id": "write", "method": "agent.write", "params": map[string]any{
+		"agents": []string{"opencode"}, "catalog_token": models.CatalogToken, "model_config": config, "revision_token": preview.RevisionToken,
+		"approve_managed_overwrite": preview.ManagedConfigDrift, "approve_codex_auth_change": preview.RequiresCodexAuthApproval, "api_key": subprocessKey,
+	}})
+	if writeResponse.Error != nil {
+		t.Fatalf("write error = %+v", writeResponse.Error)
+	}
+	stopTrustedRouter(t, dataDir, authority)
+
+	cleanupPreviewResponse := send(map[string]any{"id": "cleanup-preview", "method": "agent.cleanup.preview", "params": map[string]any{"agent": "opencode"}})
+	if cleanupPreviewResponse.Error != nil {
+		t.Fatalf("cleanup preview error = %+v", cleanupPreviewResponse.Error)
+	}
+	var cleanupPreview protocol.AgentCleanupPreviewResult
+	if err := json.Unmarshal(cleanupPreviewResponse.Result, &cleanupPreview); err != nil {
+		t.Fatal(err)
+	}
+	if cleanupPreview.Agent != "opencode" || cleanupPreview.RevisionToken == "" || len(cleanupPreview.Files) != 1 {
+		t.Fatalf("cleanup preview = %#v", cleanupPreview)
+	}
+	cleanupWriteResponse := send(map[string]any{"id": "cleanup-write", "method": "agent.cleanup.write", "params": map[string]any{
+		"agent": "opencode", "revision_token": cleanupPreview.RevisionToken, "approve_managed_overwrite": cleanupPreview.ManagedConfigDrift,
+	}})
+	if cleanupWriteResponse.Error != nil {
+		t.Fatalf("cleanup write error = %+v", cleanupWriteResponse.Error)
+	}
+	finish()
+
+	cleaned, err := os.ReadFile(openCodePath)
+	if err != nil || !strings.Contains(string(cleaned), `"theme":"keep"`) || strings.Contains(string(cleaned), "mtls-router") || strings.Contains(string(cleaned), subprocessKey) {
+		t.Fatalf("cleaned OpenCode config = %q, %v", cleaned, err)
+	}
+	sidecar := filepath.Join(dataDir, "agent-transactions", "last-applied-model-config.json")
+	if _, err := os.Stat(sidecar); !os.IsNotExist(err) {
+		t.Fatalf("final sidecar still exists: %v", err)
+	}
+	assertModelRequestCount(t, requestLog, 2)
+	assertTreeExcludes(t, filepath.Join(dataDir, "agent-transactions"), subprocessKey)
 }
 
 func TestServeOnlyCommandAndExplicitFlagValidation(t *testing.T) {
@@ -429,6 +504,31 @@ func startTrustedRouter(t *testing.T, dataDir, catalogMode string) (string, stri
 		t.Fatal(err)
 	}
 	return authority, requestLog
+}
+
+func stopTrustedRouter(t *testing.T, dataDir, authority string) {
+	t.Helper()
+	value, err := state.Read(filepath.Join(dataDir, "cli", "setup-state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	process, err := os.FindProcess(value.PID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		connection, dialErr := net.DialTimeout("tcp", authority, 50*time.Millisecond)
+		if dialErr != nil {
+			return
+		}
+		_ = connection.Close()
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("trusted router %s did not stop", authority)
 }
 
 func startManagerSession(t *testing.T, binary, dataDir, authority string) (func(any) protocol.Response, func()) {

@@ -755,6 +755,119 @@ func TestRevisionTokensBindEveryFileAndSidecarField(t *testing.T) {
 	}
 }
 
+func TestCleanupRevisionRoundTripAndContextSeparation(t *testing.T) {
+	signer, _ := NewTokenSigner(bytes.Repeat([]byte{0x43}, 32), "generation-cleanup")
+	existing := RevisionState{Exists: true, Size: 2, Mode: 0o600, Digest: "revision-mac"}
+	claims := CleanupRevisionClaims{
+		Agent: OpenCode,
+		Files: []CleanupRevisionFile{{
+			Role: "config", SourcePath: "/config", TargetPath: "/config",
+			Operation: "delete", BackupRequired: true, BackupSource: "/config",
+			SourceRevision: existing, TargetRevision: existing,
+			RemovedPaths: []string{"model", "provider.mtls-router"},
+		}},
+		StateOperation:     "delete",
+		StateRevision:      existing,
+		ManagedConfigDrift: true,
+	}
+	token, err := signer.SignCleanupRevision(claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := signer.VerifyCleanupRevision(token)
+	if err != nil || !reflect.DeepEqual(decoded, claims) {
+		t.Fatalf("round trip = %#v, %v", decoded, err)
+	}
+	if _, err := signer.VerifyRevision(token); !errors.Is(err, ErrTokenInvalid) {
+		t.Fatalf("cleanup token accepted as normal revision: %v", err)
+	}
+}
+
+func TestCleanupRevisionRejectsInvalidClaims(t *testing.T) {
+	signer, _ := NewTokenSigner(bytes.Repeat([]byte{0x44}, 32), "generation-cleanup")
+	existing := RevisionState{Exists: true, Size: 2, Mode: 0o600, Digest: "revision-mac"}
+	base := CleanupRevisionClaims{
+		Agent: Codex,
+		Files: []CleanupRevisionFile{
+			{Role: "auth", SourcePath: "/codex/auth.json", TargetPath: "/codex/auth.json", Operation: "delete", BackupRequired: true, BackupSource: "/codex/auth.json", SourceRevision: existing, TargetRevision: existing, RemovedPaths: []string{"OPENAI_API_KEY", "auth_mode"}},
+			{Role: "config", SourcePath: "/codex/config.toml", TargetPath: "/codex/config.toml", Operation: "replace", BackupRequired: true, BackupSource: "/codex/config.toml", SourceRevision: existing, TargetRevision: existing, RemovedPaths: []string{"model", "model_provider"}},
+		},
+		StateOperation: "replace", StateRevision: existing,
+	}
+	tests := []struct {
+		name   string
+		mutate func(*CleanupRevisionClaims)
+	}{
+		{name: "agent", mutate: func(c *CleanupRevisionClaims) { c.Agent = "other" }},
+		{name: "operation", mutate: func(c *CleanupRevisionClaims) { c.Files[0].Operation = "create" }},
+		{name: "absent source", mutate: func(c *CleanupRevisionClaims) { c.Files[0].SourceRevision = RevisionState{} }},
+		{name: "target mode", mutate: func(c *CleanupRevisionClaims) { c.Files[0].TargetRevision.Mode = 0o640 }},
+		{name: "relative source", mutate: func(c *CleanupRevisionClaims) { c.Files[0].SourcePath = "relative" }},
+		{name: "relative target", mutate: func(c *CleanupRevisionClaims) { c.Files[0].TargetPath = "relative" }},
+		{name: "backup source", mutate: func(c *CleanupRevisionClaims) { c.Files[0].BackupSource = "/other" }},
+		{name: "unsorted removed paths", mutate: func(c *CleanupRevisionClaims) { c.Files[0].RemovedPaths = []string{"auth_mode", "OPENAI_API_KEY"} }},
+		{name: "duplicate removed paths", mutate: func(c *CleanupRevisionClaims) { c.Files[0].RemovedPaths = []string{"auth_mode", "auth_mode"} }},
+		{name: "empty removed paths", mutate: func(c *CleanupRevisionClaims) { c.Files[0].RemovedPaths = nil }},
+		{name: "state operation", mutate: func(c *CleanupRevisionClaims) { c.StateOperation = "create" }},
+		{name: "state absent", mutate: func(c *CleanupRevisionClaims) { c.StateRevision = RevisionState{} }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			claims := cloneCleanupRevisionClaims(t, base)
+			test.mutate(&claims)
+			if _, err := signer.SignCleanupRevision(claims); !errors.Is(err, ErrTokenInvalid) {
+				t.Fatalf("SignCleanupRevision() error = %v, want ErrTokenInvalid", err)
+			}
+		})
+	}
+}
+
+func TestCleanupRevisionBindsEveryClaimAndMAC(t *testing.T) {
+	key := bytes.Repeat([]byte{0x45}, 32)
+	signer, _ := NewTokenSigner(key, "generation-cleanup")
+	existing := RevisionState{Exists: true, Size: 2, Mode: 0o600, Digest: "revision-mac"}
+	base := CleanupRevisionClaims{
+		Agent:          OpenCode,
+		Files:          []CleanupRevisionFile{{Role: "config", SourcePath: "/config", TargetPath: "/config", Operation: "delete", BackupRequired: true, BackupSource: "/config", SourceRevision: existing, TargetRevision: existing, RemovedPaths: []string{"model", "provider.mtls-router"}}},
+		StateOperation: "delete", StateRevision: existing, ManagedConfigDrift: true,
+	}
+	token, err := signer.SignCleanupRevision(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondProcess, _ := NewTokenSigner(append([]byte(nil), key...), "generation-cleanup")
+	mutations := []struct {
+		name   string
+		mutate func(*CleanupRevisionClaims)
+	}{
+		{name: "agent", mutate: func(c *CleanupRevisionClaims) { c.Agent = Claude }},
+		{name: "operation", mutate: func(c *CleanupRevisionClaims) { c.Files[0].Operation = "replace" }},
+		{name: "existence", mutate: func(c *CleanupRevisionClaims) { c.Files[0].SourceRevision.Exists = false }},
+		{name: "mode", mutate: func(c *CleanupRevisionClaims) { c.Files[0].SourceRevision.Mode = 0o640 }},
+		{name: "source path", mutate: func(c *CleanupRevisionClaims) { c.Files[0].SourcePath = "/other" }},
+		{name: "target path", mutate: func(c *CleanupRevisionClaims) { c.Files[0].TargetPath = "/other" }},
+		{name: "backup source", mutate: func(c *CleanupRevisionClaims) { c.Files[0].BackupSource = "/other" }},
+		{name: "removed paths", mutate: func(c *CleanupRevisionClaims) { c.Files[0].RemovedPaths = []string{"provider.mtls-router"} }},
+		{name: "drift", mutate: func(c *CleanupRevisionClaims) { c.ManagedConfigDrift = false }},
+		{name: "state operation", mutate: func(c *CleanupRevisionClaims) { c.StateOperation = "replace" }},
+		{name: "state revision", mutate: func(c *CleanupRevisionClaims) { c.StateRevision.Digest = "other" }},
+	}
+	for _, test := range mutations {
+		t.Run(test.name, func(t *testing.T) {
+			forged := tamperCleanupRevisionForTest(t, token, test.mutate)
+			if _, err := secondProcess.VerifyCleanupRevision(forged); !errors.Is(err, ErrTokenInvalid) {
+				t.Fatalf("claim mutation accepted: %v", err)
+			}
+		})
+	}
+	parts := strings.SplitN(token, ".", 2)
+	mac := []byte(parts[1])
+	mac[len(mac)-1] ^= 1
+	if _, err := secondProcess.VerifyCleanupRevision(parts[0] + "." + string(mac)); !errors.Is(err, ErrTokenInvalid) {
+		t.Fatalf("MAC mutation accepted: %v", err)
+	}
+}
+
 func cloneRevisionClaims(t *testing.T, value RevisionClaims) RevisionClaims {
 	t.Helper()
 	raw, err := json.Marshal(value)
@@ -762,6 +875,19 @@ func cloneRevisionClaims(t *testing.T, value RevisionClaims) RevisionClaims {
 		t.Fatal(err)
 	}
 	var result RevisionClaims
+	if err := json.Unmarshal(raw, &result); err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
+func cloneCleanupRevisionClaims(t *testing.T, value CleanupRevisionClaims) CleanupRevisionClaims {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result CleanupRevisionClaims
 	if err := json.Unmarshal(raw, &result); err != nil {
 		t.Fatal(err)
 	}
@@ -788,6 +914,17 @@ func tamperRevisionForTest(t *testing.T, token string, mutate func(*RevisionClai
 	}
 	mutate(&claims)
 	return tamperedTokenForTest(t, token, claims)
+}
+
+func tamperCleanupRevisionForTest(t *testing.T, token string, mutate func(*CleanupRevisionClaims)) string {
+	t.Helper()
+	payload, _ := base64.RawURLEncoding.DecodeString(strings.SplitN(token, ".", 2)[0])
+	var envelope cleanupRevisionEnvelope
+	if err := json.Unmarshal(payload, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	mutate(&envelope.Claims)
+	return tamperedTokenForTest(t, token, envelope)
 }
 
 func tamperedTokenForTest(t *testing.T, token string, claims any) string {

@@ -107,7 +107,7 @@ describe("AgentPreviewPane", () => {
       managed_config_drift: false,
       requires_codex_auth_approval: false,
     };
-    const invalid = [
+    const invalid: AgentPreview[] = [
       { ...base, drifted_agents: ["codex" as const] },
       {
         ...base,
@@ -208,7 +208,7 @@ describe("AgentPreviewPane", () => {
       path: "/safe/manager/state.json.bak",
       role: "state-backup",
       format: "json",
-      operation: "preserve",
+      operation: "backup",
       backup_sensitive: true,
     };
     renderWithI18n(<AgentPreviewPane {...props} preview={detailed} />);

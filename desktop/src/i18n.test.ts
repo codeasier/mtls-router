@@ -51,4 +51,37 @@ describe("localization resources", () => {
       resolveTranslation("en", "missing.key", { "zh-CN": {}, en: {} }),
     ).toBe("missing.key");
   });
+
+  it.each([en, zhCN])(
+    "states cleanup authentication and retention boundaries explicitly",
+    (catalog) => {
+      expect(catalog["agents.cleanup.authRemoved"]).toMatch(/auth|认证/i);
+      expect(catalog["agents.cleanup.globalKeyRetained"]).toMatch(
+        /global|全局/i,
+      );
+      expect(catalog["agents.cleanup.globalKeyRetained"]).toMatch(/not|不会/i);
+      expect(catalog["agents.cleanup.backupsRetained"]).toMatch(
+        /historical|历史/i,
+      );
+      expect(catalog["agents.cleanup.backupsRetained"]).toMatch(/remain|保留/i);
+    },
+  );
+
+  it("describes cleanup completion without claiming detection already refreshed", () => {
+    expect(en["agents.cleanup.completeNote"]).toMatch(/cleanup.*complete/i);
+    expect(en["agents.cleanup.completeNote"]).toMatch(/backup/i);
+    expect(en["agents.cleanup.completeNote"]).not.toMatch(/detect|refresh/i);
+    expect(zhCN["agents.cleanup.completeNote"]).toMatch(/清理.*完成/);
+    expect(zhCN["agents.cleanup.completeNote"]).toMatch(/备份/);
+    expect(zhCN["agents.cleanup.completeNote"]).not.toMatch(/检测|刷新/);
+  });
+
+  it("keeps ambiguous cleanup recovery and explicit finish actions bilingual", () => {
+    expect(en["agents.cleanup.ambiguous"]).toMatch(/confirm|unknown/i);
+    expect(zhCN["agents.cleanup.ambiguous"]).toMatch(/无法确认|未知/);
+    expect(en["agents.cleanup.repreview"]).toMatch(/^Re-preview/);
+    expect(zhCN["agents.cleanup.repreview"]).toMatch(/^重新预览/);
+    expect(en["agents.cleanup.finish"]).toMatch(/return.*Agent overview/i);
+    expect(zhCN["agents.cleanup.finish"]).toMatch(/返回 Agent 概览/);
+  });
 });

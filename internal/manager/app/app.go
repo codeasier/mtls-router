@@ -69,6 +69,8 @@ type lifecycleService interface {
 type agentService interface {
 	Render(context.Context, []agent.Kind, string, json.RawMessage) (agent.RenderResult, error)
 	Write(context.Context, agent.WriteRequest) (agent.WriteResult, error)
+	CleanupPreview(context.Context, agent.CleanupPreviewRequest) (agent.CleanupPreview, error)
+	CleanupWrite(context.Context, agent.CleanupWriteRequest) (agent.WriteResult, error)
 }
 
 type agentCatalogBinder interface {
@@ -264,6 +266,8 @@ func newWithDependencies(config Config, deps dependencies) *App {
 		protocol.MethodAgentRender:                  app.agentRender,
 		protocol.MethodAgentPreview:                 app.agentPreview,
 		protocol.MethodAgentWrite:                   app.agentWrite,
+		protocol.MethodAgentCleanupPreview:          app.agentCleanupPreview,
+		protocol.MethodAgentCleanupWrite:            app.agentCleanupWrite,
 	})
 	return app
 }
@@ -570,9 +574,63 @@ func (a *App) agentDetect(ctx context.Context, params json.RawMessage) (any, *pr
 			Path: item.Path, AuthPath: item.AuthPath, Format: string(item.Format), Exists: item.Exists,
 			Writable: item.Writable, Configured: item.Configured, Invalid: item.Invalid,
 			Migratable: item.Migratable, Recovery: recovery,
+			Cleanup: protocol.AgentCleanupState{
+				Managed: item.Cleanup.Managed, Available: item.Cleanup.Available, Reason: string(item.Cleanup.Reason),
+			},
 		})
 	}
 	return result, nil
+}
+
+func (a *App) agentCleanupPreview(ctx context.Context, params json.RawMessage) (any, *protocol.Error) {
+	var request protocol.AgentCleanupParams
+	if err := protocol.DecodeParams(params, &request); err != nil {
+		return nil, err
+	}
+	kind, err := cleanupAgentKind(request.Agent)
+	if err != nil {
+		return nil, err
+	}
+	if a.deps.agent == nil {
+		return nil, &protocol.Error{Code: protocol.CodeWriteFailed, Message: "Agent cleanup is unavailable"}
+	}
+	preview, previewErr := a.deps.agent.CleanupPreview(ctx, agent.CleanupPreviewRequest{Agent: kind})
+	if previewErr != nil {
+		return nil, mapAgentError(previewErr)
+	}
+	return mapCleanupPreview(preview), nil
+}
+
+func (a *App) agentCleanupWrite(ctx context.Context, params json.RawMessage) (any, *protocol.Error) {
+	var request protocol.AgentCleanupWriteParams
+	if err := protocol.DecodeParams(params, &request); err != nil {
+		return nil, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(params, &fields); err != nil {
+		return nil, invalidParams("invalid cleanup write parameters")
+	}
+	if _, ok := fields["approve_managed_overwrite"]; !ok {
+		return nil, invalidParams("approve_managed_overwrite is required")
+	}
+	kind, err := cleanupAgentKind(request.Agent)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(request.RevisionToken) == "" {
+		return nil, invalidParams("revision_token is required")
+	}
+	if a.deps.agent == nil {
+		return nil, &protocol.Error{Code: protocol.CodeWriteFailed, Message: "Agent cleanup is unavailable"}
+	}
+	result, writeErr := a.deps.agent.CleanupWrite(ctx, agent.CleanupWriteRequest{
+		Agent: kind, RevisionToken: request.RevisionToken, ApproveManagedOverwrite: request.ApproveManagedOverwrite,
+	})
+	request.RevisionToken = ""
+	if writeErr != nil {
+		return nil, mapAgentError(writeErr)
+	}
+	return mapWrite(result), nil
 }
 
 func recoveryReasons(values []agent.RecoveryReason) []string {
@@ -850,20 +908,43 @@ func mapPreview(value agent.Preview) protocol.AgentPreviewResult {
 	return result
 }
 
+func mapCleanupPreview(value agent.CleanupPreview) protocol.AgentCleanupPreviewResult {
+	result := protocol.AgentCleanupPreviewResult{
+		RevisionToken: value.RevisionToken, Agent: string(value.Agent), Files: []protocol.AgentFileEffect{},
+		RemovedPaths: append([]string{}, value.RemovedPaths...), ManagedConfigDrift: value.ManagedConfigDrift,
+	}
+	for _, file := range value.Files {
+		result.Files = append(result.Files, mapCleanupFileEffect(file))
+	}
+	if value.StateChange != nil {
+		mapped := mapCleanupFileEffect(*value.StateChange)
+		result.StateChange = &mapped
+	}
+	if value.StateBackup != nil {
+		result.StateBackup = &protocol.AgentFileEffect{
+			Path: value.StateBackup.Path, Role: value.StateBackup.Role, Format: string(value.StateBackup.Format), Operation: string(value.StateBackup.Operation),
+		}
+	}
+	return result
+}
+
+func mapCleanupFileEffect(value agent.FilePreview) protocol.AgentFileEffect {
+	return protocol.AgentFileEffect{
+		Path: value.Path, Role: value.Role, Format: string(value.Format), Operation: string(value.Operation),
+		BackupRequired: value.Backup.Required, BackupPattern: value.Backup.Pattern, BackupSensitive: value.Backup.Sensitive,
+	}
+}
+
 func mapWrite(value agent.WriteResult) protocol.AgentWriteResult {
 	result := protocol.AgentWriteResult{TransactionID: value.TransactionID}
 	for _, status := range value.Agents {
 		result.Agents = append(result.Agents, protocol.AgentWriteStatus{Agent: string(status.Agent), Success: status.Success, Changed: status.Changed, Backups: status.Backups, ErrorCode: protocol.ErrorCode(status.ErrorCode)})
 	}
 	if value.StateChange != nil {
-		operation := "create"
-		if value.StateBackup != nil {
-			operation = "replace"
-		}
-		result.StateChange = &protocol.AgentFileEffect{Path: value.StateChange.Path, Role: "state", Format: "json", Operation: operation}
+		result.StateChange = &protocol.AgentFileEffect{Path: value.StateChange.Path, Role: "state", Format: "json", Operation: string(value.StateChange.Operation)}
 	}
 	if value.StateBackup != nil {
-		result.StateBackup = &protocol.AgentFileEffect{Path: value.StateBackup.Path, Role: "state", Format: "json", Operation: "backup"}
+		result.StateBackup = &protocol.AgentFileEffect{Path: value.StateBackup.Path, Role: "state", Format: "json", Operation: string(value.StateBackup.Operation)}
 	}
 	return result
 }
@@ -925,6 +1006,16 @@ func agentKinds(values []string) ([]agent.Kind, *protocol.Error) {
 		result = append(result, kind)
 	}
 	return result, nil
+}
+
+func cleanupAgentKind(value string) (agent.Kind, *protocol.Error) {
+	kind := agent.Kind(value)
+	switch kind {
+	case agent.ClaudeCode, agent.OpenCode, agent.Codex:
+		return kind, nil
+	default:
+		return "", invalidParams("unsupported Agent cleanup selection")
+	}
 }
 
 func statusResult(found discovery.Result) protocol.RouterStatusResult {
@@ -1115,6 +1206,7 @@ func mapAgentError(err error) *protocol.Error {
 		protocol.CodeModelNotAvailable:    "A selected model is no longer available",
 		protocol.CodeManagedConfigDrift:   "Managed Agent configuration drift requires approval",
 		protocol.CodeCodexAuthUnsupported: "Codex authentication policy is unsupported",
+		protocol.CodeAgentNotManaged:      "Agent is not managed by CodeasierRouter",
 	}
 	message, ok := messages[code]
 	if !ok {

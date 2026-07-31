@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AgentOverview, type OverviewIssue } from "./AgentOverview";
+import { AgentCleanupPanel } from "./AgentCleanupPanel";
 import { AgentPanel, type AgentPanelGuardState } from "./AgentPanel";
 import { completeAgentDetection, type AgentTarget } from "./agentPresentation";
 import { useI18n } from "./i18n";
@@ -37,6 +38,7 @@ export function AgentPage({
   const { t } = useI18n();
   const [detection, setDetection] = useState<AgentDetection | null>(null);
   const [target, setTarget] = useState<AgentTarget | null>(null);
+  const [cleanupTarget, setCleanupTarget] = useState<AgentId | null>(null);
   const [issue, setIssue] = useState<OverviewIssue | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -46,8 +48,12 @@ export function AgentPage({
     dirty: false,
     busy: false,
   });
+  const cleanupBusyRef = useRef(false);
   const headingRef = useRef<HTMLHeadingElement>(null);
-  const restoreFocusRef = useRef<AgentId | null>(null);
+  const restoreFocusRef = useRef<{
+    agent: AgentId;
+    preferred: "configure" | "cleanup";
+  } | null>(null);
   const detectionGenerationRef = useRef(0);
 
   const refreshDetection = useCallback(async () => {
@@ -82,26 +88,37 @@ export function AgentPage({
   }, [refreshDetection]);
 
   useEffect(() => {
-    if (!target) return;
+    if (!target && !cleanupTarget) return;
     registerLeaveGuard(() => {
+      if (cleanupTarget) return cleanupBusyRef.current ? "block" : "allow";
       if (guardStateRef.current.busy) return "block";
       return guardStateRef.current.dirty ? "confirm" : "allow";
     });
     return () => {
       registerLeaveGuard(null);
       guardStateRef.current = { dirty: false, busy: false };
+      cleanupBusyRef.current = false;
       onDirtyChange(false);
     };
-  }, [onDirtyChange, registerLeaveGuard, target]);
+  }, [cleanupTarget, onDirtyChange, registerLeaveGuard, target]);
 
   useEffect(() => {
-    const agent = restoreFocusRef.current;
-    if (target || loading || !detection || !agent) return;
+    const restore = restoreFocusRef.current;
+    if (target || cleanupTarget || loading || !detection || !restore) return;
     restoreFocusRef.current = null;
-    const action = document.getElementById(`agent-${agent}-action`);
-    if (action instanceof HTMLButtonElement && !action.disabled) action.focus();
+    const ids =
+      restore.preferred === "cleanup"
+        ? [`agent-${restore.agent}-cleanup`, `agent-${restore.agent}-action`]
+        : [`agent-${restore.agent}-action`];
+    const action = ids
+      .map((id) => document.getElementById(id))
+      .find(
+        (element): element is HTMLButtonElement =>
+          element instanceof HTMLButtonElement && !element.disabled,
+      );
+    if (action) action.focus();
     else headingRef.current?.focus();
-  }, [detection, loading, target]);
+  }, [cleanupTarget, detection, loading, target]);
 
   async function refreshOverview() {
     if (refreshing) return;
@@ -120,9 +137,31 @@ export function AgentPage({
     if (!target) return;
     const previous = target.agent;
     onRequestLeave(() => {
-      restoreFocusRef.current = previous;
+      restoreFocusRef.current = { agent: previous, preferred: "configure" };
       setTarget(null);
     });
+  }
+
+  function leaveCleanup() {
+    if (!cleanupTarget) return;
+    const previous = cleanupTarget;
+    onRequestLeave(() => {
+      restoreFocusRef.current = { agent: previous, preferred: "cleanup" };
+      setCleanupTarget(null);
+    });
+  }
+
+  async function completeCleanup() {
+    if (!cleanupTarget) return;
+    const previous = cleanupTarget;
+    restoreFocusRef.current = { agent: previous, preferred: "cleanup" };
+    try {
+      await refreshDetection();
+    } catch {
+      setStale(Boolean(detection));
+    } finally {
+      setCleanupTarget(null);
+    }
   }
 
   if (target) {
@@ -141,6 +180,20 @@ export function AgentPage({
         onNavigateToApiKeys={onNavigateToApiKeys}
         onRetrySession={() => setPanelSession((value) => value + 1)}
         onReloaded={setDetection}
+      />
+    );
+  }
+
+  if (cleanupTarget) {
+    return (
+      <AgentCleanupPanel
+        api={api}
+        agent={cleanupTarget}
+        onBack={leaveCleanup}
+        onBusyChange={(busy) => {
+          cleanupBusyRef.current = busy;
+        }}
+        onComplete={() => void completeCleanup()}
       />
     );
   }
@@ -167,6 +220,7 @@ export function AgentPage({
           issue={issue}
           onRefresh={() => void refreshOverview()}
           onConfigure={setTarget}
+          onCleanup={setCleanupTarget}
           onRetry={setTarget}
           onNavigateToApiKeys={onNavigateToApiKeys}
         />

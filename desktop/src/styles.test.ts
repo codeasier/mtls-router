@@ -256,3 +256,32 @@ describe("responsive rebuild flow", () => {
     );
   });
 });
+
+describe("responsive Agent cleanup", () => {
+  it("stacks card actions below 900px", () => {
+    const medium = compact(extractMediaBlock(css, 900));
+    const baseRule =
+      /\.agent-card__actions\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);/.exec(
+        css,
+      );
+    const responsiveRule =
+      /@media\s*\(\s*max-width\s*:\s*900px\s*\)[\s\S]*?\.agent-card__actions\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);/.exec(
+        css,
+      );
+    expect(baseRule).not.toBeNull();
+    expect(responsiveRule).not.toBeNull();
+    expect(responsiveRule!.index).toBeGreaterThan(baseRule!.index);
+    expect(medium).toMatch(
+      /\.agent-card__actions\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);/,
+    );
+  });
+
+  it("keeps cleanup paths within their cards", () => {
+    expect(
+      compact(findRuleDeclarations(css, ".cleanup-removed-paths code")),
+    ).toMatch(/overflow-wrap:\s*anywhere;/);
+    expect(
+      compact(findRuleDeclarations(css, ".cleanup-result-path code")),
+    ).toMatch(/overflow-wrap:\s*anywhere;/);
+  });
+});

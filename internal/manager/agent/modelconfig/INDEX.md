@@ -11,7 +11,7 @@
 | `validate.go` | 各 agent section 的解析与校验（`parseClaude`/`parseOpenCode`/`parseModel`/`parseRole`/`parseLimit` 等） |
 | `canonical.go` | `Canonical(config)`、`CanonicalValue(value)` —— 规范化 JSON 序列化：键按 UTF-16 码元序排序、数字固定格式 |
 | `merge.go` | `DeepMerge(base, overlay)` 及深拷贝辅助 |
-| `token.go` | `TokenSigner`、`NewTokenSigner(key, generation)`；`SignCatalog`/`VerifyCatalog`、`SignRevision`/`VerifyRevision`、`RevisionMAC`；`CatalogClaims`、`RevisionClaims` 等 |
+| `token.go` | `TokenSigner`、`NewTokenSigner(key, generation)`；目录/普通写入/cleanup revision 的独立签名与验证、`RevisionMAC`；`CatalogClaims`、`RevisionClaims`、`CleanupRevisionClaims` |
 | `schema.go` | `GenerateSchema()` —— 导出 JSON Schema |
 
 ## 两种解码模式
@@ -24,6 +24,7 @@
 - **无 key 是设计硬约束**：schema 主动拒绝 key-like 字段名。model config 在任何环节都不得携带 API key。
 - **规范化必须稳定**：`Canonical` 按 UTF-16 码元序排键、数字用固定格式。签名与摘要都建立在它之上，序列化一旦不稳定，token 校验就会假阴性。
 - token 只承载摘要与声明，**不含 key**；sidecar 状态文件与事务 journal 同样只存 HMAC 摘要。
+- Cleanup token 使用独立 `cleanup-revision-token-v1` HMAC context；claims 只绑定单 Agent、文件 source/target 与 revision、`replace/delete`、备份来源、已排序删除路径、漂移，以及 sidecar revision/operation，不注入虚假的 catalog、router 或规范 model config 字段，也不放宽普通 `RevisionClaims`。
 - `Decode` 的错误经 `ValidationError` 携带字段路径，便于前端定位，但不回显被拒绝的值本身。
 
 ## 依赖

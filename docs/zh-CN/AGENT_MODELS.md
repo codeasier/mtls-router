@@ -30,7 +30,7 @@ Shell、PowerShell 和桌面客户端都保持以下 protocol 顺序：
 5. Print 时渲染脱敏片段；write 时预览精确文件、备份、迁移、所有权和漂移影响。
 6. 写入前用临时 key 重新获取目录，再执行一次原子多文件事务。
 
-Shell 和 PowerShell 安装命令始终省略恢复 mode，因此只支持 merge。桌面端一次只打开一个持续单 Agent 面板：有效 Agent 使用 `merge`，符合条件的无效 Agent 使用 `rebuild`。每次桌面 preview 和事务都精确只包含该 Agent；重建还必须遵守下文契约。Management protocol v4 的 method、parameter、result 和事务语义保持不变。
+Shell 和 PowerShell 安装命令始终省略恢复 mode，因此只支持 merge。桌面端一次只打开一个持续单 Agent 面板：有效 Agent 使用 `merge`，符合条件的无效 Agent 使用 `rebuild`。每次桌面 preview 和事务都精确只包含该 Agent；重建还必须遵守下文契约。Management protocol 仍为 v4，并新增 `agent.cleanup.preview` 和 `agent.cleanup.write` 用于下文独立清理契约；这两个 method 不会暴露为 setup 命令。作为全协议加固，严格请求参数解码现在除了拒绝未知字段，还会在每一层 object 中递归拒绝重复 JSON key。
 
 ### 桌面持续面板
 
@@ -142,6 +142,22 @@ Fable 所有权是有条件且基于精确路径的。启用时，manager 拥有
 
 Preset 模型不可用是唯一不导致 discovery 整体失败的情况：它会在 `preset.unavailable_agents` 中报告，省略不可用的完整 preset section，并继续提供 existing 配置和其他有效 preset section。它仍然绝不会触发替换或部分使用 preset。
 
+## 托管配置清理
+
+当 `agent.detect` 报告可信 last-applied sidecar 条目，且 `cleanup.managed=true`、`cleanup.available=true` 时，桌面端可以精确清理一个 Claude Code、OpenCode 或 Codex 配置。清理不需要 key，也不依赖 router trust、模型发现、catalog token、规范 model config 或桌面 model flow。总览不会为普通 `not_managed` Agent 显示该操作。Sidecar/signing 状态无效时报告 `model_state_invalid`；恢复未解决或写入已禁用时报告 `writes_disabled`。这两种情况都不会破坏基础 Agent 文件检测。
+
+清理绝不会只根据 provider 名称推断所有权。它会校验 sidecar、加载已保存的 Agent model section，只读取其中记录的绝对文件路径，并根据已保存配置和当前结构收窄旧版本中过宽的所有权记录：
+
+- **Claude Code：**只删除已记录的 `env.*` 路径；根 `env` object 为空时移除它。
+- **opencode：**在验证 object 结构后删除 `provider.mtls-router`。只有 sidecar 拥有根 `model` 且当前字符串以精确 ASCII `mtls-router/` 开头时才删除该字段。正常写入后来保留的用户默认 model 不会被新认领。
+- **Codex：**从 `config.toml` 删除 `model_providers.mtls-router`、必需的 `model_provider`、`model`、`cli_auth_credentials_store`，以及仅由已保存 Codex model config 表明曾生成的可选根字段；从 `auth.json` 删除 `auth_mode` 和 `OPENAI_API_KEY`。其他 auth metadata 会保留；OS keyring 凭据不会删除，也不会重建先前写入时被替换的 competing auth 字段。Config/auth 文件对始终属于同一个事务。
+
+Preview 只返回路径名称和文件/state 影响，绝不返回当前值或内容。它不会创建任何持久文件系统状态：不创建文件、目录、备份、事务 journal 或协调 lock。对于已托管状态，它只打开并校验已经存在的私有事务 lock；lock 缺失或不安全时会 fail closed，绝不补建。Cleanup 专用 HMAC token 会绑定 Agent、每个源/目标路径及 keyed revision、`replace`/`delete` 操作、必需备份来源、已排序删除路径、整文件漂移标志，以及 sidecar revision/operation；它有意不包含 router、目录、API key 或规范 model claims。
+
+整文件漂移要求 `approve_managed_overwrite=true`；批准不会扩大托管路径集合。Preview 后任一 Agent 文件或 sidecar revision 变化都会返回 `PREVIEW_STALE`。Write 会先为每个现有 Agent 文件和 sidecar 创建并验证私有 sibling 备份，再记录支持删除的 journal v3，按顺序处理 Agent 文件，最后更新或删除 sidecar。语义为空的 JSON/TOML 根会执行 `delete`，否则执行 `replace`。Journal v3 用不存在的 post revision 表示删除；启动恢复仍把 legacy v1/v2 journal 解码为仅 replace。Rollback 先恢复 manager state，再恢复 Agent 文件，避免所有权与文件分裂。
+
+清理会删除所选 Agent 文件内的认证，但保留桌面全局凭据以及所有历史和新生成备份。备份可能含当前或旧 key。稳定清理错误包括 `INVALID_PARAMS`、`AGENT_NOT_MANAGED`、`MODEL_STATE_INVALID`、`CONFIG_INVALID`、`CONFIG_NOT_WRITABLE`、`PREVIEW_STALE` 和 `MANAGED_CONFIG_DRIFT`，以及已有的 `AGENT_OPERATION_BUSY`、`BACKUP_FAILED`、`WRITE_FAILED`、`ROLLBACK_FAILED`、`OPERATION_TIMEOUT` 事务/protocol 错误。`INVALID_PARAMS` 涵盖不支持的 Agent、malformed 或重复/未知请求字段，以及缺失或 malformed revision token 或必需 approval 字段。所有错误都不会返回配置值、key 材料、文件内容、URL 或备份内容。
+
 ## 破坏性重建恢复
 
 正常 `merge` 会解析现有配置，只修改 manager-owned 路径，并保留受支持的无关数据。`rebuild` 不解析或合并 malformed 内容：经过单独且绑定预览的批准后，它会用全新渲染的纯托管文件替换完整的已批准 Agent 文件集。**重建会丢弃全部无关设置、注释、原始格式以及有效伴随文件中的元数据。继续前必须检查并保护每个备份。**
@@ -181,6 +197,8 @@ Manager 只在私有 `agent-transactions/last-applied-model-config.json` sidecar
 1. `agent.models`，提供 `owner`、`agents` 和临时 `api_key`。
 2. `agent.render` 获取 key 脱敏托管片段；或使用 `agents`、`catalog_token`、`model_config` 调用 `agent.preview`；请求 rebuild 时还必须提供每个 Agent 的 `modes` map。
 3. `agent.write`，提供上述字段、相同 `modes`、预览返回的 `revision_token`、两个显式 approval boolean、与 rebuild-mode Agent 精确一致的 `approve_rebuild` 数组和临时 `api_key`。
+
+清理自动化采用独立的两次调用：先使用精确一个 `agent` 调用 `agent.cleanup.preview`，再使用该 Agent、cleanup `revision_token` 和显式 `approve_managed_overwrite` 调用 `agent.cleanup.write`。这些请求会拒绝 API key、Agent 数组、catalog/model config、flow ID 和未知字段。Cleanup write 在 uncertain delivery 后不可 replay；应重新发现清理状态并生成新预览，而不是重发结果不确定的 write。
 
 即使没有 preset 或没有有效的已请求 section，`agent.models` 也始终包含稳定 preset object：
 

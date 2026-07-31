@@ -256,6 +256,8 @@ export const zhCN = {
   "agents.issue.retry": "重试 {agent}",
   "agents.operation.create": "创建",
   "agents.operation.replace": "替换",
+  "agents.operation.delete": "删除",
+  "agents.operation.backup": "备份",
   "agents.operation.preserve": "保留未托管配置",
   "agents.mode.merge": "合并",
   "agents.mode.rebuild": "重建",
@@ -507,6 +509,36 @@ export const zhCN = {
   "agents.leave.busy": "Agent 配置操作正在进行。请等待操作完成后再离开。",
   "agents.leave.cancel": "继续编辑",
   "agents.leave.confirm": "放弃并离开",
+  "agents.cleanup.action": "清理 {agent} 托管配置",
+  "agents.cleanup.overline": "按 Agent 清理 / 先备份 / 无需密钥",
+  "agents.cleanup.heading": "清理 {agent} 托管配置",
+  "agents.cleanup.loading": "正在生成清理预览...",
+  "agents.cleanup.keyFree":
+    "此操作不读取 API key，也不访问模型目录或路由服务。",
+  "agents.cleanup.review": "确认清理边界",
+  "agents.cleanup.removedPaths": "将移除的托管设置",
+  "agents.cleanup.fileEffects": "文件、备份与状态影响",
+  "agents.cleanup.authRemoved": "Agent 文件中的认证设置会删除。",
+  "agents.cleanup.globalKeyRetained": "桌面端保存的全局 API key 不会删除。",
+  "agents.cleanup.backupsRetained": "历史备份会保留，清理不会删除它们。",
+  "agents.cleanup.approveDrift": "批准清理已漂移的托管命名空间",
+  "agents.cleanup.write": "备份并清理",
+  "agents.cleanup.writing": "正在备份并清理...",
+  "agents.cleanup.stale": "预览后文件发生变化，尚未执行清理。请重新生成预览。",
+  "agents.cleanup.ambiguous":
+    "无法确认清理请求是否已执行（{code}），当前结果未知。请先重新生成预览，再决定下一步操作。",
+  "agents.cleanup.repreview": "重新预览清理",
+  "agents.cleanup.failed": "清理操作失败（{code}）。",
+  "agents.cleanup.retryPreview": "重试预览",
+  "agents.cleanup.retryWrite": "重试清理",
+  "agents.cleanup.completeOverline": "清理事务完成",
+  "agents.cleanup.complete": "清理完成",
+  "agents.cleanup.completeNote": "清理事务已完成；历史备份仍会保留。",
+  "agents.cleanup.finish": "完成并返回 Agent 概览",
+  "agents.cleanup.diagnostic.modelStateInvalid":
+    "无法验证桌面端保存的 Agent 托管状态。请重启应用；若问题仍存在，请手动检查配置。",
+  "agents.cleanup.diagnostic.writesDisabled":
+    "Agent 配置写入当前不可用。请先完成待恢复事务或重新启动应用。",
 } as const;
 
 export type TranslationKey = keyof typeof zhCN;

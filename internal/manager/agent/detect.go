@@ -39,8 +39,25 @@ type State struct {
 	Invalid    bool          `json:"invalid"`
 	Migratable bool          `json:"migratable,omitempty"`
 	Recovery   RecoveryState `json:"recovery"`
+	Cleanup    CleanupState  `json:"cleanup"`
 
 	pathOverridden bool
+}
+
+type CleanupUnavailableReason string
+
+const (
+	CleanupNotManaged        CleanupUnavailableReason = "not_managed"
+	CleanupModelStateInvalid CleanupUnavailableReason = "model_state_invalid"
+	CleanupWritesDisabled    CleanupUnavailableReason = "writes_disabled"
+)
+
+// CleanupState reports only whether authenticated manager ownership exists and
+// whether cleanup can currently be entered. Preview repeats all file checks.
+type CleanupState struct {
+	Managed   bool                     `json:"managed"`
+	Available bool                     `json:"available"`
+	Reason    CleanupUnavailableReason `json:"reason,omitempty"`
 }
 
 // RecoveryReason is a stable, content-free explanation of recovery state.

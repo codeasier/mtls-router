@@ -18,6 +18,7 @@ const detection: AgentDetection = {
       configured: true,
       invalid: false,
       recovery: { eligible: false, files: [] },
+      cleanup: { managed: false, available: false, reason: "not_managed" },
     },
     {
       agent: "claude",
@@ -31,6 +32,7 @@ const detection: AgentDetection = {
       configured: false,
       invalid: false,
       recovery: { eligible: false, files: [] },
+      cleanup: { managed: false, available: false, reason: "not_managed" },
     },
     {
       agent: "opencode",
@@ -48,6 +50,7 @@ const detection: AgentDetection = {
         reasons: ["syntax_invalid"],
         files: [],
       },
+      cleanup: { managed: false, available: false, reason: "not_managed" },
     },
   ],
 };
@@ -55,6 +58,7 @@ const detection: AgentDetection = {
 const callbacks = () => ({
   onRefresh: vi.fn(),
   onConfigure: vi.fn(),
+  onCleanup: vi.fn(),
   onRetry: vi.fn(),
   onNavigateToApiKeys: vi.fn(),
 });
@@ -160,6 +164,82 @@ describe("AgentOverview", () => {
         name: /模型配置工作台|Model configuration workbench/,
       }),
     ).toHaveAttribute("aria-busy", "true");
+  });
+
+  it("offers cleanup only for managed available Agents", () => {
+    const props = callbacks();
+    const managed: AgentDetection = {
+      agents: detection.agents.map((agent) =>
+        agent.agent === "opencode"
+          ? {
+              ...agent,
+              cleanup: { managed: true, available: true, reason: null },
+            }
+          : agent,
+      ),
+    };
+    const view = render(
+      <AgentOverview
+        detection={managed}
+        refreshing={false}
+        stale={false}
+        issue={null}
+        {...props}
+      />,
+    );
+
+    const cleanup = screen.getByRole("button", {
+      name: "清理 OpenCode 托管配置",
+    });
+    expect(cleanup).toHaveAttribute("id", "agent-opencode-cleanup");
+    fireEvent.click(cleanup);
+    expect(props.onCleanup).toHaveBeenCalledWith("opencode");
+    expect(screen.queryByText(/Claude Code 托管配置/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Codex 托管配置/)).not.toBeInTheDocument();
+
+    view.rerender(
+      <AgentOverview
+        detection={managed}
+        refreshing
+        stale={false}
+        issue={null}
+        {...props}
+      />,
+    );
+    expect(document.getElementById("agent-opencode-action")).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "清理 OpenCode 托管配置" }),
+    ).toBeDisabled();
+  });
+
+  it.each([
+    ["model_state_invalid", "无法验证桌面端保存的 Agent 托管状态"],
+    ["writes_disabled", "Agent 配置写入当前不可用"],
+  ])("shows an actionable cleanup diagnostic for %s", (reason, message) => {
+    const unavailable: AgentDetection = {
+      agents: detection.agents.map((agent) =>
+        agent.agent === "opencode"
+          ? {
+              ...agent,
+              cleanup: { managed: true, available: false, reason },
+            }
+          : agent,
+      ),
+    };
+    render(
+      <AgentOverview
+        detection={unavailable}
+        refreshing={false}
+        stale={false}
+        issue={null}
+        {...callbacks()}
+      />,
+    );
+
+    expect(screen.getByText(new RegExp(message))).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "清理 OpenCode 托管配置" }),
+    ).not.toBeInTheDocument();
   });
 
   it.each([

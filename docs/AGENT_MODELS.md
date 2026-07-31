@@ -47,7 +47,7 @@ The Shell, PowerShell, and desktop clients all preserve this protocol order:
 5. Render a redacted fragment for print, or preview exact file, backup, migration, ownership, and drift effects for write.
 6. Re-fetch the catalog with the transient key immediately before writing, then perform one atomic multi-file transaction.
 
-The Shell and PowerShell setup commands always omit recovery modes and therefore remain merge-only. The desktop opens one persistent single-Agent panel at a time and selects `merge` for a valid Agent or `rebuild` for an eligible invalid Agent. Each desktop preview and transaction contains exactly that Agent; rebuild follows the additional contract below. Management protocol v4 methods, parameters, results, and transaction semantics are unchanged.
+The Shell and PowerShell setup commands always omit recovery modes and therefore remain merge-only. The desktop opens one persistent single-Agent panel at a time and selects `merge` for a valid Agent or `rebuild` for an eligible invalid Agent. Each desktop preview and transaction contains exactly that Agent; rebuild follows the additional contract below. Management protocol remains v4 and adds `agent.cleanup.preview` and `agent.cleanup.write` for the separate cleanup contract below; these methods are not exposed as setup commands. As protocol-wide hardening, strict request parameter decoding now rejects duplicate JSON keys recursively at every object depth as well as unknown fields.
 
 ### Desktop persistent panel
 
@@ -294,6 +294,22 @@ reported in `preset.unavailable_agents`, the unavailable complete preset section
 is omitted, and discovery continues with existing configuration and other valid
 preset sections. It still never causes substitution or partial preset use.
 
+## Managed Configuration Cleanup
+
+The desktop can clean exactly one Claude Code, OpenCode, or Codex configuration when `agent.detect` reports a trusted last-applied sidecar entry with `cleanup.managed=true` and `cleanup.available=true`. Cleanup is key-free and independent of router trust, model discovery, catalog tokens, canonical model configuration, and desktop model flows. The overview does not show the action for ordinary `not_managed` Agents. Invalid sidecar/signing state reports `model_state_invalid`; unresolved recovery or disabled writes reports `writes_disabled`. Base Agent file detection remains available in both cases.
+
+Cleanup never infers ownership from provider names alone. It validates the sidecar, loads the saved Agent model section, reads only its recorded absolute file paths, and narrows older broad ownership records against the saved configuration and current structure:
+
+- **Claude Code:** remove only recorded `env.*` paths. Remove the root `env` object if it becomes empty.
+- **opencode:** remove `provider.mtls-router` after validating its object shape. Remove root `model` only when the sidecar owns it and its current string begins with exact ASCII `mtls-router/`. A preserved user default model is not newly claimed by later normal writes.
+- **Codex:** from `config.toml`, remove `model_providers.mtls-router`, required `model_provider`, `model`, and `cli_auth_credentials_store`, plus only optional roots represented by the saved Codex model config. From `auth.json`, remove `auth_mode` and `OPENAI_API_KEY`; preserve other auth metadata and do not delete OS-keyring credentials or reconstruct competing auth fields replaced by an earlier write. The config/auth pair remains one transaction.
+
+Preview returns path names and file/state effects only, never current values or contents. It creates no persistent filesystem state: no file, directory, backup, transaction journal, or coordination lock. For managed state it only opens and validates the already existing private transaction lock; a missing or unsafe lock fails closed without creating one. A cleanup-specific HMAC token binds the Agent, each source/target path and keyed revision, `replace`/`delete` operation, required backup source, sorted removed paths, whole-file drift flag, and sidecar revision/operation. It deliberately carries no router, catalog, API-key, or canonical-model claims.
+
+Whole-file drift requires `approve_managed_overwrite=true`; approval does not widen the managed path set. Any Agent file or sidecar revision change after preview returns `PREVIEW_STALE`. Write first creates and verifies a private sibling backup for every existing Agent file and the sidecar, records a delete-capable journal v3, applies Agent files in order, and updates or deletes the sidecar last. A semantic empty JSON/TOML root becomes a `delete`; otherwise cleanup uses `replace`. Journal v3 records absent post-revisions for deletes, while startup recovery continues to decode legacy v1/v2 journals as replace-only. Rollback restores manager state first and then Agent files so ownership and files do not split.
+
+Cleanup removes Agent-file authentication for the selected Agent but retains the desktop global credential and every historical or newly created backup. Backups may contain current or old keys. The stable cleanup failures are `INVALID_PARAMS`, `AGENT_NOT_MANAGED`, `MODEL_STATE_INVALID`, `CONFIG_INVALID`, `CONFIG_NOT_WRITABLE`, `PREVIEW_STALE`, and `MANAGED_CONFIG_DRIFT`, plus the existing `AGENT_OPERATION_BUSY`, `BACKUP_FAILED`, `WRITE_FAILED`, `ROLLBACK_FAILED`, and `OPERATION_TIMEOUT` transaction/protocol failures. `INVALID_PARAMS` covers unsupported Agents, malformed or duplicate/unknown request fields, and a missing or malformed revision token or required approval field. All fail without returning configuration values, key material, file content, URLs, or backup content.
+
 ## Destructive Rebuild Recovery
 
 Normal `merge` parses the existing configuration, changes only manager-owned paths, and preserves supported unrelated data. `rebuild` does not parse or merge the malformed content: after a separate preview-bound approval, it replaces the complete approved Agent file set with freshly rendered managed-only files. **Rebuild discards all unrelated settings, comments, original formatting, and valid companion-file metadata. Review and protect every backup before proceeding.**
@@ -354,6 +370,8 @@ Automation must use a receipt-verified `mtls-router-manager serve`. First call
 1. `agent.models` with `owner`, `agents`, and transient `api_key`.
 2. `agent.render` for key-redacted managed fragments, or `agent.preview` with `agents`, `catalog_token`, `model_config`, and a per-Agent `modes` map when requesting rebuild.
 3. `agent.write` with those fields, the same `modes`, the preview `revision_token`, both explicit approval booleans, an `approve_rebuild` array exactly matching rebuild-mode Agents, and transient `api_key`.
+
+Cleanup automation is a separate two-call sequence: call `agent.cleanup.preview` with exactly one `agent`, then call `agent.cleanup.write` with that Agent, the cleanup `revision_token`, and explicit `approve_managed_overwrite`. These requests reject API keys, Agent arrays, catalog/model configuration, flow IDs, and unknown fields. Cleanup write is non-replayable after ambiguous delivery; rediscover the cleanup state and generate a new preview instead of resending an uncertain write.
 
 `agent.models` always includes stable preset objects, including when no preset
 or no valid requested section exists:

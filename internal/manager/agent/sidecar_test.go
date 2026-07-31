@@ -6,12 +6,136 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
 
 	"github.com/codeasier/mtls-router/internal/manager/agent/modelconfig"
 )
+
+func TestSidecarOwnershipReflectsActualMerge(t *testing.T) {
+	home := t.TempDir()
+	writeFile(t, filepath.Join(home, ".config", "opencode", "opencode.json"), `{"model":"user/default"}`)
+	writeFile(t, filepath.Join(home, ".codex", "config.toml"), "model_verbosity = \"user\"\n")
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
+	writeV2Legacy(t, service, []Kind{OpenCode, Codex})
+
+	state, _, _, _, err := service.readSidecar()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(state.Agents[OpenCode].OwnedPaths, "model") {
+		t.Fatal("preserved user root model was recorded as manager-owned")
+	}
+	if slices.Contains(state.Agents[Codex].OwnedPaths, "model_verbosity") {
+		t.Fatal("absent Codex optional field was recorded as manager-owned")
+	}
+}
+
+func TestSidecarPreservesMatchingOpenCodeModelOwnershipAcrossCompatibilityWrites(t *testing.T) {
+	home := t.TempDir()
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
+	writeV2Legacy(t, service, []Kind{OpenCode})
+	writeV2Legacy(t, service, []Kind{OpenCode})
+
+	state, _, _, _, err := service.readSidecar()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(state.Agents[OpenCode].OwnedPaths, "model") {
+		t.Fatal("unchanged manager-written root model ownership was dropped")
+	}
+}
+
+func TestSidecarPreservesOpenCodeModelOwnershipAcrossUnrelatedDrift(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".config", "opencode", "opencode.json")
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
+	writeV2Legacy(t, service, []Kind{OpenCode})
+
+	root, valid := decodeObject([]byte(readString(t, path)))
+	if !valid {
+		t.Fatal("first compatibility write produced invalid JSON")
+	}
+	root["theme"] = json.RawMessage(`"user"`)
+	drifted, err := marshalObject(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, drifted, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	writeV2Legacy(t, service, []Kind{OpenCode})
+	state, _, _, _, err := service.readSidecar()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(state.Agents[OpenCode].OwnedPaths, "model") {
+		t.Fatal("unrelated drift dropped manager-owned root model")
+	}
+	root, _ = decodeObject([]byte(readString(t, path)))
+	if jsonString(t, root["theme"]) != "user" {
+		t.Fatalf("unrelated drift was not preserved: %s", readString(t, path))
+	}
+}
+
+func TestSidecarDropsDriftedOpenCodeModelOwnershipOnCompatibilityWrite(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".config", "opencode", "opencode.json")
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
+	writeV2Legacy(t, service, []Kind{OpenCode})
+
+	root, valid := decodeObject([]byte(readString(t, path)))
+	if !valid {
+		t.Fatal("first compatibility write produced invalid JSON")
+	}
+	root["model"] = json.RawMessage(`"user/default"`)
+	drifted, err := marshalObject(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, drifted, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	writeV2Legacy(t, service, []Kind{OpenCode})
+	state, _, _, _, err := service.readSidecar()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(state.Agents[OpenCode].OwnedPaths, "model") {
+		t.Fatal("drifted user root model remained manager-owned")
+	}
+	root, _ = decodeObject([]byte(readString(t, path)))
+	if jsonString(t, root["model"]) != "user/default" {
+		t.Fatalf("drifted user root model was replaced: %s", readString(t, path))
+	}
+}
+
+func TestSidecarValidationAcceptsLegacyBroadOwnership(t *testing.T) {
+	state := lastAppliedState{
+		Version: 1, KeyGeneration: "generation", Agents: map[Kind]lastAppliedAgent{
+			OpenCode: {
+				ModelConfig: json.RawMessage(`{"default_model":"managed","models":{"managed":{}}}`),
+				Files:       []lastAppliedFile{{Role: "config", Path: "/config", RevisionMAC: "revision"}},
+				OwnedPaths:  []string{"model", "provider.mtls-router"},
+			},
+			Codex: {
+				ModelConfig: json.RawMessage(`{"model":"managed"}`),
+				Files: []lastAppliedFile{
+					{Role: "config", Path: "/config.toml", RevisionMAC: "config-revision"},
+					{Role: "auth", Path: "/auth.json", RevisionMAC: "auth-revision"},
+				},
+				OwnedPaths: []string{"auth.OPENAI_API_KEY", "auth.auth_mode", "cli_auth_credentials_store", "model", "model_context_window", "model_provider", "model_providers.mtls-router", "model_verbosity"},
+			},
+		},
+	}
+	if err := validateSidecarState(state, "generation"); err != nil {
+		t.Fatalf("legacy sidecar rejected: %v", err)
+	}
+}
 
 func TestSidecarIsCanonicalPrivateAndPreservesUnselectedAgents(t *testing.T) {
 	home := t.TempDir()
@@ -383,6 +507,137 @@ func TestCrashAfterSidecarReplacementRecoversFilesAndStateTogether(t *testing.T)
 	}
 	if recovered.WritesDisabled() || readString(t, claudePath) != previousAgent || readString(t, recovered.sidecarPath()) != previousSidecar {
 		t.Fatalf("recovery split Agent/state ownership: disabled=%t agent=%q state=%q", recovered.WritesDisabled(), readString(t, claudePath), readString(t, recovered.sidecarPath()))
+	}
+}
+
+func TestDeleteCrashRecoveryRestoresStateFirst(t *testing.T) {
+	for _, crashAfter := range []journalScope{scopeAgent, scopeManagerState} {
+		t.Run(string(crashAfter), func(t *testing.T) {
+			home := t.TempDir()
+			stateDir := filepath.Join(home, "state")
+			agentPath := filepath.Join(home, ".config", "opencode", "opencode.json")
+			statePath := filepath.Join(home, "managed-state.json")
+			agentContent := []byte(`{"provider":{"mtls-router":{}}}`)
+			stateContent := []byte(`{"version":1}`)
+			writeFile(t, agentPath, string(agentContent))
+			writeFile(t, statePath, string(stateContent))
+			service := newTestService(t, stateDir, home, nil)
+			if err := service.ensureSigner(); err != nil {
+				t.Fatal(err)
+			}
+			agentEntry := deleteJournalEntry(t, service, OpenCode, scopeAgent, agentPath, agentContent)
+			stateEntry := deleteJournalEntry(t, service, "", scopeManagerState, statePath, stateContent)
+			journal := transactionJournal{Version: 3, KeyGeneration: service.keyGeneration, TransactionID: "delete-crash", Entries: []journalEntry{agentEntry, stateEntry}}
+			if err := service.prepareStateDir(); err != nil {
+				t.Fatal(err)
+			}
+			if err := service.writeJournal(journal); err != nil {
+				t.Fatal(err)
+			}
+			if journal.Entries[0].Scope != scopeAgent || journal.Entries[1].Scope != scopeManagerState {
+				t.Fatalf("journal order = %#v", journal.Entries)
+			}
+			for i := range journal.Entries {
+				entry := &journal.Entries[i]
+				if _, err := service.applyPlannedFile(plannedFile{targetPath: entry.TargetPath, operation: OperationDelete}, nil); err != nil {
+					t.Fatal(err)
+				}
+				entry.Progress = progressReplaced
+				if err := service.writeJournal(journal); err != nil {
+					t.Fatal(err)
+				}
+				if entry.Scope == crashAfter {
+					break
+				}
+			}
+
+			var rollbackOrder []string
+			service.hooks.beforeRollback = func(path string) error {
+				rollbackOrder = append(rollbackOrder, path)
+				return nil
+			}
+			if err := service.recoverLocked(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if got := readString(t, agentPath); got != string(agentContent) {
+				t.Fatalf("Agent file not restored: %q", got)
+			}
+			if got := readString(t, statePath); got != string(stateContent) {
+				t.Fatalf("manager state not restored: %q", got)
+			}
+			if crashAfter == scopeManagerState && (len(rollbackOrder) != 2 || rollbackOrder[0] != statePath || rollbackOrder[1] != agentPath) {
+				t.Fatalf("rollback order = %#v", rollbackOrder)
+			}
+		})
+	}
+}
+
+func TestStartupRecoversDeleteAfterAgentAndSidecar(t *testing.T) {
+	for _, crashAfter := range []journalScope{scopeAgent, scopeManagerState} {
+		t.Run(string(crashAfter), func(t *testing.T) {
+			home := t.TempDir()
+			stateDir := filepath.Join(home, "state")
+			agentPath := filepath.Join(home, ".config", "opencode", "opencode.json")
+			agentContent := []byte(`{"provider":{"mtls-router":{}}}`)
+			stateContent := []byte(`{"version":1}`)
+			writeFile(t, agentPath, string(agentContent))
+			service := newTestService(t, stateDir, home, nil)
+			if err := service.ensureSigner(); err != nil {
+				t.Fatal(err)
+			}
+			writeFile(t, service.sidecarPath(), string(stateContent))
+			journal := transactionJournal{Version: 3, KeyGeneration: service.keyGeneration, TransactionID: "startup-delete", Entries: []journalEntry{
+				deleteJournalEntry(t, service, OpenCode, scopeAgent, agentPath, agentContent),
+				deleteJournalEntry(t, service, "", scopeManagerState, service.sidecarPath(), stateContent),
+			}}
+			if err := service.writeJournal(journal); err != nil {
+				t.Fatal(err)
+			}
+			for i := range journal.Entries {
+				if _, err := service.applyPlannedFile(plannedFile{targetPath: journal.Entries[i].TargetPath, operation: OperationDelete}, nil); err != nil {
+					t.Fatal(err)
+				}
+				journal.Entries[i].Progress = progressReplaced
+				if err := service.writeJournal(journal); err != nil {
+					t.Fatal(err)
+				}
+				if journal.Entries[i].Scope == crashAfter {
+					break
+				}
+			}
+
+			recovered, err := NewService(Options{StateDir: stateDir, Detector: testServiceDetector(home, nil), LegacyRenderInput: legacyTestRenderInput()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if recovered.WritesDisabled() || readString(t, agentPath) != string(agentContent) || readString(t, recovered.sidecarPath()) != string(stateContent) {
+				t.Fatalf("startup delete recovery split state: disabled=%t agent=%q state=%q", recovered.WritesDisabled(), readString(t, agentPath), readString(t, recovered.sidecarPath()))
+			}
+			if _, err := os.Stat(recovered.journalPath()); !os.IsNotExist(err) {
+				t.Fatalf("journal retained after startup recovery: %v", err)
+			}
+		})
+	}
+}
+
+func deleteJournalEntry(t *testing.T, service *Service, kind Kind, scope journalScope, path string, content []byte) journalEntry {
+	t.Helper()
+	preRevision, _, mode, err := service.readKeyedRevision(path, revisionContextJournal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backupPath, err := createPrivateBackup(path, content, mode, "bak")
+	if err != nil {
+		t.Fatal(err)
+	}
+	backupRevision, err := service.keyedRevisionForContent(content, mode, revisionContextBackup, backupPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return journalEntry{
+		Scope: scope, Agent: kind, TargetPath: path, Operation: OperationDelete,
+		PreRevision: preRevision, BackupPath: backupPath, BackupRevision: backupRevision,
+		RestoreFrom: path, TargetMode: uint32(mode.Perm()), Progress: progressPending,
 	}
 }
 
