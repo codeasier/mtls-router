@@ -9,6 +9,7 @@ import type {
 } from "../ipc";
 import {
   discoveryFor,
+  cleanupPreviewFor,
   fixtureAbsentStatus,
   fixtureConfigs,
   fixtureCredentialAbsent,
@@ -219,6 +220,27 @@ export function createMockDesktopApi(
         throw mockCommandError("AGENT_WRITE_REVISION_MISMATCH");
       }
       return writeResultFor(agents, true);
+    },
+    previewAgentCleanup: async (agent) => {
+      if (currentScenario() === "protocol-error") {
+        throw mockCommandError("AGENT_CLEANUP_PREVIEW_FAILED");
+      }
+      return cleanupPreviewFor(agent);
+    },
+    writeAgentCleanup: async (agent, revisionToken) => {
+      if (currentScenario() === "preview-stale") {
+        throw mockCommandError("PREVIEW_STALE");
+      }
+      if (
+        currentScenario() === "write-fail" ||
+        currentScenario() === "protocol-error"
+      ) {
+        throw mockCommandError("AGENT_CLEANUP_WRITE_FAILED");
+      }
+      if (revisionToken !== `cleanup-revision-${agent}`) {
+        throw mockCommandError("PREVIEW_STALE");
+      }
+      return writeResultFor([agent], true);
     },
     destroyAgentModelFlow: async (flowId) => {
       activeFlows.delete(flowId);

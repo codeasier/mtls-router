@@ -26,6 +26,8 @@ const (
 	MethodAgentRender                  Method = "agent.render"
 	MethodAgentPreview                 Method = "agent.preview"
 	MethodAgentWrite                   Method = "agent.write"
+	MethodAgentCleanupPreview          Method = "agent.cleanup.preview"
+	MethodAgentCleanupWrite            Method = "agent.cleanup.write"
 )
 
 // ErrorCode is stable and intended for branching. Messages are diagnostic
@@ -74,6 +76,7 @@ const (
 	CodeModelStateInvalid           ErrorCode = "MODEL_STATE_INVALID"
 	CodeAgentOperationBusy          ErrorCode = "AGENT_OPERATION_BUSY"
 	CodeCodexAuthUnsupported        ErrorCode = "CODEX_AUTH_UNSUPPORTED"
+	CodeAgentNotManaged             ErrorCode = "AGENT_NOT_MANAGED"
 )
 
 // Request is one newline-delimited manager request. Params is method-specific.
@@ -123,6 +126,8 @@ func Deadlines() map[Method]time.Duration {
 		MethodAgentRender:                  5 * time.Second,
 		MethodAgentPreview:                 5 * time.Second,
 		MethodAgentWrite:                   30 * time.Second,
+		MethodAgentCleanupPreview:          5 * time.Second,
+		MethodAgentCleanupWrite:            30 * time.Second,
 	}
 }
 
@@ -169,6 +174,16 @@ type AgentWriteParams struct {
 	ApproveManagedOverwrite *bool             `json:"approve_managed_overwrite"`
 	ApproveCodexAuthChange  *bool             `json:"approve_codex_auth_change"`
 	APIKey                  string            `json:"api_key"`
+}
+
+type AgentCleanupParams struct {
+	Agent string `json:"agent"`
+}
+
+type AgentCleanupWriteParams struct {
+	Agent                   string `json:"agent"`
+	RevisionToken           string `json:"revision_token"`
+	ApproveManagedOverwrite *bool  `json:"approve_managed_overwrite"`
 }
 
 type ManagerInfoResult struct {
@@ -250,6 +265,13 @@ type AgentState struct {
 	Invalid    bool               `json:"invalid"`
 	Migratable bool               `json:"migratable,omitempty"`
 	Recovery   AgentRecoveryState `json:"recovery"`
+	Cleanup    AgentCleanupState  `json:"cleanup"`
+}
+
+type AgentCleanupState struct {
+	Managed   bool   `json:"managed"`
+	Available bool   `json:"available"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 type AgentRecoveryFileState struct {
@@ -341,6 +363,16 @@ type AgentPreviewResult struct {
 	RequiresCodexAuthApproval bool               `json:"requires_codex_auth_approval"`
 	StateChange               *AgentFileEffect   `json:"state_change,omitempty"`
 	StateBackup               *AgentFileEffect   `json:"state_backup,omitempty"`
+}
+
+type AgentCleanupPreviewResult struct {
+	RevisionToken      string            `json:"revision_token"`
+	Agent              string            `json:"agent"`
+	Files              []AgentFileEffect `json:"files"`
+	RemovedPaths       []string          `json:"removed_paths"`
+	ManagedConfigDrift bool              `json:"managed_config_drift"`
+	StateChange        *AgentFileEffect  `json:"state_change,omitempty"`
+	StateBackup        *AgentFileEffect  `json:"state_backup,omitempty"`
 }
 
 type AgentWriteStatus struct {

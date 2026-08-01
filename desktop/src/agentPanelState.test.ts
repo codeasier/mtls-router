@@ -38,6 +38,7 @@ function agentStateFor(overrides: Partial<AgentState> = {}): AgentState {
     invalid: false,
     migratable: false,
     recovery: { eligible: false, files: [] },
+    cleanup: { managed: true, available: true, reason: null },
     ...overrides,
   };
 }

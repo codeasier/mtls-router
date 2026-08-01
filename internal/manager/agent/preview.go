@@ -21,6 +21,7 @@ type writePlan struct {
 	agents                    []agentPlan
 	selected                  []Kind
 	files                     []plannedFile
+	revisionGuards            []plannedRevisionGuard
 	input                     renderInput
 	catalog                   modelconfig.CatalogClaims
 	canonical                 json.RawMessage
@@ -31,6 +32,12 @@ type writePlan struct {
 	drifted                   []Kind
 	collisions                []ManagedCollision
 	requiresCodexAuthApproval bool
+}
+
+type plannedRevisionGuard struct {
+	path     string
+	revision fileRevision
+	scope    journalScope
 }
 
 type plannedFile struct {

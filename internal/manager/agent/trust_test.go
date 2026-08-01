@@ -153,7 +153,7 @@ func TestNewJournalUsesKeyedContextSeparatedRevisions(t *testing.T) {
 		}
 		plain := sha256.Sum256(original)
 		entry := journal.Entries[0]
-		if journal.Version != 2 || journal.KeyGeneration != service.keyGeneration || entry.PreRevision.Digest == hex.EncodeToString(plain[:]) || entry.BackupRevision.Digest == entry.PreRevision.Digest {
+		if journal.Version != 3 || journal.KeyGeneration != service.keyGeneration || entry.PreRevision.Digest == hex.EncodeToString(plain[:]) || entry.BackupRevision.Digest == entry.PreRevision.Digest {
 			t.Fatalf("journal revisions are not keyed/context-separated: %#v", journal)
 		}
 		return nil

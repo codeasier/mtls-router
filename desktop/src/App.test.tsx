@@ -24,6 +24,7 @@ const detection: AgentDetection = {
     configured: true,
     invalid: false,
     recovery: { eligible: false, files: [] },
+    cleanup: { managed: true, available: true, reason: null },
   })),
 };
 
@@ -462,6 +463,46 @@ describe("App navigation", () => {
         drifted_agents: [],
         managed_collisions: [],
         requires_codex_auth_approval: false,
+      }),
+    );
+  });
+
+  it("blocks navigation during cleanup preview without marking a draft dirty", async () => {
+    const pendingCleanup =
+      deferred<
+        Awaited<
+          ReturnType<ReturnType<typeof createMockApi>["previewAgentCleanup"]>
+        >
+      >();
+    const api = createMockApi({
+      detectAgents: vi.fn().mockResolvedValue(detection),
+      previewAgentCleanup: vi.fn(() => pendingCleanup.promise),
+    });
+    render(<App api={api} />);
+    fireEvent.click(screen.getByRole("button", { name: "Agent 配置" }));
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "清理 OpenCode 托管配置",
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "系统设置" }));
+    expect(screen.getByText(/Agent 配置操作正在进行/)).toHaveAttribute(
+      "role",
+      "status",
+    );
+    expect(
+      screen.getByRole("heading", { name: /清理 OpenCode/ }),
+    ).toBeVisible();
+    expect(api.setAgentDraftDirty).not.toHaveBeenCalledWith(true);
+
+    await act(async () =>
+      pendingCleanup.resolve({
+        revision_token: "cleanup-revision",
+        agent: "opencode",
+        files: [],
+        removed_paths: ["provider.mtls-router"],
+        managed_config_drift: false,
       }),
     );
   });

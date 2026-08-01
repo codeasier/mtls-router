@@ -192,3 +192,13 @@ func writeAtomic(path string, content []byte, mode os.FileMode, private bool) (e
 	}
 	return nil
 }
+
+func removeTargetAndSync(path string) error {
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	if err := syncDirectory(filepath.Dir(path)); err != nil {
+		return &postReplaceError{err: err}
+	}
+	return nil
+}

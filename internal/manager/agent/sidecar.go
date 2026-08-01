@@ -148,7 +148,7 @@ func hasDuplicateJSONKey(content []byte) bool {
 	return walk(false)
 }
 
-func sidecarSection(config *modelconfig.Config, kind Kind) (json.RawMessage, []string, error) {
+func sidecarSection(config *modelconfig.Config, kind Kind, files []plannedFile, input renderInput, previous lastAppliedAgent) (json.RawMessage, []string, error) {
 	var section any
 	var owned []string
 	switch kind {
@@ -160,14 +160,70 @@ func sidecarSection(config *modelconfig.Config, kind Kind) (json.RawMessage, []s
 		}
 	case OpenCode:
 		section = config.OpenCode
-		owned = []string{"model", "provider.mtls-router"}
+		owned = []string{"provider.mtls-router"}
+		if openCodePlanOwnsRootModel(files, input.ownRootModel, previous) {
+			owned = append(owned, "model")
+		}
 	case Codex:
 		section = config.Codex
-		owned = append([]string{"model_providers.mtls-router", "auth.auth_mode", "auth.OPENAI_API_KEY"}, codexManagedRootKeys...)
+		owned = []string{"model_providers.mtls-router", "auth.auth_mode", "auth.OPENAI_API_KEY"}
+		for key := range codexManagedConfig(config.Codex, "") {
+			if key != "model_providers" {
+				owned = append(owned, key)
+			}
+		}
 	}
 	sort.Strings(owned)
 	raw, err := modelconfig.CanonicalValue(section)
 	return raw, owned, err
+}
+
+func openCodePlanOwnsRootModel(files []plannedFile, ownRootModel bool, previous lastAppliedAgent) bool {
+	for _, file := range files {
+		if file.agent != OpenCode || file.scope != scopeAgent {
+			continue
+		}
+		if file.mode == ConfigModeRebuild || ownRootModel || !file.sourceRevision.Exists {
+			return true
+		}
+		content := file.sourceContent
+		if filepath.Ext(file.sourcePath) == ".jsonc" {
+			var err error
+			content, err = stripJSONC(content)
+			if err != nil {
+				return false
+			}
+		}
+		root, valid := decodeObject(content)
+		if valid {
+			model, exists := root["model"]
+			if !exists {
+				return true
+			}
+			value, isString := rawString(model)
+			return isString && strings.HasPrefix(value, "mtls-router/") && previousOwnsOpenCodeModelAtPath(previous, file)
+		}
+	}
+	return false
+}
+
+func previousOwnsOpenCodeModelAtPath(previous lastAppliedAgent, file plannedFile) bool {
+	ownsModel := false
+	for _, path := range previous.OwnedPaths {
+		if path == "model" {
+			ownsModel = true
+			break
+		}
+	}
+	if !ownsModel {
+		return false
+	}
+	for _, recorded := range previous.Files {
+		if recorded.Role == "config" && file.role == "config" && filepath.Clean(recorded.Path) == filepath.Clean(file.sourcePath) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) appendSidecarPlan(plan writePlan, key []byte) (writePlan, error) {
@@ -176,7 +232,7 @@ func (s *Service) appendSidecarPlan(plan writePlan, key []byte) (writePlan, erro
 		state.Agents = map[Kind]lastAppliedAgent{}
 	}
 	for _, kind := range plan.selected {
-		section, owned, err := sidecarSection(plan.input.config, kind)
+		section, owned, err := sidecarSection(plan.input.config, kind, plan.files, plan.input, state.Agents[kind])
 		if err != nil {
 			return writePlan{}, operationError(CodeModelStateInvalid, "Agent model state could not be created")
 		}

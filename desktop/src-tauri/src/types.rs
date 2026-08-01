@@ -929,6 +929,15 @@ pub struct AgentState {
     #[serde(default)]
     pub migratable: bool,
     pub recovery: AgentRecoveryState,
+    pub cleanup: AgentCleanupState,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentCleanupState {
+    pub managed: bool,
+    pub available: bool,
+    pub reason: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -946,6 +955,7 @@ pub struct AgentFragment {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct AgentFileEffect {
     #[serde(default)]
     pub agent: String,
@@ -996,6 +1006,7 @@ pub struct AgentPreview {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct AgentWriteResult {
     pub transaction_id: String,
     pub agents: Vec<AgentWriteStatus>,
@@ -1004,6 +1015,7 @@ pub struct AgentWriteResult {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct AgentWriteStatus {
     pub agent: String,
     pub success: bool,
@@ -1013,6 +1025,18 @@ pub struct AgentWriteStatus {
     pub backups: Vec<String>,
     #[serde(default)]
     pub error_code: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentCleanupPreview {
+    pub revision_token: String,
+    pub agent: String,
+    pub files: Vec<AgentFileEffect>,
+    pub removed_paths: Vec<String>,
+    pub managed_config_drift: bool,
+    pub state_change: Option<AgentFileEffect>,
+    pub state_backup: Option<AgentFileEffect>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
@@ -1091,6 +1115,11 @@ mod tests {
                         "exists": true,
                         "reasons": ["syntax_invalid"]
                     }]
+                },
+                "cleanup": {
+                    "managed": false,
+                    "available": false,
+                    "reason": "not_managed"
                 }
             }]
         });
@@ -1156,5 +1185,91 @@ mod tests {
                 "warning": "Existing invalid configuration will be rebuilt"
             })
         );
+    }
+
+    #[test]
+    fn cleanup_detection_and_preview_are_strict_and_support_delete_effects() {
+        let cleanup_state = serde_json::json!({
+            "managed": true,
+            "available": true,
+            "reason": null
+        });
+        let state: AgentCleanupState = serde_json::from_value(cleanup_state.clone()).unwrap();
+        assert_eq!(serde_json::to_value(state).unwrap(), cleanup_state);
+
+        let preview_json = serde_json::json!({
+            "revision_token": "cleanup-revision",
+            "agent": "opencode",
+            "files": [{
+                "path": "/home/example/.config/opencode/opencode.json",
+                "role": "config",
+                "format": "json",
+                "operation": "delete",
+                "backup_required": true,
+                "backup_pattern": "/home/example/.config/opencode/opencode.json.bak.*",
+                "backup_sensitive": true
+            }],
+            "removed_paths": ["model", "provider.mtls-router"],
+            "managed_config_drift": false,
+            "state_change": {
+                "path": "/home/example/state/last-applied-model-config.json",
+                "role": "state",
+                "format": "json",
+                "operation": "delete",
+                "backup_required": true,
+                "backup_pattern": "/home/example/state/last-applied-model-config.json.bak.*",
+                "backup_sensitive": false
+            },
+            "state_backup": {
+                "path": "/home/example/state/last-applied-model-config.json",
+                "role": "state",
+                "format": "json",
+                "operation": "backup",
+                "backup_sensitive": false
+            }
+        });
+        let preview: AgentCleanupPreview = serde_json::from_value(preview_json).unwrap();
+        assert_eq!(preview.files[0].operation, "delete");
+        assert!(preview.files[0].backup_sensitive);
+        assert!(!preview.state_change.unwrap().backup_sensitive);
+        assert!(!preview.state_backup.unwrap().backup_sensitive);
+
+        for mut invalid in [
+            serde_json::json!({"managed": false, "available": false, "reason": "not_managed", "extra": true}),
+            serde_json::json!({
+                "revision_token": "cleanup-revision", "agent": "opencode", "files": [],
+                "removed_paths": [], "managed_config_drift": false,
+                "state_change": null, "state_backup": null, "extra": true
+            }),
+        ] {
+            let rejected = if invalid.get("revision_token").is_some() {
+                serde_json::from_value::<AgentCleanupPreview>(invalid.take()).is_err()
+            } else {
+                serde_json::from_value::<AgentCleanupState>(invalid.take()).is_err()
+            };
+            assert!(rejected);
+        }
+    }
+
+    #[test]
+    fn cleanup_result_rejects_unknown_nested_fields() {
+        let mut result = serde_json::json!({
+            "transaction_id": "cleanup-transaction",
+            "agents": [{
+                "agent": "opencode", "success": true,
+                "changed": ["/config"], "backups": ["/config.bak"]
+            }],
+            "state_change": {
+                "path": "/state", "role": "state", "format": "json", "operation": "delete"
+            },
+            "state_backup": {
+                "path": "/state.bak", "role": "state", "format": "json", "operation": "backup"
+            }
+        });
+        let parsed: AgentWriteResult = serde_json::from_value(result.clone()).unwrap();
+        assert_eq!(parsed.state_change.unwrap().operation, "delete");
+        assert_eq!(parsed.state_backup.unwrap().operation, "backup");
+        result["agents"][0]["model_config"] = serde_json::json!({});
+        assert!(serde_json::from_value::<AgentWriteResult>(result).is_err());
     }
 }

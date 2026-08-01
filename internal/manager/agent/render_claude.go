@@ -73,6 +73,42 @@ func mergeClaude(root map[string]json.RawMessage, config *modelconfig.ClaudeConf
 	return marshalObject(result)
 }
 
+func cleanupClaude(root map[string]json.RawMessage, ownedPaths []string) (cleanupTransform, error) {
+	result := cloneRawObject(root)
+	rawEnv, exists := result["env"]
+	if !exists {
+		content, err := marshalCleanupJSON(result)
+		return newCleanupTransform(content, len(result) == 0, nil), err
+	}
+	env, valid := decodeObject(rawEnv)
+	if !valid {
+		return cleanupTransform{}, operationError(CodeConfigInvalid, "Claude Code env setting is not an object")
+	}
+	removed := make([]string, 0, len(ownedPaths))
+	for _, path := range ownedPaths {
+		const prefix = "env."
+		if len(path) <= len(prefix) || path[:len(prefix)] != prefix {
+			continue
+		}
+		key := path[len(prefix):]
+		if _, present := env[key]; present {
+			delete(env, key)
+			removed = append(removed, path)
+		}
+	}
+	if len(env) == 0 {
+		delete(result, "env")
+	} else {
+		envJSON, err := json.Marshal(env)
+		if err != nil {
+			return cleanupTransform{}, err
+		}
+		result["env"] = envJSON
+	}
+	content, err := marshalCleanupJSON(result)
+	return newCleanupTransform(content, len(result) == 0, removed), err
+}
+
 func claudeManagedEnv(config *modelconfig.ClaudeConfig, routerBaseURL, key string) map[string]string {
 	result := map[string]string{
 		"ANTHROPIC_BASE_URL":            routerBaseURL,

@@ -58,6 +58,8 @@ type fakeAgent struct {
 	render          func(context.Context, []agent.Kind, string, json.RawMessage) (agent.RenderResult, error)
 	preview         func(context.Context, []agent.Kind) (agent.Preview, error)
 	previewRequest  func(context.Context, agent.PreviewRequest) (agent.Preview, error)
+	cleanupPreview  func(context.Context, agent.CleanupPreviewRequest) (agent.CleanupPreview, error)
+	cleanupWrite    func(context.Context, agent.CleanupWriteRequest) (agent.WriteResult, error)
 	validatePreview func(context.Context, agent.WriteRequest) error
 	binding         func(context.Context, []agent.Kind, string, json.RawMessage) (agent.CatalogBinding, error)
 	write           func(context.Context, agent.WriteRequest) (agent.WriteResult, error)
@@ -139,6 +141,14 @@ func (f *fakeAgent) Write(ctx context.Context, request agent.WriteRequest) (agen
 	return f.write(ctx, request)
 }
 
+func (f *fakeAgent) CleanupPreview(ctx context.Context, request agent.CleanupPreviewRequest) (agent.CleanupPreview, error) {
+	return f.cleanupPreview(ctx, request)
+}
+
+func (f *fakeAgent) CleanupWrite(ctx context.Context, request agent.CleanupWriteRequest) (agent.WriteResult, error) {
+	return f.cleanupWrite(ctx, request)
+}
+
 func (f *fakeAgent) ValidatePreview(ctx context.Context, request agent.WriteRequest) error {
 	if f.validatePreview == nil {
 		return nil
@@ -200,6 +210,157 @@ func TestAgentPreviewMapsModesWarningsAndSidecarBackupPlan(t *testing.T) {
 	}
 }
 
+func TestAgentCleanupHandlersDispatchDirectlyAndMapSafeResults(t *testing.T) {
+	const forbidden = "cleanup-secret-canary"
+	var previewRequest agent.CleanupPreviewRequest
+	var writeRequest agent.CleanupWriteRequest
+	routerCalls, catalogCalls := 0, 0
+	agentManager := &fakeAgent{
+		cleanupPreview: func(_ context.Context, request agent.CleanupPreviewRequest) (agent.CleanupPreview, error) {
+			previewRequest = request
+			return agent.CleanupPreview{
+				RevisionToken: "cleanup-revision", Agent: agent.OpenCode,
+				Files: []agent.FilePreview{{
+					Role: "config", Path: "/safe/opencode.json", Format: agent.FormatJSON, Operation: agent.OperationDelete,
+					Preserves: []string{"unmanaged configuration"}, Backup: agent.BackupPlan{Required: true, Pattern: "/safe/opencode.json.bak-<timestamp>-<random>", Sensitive: true, Warning: "backup warning"},
+				}},
+				RemovedPaths: []string{"model", "provider.mtls-router"}, ManagedConfigDrift: true,
+				StateChange: &agent.FilePreview{Role: "state", Path: "/safe/state.json", Format: agent.FormatJSON, Operation: agent.OperationDelete, Backup: agent.BackupPlan{Required: true, Pattern: "/safe/state.json.bak-<timestamp>-<random>", Sensitive: false, Warning: "state warning"}},
+				StateBackup: &agent.FilePreview{Role: "state", Path: "/safe/state.json", Format: agent.FormatJSON, Operation: agent.Operation("backup")},
+			}, nil
+		},
+		cleanupWrite: func(_ context.Context, request agent.CleanupWriteRequest) (agent.WriteResult, error) {
+			writeRequest = request
+			return agent.WriteResult{
+				TransactionID: "cleanup-transaction",
+				Agents:        []agent.AgentWriteStatus{{Agent: agent.OpenCode, Success: true, Changed: []string{"/safe/opencode.json"}, Backups: []string{"/safe/opencode.json.bak"}}},
+				StateChange:   &agent.FileWriteStatus{Path: "/safe/state.json", Operation: agent.OperationDelete, Replaced: true}, StateBackup: &agent.FileWriteStatus{Path: "/safe/state.json.bak", Operation: agent.OperationBackup, BackupPath: "/safe/state.json.bak"},
+			}, nil
+		},
+		binding: func(context.Context, []agent.Kind, string, json.RawMessage) (agent.CatalogBinding, error) {
+			catalogCalls++
+			return agent.CatalogBinding{}, errors.New(forbidden)
+		},
+	}
+	manager := newWithDependencies(Config{}, dependencies{
+		agent: agentManager,
+		trusted: fakeTrustedRouter{
+			fetch: func(context.Context, protocol.RouterOwner, string) (trustedrouter.Result, *protocol.Error) {
+				routerCalls++
+				return trustedrouter.Result{}, nil
+			},
+			revalidate: func(context.Context, protocol.RouterOwner, string, trustedrouter.Binding) ([]string, *protocol.Error) {
+				routerCalls++
+				return nil, nil
+			},
+		},
+	})
+	requests := []string{
+		`{"id":"preview","method":"agent.cleanup.preview","params":{"agent":"opencode"}}`,
+		`{"id":"write","method":"agent.cleanup.write","params":{"agent":"opencode","revision_token":"cleanup-revision","approve_managed_overwrite":true}}`,
+		`{"id":"reject","method":"agent.cleanup.preview","params":{"agent":"opencode","api_key":"` + forbidden + `","catalog_token":"` + forbidden + `","model_config":{"saved":"` + forbidden + `"},"flow_id":"` + forbidden + `"}}`,
+		`{"id":"missing-approval","method":"agent.cleanup.write","params":{"agent":"opencode","revision_token":"cleanup-revision"}}`,
+	}
+	var output strings.Builder
+	if err := manager.Serve(context.Background(), strings.NewReader(strings.Join(requests, "\n")+"\n"), &output); err != nil {
+		t.Fatal(err)
+	}
+	if previewRequest.Agent != agent.OpenCode || writeRequest.Agent != agent.OpenCode || writeRequest.RevisionToken != "cleanup-revision" || !writeRequest.ApproveManagedOverwrite {
+		t.Fatalf("cleanup requests = preview %#v write %#v", previewRequest, writeRequest)
+	}
+	if routerCalls != 0 || catalogCalls != 0 {
+		t.Fatalf("cleanup touched router/catalog: trusted=%d catalog=%d", routerCalls, catalogCalls)
+	}
+	if strings.Contains(output.String(), forbidden) {
+		t.Fatalf("cleanup response leaked rejected data: %s", output.String())
+	}
+	for _, prose := range []string{"unmanaged configuration", "backup warning", "state warning"} {
+		if strings.Contains(output.String(), prose) {
+			t.Fatalf("cleanup response exposed manager prose %q: %s", prose, output.String())
+		}
+	}
+	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+	var previewResponse, writeResponse, rejectedResponse, missingApprovalResponse protocol.Response
+	for i, target := range []*protocol.Response{&previewResponse, &writeResponse, &rejectedResponse, &missingApprovalResponse} {
+		if err := json.Unmarshal([]byte(lines[i]), target); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var preview protocol.AgentCleanupPreviewResult
+	if previewResponse.Error != nil || json.Unmarshal(previewResponse.Result, &preview) != nil {
+		t.Fatalf("preview response = %#v", previewResponse)
+	}
+	if preview.Agent != "opencode" || len(preview.Files) != 1 || preview.Files[0].Operation != "delete" || strings.Join(preview.RemovedPaths, ",") != "model,provider.mtls-router" || preview.StateChange == nil || preview.StateChange.Operation != "delete" || preview.StateBackup == nil {
+		t.Fatalf("cleanup preview = %#v", preview)
+	}
+	if len(preview.Files[0].Preserves) != 0 || preview.Files[0].Warning != "" || preview.StateChange.Warning != "" {
+		t.Fatalf("cleanup preview exposed manager prose = %#v", preview)
+	}
+	if !preview.Files[0].BackupSensitive || preview.StateChange.BackupSensitive || preview.StateBackup.BackupSensitive {
+		t.Fatalf("cleanup backup sensitivity = file %#v state %#v backup %#v", preview.Files[0], preview.StateChange, preview.StateBackup)
+	}
+	var write protocol.AgentWriteResult
+	if writeResponse.Error != nil || json.Unmarshal(writeResponse.Result, &write) != nil || len(write.Agents) != 1 || strings.Join(write.Agents[0].Changed, ",") != "/safe/opencode.json" || strings.Join(write.Agents[0].Backups, ",") != "/safe/opencode.json.bak" {
+		t.Fatalf("cleanup write = %#v response=%#v", write, writeResponse)
+	}
+	if write.StateChange == nil || write.StateChange.Operation != "delete" || write.StateBackup == nil || write.StateBackup.Operation != "backup" {
+		t.Fatalf("cleanup write state effects = change %#v backup %#v", write.StateChange, write.StateBackup)
+	}
+	if rejectedResponse.Error == nil || rejectedResponse.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("rejected response = %#v", rejectedResponse)
+	}
+	if missingApprovalResponse.Error == nil || missingApprovalResponse.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("missing approval response = %#v", missingApprovalResponse)
+	}
+}
+
+func TestMapWriteUsesActualStateOperation(t *testing.T) {
+	for _, operation := range []agent.Operation{agent.OperationCreate, agent.OperationReplace, agent.OperationDelete} {
+		t.Run(string(operation), func(t *testing.T) {
+			mapped := mapWrite(agent.WriteResult{StateChange: &agent.FileWriteStatus{Path: "/state", Operation: operation, Replaced: true}})
+			if mapped.StateChange == nil || mapped.StateChange.Operation != string(operation) {
+				t.Fatalf("mapped state change = %#v", mapped.StateChange)
+			}
+		})
+	}
+}
+
+func TestAgentCleanupMapsNotManagedAndDetectionStateWithoutDetails(t *testing.T) {
+	const forbidden = "saved-model-url-api-key-canary"
+	manager := newWithDependencies(Config{}, dependencies{
+		detect: func() ([]agent.State, error) {
+			return []agent.State{{Agent: agent.OpenCode, Name: "opencode", Cleanup: agent.CleanupState{Managed: true, Available: false, Reason: agent.CleanupWritesDisabled}}}, nil
+		},
+		agent: &fakeAgent{
+			cleanupPreview: func(context.Context, agent.CleanupPreviewRequest) (agent.CleanupPreview, error) {
+				return agent.CleanupPreview{}, &agent.OperationError{Code: agent.CodeAgentNotManaged}
+			},
+			cleanupWrite: func(context.Context, agent.CleanupWriteRequest) (agent.WriteResult, error) {
+				return agent.WriteResult{}, errors.New(forbidden)
+			},
+		},
+	})
+	requests := []string{
+		`{"id":"detect","method":"agent.detect"}`,
+		`{"id":"preview","method":"agent.cleanup.preview","params":{"agent":"opencode"}}`,
+		`{"id":"write","method":"agent.cleanup.write","params":{"agent":"opencode","revision_token":"revision","approve_managed_overwrite":false}}`,
+	}
+	var output strings.Builder
+	if err := manager.Serve(context.Background(), strings.NewReader(strings.Join(requests, "\n")+"\n"), &output); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.String(), forbidden) {
+		t.Fatalf("cleanup response leaked service error: %s", output.String())
+	}
+	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+	if !strings.Contains(lines[0], `"cleanup":{"managed":true,"available":false,"reason":"writes_disabled"}`) {
+		t.Fatalf("detection cleanup state = %s", lines[0])
+	}
+	if !strings.Contains(lines[1], `"code":"AGENT_NOT_MANAGED"`) || !strings.Contains(lines[2], `"code":"WRITE_FAILED"`) {
+		t.Fatalf("cleanup errors = %s", output.String())
+	}
+}
+
 func TestMapPreviewEncodesEmptyCollectionsAsArrays(t *testing.T) {
 	encoded, err := json.Marshal(mapPreview(agent.Preview{ModelConfig: json.RawMessage(`{"version":1}`)}))
 	if err != nil {
@@ -210,6 +371,22 @@ func TestMapPreviewEncodesEmptyCollectionsAsArrays(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, field := range []string{"fragments", "files", "drifted_agents", "managed_collisions"} {
+		if got := string(result[field]); got != "[]" {
+			t.Errorf("%s = %s, want []", field, got)
+		}
+	}
+}
+
+func TestMapCleanupPreviewEncodesEmptyCollectionsAsArrays(t *testing.T) {
+	encoded, err := json.Marshal(mapCleanupPreview(agent.CleanupPreview{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"files", "removed_paths"} {
 		if got := string(result[field]); got != "[]" {
 			t.Errorf("%s = %s, want []", field, got)
 		}
@@ -787,7 +964,7 @@ func TestAgentWriteThreadsRebuildModesApprovalAndStateBackupArtifact(t *testing.
 		},
 		write: func(_ context.Context, request agent.WriteRequest) (agent.WriteResult, error) {
 			written = request
-			return agent.WriteResult{TransactionID: "transaction", StateChange: &agent.FileWriteStatus{Path: "/state.json", Replaced: true}, StateBackup: &agent.FileWriteStatus{Path: "/state.json.bak-real", BackupPath: "/state.json.bak-real"}}, nil
+			return agent.WriteResult{TransactionID: "transaction", StateChange: &agent.FileWriteStatus{Path: "/state.json", Operation: agent.OperationReplace, Replaced: true}, StateBackup: &agent.FileWriteStatus{Path: "/state.json.bak-real", Operation: agent.OperationBackup, BackupPath: "/state.json.bak-real"}}, nil
 		},
 	}
 	manager := newWithDependencies(Config{}, dependencies{

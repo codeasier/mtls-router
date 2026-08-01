@@ -7,12 +7,6 @@ import (
 	"github.com/codeasier/mtls-router/internal/manager/agent/modelconfig"
 )
 
-var codexManagedRootKeys = []string{
-	"model_provider", "model", "cli_auth_credentials_store", "model_reasoning_effort",
-	"model_reasoning_summary", "model_verbosity", "model_context_window",
-	"model_auto_compact_token_limit", "model_auto_compact_token_limit_scope",
-}
-
 var codexRequiredRootKeys = []string{"model_provider", "model", "cli_auth_credentials_store"}
 
 var codexCompetingAuthKeys = []string{"tokens", "last_refresh", "agent_identity", "personal_access_token", "bedrock_api_key"}
@@ -124,6 +118,73 @@ func mergeCodex(content []byte, config *modelconfig.CodexConfig, apiBaseURL stri
 		root[key] = value
 	}
 	return encodeTOML(root)
+}
+
+func cleanupCodexConfig(content []byte, saved *modelconfig.CodexConfig) (cleanupTransform, error) {
+	if saved == nil {
+		return cleanupTransform{}, operationError(CodeConfigInvalid, "saved Codex configuration is invalid")
+	}
+	root, valid := decodeTOML(content)
+	if !valid {
+		return cleanupTransform{}, operationError(CodeConfigInvalid, "Codex configuration is invalid TOML")
+	}
+	managed := codexManagedConfig(saved, "")
+	removed := make([]string, 0, len(codexRequiredRootKeys)+len(managed))
+	for _, key := range codexRequiredRootKeys {
+		if _, exists := root[key]; exists {
+			delete(root, key)
+			removed = append(removed, key)
+		}
+	}
+	for key := range managed {
+		if key == "model_providers" || containsString(codexRequiredRootKeys, key) {
+			continue
+		}
+		if _, exists := root[key]; exists {
+			delete(root, key)
+			removed = append(removed, key)
+		}
+	}
+	if value, exists := root["model_providers"]; exists {
+		providers, ok := value.(map[string]any)
+		if !ok {
+			return cleanupTransform{}, operationError(CodeConfigInvalid, "Codex model providers setting is not a table")
+		}
+		if provider, exists := providers["mtls-router"]; exists {
+			if _, ok := provider.(map[string]any); !ok {
+				return cleanupTransform{}, operationError(CodeConfigInvalid, "Codex managed provider is not a table")
+			}
+			delete(providers, "mtls-router")
+			removed = append(removed, "model_providers.mtls-router")
+		}
+		if len(providers) == 0 {
+			delete(root, "model_providers")
+		}
+	}
+	output, err := encodeTOML(root)
+	return newCleanupTransform(output, len(root) == 0, removed), err
+}
+
+func cleanupCodexAuth(root map[string]json.RawMessage) (cleanupTransform, error) {
+	result := cloneRawObject(root)
+	removed := make([]string, 0, 2)
+	for _, key := range []string{"auth_mode", "OPENAI_API_KEY"} {
+		if _, exists := result[key]; exists {
+			delete(result, key)
+			removed = append(removed, "auth."+key)
+		}
+	}
+	content, err := marshalCleanupJSON(result)
+	return newCleanupTransform(content, len(result) == 0, removed), err
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func renderCodexAuthFragment(key string, existing map[string]json.RawMessage) ([]byte, error) {

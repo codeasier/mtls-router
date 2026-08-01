@@ -33,7 +33,39 @@ func acquireTransactionLock(ctx context.Context, stateDir string) (*transactionL
 		file.Close()
 		return nil, err
 	}
+	return acquireOpenedTransactionLock(ctx, file)
+}
 
+// acquireExistingTransactionLock opens existing coordination state without
+// creating directories, files, or changing permissions.
+func acquireExistingTransactionLock(ctx context.Context, stateDir string) (*transactionLock, error) {
+	dirInfo, err := os.Lstat(stateDir)
+	if err != nil || isFinalComponentLink(stateDir, dirInfo) || !dirInfo.IsDir() || !privatePermissionsOK(stateDir, true, dirInfo.Mode()) {
+		return nil, errors.New("invalid transaction state directory")
+	}
+	path := filepath.Join(stateDir, lockFileName)
+	pathInfo, err := os.Lstat(path)
+	if err != nil || isFinalComponentLink(path, pathInfo) || !pathInfo.Mode().IsRegular() || !privatePermissionsOK(path, false, pathInfo.Mode()) {
+		return nil, errors.New("invalid transaction lock")
+	}
+	file, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		return nil, err
+	}
+	openedInfo, err := file.Stat()
+	if err != nil || !openedInfo.Mode().IsRegular() || !os.SameFile(pathInfo, openedInfo) {
+		file.Close()
+		return nil, errors.New("transaction lock identity changed")
+	}
+	pathAfter, err := os.Lstat(path)
+	if err != nil || isFinalComponentLink(path, pathAfter) || !os.SameFile(openedInfo, pathAfter) || !privatePermissionsOK(path, false, pathAfter.Mode()) {
+		file.Close()
+		return nil, errors.New("transaction lock path identity changed")
+	}
+	return acquireOpenedTransactionLock(ctx, file)
+}
+
+func acquireOpenedTransactionLock(ctx context.Context, file *os.File) (*transactionLock, error) {
 	deadline := time.Now().Add(lockTimeout)
 	for {
 		locked, err := tryLockFile(file)

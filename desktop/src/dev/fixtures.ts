@@ -1,5 +1,6 @@
 import type {
   AgentDetection,
+  AgentCleanupPreview,
   AgentId,
   AgentModelsResult,
   AgentPreview,
@@ -36,6 +37,7 @@ export const fixtureDetection: AgentDetection = {
     configured: true,
     invalid: false,
     recovery: { eligible: false, files: [] },
+    cleanup: { managed: true, available: true, reason: null },
   })),
 };
 
@@ -186,6 +188,33 @@ export function writeResultFor(
             error_code: "AGENT_WRITE_FAILED",
           },
     ),
+  };
+}
+
+export function cleanupPreviewFor(agent: AgentId): AgentCleanupPreview {
+  return {
+    revision_token: `cleanup-revision-${agent}`,
+    agent,
+    files: [
+      {
+        path: `/mock/${agent}/config`,
+        role: "config",
+        format: agent === "codex" ? "toml" : "json",
+        operation: "replace",
+        backup_required: true,
+        backup_sensitive: true,
+        backup_pattern: `/mock/${agent}/config.bak.*`,
+      },
+    ],
+    removed_paths: ["provider.mtls-router"],
+    managed_config_drift: false,
+    state_backup: {
+      path: "/mock/app-data/agent-model-state.json.bak.*",
+      role: "manager_state_backup",
+      format: "json",
+      operation: "backup",
+      backup_sensitive: false,
+    },
   };
 }
 

@@ -43,6 +43,7 @@ const detection = {
     configured: true,
     invalid: false,
     recovery: { eligible: false, files: [] },
+    cleanup: { managed: true, available: true, reason: null },
   })),
 };
 

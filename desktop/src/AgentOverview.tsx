@@ -27,6 +27,7 @@ interface AgentOverviewProps {
   issue: OverviewIssue | null;
   onRefresh(): void;
   onConfigure(target: AgentTarget): void;
+  onCleanup(agent: AgentState["agent"]): void;
   onRetry(target: AgentTarget): void;
   onNavigateToApiKeys(): void;
 }
@@ -190,6 +191,7 @@ export function AgentOverview({
   issue,
   onRefresh,
   onConfigure,
+  onCleanup,
   onRetry,
   onNavigateToApiKeys,
 }: AgentOverviewProps) {
@@ -281,19 +283,42 @@ export function AgentOverview({
                   ))}
                 </ul>
               )}
-              <button
-                type="button"
-                id={`agent-${id}-action`}
-                className={
-                  configuration.action === "rebuild"
-                    ? "agent-card__action agent-rebuild-toggle"
-                    : "agent-card__action control-button"
-                }
-                disabled={refreshing || configuration.action === "disabled"}
-                onClick={() => onConfigure(target)}
-              >
-                {label}
-              </button>
+              {agent.cleanup.reason === "model_state_invalid" && (
+                <p className="agent-cleanup-diagnostic" role="note">
+                  {t("agents.cleanup.diagnostic.modelStateInvalid")}
+                </p>
+              )}
+              {agent.cleanup.reason === "writes_disabled" && (
+                <p className="agent-cleanup-diagnostic" role="note">
+                  {t("agents.cleanup.diagnostic.writesDisabled")}
+                </p>
+              )}
+              <div className="agent-card__actions">
+                <button
+                  type="button"
+                  id={`agent-${id}-action`}
+                  className={
+                    configuration.action === "rebuild"
+                      ? "agent-card__action agent-rebuild-toggle"
+                      : "agent-card__action control-button"
+                  }
+                  disabled={refreshing || configuration.action === "disabled"}
+                  onClick={() => onConfigure(target)}
+                >
+                  {label}
+                </button>
+                {agent.cleanup.managed && agent.cleanup.available && (
+                  <button
+                    type="button"
+                    id={`agent-${id}-cleanup`}
+                    className="agent-card__action text-button agent-cleanup-action"
+                    disabled={refreshing}
+                    onClick={() => onCleanup(id)}
+                  >
+                    {t("agents.cleanup.action", { agent: agentNames[id] })}
+                  </button>
+                )}
+              </div>
             </li>
           );
         })}

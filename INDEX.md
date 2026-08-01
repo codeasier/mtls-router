@@ -29,19 +29,19 @@ Tauri UI (React) ──invoke──▶ Rust commands ──stdin/stdout JSON─�
 
 ## Manager（`cmd/mtls-router-manager/` + `internal/manager/`）
 
-Manager 是一个基本无状态、按请求处理的 management protocol v4 JSON 服务（`internal/manager/protocol/`）；一个例外是 `occupant.Service`，它只为允许强制终止的目标在 `Inspect` 与 `ForceTerminate` 之间持有一个内存中一次性确认 token（30 秒后过期；其他长生命周期状态位于 `lifecycle.Manager` 与 `agent.Service`）。它暴露 15 个方法，分组如下：
+Manager 是一个基本无状态、按请求处理的 management protocol v4 JSON 服务（`internal/manager/protocol/`）；一个例外是 `occupant.Service`，它只为允许强制终止的目标在 `Inspect` 与 `ForceTerminate` 之间持有一个内存中一次性确认 token（30 秒后过期；其他长生命周期状态位于 `lifecycle.Manager` 与 `agent.Service`）。它暴露 17 个方法，分组如下：
 
 - `manager.info`、`diagnostics.collect` — 元数据
 - `router.status/start/stop/health/version/logs` — 路由生命周期（spawn/监控 router 二进制）
 - `router.inspect_occupant/force_terminate_occupant` — 端口冲突解决
-- `agent.detect/models/render/preview/write` — Agent 配置（Claude Code、opencode、Codex）
+- `agent.detect/models/render/preview/write`、`agent.cleanup.preview/write` — Agent 配置及按单 Agent 清理（Claude Code、opencode、Codex）
 
 子包职责：
-- `app` — 装配所有服务，映射协议错误，强制 API key 清零
+- `app` — 装配所有服务，映射协议错误，强制 API key 清零，并把无 key cleanup 请求直接分发到 Agent service
 - `lifecycle` — 进程 spawn、状态文件、父进程监控、异常退出检测
 - `discovery` — 分类 router 状态（desktop_owned / external_compatible / degraded / stale / absent）
-- `agent` — 检测、配置渲染（按 agent 格式：JSON/TOML）、带备份/回滚的事务性写入
-- `agent/modelconfig` — 无 key 的规范化 model config schema v1：`Decode`/`DecodeStructural`/`Canonical`/`DeepMerge`、token 签名
+- `agent` — 检测、配置渲染（按 agent 格式：JSON/TOML）、基于 sidecar 所有权的清理、支持 replace/delete 与备份/回滚的事务性写入
+- `agent/modelconfig` — 无 key 的规范化 model config schema v1：`Decode`/`DecodeStructural`/`Canonical`/`DeepMerge`、目录/写入/cleanup token 签名
 - `trustedrouter` — 经 router `/v1/models` 的鉴权模型目录发现
 - `occupant` — 结构化端口占用诊断、Windows 权限预检、SCM/systemd supervisor 分类与受保护的精确强制终止
 - `protocol` — 请求/响应类型、方法超时、错误码
@@ -56,8 +56,8 @@ Manager 是一个基本无状态、按请求处理的 management protocol v4 JSO
 
 内存与无 key 数据：
 - Go manager 在成功 decode 后将 `request.APIKey = ""`（尽力而为；底层 JSON/Scanner 缓冲区由 GC 管理，不保证清零）。
-- Rust 桌面端将 key 存于 `ModelFlow.api_key: Zeroizing<String>` —— 内存 drop 时真正清零。
-- `modelconfig`（schema v1）是无 key 的设计硬约束，主动拒绝 key-like 字段名；sidecar 状态文件与事务 journal 只存 HMAC 摘要，不含 key。
+- Rust 桌面端把全局 key 持久化到私有 `credentials.json`，按需以 `Zeroizing<String>` 加载；`ModelFlow` 不含 key，cleanup command 也不读取凭据。
+- `modelconfig`（schema v1）是无 key 的设计硬约束，主动拒绝 key-like 字段名；sidecar 状态文件、事务 journal 与 cleanup revision claim 只存 HMAC 摘要和无密钥声明，不含 key。
 
 含 key 的持久化（Agent 凭据文件）：
 - `agent.write` 会把 key **明文**写入目标 Agent 的凭据文件：Claude `~/.claude/settings.json`（`env.ANTHROPIC_AUTH_TOKEN`）、opencode `~/.config/opencode/opencode.json`（`provider.mtls-router.options.apiKey`）、Codex `~/.codex/auth.json`（`OPENAI_API_KEY`）；Codex `config.toml` 不含 key。
@@ -74,14 +74,15 @@ key 绝不出现于环境变量、CLI 参数、model config、日志或 journal 
 **前端**（React 19 + TypeScript + Vite）：
 - `src/ipc.ts` — 类型化的 `DesktopApi` 接口，包装 Tauri invoke 命令；所有敏感文本在客户端脱敏
 - `src/App.tsx` — 根布局与侧边栏导航，分发到 4 个页面组件
-- `src/RouterPage.tsx`、`src/AgentPage.tsx`、`src/LogsPage.tsx`、`src/SettingsPage.tsx` — 各区块页面
+- `src/RouterPage.tsx`、`src/AgentPage.tsx`、`src/LogsPage.tsx`、`src/SettingsPage.tsx` — 各区块页面；Agent 页面协调独立配置与 cleanup 目标
+- `src/AgentCleanupPanel.tsx`、`src/agentCleanupState.ts`、`src/useAgentCleanupController.ts` — 单 Agent cleanup 审阅、状态机与无 key preview/write 编排
 - `src/model.ts` — 共享类型与导航模型
 - i18n：`src/i18n.tsx`（context provider）+ `src/locales/zh-CN.ts`、`src/locales/en.ts`
 
 **后端**（Rust，Tauri 2）：
 - `src/lib.rs` — 应用入口：插件注册、setup、invoke handler 注册
-- `src/commands.rs` — Tauri 命令处理器，代理到 manager client；`AppState`、`ModelFlow`
-- `src/manager.rs` — spawn 并通过 stdin/stdout 与 `mtls-router-manager serve` 通信；握手校验
+- `src/commands.rs` — Tauri 命令处理器，代理到 manager client；`AppState`、`ModelFlow`，以及不接收凭据/model flow 的 cleanup preview/write command
+- `src/manager.rs` — spawn 并通过 stdin/stdout 与 `mtls-router-manager serve` 通信；握手校验；cleanup write 禁止不确定投递后的自动 replay
 - `src/scheduler.rs` — 轮询调度器，向前端 emit `router-poll-snapshot` 事件
 - `src/port_recovery.rs` — manager 报告首次释放后约 10 秒定期采样，区分未检测到重新占用与已采样到重新占用
 - `src/sidecar.rs` — 解析并校验 sidecar 二进制路径（运行时纯名字 `mtls-router[-manager][.exe]`；target-triple 名仅为构建输入）
@@ -91,7 +92,7 @@ key 绝不出现于环境变量、CLI 参数、model config、日志或 journal 
 - `src/autostart.rs` — 登录启动插件包装（首次启动默认启用）
 - `src/paths.rs` — 桌面数据目录解析
 - `src/process_identity.rs` — 捕获 PID + 启动时间 + 可执行文件，用于父身份 flag
-- `src/types.rs` — 镜像 manager 协议结果的 serde 类型
+- `src/types.rs` — 镜像 manager 协议结果的严格 serde 类型，包含 cleanup detection、preview 与 delete/backup 文件影响
 - `src/error.rs` — 将 manager 协议错误映射为用户可见字符串
 
 Rust 侧绝不向 webview 暴露 shell/fs/http 权限（由 `lib.rs` 中的测试强制保证）。
@@ -123,7 +124,7 @@ Rust 侧绝不向 webview 暴露 shell/fs/http 权限（由 `lib.rs` 中的测�
 | `internal/version` | [INDEX.md](internal/version/INDEX.md) | 链接期构建元数据变量 |
 | `internal/log` | [INDEX.md](internal/log/INDEX.md) | 访问日志响应记录器 |
 | `internal/tlspolicy` | [INDEX.md](internal/tlspolicy/INDEX.md) | TLS 最低版本解析 |
-| `internal/manager` | [INDEX.md](internal/manager/INDEX.md) | 控制面：15 个协议方法、生命周期、发现、agent 配置。其 14 个子包各有专属 INDEX，导航见 [子包表](internal/manager/INDEX.md#子包) |
+| `internal/manager` | [INDEX.md](internal/manager/INDEX.md) | 控制面：17 个协议方法、生命周期、发现、Agent 配置与清理。其 14 个子包各有专属 INDEX，导航见 [子包表](internal/manager/INDEX.md#子包) |
 | `desktop` | [INDEX.md](desktop/INDEX.md) | Tauri 2 应用：React 前端 + Rust 后端、sidecar 管理 |
 
 ## 辅助参考

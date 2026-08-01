@@ -168,8 +168,12 @@ func boundErrorDetails(protocolErr *Error) {
 	}
 }
 
-// DecodeParams strictly decodes method parameters and rejects unknown fields.
+// DecodeParams strictly decodes method parameters and rejects duplicate or
+// unknown fields at any object depth.
 func DecodeParams(params json.RawMessage, target any) *Error {
+	if err := rejectDuplicateJSONKeys(params); err != nil {
+		return &Error{Code: CodeInvalidParams, Message: "invalid method parameters"}
+	}
 	decoder := json.NewDecoder(bytes.NewReader(params))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
@@ -177,6 +181,70 @@ func DecodeParams(params json.RawMessage, target any) *Error {
 	}
 	if decoder.Decode(&struct{}{}) != io.EOF {
 		return &Error{Code: CodeInvalidParams, Message: "invalid method parameters"}
+	}
+	return nil
+}
+
+func rejectDuplicateJSONKeys(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := scanUniqueJSONValue(decoder); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		if err == nil {
+			return errors.New("trailing JSON value")
+		}
+		return err
+	}
+	return nil
+}
+
+func scanUniqueJSONValue(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delimiter {
+	case '{':
+		keys := make(map[string]struct{})
+		for decoder.More() {
+			token, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := token.(string)
+			if !ok {
+				return errors.New("invalid JSON object key")
+			}
+			if _, exists := keys[key]; exists {
+				return errors.New("duplicate JSON object key")
+			}
+			keys[key] = struct{}{}
+			if err := scanUniqueJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		closing, err := decoder.Token()
+		if err != nil || closing != json.Delim('}') {
+			return errors.New("invalid JSON object")
+		}
+	case '[':
+		for decoder.More() {
+			if err := scanUniqueJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		closing, err := decoder.Token()
+		if err != nil || closing != json.Delim(']') {
+			return errors.New("invalid JSON array")
+		}
+	default:
+		return errors.New("invalid JSON delimiter")
 	}
 	return nil
 }

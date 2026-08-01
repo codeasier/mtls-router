@@ -282,6 +282,8 @@ export const en: Record<TranslationKey, string> = {
   "agents.issue.retry": "Retry {agent}",
   "agents.operation.create": "Create",
   "agents.operation.replace": "Replace",
+  "agents.operation.delete": "Delete",
+  "agents.operation.backup": "Backup",
   "agents.operation.preserve": "Preserve unmanaged configuration",
   "agents.mode.merge": "Merge",
   "agents.mode.rebuild": "Rebuild",
@@ -574,4 +576,40 @@ export const en: Record<TranslationKey, string> = {
     "An Agent configuration operation is in progress. Wait for it to finish before leaving.",
   "agents.leave.cancel": "Keep editing",
   "agents.leave.confirm": "Discard and leave",
+  "agents.cleanup.action": "Clean up managed {agent} configuration",
+  "agents.cleanup.overline": "PER-AGENT CLEANUP / BACKUP FIRST / KEY-FREE",
+  "agents.cleanup.heading": "Clean up managed {agent} configuration",
+  "agents.cleanup.loading": "Generating cleanup preview...",
+  "agents.cleanup.keyFree":
+    "This operation does not read the API key or contact the model catalog or router service.",
+  "agents.cleanup.review": "Confirm cleanup boundary",
+  "agents.cleanup.removedPaths": "Managed settings to remove",
+  "agents.cleanup.fileEffects": "File, backup, and state effects",
+  "agents.cleanup.authRemoved":
+    "Authentication settings in the Agent files will be removed.",
+  "agents.cleanup.globalKeyRetained":
+    "The global API key saved by the desktop will not be removed.",
+  "agents.cleanup.backupsRetained":
+    "Historical and new backups remain in place; cleanup does not delete them. Some Agent backups may contain credentials or old keys.",
+  "agents.cleanup.approveDrift":
+    "Approve cleanup of drifted managed namespaces",
+  "agents.cleanup.write": "Back up and clean up",
+  "agents.cleanup.writing": "Backing up and cleaning up...",
+  "agents.cleanup.stale":
+    "Files changed after preview. Cleanup has not run; generate a new preview.",
+  "agents.cleanup.ambiguous":
+    "Cleanup delivery could not be confirmed ({code}). Its outcome is unknown; generate a new preview before taking another action.",
+  "agents.cleanup.repreview": "Re-preview cleanup",
+  "agents.cleanup.failed": "Cleanup failed ({code}).",
+  "agents.cleanup.retryPreview": "Retry preview",
+  "agents.cleanup.retryWrite": "Retry cleanup",
+  "agents.cleanup.completeOverline": "CLEANUP TRANSACTION COMPLETE",
+  "agents.cleanup.complete": "Cleanup complete",
+  "agents.cleanup.completeNote":
+    "Cleanup is complete; historical backups remain in place.",
+  "agents.cleanup.finish": "Finish and return to Agent overview",
+  "agents.cleanup.diagnostic.modelStateInvalid":
+    "The desktop-saved Agent management state cannot be verified. Restart the app; if this persists, inspect the configuration manually.",
+  "agents.cleanup.diagnostic.writesDisabled":
+    "Agent configuration writes are unavailable. Recover the pending transaction or restart the app first.",
 };

@@ -8,6 +8,7 @@ import {
   sanitizeSensitiveText,
   validOccupantInspection,
   type AgentDetection,
+  type AgentCleanupPreview,
   type AgentModes,
   type AgentPreview,
   type InvokeFn,
@@ -42,6 +43,11 @@ const detectionFixture = {
           },
         ],
       },
+      cleanup: {
+        managed: false,
+        available: false,
+        reason: "not_managed",
+      },
     },
   ],
 } satisfies AgentDetection;
@@ -70,6 +76,30 @@ const previewFixture = {
   managed_collisions: [],
   requires_codex_auth_approval: false,
 } satisfies AgentPreview;
+
+const cleanupPreviewFixture = {
+  revision_token: "cleanup-revision-1",
+  agent: "opencode",
+  files: [
+    {
+      path: "/home/example/.config/opencode/opencode.json",
+      role: "config",
+      format: "json",
+      operation: "delete",
+      backup_required: true,
+    },
+  ],
+  removed_paths: ["model", "provider.mtls-router"],
+  managed_config_drift: true,
+} satisfies AgentCleanupPreview;
+
+if (
+  cleanupPreviewFixture.files.some(
+    (file) => "preserves" in file || "warning" in file,
+  )
+) {
+  throw new Error("cleanup fixture must remain free of manager prose");
+}
 
 const forceableOccupant = {
   pid: 7,
@@ -475,6 +505,39 @@ describe("typed desktop API", () => {
     });
     expect(invoke.mock.calls[4][1]).not.toHaveProperty("request.modes");
     expect(JSON.stringify(invoke.mock.calls)).not.toContain("api_key");
+  });
+
+  it("uses exact key-free cleanup command payloads", async () => {
+    const invoke = vi
+      .fn()
+      .mockResolvedValueOnce(cleanupPreviewFixture)
+      .mockResolvedValueOnce({ transaction_id: "cleanup-tx", agents: [] });
+    const api = createDesktopApi(invoke as InvokeFn);
+
+    await api.previewAgentCleanup("opencode");
+    await api.writeAgentCleanup("opencode", "cleanup-revision-1", true);
+
+    expect(invoke).toHaveBeenNthCalledWith(1, COMMANDS.agentCleanupPreview, {
+      request: { agent: "opencode" },
+    });
+    expect(invoke).toHaveBeenNthCalledWith(2, COMMANDS.agentCleanupWrite, {
+      request: {
+        agent: "opencode",
+        revision_token: "cleanup-revision-1",
+        approve_managed_overwrite: true,
+      },
+    });
+    const payload = JSON.stringify(invoke.mock.calls);
+    for (const forbidden of [
+      "api_key",
+      "flow_id",
+      "catalog_token",
+      "model_config",
+    ]) {
+      expect(payload).not.toContain(forbidden);
+    }
+    expect(cleanupPreviewFixture.files[0]).not.toHaveProperty("preserves");
+    expect(cleanupPreviewFixture.files[0]).not.toHaveProperty("warning");
   });
 
   it("exposes credential management without a credential readback API", async () => {

@@ -6,10 +6,10 @@ use crate::{
     model_config::{self, ModelConfig},
     scheduler::PollScheduler,
     types::{
-        AgentDetect, AgentFragment, AgentPreview, AgentWriteResult, ComponentVersions,
-        CredentialSummary, DesktopPaths, Diagnostics, ManagerInfo, NativeLanguage,
-        OccupantInspection, OccupantTerminationResult, PollSnapshot, RecoveryAction, RouterHealth,
-        RouterLogs, RouterStatus, RouterVersion,
+        AgentCleanupPreview, AgentDetect, AgentFragment, AgentPreview, AgentWriteResult,
+        ComponentVersions, CredentialSummary, DesktopPaths, Diagnostics, ManagerInfo,
+        NativeLanguage, OccupantInspection, OccupantTerminationResult, PollSnapshot,
+        RecoveryAction, RouterHealth, RouterLogs, RouterStatus, RouterVersion,
     },
 };
 use chrono::{DateTime, Utc};
@@ -132,6 +132,20 @@ pub struct AgentWriteRequest {
     pub approve_managed_overwrite: bool,
     pub approve_codex_auth_change: bool,
     pub approve_rebuild: Vec<String>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentCleanupPreviewRequest {
+    pub agent: String,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentCleanupWriteRequest {
+    pub agent: String,
+    pub revision_token: String,
+    pub approve_managed_overwrite: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -562,6 +576,52 @@ async fn agent_detect_command(manager: &ManagerClient) -> Result<AgentDetect> {
 }
 
 #[tauri::command]
+pub async fn agent_cleanup_preview(
+    request: AgentCleanupPreviewRequest,
+    state: tauri::State<'_, AppState>,
+) -> Result<AgentCleanupPreview> {
+    agent_cleanup_preview_command(request, &state.manager).await
+}
+
+async fn agent_cleanup_preview_command(
+    request: AgentCleanupPreviewRequest,
+    manager: &ManagerClient,
+) -> Result<AgentCleanupPreview> {
+    validate_cleanup_agent(&request.agent)?;
+    let params = serde_json::to_value(request)
+        .map_err(|_| CommandError::invalid_params("cleanup preview request is invalid"))?;
+    manager.call("agent.cleanup.preview", params).await
+}
+
+#[tauri::command]
+pub async fn agent_cleanup_write(
+    request: AgentCleanupWriteRequest,
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<AgentWriteResult> {
+    let output = run_lifecycle_command(
+        &state.lifecycle,
+        agent_cleanup_write_command(request, &state.manager),
+    )
+    .await?;
+    resume_quit_after_operation(&app, output.quit_action);
+    output.value
+}
+
+async fn agent_cleanup_write_command(
+    request: AgentCleanupWriteRequest,
+    manager: &ManagerClient,
+) -> Result<AgentWriteResult> {
+    validate_cleanup_agent(&request.agent)?;
+    if request.revision_token.trim().is_empty() || request.revision_token.len() > 512 * 1024 {
+        return Err(CommandError::invalid_params("revision token is invalid"));
+    }
+    let params = serde_json::to_value(request)
+        .map_err(|_| CommandError::invalid_params("cleanup write request is invalid"))?;
+    manager.call("agent.cleanup.write", params).await
+}
+
+#[tauri::command]
 pub async fn agent_write(
     request: AgentWriteRequest,
     state: tauri::State<'_, AppState>,
@@ -796,6 +856,13 @@ pub fn validate_agents(agents: &[String]) -> Result<()> {
         return Err(CommandError::invalid_params("Agent selection is invalid"));
     }
     Ok(())
+}
+
+fn validate_cleanup_agent(agent: &str) -> Result<()> {
+    if matches!(agent, "claude" | "opencode" | "codex") {
+        return Ok(());
+    }
+    Err(CommandError::invalid_params("Agent selection is invalid"))
 }
 
 fn validate_flow_id(flow_id: &str) -> Result<()> {
@@ -1160,6 +1227,132 @@ mod tests {
             "unknown": true
         }))
         .is_err());
+
+        for (field, value) in [
+            ("api_key", json!("must-not-be-accepted")),
+            ("catalog_token", json!("must-not-be-accepted")),
+            ("model_config", json!({})),
+            ("flow_id", json!("must-not-be-accepted")),
+        ] {
+            let mut preview = json!({"agent": "opencode"});
+            preview[field] = value.clone();
+            assert!(serde_json::from_value::<AgentCleanupPreviewRequest>(preview).is_err());
+
+            let mut write = json!({
+                "agent": "opencode",
+                "revision_token": "revision",
+                "approve_managed_overwrite": false
+            });
+            write[field] = value;
+            assert!(serde_json::from_value::<AgentCleanupWriteRequest>(write).is_err());
+        }
+    }
+
+    #[test]
+    fn cleanup_commands_send_exact_key_free_payloads_without_model_flows() {
+        tauri::async_runtime::block_on(async {
+            let preview_response = serde_json::to_vec(&json!({"id":"desktop-1","result":{
+                "revision_token":"cleanup-revision",
+                "agent":"opencode",
+                "files":[],
+                "removed_paths":["provider.mtls-router"],
+                "managed_config_drift":false,
+                "state_change":null,
+                "state_backup":null
+            }}))
+            .unwrap();
+            let write_response = serde_json::to_vec(&json!({"id":"desktop-2","result":{
+                "transaction_id":"cleanup-transaction",
+                "agents":[],
+                "state_change":null,
+                "state_backup":null
+            }}))
+            .unwrap();
+            let (manager, requests) = fake_client(vec![preview_response, write_response]);
+
+            agent_cleanup_preview_command(
+                AgentCleanupPreviewRequest {
+                    agent: "opencode".into(),
+                },
+                &manager,
+            )
+            .await
+            .unwrap();
+            agent_cleanup_write_command(
+                AgentCleanupWriteRequest {
+                    agent: "opencode".into(),
+                    revision_token: "cleanup-revision".into(),
+                    approve_managed_overwrite: false,
+                },
+                &manager,
+            )
+            .await
+            .unwrap();
+
+            let requests = requests.lock().unwrap();
+            let cleanup = requests
+                .iter()
+                .filter(|request| {
+                    request["method"]
+                        .as_str()
+                        .is_some_and(|method| method.starts_with("agent.cleanup."))
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(cleanup.len(), 2);
+            assert_eq!(cleanup[0]["params"], json!({"agent":"opencode"}));
+            assert_eq!(
+                cleanup[1]["params"],
+                json!({
+                    "agent":"opencode",
+                    "revision_token":"cleanup-revision",
+                    "approve_managed_overwrite":false
+                })
+            );
+            let payload = serde_json::to_string(&cleanup).unwrap();
+            for forbidden in ["api_key", "catalog", "model", "flow"] {
+                assert!(
+                    !payload.contains(forbidden),
+                    "cleanup payload contained {forbidden}"
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn cleanup_write_lifecycle_gate_releases_after_success_and_failure() {
+        tauri::async_runtime::block_on(async {
+            for response in [
+                serde_json::to_vec(&json!({"id":"desktop-1","result":{
+                    "transaction_id":"cleanup-transaction", "agents":[],
+                    "state_change":null, "state_backup":null
+                }}))
+                .unwrap(),
+                serde_json::to_vec(&json!({"id":"desktop-1","error":{
+                    "code":"PREVIEW_STALE", "message":"preview is stale"
+                }}))
+                .unwrap(),
+            ] {
+                let (manager, _) = fake_client(vec![response]);
+                let lifecycle = LifecycleState::default();
+                let output = run_lifecycle_command(
+                    &lifecycle,
+                    agent_cleanup_write_command(
+                        AgentCleanupWriteRequest {
+                            agent: "codex".into(),
+                            revision_token: "cleanup-revision".into(),
+                            approve_managed_overwrite: false,
+                        },
+                        &manager,
+                    ),
+                )
+                .await
+                .unwrap();
+                assert!(matches!(output.value, Ok(_) | Err(_)));
+                assert!(run_lifecycle_command(&lifecycle, async { Ok(()) })
+                    .await
+                    .is_ok());
+            }
+        });
     }
 
     #[test]

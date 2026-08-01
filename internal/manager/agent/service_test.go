@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -1277,6 +1278,184 @@ func TestStartupRecoversManagerCrashAfterReplacement(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(stateDir, journalFileName)); !os.IsNotExist(err) {
 		t.Fatalf("journal retained after startup recovery: %v", err)
+	}
+}
+
+func TestDeletePlannedFileRemovesAndSyncsTarget(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, "config.json")
+	writeFile(t, path, `{"managed":true}`)
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
+	output, err := service.applyPlannedFile(plannedFile{targetPath: path, operation: OperationDelete}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output != nil {
+		t.Fatalf("delete output = %q", output)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("delete target still exists: %v", err)
+	}
+}
+
+func TestJournalV3AllowsAbsentDeletePostRevision(t *testing.T) {
+	home := t.TempDir()
+	stateDir := filepath.Join(home, "state")
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(home, "config.json")
+	backup := filepath.Join(home, "config.json.bak-test")
+	journal := transactionJournal{Version: 3, KeyGeneration: "generation", TransactionID: "delete", Entries: []journalEntry{{
+		Scope: scopeAgent, Agent: OpenCode, TargetPath: path, Operation: OperationDelete,
+		PreRevision: fileRevision{Exists: true, Size: 2, Mode: 0o600, Digest: "pre"},
+		BackupPath:  backup, BackupRevision: fileRevision{Exists: true, Size: 2, Mode: 0o600, Digest: "backup"},
+		RestoreFrom: path, TargetMode: 0o600, Progress: progressPending,
+	}}}
+	writeJournalFixture(t, filepath.Join(stateDir, journalFileName), journal)
+	decoded, err := decodeJournal(filepath.Join(stateDir, journalFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Version != 3 || decoded.Entries[0].Operation != OperationDelete {
+		t.Fatalf("delete journal = %#v", decoded)
+	}
+	if decoded.Entries[0].PostRevision.Exists {
+		t.Fatal("delete post revision unexpectedly exists")
+	}
+}
+
+func TestJournalLegacyVersionsDecodeAsImplicitReplace(t *testing.T) {
+	for _, version := range []int{1, 2} {
+		t.Run(fmt.Sprintf("v%d", version), func(t *testing.T) {
+			home := t.TempDir()
+			path := filepath.Join(home, "config.json")
+			backup := filepath.Join(home, "config.json.bak-test")
+			existing := fileRevision{Exists: true, Size: 2, Mode: 0o600, Digest: "revision"}
+			entry := journalEntry{Scope: scopeAgent, Agent: OpenCode, TargetPath: path, PreRevision: existing, PostRevision: existing, BackupPath: backup, RestoreFrom: path, TargetMode: 0o600, Progress: progressPending}
+			if version == 2 {
+				entry.BackupRevision = existing
+			}
+			journal := transactionJournal{Version: version, TransactionID: "legacy", Entries: []journalEntry{entry}}
+			if version == 2 {
+				journal.KeyGeneration = "generation"
+			}
+			journalPath := filepath.Join(home, journalFileName)
+			writeJournalFixture(t, journalPath, journal)
+			decoded, err := decodeJournal(journalPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if decoded.Entries[0].Operation != OperationReplace {
+				t.Fatalf("legacy operation = %q", decoded.Entries[0].Operation)
+			}
+		})
+	}
+}
+
+func TestJournalRejectsOperationPostRevisionMismatch(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, "config.json")
+	backup := filepath.Join(home, "config.json.bak-test")
+	existing := fileRevision{Exists: true, Size: 2, Mode: 0o600, Digest: "revision"}
+	base := transactionJournal{Version: 3, KeyGeneration: "generation", TransactionID: "invalid", Entries: []journalEntry{{
+		Scope: scopeAgent, Agent: OpenCode, TargetPath: path, Operation: OperationDelete,
+		PreRevision: existing, BackupPath: backup, BackupRevision: existing, RestoreFrom: path, TargetMode: 0o600, Progress: progressPending,
+	}}}
+	for _, test := range []struct {
+		name   string
+		mutate func(*journalEntry)
+	}{
+		{name: "delete with existing post", mutate: func(e *journalEntry) { e.PostRevision = existing }},
+		{name: "delete with nonzero absent post", mutate: func(e *journalEntry) { e.PostRevision.Digest = "unexpected" }},
+		{name: "replace with absent post", mutate: func(e *journalEntry) { e.Operation = OperationReplace }},
+		{name: "unknown operation", mutate: func(e *journalEntry) { e.Operation = "preserve" }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			journal := base
+			journal.Entries = append([]journalEntry(nil), base.Entries...)
+			test.mutate(&journal.Entries[0])
+			journalPath := filepath.Join(t.TempDir(), journalFileName)
+			writeJournalFixture(t, journalPath, journal)
+			if _, err := decodeJournal(journalPath); err == nil {
+				t.Fatal("invalid journal accepted")
+			}
+		})
+	}
+}
+
+func TestMixedReplaceDeleteRollbackRestoresBothFiles(t *testing.T) {
+	home := t.TempDir()
+	replacePath := filepath.Join(home, "replace.json")
+	deletePath := filepath.Join(home, "delete.json")
+	replaceBefore := []byte(`{"value":"before"}`)
+	replaceAfter := []byte(`{"value":"after"}`)
+	deleteBefore := []byte(`{"managed":true}`)
+	writeFile(t, replacePath, string(replaceBefore))
+	writeFile(t, deletePath, string(deleteBefore))
+	service := newTestService(t, filepath.Join(home, "state"), home, nil)
+	if err := service.ensureSigner(); err != nil {
+		t.Fatal(err)
+	}
+	replaceEntry := replaceJournalEntry(t, service, OpenCode, replacePath, replaceBefore, replaceAfter)
+	deleteEntry := deleteJournalEntry(t, service, ClaudeCode, scopeAgent, deletePath, deleteBefore)
+	journal := transactionJournal{Version: 3, KeyGeneration: service.keyGeneration, TransactionID: "mixed", Entries: []journalEntry{replaceEntry, deleteEntry}}
+	if err := service.prepareStateDir(); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.writeJournal(journal); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeAtomic(replacePath, replaceAfter, 0o600, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeTargetAndSync(deletePath); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.rollback(context.Background(), &journal, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := readString(t, replacePath); got != string(replaceBefore) {
+		t.Fatalf("replace target not restored: %q", got)
+	}
+	if got := readString(t, deletePath); got != string(deleteBefore) {
+		t.Fatalf("delete target not restored: %q", got)
+	}
+}
+
+func replaceJournalEntry(t *testing.T, service *Service, kind Kind, path string, before, after []byte) journalEntry {
+	t.Helper()
+	preRevision, _, mode, err := service.readKeyedRevision(path, revisionContextJournal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	postRevision, err := service.keyedRevisionForContent(after, mode, revisionContextJournal, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backupPath, err := createPrivateBackup(path, before, mode, "bak")
+	if err != nil {
+		t.Fatal(err)
+	}
+	backupRevision, err := service.keyedRevisionForContent(before, mode, revisionContextBackup, backupPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return journalEntry{
+		Scope: scopeAgent, Agent: kind, TargetPath: path, Operation: OperationReplace,
+		PreRevision: preRevision, PostRevision: postRevision, BackupPath: backupPath,
+		BackupRevision: backupRevision, RestoreFrom: path, TargetMode: uint32(mode.Perm()), Progress: progressPending,
+	}
+}
+
+func writeJournalFixture(t *testing.T, path string, journal transactionJournal) {
+	t.Helper()
+	content, err := json.Marshal(journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 

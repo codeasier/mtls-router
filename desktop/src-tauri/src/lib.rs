@@ -220,6 +220,8 @@ pub fn run() {
             commands::agent_render,
             commands::agent_preview,
             commands::agent_write,
+            commands::agent_cleanup_preview,
+            commands::agent_cleanup_write,
             commands::agent_model_flow_destroy,
             commands::agent_model_config_import,
             commands::agent_model_config_export,

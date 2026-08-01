@@ -26,6 +26,7 @@ const MANAGER_INFO: &str = "manager.info";
 const ROUTER_STATUS: &str = "router.status";
 const ROUTER_START: &str = "router.start";
 const FORCE_TERMINATE_OCCUPANT: &str = "router.force_terminate_occupant";
+const AGENT_CLEANUP_WRITE: &str = "agent.cleanup.write";
 
 #[derive(Debug)]
 pub enum TransportEvent {
@@ -432,12 +433,8 @@ async fn run_actor(
             drop(call.activity.take());
             continue;
         }
-        let sensitive = matches!(
-            call.method,
-            "agent.models" | "agent.write" | FORCE_TERMINATE_OCCUPANT
-        );
-        let replayable = !sensitive;
-        let params = if sensitive {
+        let must_not_replay = request_must_not_replay(call.method);
+        let params = if must_not_replay {
             std::mem::take(&mut call.params)
         } else {
             call.params.clone()
@@ -457,7 +454,7 @@ async fn run_actor(
             }
             match recover(factory.as_ref(), &mut request_id).await {
                 Ok(mut replacement) => {
-                    let retried = if !replayable {
+                    let retried = if must_not_replay {
                         result
                     } else {
                         let retried =
@@ -492,6 +489,13 @@ async fn run_actor(
     if let Some(active) = session {
         active.child.kill();
     }
+}
+
+fn request_must_not_replay(method: &str) -> bool {
+    matches!(
+        method,
+        "agent.models" | "agent.write" | AGENT_CLEANUP_WRITE | FORCE_TERMINATE_OCCUPANT
+    )
 }
 
 async fn start_and_handshake(factory: &dyn TransportFactory) -> Result<TransportSession> {
@@ -644,13 +648,17 @@ fn watchdog(method: &str) -> Result<Duration> {
     let manager_seconds = match method {
         "manager.info" | "router.status" | "router.version" => 1,
         "router.logs" => 2,
-        "diagnostics.collect" | "agent.detect" | "agent.render" | "agent.preview" => 5,
+        "diagnostics.collect"
+        | "agent.detect"
+        | "agent.render"
+        | "agent.preview"
+        | "agent.cleanup.preview" => 5,
         "router.health" => 12,
         "router.inspect_occupant" => 2,
         FORCE_TERMINATE_OCCUPANT => 3,
         "router.stop" => 7,
         "router.start" => 20,
-        "agent.models" | "agent.write" => 30,
+        "agent.models" | "agent.write" | AGENT_CLEANUP_WRITE => 30,
         _ => return Err(CommandError::invalid_params("unknown manager method")),
     };
     Ok(Duration::from_secs(manager_seconds + 1))
@@ -964,6 +972,14 @@ mod tests {
         assert_eq!(watchdog("agent.write").unwrap(), Duration::from_secs(31));
         assert_eq!(watchdog("agent.models").unwrap(), Duration::from_secs(31));
         assert_eq!(watchdog("agent.render").unwrap(), Duration::from_secs(6));
+        assert_eq!(
+            watchdog("agent.cleanup.preview").unwrap(),
+            Duration::from_secs(6)
+        );
+        assert_eq!(
+            watchdog("agent.cleanup.write").unwrap(),
+            Duration::from_secs(31)
+        );
     }
 
     #[test]
@@ -1026,6 +1042,34 @@ mod tests {
                 writes
                     .iter()
                     .filter(|request| request["method"] == "agent.write")
+                    .count(),
+                1
+            );
+        });
+    }
+
+    #[test]
+    fn agent_cleanup_write_is_never_replayed_after_ambiguous_delivery() {
+        runtime().block_on(async {
+            let (client, writes) = client(vec![Behavior::Malformed, Behavior::Valid]);
+            let error = client
+                .call::<Value>(
+                    "agent.cleanup.write",
+                    json!({
+                        "agent": "opencode",
+                        "revision_token": "cleanup-revision",
+                        "approve_managed_overwrite": false
+                    }),
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(error.code, "INVALID_RESPONSE");
+            assert_eq!(
+                writes
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|request| request["method"] == "agent.cleanup.write")
                     .count(),
                 1
             );

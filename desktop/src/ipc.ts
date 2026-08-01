@@ -23,6 +23,8 @@ export const COMMANDS = {
   agentRender: "agent_render",
   agentPreview: "agent_preview",
   agentWrite: "agent_write",
+  agentCleanupPreview: "agent_cleanup_preview",
+  agentCleanupWrite: "agent_cleanup_write",
   agentFlowDestroy: "agent_model_flow_destroy",
   agentModelConfigImport: "agent_model_config_import",
   agentModelConfigExport: "agent_model_config_export",
@@ -565,6 +567,13 @@ export interface AgentState {
   invalid: boolean;
   migratable?: boolean;
   recovery: AgentRecoveryState;
+  cleanup: AgentCleanupState;
+}
+
+export interface AgentCleanupState {
+  managed: boolean;
+  available: boolean;
+  reason?: string | null;
 }
 
 export interface AgentDetection {
@@ -595,19 +604,24 @@ export interface AgentFragment {
   format: string;
   content: string;
 }
+export type AgentFileOperation =
+  "create" | "replace" | "preserve" | "delete" | "backup";
 export interface AgentFileEffect {
   agent?: AgentId;
   mode?: AgentMode;
   path: string;
   role: string;
   format: string;
-  operation: string;
+  operation: AgentFileOperation;
   backup_path?: string;
   backup_required?: boolean;
   backup_pattern?: string;
   backup_sensitive?: boolean;
   preserves?: string[];
   warning?: string;
+}
+export interface AgentBackupFileEffect extends AgentFileEffect {
+  operation: "backup";
 }
 export interface AgentPreview {
   revision_token: string;
@@ -624,7 +638,21 @@ export interface AgentPreview {
   }>;
   requires_codex_auth_approval: boolean;
   state_change?: AgentFileEffect;
-  state_backup?: AgentFileEffect;
+  state_backup?: AgentBackupFileEffect;
+}
+
+export interface AgentCleanupFileEffect extends AgentFileEffect {
+  operation: "replace" | "delete";
+}
+
+export interface AgentCleanupPreview {
+  revision_token: string;
+  agent: AgentId;
+  files: AgentCleanupFileEffect[];
+  removed_paths: string[];
+  managed_config_drift: boolean;
+  state_change?: AgentCleanupFileEffect | null;
+  state_backup?: AgentBackupFileEffect | null;
 }
 
 export interface FileWriteStatus {
@@ -647,7 +675,7 @@ export interface AgentWriteResult {
   transaction_id: string;
   agents: AgentWriteStatus[];
   state_change?: AgentFileEffect;
-  state_backup?: AgentFileEffect;
+  state_backup?: AgentBackupFileEffect;
 }
 
 export interface DesktopApi {
@@ -697,6 +725,12 @@ export interface DesktopApi {
     approveManagedOverwrite: boolean,
     approveCodexAuthChange: boolean,
     approveRebuild: AgentId[],
+  ): Promise<AgentWriteResult>;
+  previewAgentCleanup(agent: AgentId): Promise<AgentCleanupPreview>;
+  writeAgentCleanup(
+    agent: AgentId,
+    revisionToken: string,
+    approveManagedOverwrite: boolean,
   ): Promise<AgentWriteResult>;
   destroyAgentModelFlow(flowId: string): Promise<void>;
   importAgentModelConfig(
@@ -835,6 +869,16 @@ export function createDesktopApi(
           approve_managed_overwrite: approveManagedOverwrite,
           approve_codex_auth_change: approveCodexAuthChange,
           approve_rebuild: approveRebuild,
+        },
+      }),
+    previewAgentCleanup: (agent) =>
+      invoke(COMMANDS.agentCleanupPreview, { request: { agent } }),
+    writeAgentCleanup: (agent, revisionToken, approveManagedOverwrite) =>
+      invoke(COMMANDS.agentCleanupWrite, {
+        request: {
+          agent,
+          revision_token: revisionToken,
+          approve_managed_overwrite: approveManagedOverwrite,
         },
       }),
     destroyAgentModelFlow: (flowId) =>
