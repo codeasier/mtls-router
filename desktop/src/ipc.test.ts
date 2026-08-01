@@ -5,6 +5,7 @@ import {
   createDesktopApi,
   MAX_LOG_LINES,
   POLL_SNAPSHOT_EVENT,
+  UPDATE_PROGRESS_EVENT,
   sanitizeSensitiveText,
   validOccupantInspection,
   type AgentDetection,
@@ -414,6 +415,34 @@ describe("typed desktop API", () => {
     });
     expect(invoke).toHaveBeenNthCalledWith(2, COMMANDS.windowVisibility, {
       visible: false,
+    });
+    expect(unlisten).toHaveBeenCalledOnce();
+  });
+
+  it("uses the update commands and forwards typed download progress", async () => {
+    const invoke = vi
+      .fn()
+      .mockResolvedValueOnce({ available: false, current_version: "1.0.0" })
+      .mockResolvedValueOnce(undefined);
+    const unlisten = vi.fn();
+    const listen = vi.fn().mockResolvedValue(unlisten);
+    const api = createDesktopApi(invoke as InvokeFn, listen as ListenFn);
+    const observer = vi.fn();
+
+    await api.checkForUpdate();
+    const stop = await api.subscribeUpdateProgress(observer);
+    listen.mock.calls[0][1]({ payload: { downloaded: 64, total: 128 } });
+    await api.installUpdate("1.1.0");
+    stop();
+
+    expect(invoke).toHaveBeenNthCalledWith(1, COMMANDS.updateCheck);
+    expect(listen).toHaveBeenCalledWith(
+      UPDATE_PROGRESS_EVENT,
+      expect.any(Function),
+    );
+    expect(observer).toHaveBeenCalledWith({ downloaded: 64, total: 128 });
+    expect(invoke).toHaveBeenNthCalledWith(2, COMMANDS.updateInstall, {
+      version: "1.1.0",
     });
     expect(unlisten).toHaveBeenCalledOnce();
   });

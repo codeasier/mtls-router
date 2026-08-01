@@ -13,6 +13,7 @@ mod scheduler;
 mod sidecar;
 mod tray;
 mod types;
+mod updater;
 
 use commands::AppState;
 use credential::{CredentialError, CredentialStore};
@@ -114,6 +115,7 @@ pub fn run() {
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(autostart::plugin());
 
     #[cfg(desktop)]
@@ -213,6 +215,8 @@ pub fn run() {
             commands::poll_snapshot,
             commands::router_logs,
             commands::component_versions,
+            updater::update_check,
+            updater::update_install,
             commands::diagnostics_collect,
             commands::open_log_location,
             commands::agent_detect,

@@ -15,7 +15,7 @@ package_contains() { grep -Fq -- "$1" "$PACKAGE_SCRIPT" || fail "package script 
 [[ "$(grep -c '^  release:$' "$WORKFLOW")" -eq 1 ]] || fail "expected one aggregation/release job"
 [[ "$(grep -c 'softprops/action-gh-release@' "$WORKFLOW")" -eq 1 ]] || fail "release must be published once"
 [[ "$(grep -c 'easingthemes/ssh-deploy@' "$WORKFLOW")" -eq 1 ]] || fail "staged outputs must be mirrored once"
-contains 'needs: [build, desktop]'
+contains 'needs: [prepare, build, desktop]'
 contains 'actions/download-artifact@v4'
 contains 'merge-multiple: true'
 package_contains 'LC_ALL=C sha256sum release/mtls-router-*'
@@ -37,9 +37,11 @@ contains "test \"\$(od -An -tx1 -N3 setup.ps1 | tr -d ' \\n')\" = efbbbf"
 package_contains 'test "$(find release -maxdepth 1 -type f -name '\''mtls-router-*'\'' | wc -l)" -eq 12'
 package_contains 'test "$(find release -maxdepth 1 -type f | wc -l)" -eq 19'
 contains 'pattern: mtls-router-cli-*'
-package_contains 'test "$(find release -maxdepth 1 -type f -name '\''CodeasierRouter-*'\'' | wc -l)" -eq 12'
+package_contains 'expected_desktop_assets=12'
+package_contains 'if [[ "$online_update" == true ]]; then expected_desktop_assets=20; fi'
 package_contains 'test "$(find release -maxdepth 1 -type f -name '\''signing-status-*'\'' | wc -l)" -eq 6'
-package_contains 'test "$(find release -maxdepth 1 -type f | wc -l)" -eq 37'
+package_contains 'expected_release_files=37'
+package_contains 'expected_release_files=46'
 contains './scripts/package-release.sh'
 package_contains './scripts/check-release-protocol.sh protocol-metadata'
 [[ -x "$PROTOCOL_CHECK" ]] || fail 'release protocol preflight is missing or not executable'
@@ -75,6 +77,75 @@ mv "$protocol_tmp/deliberate-protocol-v3-mismatch.json" "$protocol_tmp/release-m
 if "$PROTOCOL_CHECK" "$protocol_tmp" >/dev/null 2>&1; then
   fail 'deliberate mixed protocol-v3/v4 release metadata was accepted'
 fi
+
+package_tmp="$protocol_tmp/package-fixture"
+mkdir -p "$package_tmp/bin" "$package_tmp/scripts" "$package_tmp/binaries" "$package_tmp/desktop-packages" "$package_tmp/protocol-metadata"
+cat >"$package_tmp/bin/tar" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" != --sort=name ]]; then exec /usr/bin/tar "$@"; fi
+output=
+args=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --sort=name|--mtime=@0|--owner=0|--group=0|--numeric-owner) shift ;;
+    -czf) output=$2; shift 2 ;;
+    *) args+=("$1"); shift ;;
+  esac
+done
+exec /usr/bin/tar -czf "$output" "${args[@]}"
+SH
+cat >"$package_tmp/bin/touch" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == -d ]]; then shift 2; fi
+exec /usr/bin/touch "$@"
+SH
+chmod +x "$package_tmp/bin/tar" "$package_tmp/bin/touch"
+cp "$PACKAGE_SCRIPT" "$PROTOCOL_CHECK" "$package_tmp/scripts/"
+cp "$ROOT/setup.sh" "$ROOT/setup.ps1" "$package_tmp/"
+for kind in cli desktop; do
+  for os_arch in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64 windows-arm64; do
+    printf '{"schema_version":1,"producer":"%s-%s","management_protocol_version":"4"}\n' "$kind" "$os_arch" >"$package_tmp/protocol-metadata/release-metadata-$kind-$os_arch.json"
+  done
+done
+for os_arch in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64; do
+  printf 'router %s\n' "$os_arch" >"$package_tmp/binaries/mtls-router-$os_arch"
+  printf 'manager %s\n' "$os_arch" >"$package_tmp/binaries/mtls-router-manager-$os_arch"
+done
+for os_arch in windows-amd64 windows-arm64; do
+  printf 'router %s\n' "$os_arch" >"$package_tmp/binaries/mtls-router-$os_arch.exe"
+  printf 'manager %s\n' "$os_arch" >"$package_tmp/binaries/mtls-router-manager-$os_arch.exe"
+done
+for os_arch in linux-amd64 linux-arm64 windows-amd64 windows-arm64 darwin-amd64 darwin-arm64; do
+  os=${os_arch%-*}
+  arch=${os_arch#*-}
+  case "$os" in darwin) suffix=dmg ;; linux) suffix=AppImage ;; windows) suffix=exe ;; esac
+  package="CodeasierRouter-$os-$arch.$suffix"
+  printf 'desktop package %s\n' "$os_arch" >"$package_tmp/desktop-packages/$package"
+  (cd "$package_tmp/desktop-packages" && sha256sum "$package" >"CodeasierRouter-$os-$arch.sha256")
+  printf 'signed\n' >"$package_tmp/desktop-packages/signing-status-$os-$arch.txt"
+  if [[ "$os" == darwin ]]; then
+    updater="CodeasierRouter-$os-$arch.app.tar.gz"
+    printf 'desktop updater %s\n' "$os_arch" >"$package_tmp/desktop-packages/$updater"
+  else
+    updater="$package"
+  fi
+  printf 'trusted updater signature %s\n' "$os_arch" >"$package_tmp/desktop-packages/$updater.sig"
+done
+(cd "$package_tmp" && PATH="$package_tmp/bin:$PATH" RELEASE_TAG=v1.2.3 DOWNLOAD_BASE_URL=https://downloads.codeasier.top/mtls-router/v1.2.3 SOURCE_DATE_EPOCH=0 ./scripts/package-release.sh) || \
+  fail 'stable updater release fixture failed to package'
+[[ "$(find "$package_tmp/release" -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 46 ]] || \
+  fail 'stable updater release fixture has the wrong exact asset count'
+jq -e '
+  .version == "1.2.3" and
+  (.platforms | length) == 6 and
+  .platforms["darwin-aarch64"].url == "https://downloads.codeasier.top/mtls-router/v1.2.3/CodeasierRouter-darwin-arm64.app.tar.gz" and
+  .platforms["linux-x86_64"].url == "https://downloads.codeasier.top/mtls-router/v1.2.3/CodeasierRouter-linux-amd64.AppImage" and
+  .platforms["windows-x86_64"].url == "https://downloads.codeasier.top/mtls-router/v1.2.3/CodeasierRouter-windows-amd64.exe"
+' "$package_tmp/release/latest.json" >/dev/null || fail 'stable updater latest.json is invalid'
+(cd "$package_tmp/release" && sha256sum -c SHA256SUMS >/dev/null) || fail 'stable updater release checksums are invalid'
+
 [[ "$(grep -Fc 'version="${GITHUB_REF_NAME#v}"' "$WORKFLOW")" -eq 2 ]] || \
   fail 'CLI and desktop jobs must derive tag versions without the v prefix'
 [[ "$(grep -Fc 'version="$DISPATCH_VERSION"' "$WORKFLOW")" -eq 2 ]] || \
@@ -167,7 +238,7 @@ for value in \
   'head_branch == release_tag' \
   'head_sha == tag_sha' \
   'conclusion == "failure"' \
-  'assert release["draft"] is True' \
+  'if release["draft"]:' \
   'releases?per_page=100" --slurp' \
   'run-id: ${{ inputs.source_run_id }}' \
   'github-token: ${{ github.token }}' \
@@ -177,11 +248,36 @@ for value in \
   'releases/$release_id/assets?name=$(basename "$asset")' \
   'releases/assets/$asset_id' \
   'cmp expected-assets.txt actual-assets.txt' \
+  'if [[ "$release_is_draft" == true ]]' \
+  'test "$release_is_draft" = false' \
   'RELEASE_ID: ${{ steps.prepare-release.outputs.release_id }}' \
   'SOURCE: release/' \
+  'Validate recovered updater assets' \
+  '(cd release && sha256sum -c SHA256SUMS)' \
   'Update latest symlink' \
   '-F draft=false -F make_latest=true'; do
   grep -Fq -- "$value" "$RECOVERY" || fail "recovery workflow missing: $value"
+done
+for value in \
+  'RELEASE_TAG: ${{ inputs.release_tag }}' \
+  'release/latest.json' \
+  'test ! -e "$base/latest" || test -L "$base/latest"' \
+  'current="$(basename "$(readlink "$base/latest")")"' \
+  'sort -V | tail -n1' \
+  'mv -Tf "$base/latest.tmp" "$base/latest"'; do
+  grep -Fq -- "$value" "$RECOVERY" || fail "recovery updater handling missing: $value"
+done
+for value in \
+  'RELEASE_TAG: ${{ github.ref_name }}' \
+  'if: needs.prepare.outputs.online-update == '\''true'\''' \
+  'test ! -e "$base/latest" || test -L "$base/latest"' \
+  'current="$(basename "$(readlink "$base/latest")")"' \
+  'sort -V | tail -n1' \
+  'mv -Tf "$base/latest.tmp" "$base/latest"'; do
+  grep -Fq -- "$value" "$WORKFLOW" || fail "release updater publication missing: $value"
+done
+for target in linux-x86_64 linux-aarch64 windows-x86_64 windows-aarch64 darwin-x86_64 darwin-aarch64; do
+  grep -Fq -- "\"$target\"" "$PACKAGE_SCRIPT" || fail "latest feed is missing target $target"
 done
 if grep -Fq -- '--hostname uploads.github.com' "$RECOVERY"; then
   fail 'gh api must use the full uploads.github.com URL'

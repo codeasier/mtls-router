@@ -162,4 +162,16 @@ describe("createMockDesktopApi", () => {
     expect(snapshot.status?.state).toBe("desktop_owned");
     expect(snapshot.health?.status).toBe("ok");
   });
+
+  it("provides an in-memory update fixture without installing anything", async () => {
+    const api = createMockDesktopApi();
+
+    expect(await api.checkForUpdate()).toMatchObject({
+      available: true,
+      update: { version: "0.2.0-mock" },
+    });
+    await expect(api.installUpdate("0.2.0-mock")).resolves.toBeUndefined();
+    const stop = await api.subscribeUpdateProgress(() => undefined);
+    expect(stop()).toBeUndefined();
+  });
 });

@@ -1,15 +1,42 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useI18n } from "./i18n";
-import type { ComponentVersions, DesktopApi, DesktopPaths } from "./ipc";
+import type {
+  ComponentVersions,
+  DesktopApi,
+  DesktopPaths,
+  UpdateCheckResult,
+  UpdateProgress,
+} from "./ipc";
 
-export function SettingsPage({ api }: { api: DesktopApi }) {
+interface SettingsPageProps {
+  api: DesktopApi;
+  updateResult: UpdateCheckResult | null;
+  checkingForUpdate: boolean;
+  updateCheckError: boolean;
+  onCheckForUpdate(): Promise<void>;
+}
+
+export function SettingsPage({
+  api,
+  updateResult,
+  checkingForUpdate,
+  updateCheckError,
+  onCheckForUpdate,
+}: SettingsPageProps) {
   const { language, setLanguage, t } = useI18n();
   const [autostart, setAutostart] = useState<boolean | null>(null);
   const [versions, setVersions] = useState<ComponentVersions | null>(null);
   const [paths, setPaths] = useState<DesktopPaths | null>(null);
   const [savingAutostart, setSavingAutostart] = useState(false);
   const [preparing, setPreparing] = useState(false);
+  const [installState, setInstallState] = useState<
+    "idle" | "downloading" | "restarting" | "error"
+  >("idle");
+  const [updateProgress, setUpdateProgress] = useState<UpdateProgress | null>(
+    null,
+  );
+  const stopUpdateProgressRef = useRef<(() => void) | null>(null);
   const [message, setMessage] = useState<
     | ""
     | "settings.error.load"
@@ -48,6 +75,13 @@ export function SettingsPage({ api }: { api: DesktopApi }) {
     };
   }, [api]);
 
+  useEffect(
+    () => () => {
+      stopUpdateProgressRef.current?.();
+    },
+    [],
+  );
+
   async function changeAutostart() {
     if (autostart === null || savingAutostart) return;
     setSavingAutostart(true);
@@ -71,6 +105,43 @@ export function SettingsPage({ api }: { api: DesktopApi }) {
     } catch {
       setPreparing(false);
       setMessage("settings.error.uninstall");
+    }
+  }
+
+  async function installUpdate() {
+    const update = updateResult?.update;
+    if (
+      !updateResult?.available ||
+      !update ||
+      installState === "downloading" ||
+      installState === "restarting"
+    ) {
+      return;
+    }
+    if (
+      !window.confirm(
+        t("update.installConfirm", {
+          version: update.version,
+        }),
+      )
+    ) {
+      return;
+    }
+
+    setInstallState("downloading");
+    setUpdateProgress({ downloaded: 0 });
+    try {
+      const stop = await api.subscribeUpdateProgress((progress) => {
+        setUpdateProgress(progress);
+      });
+      stopUpdateProgressRef.current = stop;
+      await api.installUpdate(update.version);
+      setInstallState("restarting");
+    } catch {
+      setInstallState("error");
+    } finally {
+      stopUpdateProgressRef.current?.();
+      stopUpdateProgressRef.current = null;
     }
   }
 
@@ -128,7 +199,23 @@ export function SettingsPage({ api }: { api: DesktopApi }) {
         </section>
 
         <section className="settings-block settings-block--versions">
-          <h3>{t("settings.components")}</h3>
+          <div className="settings-block__heading">
+            <h3>{t("settings.components")}</h3>
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => void onCheckForUpdate()}
+              disabled={
+                checkingForUpdate ||
+                installState === "downloading" ||
+                installState === "restarting"
+              }
+            >
+              {checkingForUpdate
+                ? t("update.checking")
+                : t("update.checkAction")}
+            </button>
+          </div>
           <ol
             className="settings-version-list"
             aria-label={t("settings.components")}
@@ -141,6 +228,120 @@ export function SettingsPage({ api }: { api: DesktopApi }) {
               </li>
             ))}
           </ol>
+          <div className="update-panel" aria-labelledby="update-heading">
+            <div className="update-panel__versions">
+              <div>
+                <span>{t("update.currentVersion")}</span>
+                <code>
+                  {updateResult?.current_version ??
+                    versions?.desktop ??
+                    t("settings.unavailable")}
+                </code>
+              </div>
+              <div>
+                <span>{t("update.latestVersion")}</span>
+                <code>
+                  {updateResult?.update?.version ??
+                    updateResult?.current_version ??
+                    t("settings.unavailable")}
+                </code>
+              </div>
+            </div>
+
+            <h4 id="update-heading">
+              {checkingForUpdate
+                ? t("update.checking")
+                : updateResult?.available
+                  ? t("update.available")
+                  : updateResult
+                    ? t("update.current")
+                    : t("update.statusUnavailable")}
+            </h4>
+
+            {updateResult?.update?.published_at && (
+              <p className="update-panel__published">
+                {t("update.publishedAt", {
+                  date: updateResult.update.published_at,
+                })}
+              </p>
+            )}
+            {updateResult?.update?.notes && (
+              <div className="update-release-notes">
+                <strong>{t("update.releaseNotes")}</strong>
+                <p>{updateResult.update.notes}</p>
+              </div>
+            )}
+
+            {installState === "downloading" && updateProgress && (
+              <div className="update-progress" role="status">
+                <div
+                  className={
+                    updateProgress.total
+                      ? "update-progress__track"
+                      : "update-progress__track is-indeterminate"
+                  }
+                  role="progressbar"
+                  aria-label={t("update.downloadProgress")}
+                  aria-valuemin={0}
+                  aria-valuenow={updateProgress.downloaded}
+                  aria-valuemax={updateProgress.total}
+                >
+                  <span
+                    style={
+                      updateProgress.total
+                        ? {
+                            width: `${Math.min(
+                              (updateProgress.downloaded /
+                                updateProgress.total) *
+                                100,
+                              100,
+                            )}%`,
+                          }
+                        : undefined
+                    }
+                  />
+                </div>
+                <span>
+                  {updateProgress.total
+                    ? t("update.progressKnown", {
+                        downloaded: updateProgress.downloaded,
+                        total: updateProgress.total,
+                      })
+                    : t("update.progressUnknown", {
+                        downloaded: updateProgress.downloaded,
+                      })}
+                </span>
+              </div>
+            )}
+
+            {(updateCheckError || installState === "error") && (
+              <p className="update-panel__error" role="alert">
+                {installState === "error"
+                  ? t("update.error.install")
+                  : t("update.error.check")}
+              </p>
+            )}
+            {installState === "restarting" && (
+              <p className="update-panel__state" role="status">
+                {t("update.restarting")}
+              </p>
+            )}
+
+            {updateResult?.available &&
+              updateResult.update &&
+              installState !== "restarting" && (
+                <button
+                  type="button"
+                  className="control-button"
+                  onClick={() => void installUpdate()}
+                  disabled={installState === "downloading"}
+                >
+                  {installState === "downloading"
+                    ? t("update.installing")
+                    : t("update.installAction")}
+                </button>
+              )}
+          </div>
         </section>
 
         <section className="settings-block settings-block--locations">

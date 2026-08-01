@@ -30,7 +30,17 @@ On first launch the application:
 
 First launch never changes Claude Code, opencode, or Codex files. A second application launch activates the existing window instead of starting a second manager or router.
 
-If either sidecar is missing, non-executable, altered, or for the wrong architecture, startup fails closed and reports that reinstallation is required. The application does not download or replace a sidecar by itself. Reinstall the complete package from the trusted source.
+If either sidecar is missing, non-executable, altered, or for the wrong architecture, startup fails closed and reports that reinstallation is required. The application never downloads or replaces an individual sidecar. Reinstall the complete package from the trusted source, or use a valid whole-package desktop update when the installed application can still run it.
+
+## Online updates
+
+Stable desktop releases support whole-package online updates on Windows x86_64/arm64, macOS Intel/Apple Silicon, and Linux x86_64/arm64. The update replaces the desktop application together with its matched `mtls-router-manager` and `mtls-router` sidecars; it is not a sidecar-only update. This capability belongs only to the desktop application and does not add or change update behavior in the CLI binaries or setup scripts.
+
+At startup the application silently checks `https://downloads.codeasier.top/mtls-router/latest/latest.json` once. A failed check does not block startup. Settings shows the current and latest desktop versions, release notes when supplied, and a manual **Check for updates** action. Only a newer stable SemVer release is accepted; prerelease and build-metadata versions are not offered, and validation/non-stable builds are not published to the desktop update channel.
+
+The application never downloads or installs an update without confirmation. After you approve the displayed stable version, it downloads the platform package, reports progress, verifies the mandatory Tauri updater signature, stops only a verified desktop-owned router, installs the complete package, and restarts the application. A compatible external router is not stopped. If installation fails after stopping a desktop-owned router, the application attempts to start that router again.
+
+On every platform, online installation is supported only when the current package is running from an installation location and filesystem layout supported by that platform's Tauri updater. If the updater reports that the current location is unsupported or cannot replace the installed package, quit the application and manually install the complete new package from the trusted release channel; do not replace the packaged manager or router separately.
 
 ## Router ownership and state
 
@@ -111,7 +121,7 @@ Automation must invoke the receipt-verified installed `mtls-router-manager serve
 
 Each production package is bound to one service environment. The router sidecar contains a shared client certificate, shared private key, upstream CA, and default upstream URL. A user who can obtain the package can extract those embedded values; packaging and the desktop UI cannot prevent this. Distribute packages only to trusted internal users.
 
-Revocation or rotation requires a replacement release built with new credential material, distribution of the complete replacement package, and server-side rejection of the old credential. There is no runtime certificate import, profile switch, sidecar update, or automatic application update.
+Revocation or rotation requires a replacement release built with new credential material, distribution of the complete replacement package, and server-side rejection of the old credential. There is no runtime certificate import, profile switch, or independent sidecar update. A stable whole-package desktop update can distribute the replacement application and matched sidecars after user confirmation; CLI installations still require the existing CLI distribution and setup process.
 
 The local listener is plain HTTP on trusted localhost. Do not expose the management endpoints or listener publicly.
 

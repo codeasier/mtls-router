@@ -4,6 +4,7 @@ import { listen as tauriListen, type UnlistenFn } from "@tauri-apps/api/event";
 export const POLL_SNAPSHOT_EVENT = "router-poll-snapshot";
 export const MAIN_WINDOW_FOCUSED_EVENT = "main-window-focused";
 export const AGENT_DRAFT_QUIT_REQUESTED_EVENT = "agent-draft-quit-requested";
+export const UPDATE_PROGRESS_EVENT = "update-download-progress";
 
 export const COMMANDS = {
   routerStatus: "router_status",
@@ -39,6 +40,8 @@ export const COMMANDS = {
   windowVisibility: "window_visibility",
   setAgentDraftDirty: "set_agent_draft_dirty",
   resolveAppQuit: "resolve_app_quit",
+  updateCheck: "update_check",
+  updateInstall: "update_install",
 } as const;
 
 export const MAX_LOG_LINES = 200;
@@ -409,6 +412,23 @@ export interface ComponentVersions {
   management_protocol?: string;
 }
 
+export interface UpdateInfo {
+  version: string;
+  notes?: string;
+  published_at?: string;
+}
+
+export interface UpdateCheckResult {
+  available: boolean;
+  current_version: string;
+  update?: UpdateInfo;
+}
+
+export interface UpdateProgress {
+  downloaded: number;
+  total?: number;
+}
+
 export interface RouterLogs {
   lines: string[];
 }
@@ -698,6 +718,11 @@ export interface DesktopApi {
   cancelRouterReleaseObservation(): Promise<void>;
   retryRouterHealth(): Promise<RouterHealth>;
   getComponentVersions(): Promise<ComponentVersions>;
+  checkForUpdate(): Promise<UpdateCheckResult>;
+  installUpdate(version: string): Promise<void>;
+  subscribeUpdateProgress(
+    listener: (progress: UpdateProgress) => void,
+  ): Promise<UnlistenFn>;
   getRouterLogs(limit?: number): Promise<RouterLogs>;
   collectDiagnostics(): Promise<Diagnostics>;
   openLogLocation(): Promise<void>;
@@ -815,6 +840,12 @@ export function createDesktopApi(
       invoke(COMMANDS.routerCancelReleaseObservation),
     retryRouterHealth: () => invoke(COMMANDS.routerHealth),
     getComponentVersions: () => invoke(COMMANDS.componentVersions),
+    checkForUpdate: () => invoke(COMMANDS.updateCheck),
+    installUpdate: (version) => invoke(COMMANDS.updateInstall, { version }),
+    subscribeUpdateProgress: (listener) =>
+      listen<UpdateProgress>(UPDATE_PROGRESS_EVENT, (event) =>
+        listener(event.payload),
+      ),
     getRouterLogs: async (limit = MAX_LOG_LINES) => {
       const safeLimit = Math.min(Math.max(limit, 1), MAX_LOG_LINES);
       const result = await invoke<RouterLogs>(COMMANDS.routerLogs, {

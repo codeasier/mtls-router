@@ -2,7 +2,7 @@
 
 [English](../BUILD.md)
 
-本文档面向构建 router、Go manager 或 Tauri 桌面应用的维护者。当前仓库中的 CI 和 release workflow 会构建全部六个原生桌面包目标，并在匹配的 runner 上检查每个包。Tag 触发的 release 会把这些桌面包与 CLI router/manager 二进制及压缩包一起发布。Windows/macOS 签名和 macOS notarization/stapling 取决于完整凭据，而且包检查不会安装或启动应用；每个发布包都必须保留独立签名状态和目标 runner 上成功安装/启动的证据。
+本文档面向构建 router、Go manager 或 Tauri 桌面应用的维护者。当前仓库中的 CI 和 release workflow 会构建全部六个原生桌面包目标，并在匹配的 runner 上检查每个包。精确 stable `vX.Y.Z` tag release 会把这些桌面包、签名 updater 产物与 CLI router/manager 二进制及压缩包一起发布。Windows/macOS 签名和 macOS notarization/stapling 取决于完整平台凭据；Tauri updater 签名则是 stable release 的独立强制要求。包检查不会安装、启动或更新应用；每个发布包都必须保留独立签名状态和目标 runner 上成功安装/启动/更新的证据。
 
 ## 工具链和 lockfile
 
@@ -206,6 +206,33 @@ Release workflow 实现了有条件的平台签名和状态验证：
 
 本地包默认未签名，除非经过单独且验证过的签名流程。CI 有意使用 `--no-sign` 做包验证；release workflow 则根据凭据可用性选择签名或未签名分支并记录结果。组织策略要求签名/notarization，而对应状态文件无法证明时，必须阻止生产分发。
 
+### Updater 签名与 channel
+
+Tauri updater 签名与操作系统平台签名保护不同的信任边界，二者不能相互替代：
+
+- Tauri updater 签名证明在线更新产物由已安装应用内嵌公钥所对应的私钥签发。Windows、macOS 和 Linux 都必须先通过该签名校验才能安装更新。
+- Windows Authenticode 与 macOS code signing/notarization 为下载和安装的软件建立 publisher/platform 信任。即使 Tauri updater 签名有效，只要分发策略要求，它们仍然是必需的。Linux 当前没有配置平台包签名，但其在线更新产物仍强制要求 Tauri 签名。
+
+只有精确 stable `vX.Y.Z` tag 才会生成在线更新。Validation dispatch、prerelease tag 和其他 ref 都保持 `createUpdaterArtifacts` 关闭，也不会推进 channel。Stable 构建内嵌 endpoint `https://downloads.codeasier.top/mtls-router/latest/latest.json`。Release 汇总会发布含六个平台的 `latest.json`、每个平台 updater 产物及 `.sig`，然后原子推进镜像上的 `latest` symlink。Windows 和 Linux 直接复用最终 NSIS/AppImage 包作为 updater 产物；macOS 还会发布签名的 `CodeasierRouter-darwin-<arch>.app.tar.gz`。每个 updater 产物、签名和 `latest.json` 都由 `SHA256SUMS` 覆盖。
+
+在可信且不被录屏/记录的 operator 工作站上，从 `desktop/` 目录一次性生成 updater keypair。下面的命令只包含输出路径，密码由交互提示读取，不包含任何 key 或密码值：
+
+```bash
+npm exec tauri -- signer generate -w /secure/offline/CodeasierRouter-updater.key
+```
+
+不得传入 `--password`，不得把密码或私钥放入环境变量，不得启用 verbose shell trace、录制终端，或把生成的 key material 粘贴到命令、日志、issue 或仓库文件。应分别保护并备份生成的私钥文件及其密码，同时保留生成的 companion public key 用于配置。丢失私钥后将无法发布已安装应用信任的更新。轮换公钥同样必须有显式迁移或手工重装方案，因为现有应用只信任其构建时内嵌的公钥。
+
+在仓库 GitHub **Settings > Secrets and variables > Actions** 界面中，通过受保护 operator 流程创建以下 repository Secrets，只把值粘贴到 secret value 输入框：
+
+- `TAURI_SIGNING_PRIVATE_KEY`：生成的完整私钥内容。
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`：生成时输入的密码。
+- `TAURI_UPDATER_PUBKEY`：生成的完整 companion public-key 内容。公钥本身不保密，但本 workflow 有意从受保护 Secrets 界面读取它，stable release preflight 也要求该值存在。
+
+还需创建 repository variable `TAURI_UPDATER_PUBKEY_SHA256`，其值为 `node ./scripts/updater-public-key-fingerprint.mjs /secure/offline/CodeasierRouter-updater.key.pub` 输出的 canonical 公钥指纹。该值不保密，用于在构建前阻止意外替换公钥；修改它属于显式 key rotation，仍需执行上文的迁移方案。
+
+这三个 Secret 不得使用命令行 secret setter 配置：命令参数、shell interpolation、重定向的临时文件、debug 输出和被收集的 CI 日志都不是获批 secret transport。任一 updater key 输入、固定公钥指纹或 HTTPS endpoint 缺失或不一致时，stable release 会在打包前失败。每个原生 package check 还会在上传 artifact 前，用内嵌公钥验证生成的 updater 签名；updater 配置只写入 runner 私有临时文件，绝不能打印 key 内容。
+
 ## 包验证
 
 两个 workflow 都会在原生匹配 runner 上对六个包逐一调用 `desktop/scripts/verify-package.sh`。该脚本会拒绝 host/target 不匹配；解包 NSIS、DMG 或 AppImage；检查包/版本身份；检查 desktop、manager 和 router 的格式及架构；比较打包 sidecar 与本 job 构建 sidecar 的哈希；检查 macOS/Linux 可执行权限；并验证 manager 版本、目标、deployment ID 和 protocol。Release workflow 还会在发布前验证每个生成的 `.sha256`。
@@ -222,8 +249,9 @@ Release workflow 实现了有条件的平台签名和状态验证：
 8. 确认 Windows 卸载移除当前用户 autostart。确认 macOS/Linux **准备卸载**在删除前移除 autostart 并退出。
 9. 确认卸载不删除或重写 Agent 文件、敏感备份、日志或状态。
 10. 扫描源码、日志、诊断、router 之外的包内容和发布校验文件，排除意外 API key 或凭据文件。
+11. 在真实 Windows x86_64/arm64、macOS Intel/Apple Silicon 和 Linux x86_64/arm64 目标上，把上一 stable 包安装到受支持且可写的位置，再通过受控真实 feed 更新到候选版本。确认启动与手动检查、显式确认、签名校验、下载/安装/重启、候选 desktop/manager/router 版本、router 所有权行为，以及故意放在不受支持或不可写安装位置时的恢复。Mock UI、包检查和全新安装候选包都不能代替该上一版本到下一版本测试。
 
-任何目标缺少包检查、签名状态和成功安装/启动证据时都不能发布。Workflow 配置、已上传 artifact、本地 Tauri 构建和包检查本身都不属于启动证据。
+任何目标缺少包检查、签名状态、成功安装/启动证据或上一版本到下一版本的真实平台更新证据时，都不能推进 stable 更新 channel。Workflow 配置、已上传 artifact、本地 Tauri 构建、mock updater 行为和包检查本身都不属于运行时证据。
 
 ## 原生端口恢复验收
 
@@ -265,9 +293,9 @@ CI 和 release target runner 会在 Windows、macOS、Linux 上原生执行 `go 
 
 ## Release workflow
 
-当前 `.github/workflows/release.yml` 为六个 Go 目标构建 router 和 manager，并创建六个平台压缩包；每个包包含精确 router/manager 二进制对和安装脚本。同时，六个原生 runner 会构建并检查 Windows x86_64/arm64 NSIS 安装器、macOS Intel/Apple Silicon DMG，以及 Linux x86_64/arm64 AppImage。手工 dispatch 只用于验证，可以选择一组配套 CLI/desktop 目标及可选 HTTPS upstream override。版本 tag 始终忽略验证 override，等待全部 12 个构建 job，验证六个桌面包 checksum，汇总一个 `SHA256SUMS`，然后发布并镜像 CLI、桌面 asset 和六个签名状态文件。
+当前 `.github/workflows/release.yml` 为六个 Go 目标构建 router 和 manager，并创建六个平台压缩包；每个包包含精确 router/manager 二进制对和安装脚本。同时，六个原生 runner 会构建并检查 Windows x86_64/arm64 NSIS 安装器、macOS Intel/Apple Silicon DMG，以及 Linux x86_64/arm64 AppImage。手工 dispatch 只用于验证，可以选择一组配套 CLI/desktop 目标及可选 HTTPS upstream override；它不会生成 updater 产物。精确 stable 版本 tag 始终忽略验证 override，等待全部 12 个构建 job，验证六个桌面包 checksum 和签名 updater pair，汇总 `SHA256SUMS` 与 `latest.json`，发布并镜像 CLI、桌面 asset 和六个签名状态文件，再原子推进 `latest` updater channel。Release workflow 的这些改动不会为 standalone CLI router、manager、archive 或 setup 脚本新增自更新行为。
 
-生产 CLI 和桌面 sidecar 需要 repository secrets `CLIENT_CERT_PEM`、`CLIENT_KEY_PEM`、`UPSTREAM_CA_PEM`，以及 variables `UPSTREAM_URL` 和非默认 `DEPLOYMENT_ID`。可选 repository variable `AGENT_MODEL_PRESET_BASE64` 会向每个 standalone manager 和 desktop manager sidecar 提供相同 preset；空值有效并表示无 preset。Release preflight 会在 matrix build 前通过 manager loader 校验已配置的值，且不打印其内容。可选 repository variable `SIMPLIFY` 遵循上述规范化规则，未设置或为空时默认为 `True`。它会在 matrix fan-out 前规范化，并以同一个规范值传给所有 standalone 和 desktop manager；desktop 构建脚本可以再次执行幂等校验和规范化。Router build 绝不会收到这两个仅供 manager 使用的值。可选平台凭据会选择上文所述的签名/notarization release 分支。
+生产 CLI 和桌面 sidecar 需要 repository secrets `CLIENT_CERT_PEM`、`CLIENT_KEY_PEM`、`UPSTREAM_CA_PEM`，以及 variables `UPSTREAM_URL` 和非默认 `DEPLOYMENT_ID`。Stable 桌面 updater 发布还要求 `TAURI_SIGNING_PRIVATE_KEY`、`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 和 `TAURI_UPDATER_PUBKEY`，以及固定 repository variable `TAURI_UPDATER_PUBKEY_SHA256`。可选 repository variable `AGENT_MODEL_PRESET_BASE64` 会向每个 standalone manager 和 desktop manager sidecar 提供相同 preset；空值有效并表示无 preset。Release preflight 会在 matrix build 前通过 manager loader 校验已配置的值，且不打印其内容。可选 repository variable `SIMPLIFY` 遵循上述规范化规则，未设置或为空时默认为 `True`。它会在 matrix fan-out 前规范化，并以同一个规范值传给所有 standalone 和 desktop manager；desktop 构建脚本可以再次执行幂等校验和规范化。Router build 绝不会收到这两个仅供 manager 使用的值。可选平台凭据会选择上文所述的签名/notarization release 分支；与这些可选凭据不同，精确 stable tag 强制要求全部 updater-key 输入存在。
 
 每个 CLI 和 desktop matrix producer 都会生成 code-owned protocol metadata。`scripts/package-release.sh` 在组装 archive 前要求每个 producer 恰好一个 metadata 文件，并要求全部文件声明 schema `1` 与 management protocol `4`。正常发布和恢复发布共用此 preflight，因此有效但 protocol 混合的 artifact set 无法发布。
 

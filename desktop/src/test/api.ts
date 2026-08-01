@@ -45,6 +45,12 @@ export function createMockApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
       router: "router-v1",
       management_protocol: "4",
     }),
+    checkForUpdate: vi.fn().mockResolvedValue({
+      available: false,
+      current_version: "desktop-v1",
+    }),
+    installUpdate: vi.fn().mockResolvedValue(undefined),
+    subscribeUpdateProgress: vi.fn().mockResolvedValue(() => undefined),
     getRouterLogs: vi.fn().mockResolvedValue({ lines: [] }),
     collectDiagnostics: vi.fn().mockResolvedValue({ summary: "safe summary" }),
     openLogLocation: vi.fn().mockResolvedValue(undefined),

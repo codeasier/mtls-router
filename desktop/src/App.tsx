@@ -9,7 +9,7 @@ import {
 import { AgentPage, type LeaveGuard } from "./AgentPage";
 import { ApiKeysPage } from "./ApiKeysPage";
 import { I18nProvider, useI18n } from "./i18n";
-import { desktopApi, type DesktopApi } from "./ipc";
+import { desktopApi, type DesktopApi, type UpdateCheckResult } from "./ipc";
 import { LogsPage } from "./LogsPage";
 import type { TranslationKey } from "./locales/zh-CN";
 import { navigationItems, type SectionId } from "./model";
@@ -86,6 +86,11 @@ function AppContent({ api }: { api: DesktopApi }) {
     useState(readSidebarCollapsed);
   const [agentExitGuarded, setAgentExitGuarded] = useState(false);
   const [blockedLeaveAttempt, setBlockedLeaveAttempt] = useState(0);
+  const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(
+    null,
+  );
+  const [checkingForUpdate, setCheckingForUpdate] = useState(false);
+  const [updateCheckError, setUpdateCheckError] = useState(false);
   const [pendingLeave, setPendingLeave] = useState<{
     kind: "navigation" | "native-quit";
     confirm(): void;
@@ -98,11 +103,28 @@ function AppContent({ api }: { api: DesktopApi }) {
   const leaveConfirmRef = useRef<HTMLButtonElement>(null);
   const sectionHeadingRef = useRef<HTMLHeadingElement>(null);
   const focusSectionHeadingRef = useRef(false);
+  const startupUpdateCheckStartedRef = useRef(false);
+  const updateCheckInFlightRef = useRef(false);
   const sectionKey = sectionKeys[activeSection];
 
   const registerLeaveGuard = useCallback((guard: LeaveGuard | null) => {
     leaveGuardRef.current = guard;
   }, []);
+
+  const checkForUpdate = useCallback(async () => {
+    if (updateCheckInFlightRef.current) return;
+    updateCheckInFlightRef.current = true;
+    setCheckingForUpdate(true);
+    setUpdateCheckError(false);
+    try {
+      setUpdateResult(await api.checkForUpdate());
+    } catch {
+      setUpdateCheckError(true);
+    } finally {
+      updateCheckInFlightRef.current = false;
+      setCheckingForUpdate(false);
+    }
+  }, [api]);
 
   const requestLeave = useCallback(
     (
@@ -161,6 +183,12 @@ function AppContent({ api }: { api: DesktopApi }) {
     },
     [activeSection, requestLeave],
   );
+
+  useEffect(() => {
+    if (startupUpdateCheckStartedRef.current) return;
+    startupUpdateCheckStartedRef.current = true;
+    void checkForUpdate();
+  }, [checkForUpdate]);
 
   useEffect(() => {
     function synchronizeVisibility() {
@@ -337,6 +365,30 @@ function AppContent({ api }: { api: DesktopApi }) {
         </header>
 
         <div className="main-scroll">
+          {updateResult?.available && updateResult.update && (
+            <aside
+              className="update-notice"
+              role="status"
+              aria-label={t("update.noticeAria")}
+            >
+              <div>
+                <strong>{t("update.noticeTitle")}</strong>
+                <span>
+                  {t("update.noticeDescription", {
+                    version: updateResult.update.version,
+                  })}
+                </span>
+              </div>
+              <button
+                type="button"
+                className="text-button"
+                onClick={() => navigate("settings")}
+              >
+                {t("update.viewAction")}
+              </button>
+            </aside>
+          )}
+
           {blockedLeaveAttempt > 0 && (
             <p
               key={blockedLeaveAttempt}
@@ -365,7 +417,15 @@ function AppContent({ api }: { api: DesktopApi }) {
             />
           )}
           {activeSection === "api-keys" && <ApiKeysPage api={api} />}
-          {activeSection === "settings" && <SettingsPage api={api} />}
+          {activeSection === "settings" && (
+            <SettingsPage
+              api={api}
+              updateResult={updateResult}
+              checkingForUpdate={checkingForUpdate}
+              updateCheckError={updateCheckError}
+              onCheckForUpdate={checkForUpdate}
+            />
+          )}
         </div>
       </main>
       {pendingLeave && (

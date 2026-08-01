@@ -30,7 +30,17 @@ Release asset 集中每个桌面包都有一个 `.sha256` 文件和一个 `signi
 
 首次启动绝不会修改 Claude Code、opencode 或 Codex 文件。第二次启动应用只会激活现有窗口，不会再启动一组 manager/router。
 
-如果任一 sidecar 缺失、不可执行、被修改或架构错误，启动会安全失败并提示需要重新安装。应用不会自行下载或替换 sidecar；请从可信来源重新安装完整桌面包。
+如果任一 sidecar 缺失、不可执行、被修改或架构错误，启动会安全失败并提示需要重新安装。应用绝不会单独下载或替换某个 sidecar；请从可信来源重新安装完整桌面包，或在已安装应用仍能执行更新时使用有效的桌面整包更新。
+
+## 在线更新
+
+Stable 桌面 release 在 Windows x86_64/arm64、macOS Intel/Apple Silicon 和 Linux x86_64/arm64 上支持整包在线更新。更新会同时替换桌面应用及其匹配的 `mtls-router-manager` 和 `mtls-router` sidecar，不是只更新 sidecar。该能力仅属于桌面应用，不会新增或改变 CLI 二进制或安装脚本的更新行为。
+
+应用每次启动会静默检查一次 `https://downloads.codeasier.top/mtls-router/latest/latest.json`；检查失败不会阻断启动。设置页面会显示当前和最新桌面版本、release 提供的更新说明，以及手动**检查更新**操作。应用只接受更高版本的 stable SemVer release；不会提供 prerelease 或含 build metadata 的版本，validation/非 stable 构建也不会发布到桌面更新 channel。
+
+应用绝不会在未经确认时下载或安装更新。你确认界面显示的 stable 版本后，应用才会下载平台包、报告进度、校验强制的 Tauri updater 签名、只停止经过验证且由桌面端所有的 router、安装完整包并重启应用。兼容的外部 router 不会被停止。如果停止桌面端所属 router 后安装失败，应用会尝试重新启动该 router。
+
+在每个平台上，只有当前包运行在对应平台 Tauri updater 支持的安装位置和文件系统布局中时，才能执行在线安装。如果 updater 报告当前位置不受支持或无法替换已安装包，请退出应用，再从可信 release 渠道手工安装完整新包；不要单独替换打包的 manager 或 router。
 
 ## Router 所有权和状态
 
@@ -111,7 +121,7 @@ API 密钥页面会在桌面凭据存储中保存、替换或删除一个全局 
 
 每个生产包绑定一个服务环境。router sidecar 包含共享客户端证书、共享私钥、上游 CA 和默认上游 URL。获得包的用户可以提取这些内嵌值；打包方式和桌面 UI 无法阻止提取。桌面包只能分发给可信内部用户。
 
-吊销或轮换需要：使用新凭据材料构建替代 release，分发完整替代包，并在服务端拒绝旧凭据。应用不支持运行时证书导入、profile 切换、sidecar 更新或自动更新。
+吊销或轮换需要：使用新凭据材料构建替代 release，分发完整替代包，并在服务端拒绝旧凭据。应用不支持运行时证书导入、profile 切换或独立 sidecar 更新。Stable 桌面整包更新可以在用户确认后分发替代应用及其匹配 sidecar；CLI 安装仍使用现有 CLI 分发和 setup 流程。
 
 本地 listener 是可信 localhost 上的 plain HTTP。不要把管理端点或 listener 暴露到公网。
 

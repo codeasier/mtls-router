@@ -893,6 +893,30 @@ pub struct ComponentVersions {
     pub management_protocol: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct UpdateInfo {
+    pub version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub published_at: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct UpdateCheckResult {
+    pub available: bool,
+    pub current_version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub update: Option<UpdateInfo>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct UpdateProgress {
+    pub downloaded: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total: Option<u64>,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct AgentRecoveryFileState {
     pub role: String,

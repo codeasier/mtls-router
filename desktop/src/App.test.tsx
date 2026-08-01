@@ -129,6 +129,27 @@ describe("App navigation", () => {
     expect(screen.getByText("桌面控制面板")).toBeInTheDocument();
   });
 
+  it("checks once on startup and surfaces an accessible update notice", async () => {
+    const api = createMockApi({
+      checkForUpdate: vi.fn().mockResolvedValue({
+        available: true,
+        current_version: "1.0.0",
+        update: { version: "1.1.0", notes: "Safer updates." },
+      }),
+    });
+    render(<App api={api} />);
+
+    const notice = await screen.findByRole("status", {
+      name: "应用更新通知",
+    });
+    expect(notice).toHaveTextContent("1.1.0");
+    expect(api.checkForUpdate).toHaveBeenCalledOnce();
+
+    fireEvent.click(screen.getByRole("button", { name: "查看更新" }));
+    expect(screen.getByRole("heading", { name: "系统设置" })).toBeVisible();
+    expect(await screen.findByText("Safer updates.")).toBeVisible();
+  });
+
   it("opens API key management from the main navigation", async () => {
     render(
       <App

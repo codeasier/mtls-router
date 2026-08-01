@@ -2,7 +2,7 @@
 
 [中文](zh-CN/BUILD.md)
 
-This document is for maintainers building the router, Go manager, or Tauri desktop application. The checked-in CI and release workflows build all six native desktop package targets and inspect each package on a matching runner. Tag-triggered releases publish those desktop packages with the CLI router/manager binaries and archives. Windows/macOS signing and macOS notarization/stapling are conditional on complete credentials, and package inspection does not install or launch the application; retain separate signing-status and successful target-runner install/launch evidence for every released package.
+This document is for maintainers building the router, Go manager, or Tauri desktop application. The checked-in CI and release workflows build all six native desktop package targets and inspect each package on a matching runner. Exact stable `vX.Y.Z` tag releases publish those desktop packages with signed updater artifacts and the CLI router/manager binaries and archives. Windows/macOS signing and macOS notarization/stapling are conditional on complete platform credentials; Tauri updater signing is separately mandatory for stable releases. Package inspection does not install, launch, or update the application; retain separate signing-status and successful target-runner install/launch/update evidence for every released package.
 
 ## Toolchains and lockfiles
 
@@ -222,6 +222,33 @@ The release workflow implements conditional platform signing and status verifica
 
 Local packages are unsigned unless a separate verified signing process signs them. CI intentionally uses `--no-sign` for package validation, while the release workflow selects signed or unsigned branches according to credential availability and records the result. Production distribution must remain blocked where organizational policy requires signing/notarization and the corresponding status file does not prove it.
 
+### Updater signing and channel
+
+Tauri updater signing and operating-system platform signing serve different trust boundaries and neither replaces the other:
+
+- The Tauri updater signature proves that an online-update artifact was signed by the private key corresponding to the public key embedded in the installed application. Tauri requires this signature before installation on Windows, macOS, and Linux.
+- Windows Authenticode and macOS code signing/notarization establish publisher and platform trust for downloaded and installed software. They remain required wherever distribution policy requires them, even when the Tauri updater signature is valid. Linux currently has no configured platform package signature, but its online updater artifact still requires the Tauri signature.
+
+Online updates are produced only for an exact stable `vX.Y.Z` tag. Validation dispatches, prerelease tags, and other refs keep `createUpdaterArtifacts` disabled and do not advance the channel. Stable builds embed the endpoint `https://downloads.codeasier.top/mtls-router/latest/latest.json`. Release assembly publishes a six-platform `latest.json`, each platform's updater artifact and `.sig`, and then atomically advances the mirrored `latest` symlink. Windows and Linux reuse the final NSIS/AppImage package as the updater artifact; macOS additionally publishes a signed `CodeasierRouter-darwin-<arch>.app.tar.gz`. Every updater asset, signature, and `latest.json` is covered by `SHA256SUMS`.
+
+Generate the updater keypair once on a trusted, non-recorded operator workstation from `desktop/`. The command prompts for the password and contains no key or password value:
+
+```bash
+npm exec tauri -- signer generate -w /secure/offline/CodeasierRouter-updater.key
+```
+
+Do not pass `--password`, put the password or private key in an environment variable, enable verbose shell tracing, record the terminal, or paste generated key material into a command, log, issue, or repository file. Protect and back up the generated private-key file and its password separately; preserve the generated companion public key for configuration. Losing the private key prevents publishing updates trusted by installed applications. Rotating the public key also requires an explicit migration or manual-reinstall plan because existing applications trust the public key embedded when they were built.
+
+In the repository's GitHub **Settings > Secrets and variables > Actions** UI, create these repository Secrets through the protected operator process, pasting values only into the secret-value fields:
+
+- `TAURI_SIGNING_PRIVATE_KEY`: complete generated private-key contents.
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: the password entered at generation.
+- `TAURI_UPDATER_PUBKEY`: complete generated companion public-key contents. The public key is not confidential, but this workflow deliberately sources it from the protected Secrets interface and stable release preflight requires it.
+
+Also create repository variable `TAURI_UPDATER_PUBKEY_SHA256` with the canonical public-key fingerprint printed by `node ./scripts/updater-public-key-fingerprint.mjs /secure/offline/CodeasierRouter-updater.key.pub`. This non-secret pin makes an accidental public-key replacement fail before building. Changing it is a deliberate key-rotation event and still requires the migration plan described above.
+
+Do not use command-line secret setters for the three Secrets: command arguments, shell interpolation, redirected ad hoc files, debug output, and captured CI logs are not approved secret transport. A stable release fails before packaging if any updater key input, the pinned fingerprint, or the HTTPS endpoint is absent or inconsistent. Each native package check also verifies the generated updater signature against the embedded public key before uploading artifacts; updater configuration is written to a private runner-temporary config and key contents must never be printed.
+
 ## Package verification
 
 Both workflows invoke `desktop/scripts/verify-package.sh` for every one of the six packages on a native matching runner. The script rejects a host/target mismatch; unpacks the NSIS, DMG, or AppImage; checks package/version identity; checks desktop, manager, and router formats and architectures; compares packaged sidecar hashes with the sidecars built for that job; checks executable permissions on macOS/Linux; and validates manager version, target, deployment ID, and protocol. The release workflow then verifies each generated `.sha256` before publication.
@@ -238,8 +265,9 @@ That automated inspection does not install or launch the packaged application. B
 8. Confirm Windows uninstall removes current-user autostart. Confirm macOS/Linux **Prepare for uninstall** removes autostart and exits before deletion.
 9. Confirm uninstall does not remove or rewrite Agent files, sensitive backups, logs, or state.
 10. Scan source, logs, diagnostics, package contents outside the router, and published checksums for accidental API keys or credential files.
+11. On every real Windows x86_64/arm64, macOS Intel/Apple Silicon, and Linux x86_64/arm64 target, install the previous stable package in a supported writable location and update it to the candidate through a controlled real feed. Confirm the startup and manual checks, explicit confirmation, signature verification, download/install/restart, candidate desktop/manager/router versions, router ownership behavior, and recovery from a deliberately unsupported or non-writable installation location. Mock UI, package inspection, and a fresh candidate install do not satisfy this previous-to-next test.
 
-Do not publish if any target lacks package-inspection, signing-status, and successful install/launch evidence. Workflow configuration, an uploaded artifact, a local Tauri build, and package inspection alone are not launch evidence.
+Do not advance the stable update channel if any target lacks package inspection, signing status, successful install/launch evidence, or the previous-to-next real-platform update evidence. Workflow configuration, an uploaded artifact, a local Tauri build, mock updater behavior, and package inspection alone are not runtime evidence.
 
 ## Native port-recovery acceptance
 
@@ -281,9 +309,9 @@ Retain the following manual evidence from controlled, disposable hosts before re
 
 ## Release workflow
 
-The current `.github/workflows/release.yml` builds router and manager binaries for all six Go targets and creates six platform archives containing the exact router/manager pair and setup script. In parallel, six native runners build and inspect Windows x86_64/arm64 NSIS installers, macOS Intel/Apple Silicon DMGs, and Linux x86_64/arm64 AppImages. A manual dispatch is validation-only and may select one paired CLI/desktop target plus an optional HTTPS upstream override. A version tag always ignores validation overrides, waits for all 12 build jobs, verifies the six desktop package checksums, assembles one `SHA256SUMS`, and publishes and mirrors the CLI and desktop assets plus six signing-status files.
+The current `.github/workflows/release.yml` builds router and manager binaries for all six Go targets and creates six platform archives containing the exact router/manager pair and setup script. In parallel, six native runners build and inspect Windows x86_64/arm64 NSIS installers, macOS Intel/Apple Silicon DMGs, and Linux x86_64/arm64 AppImages. A manual dispatch is validation-only and may select one paired CLI/desktop target plus an optional HTTPS upstream override; it does not produce updater artifacts. An exact stable version tag always ignores validation overrides, waits for all 12 build jobs, verifies the six desktop package checksums and signed updater pairs, assembles one `SHA256SUMS` and `latest.json`, publishes and mirrors the CLI and desktop assets plus six signing-status files, and atomically advances the `latest` updater channel. No release workflow change adds self-update behavior to the standalone CLI router, manager, archives, or setup scripts.
 
-Production CLI and desktop sidecars require repository secrets `CLIENT_CERT_PEM`, `CLIENT_KEY_PEM`, and `UPSTREAM_CA_PEM`, plus variables `UPSTREAM_URL` and a non-default `DEPLOYMENT_ID`. Optional repository variable `AGENT_MODEL_PRESET_BASE64` supplies the same preset to every standalone manager and desktop manager sidecar; empty is valid and means no preset. Release preflight validates a configured value through the manager loader before matrix builds without printing its contents. Optional repository variable `SIMPLIFY` follows the normalization rules above and defaults to `True` when unset or empty. It is normalized before matrix fan-out and propagated to every standalone and desktop manager as the same canonical value; the desktop build script may idempotently validate and normalize it again. Router builds never receive either manager-only value. Optional platform credentials select the signed/notarized release branches described above.
+Production CLI and desktop sidecars require repository secrets `CLIENT_CERT_PEM`, `CLIENT_KEY_PEM`, and `UPSTREAM_CA_PEM`, plus variables `UPSTREAM_URL` and a non-default `DEPLOYMENT_ID`. Stable desktop updater publication additionally requires `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`, and `TAURI_UPDATER_PUBKEY`, plus the pinned repository variable `TAURI_UPDATER_PUBKEY_SHA256`. Optional repository variable `AGENT_MODEL_PRESET_BASE64` supplies the same preset to every standalone manager and desktop manager sidecar; empty is valid and means no preset. Release preflight validates a configured value through the manager loader before matrix builds without printing its contents. Optional repository variable `SIMPLIFY` follows the normalization rules above and defaults to `True` when unset or empty. It is normalized before matrix fan-out and propagated to every standalone and desktop manager as the same canonical value; the desktop build script may idempotently validate and normalize it again. Router builds never receive either manager-only value. Optional platform credentials select the signed/notarized release branches described above; unlike those optional credentials, all updater-key inputs are mandatory for an exact stable tag.
 
 Each CLI and desktop matrix producer emits code-owned protocol metadata. `scripts/package-release.sh` requires exactly one metadata file per producer and requires every file to declare schema `1` and management protocol `4` before it assembles archives. This preflight is shared by normal and recovery publication, so a valid but mixed-protocol artifact set is not publishable.
 
