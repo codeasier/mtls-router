@@ -672,6 +672,14 @@ func TestRouterTrustedChannelReturnsOnlyCompleteCorrelatedState(t *testing.T) {
 	if responseErr == nil || responseErr.Code != protocol.CodeRouterStateStale {
 		t.Fatalf("mismatched trust error = %#v", responseErr)
 	}
+
+	found.Version.PID = found.State.PID
+	found.Version.Version = "router-v1"
+	found.Classification = discovery.Degraded
+	_, responseErr = manager.routerTrustedChannel(context.Background(), json.RawMessage(`{}`))
+	if responseErr == nil || responseErr.Code != protocol.CodeRouterDegraded {
+		t.Fatalf("degraded trust error = %#v", responseErr)
+	}
 }
 
 func TestSanitizeTextRedactsURLUserinfoBeforeQueryValues(t *testing.T) {

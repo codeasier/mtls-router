@@ -42,7 +42,7 @@ agent.cleanup.preview     agent.cleanup.write
 - `boundErrorDetails` 对错误 detail 做上限约束，避免把无界内容回传给客户端。
 - 协议版本 `4` 由 `internal/version.ManagementProtocolVersion` 常量提供，不经 `-ldflags` 注入。
 - Cleanup preview/write deadline 分别为 5 秒和 30 秒；请求严格只接受单个 `agent`，write 另接受 revision token 与显式漂移批准，不接受 API key、catalog/model config、flow 或批量 Agents。
-- `router.trusted_channel` 只供原生 Rust 图片数据面使用，返回 manager 已关联验证的 listener、PID、router/OS 启动身份、可执行文件/binary path 与 deployment/protocol；不得通过 WebView command 直接暴露。
+- `router.trusted_channel` 只供原生 Rust 图片数据面使用，返回 manager 已关联验证的 listener、PID、OS 进程启动身份、可执行文件/binary path 与 deployment/protocol；不得通过 WebView command 直接暴露。
 
 ## 依赖
 

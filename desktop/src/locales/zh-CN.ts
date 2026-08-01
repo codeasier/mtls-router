@@ -569,6 +569,7 @@ export const zhCN = {
   "conversations.heading": "图片对话",
   "conversations.overline": "受信任本地图片数据面",
   "conversations.new": "新建对话",
+  "conversations.messageCount": "消息：{count}",
   "conversations.empty": "暂无对话。点击「新建对话」开始。",
   "conversations.delete": "删除",
   "conversations.deleteConfirm": "确定删除此对话及其所有图片？",

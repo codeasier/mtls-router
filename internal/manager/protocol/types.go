@@ -226,7 +226,6 @@ type RouterVersionResult struct {
 type RouterTrustedChannelResult struct {
 	ListenAddr                string `json:"listen_addr"`
 	PID                       int    `json:"pid"`
-	StartedAt                 string `json:"started_at"`
 	ProcessStartedAt          string `json:"process_started_at"`
 	ProcessExecutable         string `json:"process_executable"`
 	BinaryPath                string `json:"binary_path"`

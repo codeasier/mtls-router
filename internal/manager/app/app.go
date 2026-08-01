@@ -457,6 +457,9 @@ func (a *App) routerTrustedChannel(ctx context.Context, params json.RawMessage) 
 	if err := discoveryError(found, false); err != nil {
 		return nil, err
 	}
+	if found.Classification != discovery.DesktopOwned && found.Classification != discovery.ExternalCompatible {
+		return nil, &protocol.Error{Code: protocol.CodeRouterDegraded, Message: "router health is degraded"}
+	}
 	value := found.State
 	if value.PID <= 0 || value.ListenAddr == "" || value.StartedAt == "" ||
 		value.ProcessStartedAt == "" || value.ProcessExecutable == "" || value.BinaryPath == "" ||
@@ -467,7 +470,7 @@ func (a *App) routerTrustedChannel(ctx context.Context, params json.RawMessage) 
 		return nil, &protocol.Error{Code: protocol.CodeRouterStateStale, Message: "router trust state is stale"}
 	}
 	return protocol.RouterTrustedChannelResult{
-		ListenAddr: value.ListenAddr, PID: value.PID, StartedAt: value.StartedAt,
+		ListenAddr: value.ListenAddr, PID: value.PID,
 		ProcessStartedAt: value.ProcessStartedAt, ProcessExecutable: value.ProcessExecutable,
 		BinaryPath: value.BinaryPath, DeploymentID: value.DeploymentID,
 		ManagementProtocolVersion: value.ManagementProtocolVersion,

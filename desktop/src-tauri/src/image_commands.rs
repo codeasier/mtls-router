@@ -480,55 +480,58 @@ pub async fn image_start_generation(
         let store = ImageStore::from_data_dir(&data_dir);
         let _store_guard = store_lock.lock().await;
         let mut event_status = "failed";
-        if let Ok(mut snapshot) = store.load() {
-            let (status, output_asset_id, error_category) = match result {
-                Ok(gen_result) => {
-                    let validated = gen_result.validated;
-                    let source = AssetSource::Generation;
-                    match store.save_asset(
-                        &mut snapshot,
-                        &gen_result.image_bytes,
-                        &validated,
-                        source,
-                    ) {
-                        Ok(asset) => (MessageStatus::Succeeded, asset.id, String::new()),
-                        Err(_) => (MessageStatus::Failed, String::new(), "store_error".into()),
+        match store.load() {
+            Ok(mut snapshot) => {
+                let (status, output_asset_id, error_category) = match result {
+                    Ok(gen_result) => {
+                        let validated = gen_result.validated;
+                        let source = AssetSource::Generation;
+                        match store.save_asset(
+                            &mut snapshot,
+                            &gen_result.image_bytes,
+                            &validated,
+                            source,
+                        ) {
+                            Ok(asset) => (MessageStatus::Succeeded, asset.id, String::new()),
+                            Err(_) => (MessageStatus::Failed, String::new(), "store_error".into()),
+                        }
                     }
-                }
-                Err(GenerationError::Cancelled) => {
-                    (MessageStatus::Cancelled, String::new(), "cancelled".into())
-                }
-                Err(GenerationError::Timeout) => {
-                    (MessageStatus::Failed, String::new(), "timeout".into())
-                }
-                Err(e) => (MessageStatus::Failed, String::new(), sanitize_error(&e)),
-            };
-
-            if store
-                .complete_assistant_message(
-                    &mut snapshot,
-                    &message_id,
-                    status.clone(),
-                    if output_asset_id.is_empty() {
-                        None
-                    } else {
-                        Some(&output_asset_id)
-                    },
-                    if error_category.is_empty() {
-                        None
-                    } else {
-                        Some(&error_category)
-                    },
-                )
-                .is_ok()
-                && store.save(&snapshot).is_ok()
-            {
-                event_status = match status {
-                    MessageStatus::Succeeded => "succeeded",
-                    MessageStatus::Cancelled => "cancelled",
-                    _ => "failed",
+                    Err(GenerationError::Cancelled) => {
+                        (MessageStatus::Cancelled, String::new(), "cancelled".into())
+                    }
+                    Err(GenerationError::Timeout) => {
+                        (MessageStatus::Failed, String::new(), "timeout".into())
+                    }
+                    Err(e) => (MessageStatus::Failed, String::new(), sanitize_error(&e)),
                 };
+
+                if store
+                    .complete_assistant_message(
+                        &mut snapshot,
+                        &message_id,
+                        status.clone(),
+                        if output_asset_id.is_empty() {
+                            None
+                        } else {
+                            Some(&output_asset_id)
+                        },
+                        if error_category.is_empty() {
+                            None
+                        } else {
+                            Some(&error_category)
+                        },
+                    )
+                    .is_ok()
+                    && store.save(&snapshot).is_ok()
+                {
+                    event_status = match status {
+                        MessageStatus::Succeeded => "succeeded",
+                        MessageStatus::Cancelled => "cancelled",
+                        _ => "failed",
+                    };
+                }
             }
+            Err(_) => eprintln!("CodeasierRouter: image completion snapshot load failed"),
         }
 
         drop(_store_guard);

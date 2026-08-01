@@ -7,7 +7,6 @@
 use crate::image_limits::{MAX_PROMPT_BYTES, MAX_RESPONSE_BYTES};
 use crate::image_validation::{self, ImageValidationError, ValidatedImage};
 use crate::trusted_channel::{TrustedChannel, TrustedChannelError};
-use base64::Engine;
 use serde::Deserialize;
 
 /// Stable error classification for image generation failures.
@@ -57,8 +56,8 @@ impl std::error::Error for GenerationError {}
 
 impl From<TrustedChannelError> for GenerationError {
     fn from(e: TrustedChannelError) -> Self {
-        match &e {
-            TrustedChannelError::IoError(msg) if msg.contains("timeout") => Self::Timeout,
+        match e {
+            TrustedChannelError::Timeout => Self::Timeout,
             _ => Self::ChannelError(e),
         }
     }
@@ -186,10 +185,7 @@ pub fn parse_generation_response(body: &[u8]) -> Result<GenerationResult, Genera
         }
         return Err(GenerationError::ResponseEmpty);
     }
-    let validated = image_validation::validate_b64_image(&item.b64_json)?;
-    let image_bytes = base64::engine::general_purpose::STANDARD
-        .decode(&item.b64_json)
-        .map_err(|_| GenerationError::ResponseParseFailed)?;
+    let (image_bytes, validated) = image_validation::decode_and_validate_b64_image(&item.b64_json)?;
     Ok(GenerationResult {
         image_bytes,
         validated,
@@ -295,7 +291,24 @@ mod tests {
         let result = parse_generation_response(body.as_bytes()).unwrap();
         assert_eq!(result.validated.width, 2);
         assert_eq!(result.validated.height, 2);
-        assert!(!result.image_bytes.is_empty());
+        assert_eq!(
+            result.image_bytes,
+            base64::engine::general_purpose::STANDARD
+                .decode(&b64)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn maps_only_typed_channel_timeouts_to_generation_timeout() {
+        assert_eq!(
+            GenerationError::from(TrustedChannelError::Timeout),
+            GenerationError::Timeout
+        );
+        assert_eq!(
+            GenerationError::from(TrustedChannelError::ConnectFailed("timeout".into())),
+            GenerationError::ChannelError(TrustedChannelError::ConnectFailed("timeout".into()))
+        );
     }
 
     #[test]

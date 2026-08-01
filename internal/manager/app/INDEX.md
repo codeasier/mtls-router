@@ -21,7 +21,7 @@
 - **诊断脱敏**：`lifecycle` 保留有界的**原始**子进程输出，`app` 只向客户端暴露脱敏的、会话作用域的诊断（`startupDiagnostic`）。
 - **启动失败锁存**：`latchStartupFailure` / `failedStatus` / `clearFailureAfterStart` 让一次失败的启动在后续 `router.status` 中仍可见，而不是被下一次轮询抹掉。
 - **受保护 PID**：`protectedStatePID` 阻止强制终止落到状态文件记录的自有进程上。
-- **图片 trust state**：`router.trusted_channel` 仅在 discovery 的 listener、远端 version 与持久 state 的 PID/deployment/protocol 完整关联，且 state 含 router/OS 启动身份、可执行文件和 binary path 时返回；该结果只供原生桌面后端使用。
+- **图片 trust state**：`router.trusted_channel` 仅接受完整健康或外部兼容分类，并在 discovery 的 listener、远端 version 与持久 state 的 PID/deployment/protocol 完整关联，且 state 含 OS 进程启动身份、可执行文件和 binary path 时返回；该结果只供原生桌面后端使用。
 - 服务层的错误（`agent.OperationError`、`lifecycle.Error`、`modelcatalog.Error`）在此统一映射为稳定的 `protocol.ErrorCode`；错误消息只作诊断用途。
 
 ## 依赖

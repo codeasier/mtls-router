@@ -23,6 +23,8 @@ type conformanceVector struct {
 	Scenario            string  `json:"scenario"`
 	ExpectedOutcome     string  `json:"expected_outcome"`
 	AuthMustNeverBeSent bool    `json:"auth_must_never_be_sent"`
+	GoApplicability     string  `json:"go_applicability"`
+	GoReason            string  `json:"go_reason"`
 	GoErrorCode         *string `json:"go_error_code"`
 	RustError           string  `json:"rust_error"`
 }
@@ -58,6 +60,22 @@ func TestConformanceVectors(t *testing.T) {
 			}
 			if v.ExpectedOutcome != "success" && v.RustError == "" {
 				t.Error("non-success outcome must have a rust_error")
+			}
+			switch v.GoApplicability {
+			case "channel":
+				if v.ExpectedOutcome == "fail_before_auth" && v.GoErrorCode == nil {
+					t.Error("Go channel failure must declare go_error_code")
+				}
+			case "listener":
+				if v.GoErrorCode != nil {
+					t.Error("Go listener rejection must not declare a channel error code")
+				}
+			case "not_applicable":
+				if v.GoReason == "" {
+					t.Error("Go-inapplicable vector must declare go_reason")
+				}
+			default:
+				t.Errorf("unknown go_applicability %q", v.GoApplicability)
 			}
 		})
 	}
@@ -112,10 +130,22 @@ func TestGoConformanceVectorsExecuteBeforeAuthFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, vector := range cf.Vectors {
-		if vector.GoErrorCode == nil || vector.ExpectedOutcome != "fail_before_auth" {
-			continue
-		}
 		t.Run(vector.Name, func(t *testing.T) {
+			switch vector.GoApplicability {
+			case "not_applicable":
+				return
+			case "listener":
+				if _, err := trustedrouter.NormalizeListener("10.0.0.1:19099"); err == nil {
+					t.Fatal("non-loopback listener was accepted")
+				}
+				return
+			case "channel":
+				if vector.ExpectedOutcome != "fail_before_auth" {
+					return
+				}
+			default:
+				t.Fatalf("unknown go_applicability %q", vector.GoApplicability)
+			}
 			var authObserved atomic.Bool
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Header.Get("Authorization") != "" {
@@ -185,7 +215,7 @@ func TestGoConformanceVectorsExecuteBeforeAuthFailures(t *testing.T) {
 				defer cancel()
 			}
 			_, got := (trustedrouter.Channel{ValidateProcess: validate}).Fetch(ctx, listener, trusted, "key-canary")
-			if got == nil || string(got.Code) != *vector.GoErrorCode {
+			if got == nil || vector.GoErrorCode == nil || string(got.Code) != *vector.GoErrorCode {
 				t.Fatalf("error = %#v, want code %s", got, *vector.GoErrorCode)
 			}
 			if authObserved.Load() {

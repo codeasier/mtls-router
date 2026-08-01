@@ -207,9 +207,10 @@ pub fn run() {
             if let Ok(mut snapshot) = image_store.load() {
                 let changed = image_store.finalize_leftover_running(&mut snapshot)
                     | image_store.prune_unreferenced_assets(&mut snapshot);
-                if (!changed || image_store.save(&snapshot).is_ok())
-                    && image_store.cleanup_orphans(&snapshot).is_err()
-                {
+                let saved = !changed || image_store.save(&snapshot).is_ok();
+                if changed && !saved {
+                    eprintln!("CodeasierRouter: image snapshot save failed");
+                } else if image_store.cleanup_orphans(&snapshot).is_err() {
                     eprintln!("CodeasierRouter: image orphan cleanup failed");
                 }
             }

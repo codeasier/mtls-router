@@ -23,8 +23,6 @@ pub struct TrustedChannelConfig {
     pub listen_address: String,
     #[serde(rename = "pid")]
     pub expected_pid: u32,
-    #[serde(rename = "started_at")]
-    pub expected_started_at: String,
     #[serde(rename = "process_started_at")]
     pub expected_process_started_at: String,
     #[serde(rename = "process_executable")]
@@ -41,7 +39,6 @@ pub struct TrustedChannelConfig {
 #[derive(Clone, Debug, serde::Deserialize)]
 pub struct VersionInfo {
     pub pid: u32,
-    pub started_at: String,
     #[serde(default)]
     pub deployment_id: String,
     #[serde(default)]
@@ -70,6 +67,7 @@ pub enum TrustedChannelError {
     HealthNotOk,
     HealthParseFailed,
     VersionParseFailed,
+    Timeout,
     IoError(String),
 }
 
@@ -90,6 +88,7 @@ impl std::fmt::Display for TrustedChannelError {
             Self::HealthNotOk => write!(f, "router health is not ok"),
             Self::HealthParseFailed => write!(f, "failed to parse health response"),
             Self::VersionParseFailed => write!(f, "failed to parse version response"),
+            Self::Timeout => write!(f, "request timed out"),
             Self::IoError(msg) => write!(f, "io error: {msg}"),
         }
     }
@@ -117,7 +116,7 @@ impl TrustedChannel {
             TcpStream::connect(&authority),
         )
         .await
-        .map_err(|_| TrustedChannelError::ConnectFailed("timeout".into()))?
+        .map_err(|_| TrustedChannelError::Timeout)?
         .map_err(|e| TrustedChannelError::ConnectFailed(e.to_string()))?;
         stream
             .set_nodelay(true)
@@ -145,7 +144,7 @@ impl TrustedChannel {
     ) -> TrustedResult<()> {
         tokio::time::timeout(timeout, self.verify_trust_inner(config))
             .await
-            .map_err(|_| TrustedChannelError::IoError("trust verification timeout".into()))?
+            .map_err(|_| TrustedChannelError::Timeout)?
     }
 
     async fn verify_trust_inner(&mut self, config: &TrustedChannelConfig) -> TrustedResult<()> {
@@ -164,7 +163,6 @@ impl TrustedChannel {
         let version: VersionInfo =
             serde_json::from_slice(&body).map_err(|_| TrustedChannelError::VersionParseFailed)?;
         if version.pid != config.expected_pid
-            || version.started_at != config.expected_started_at
             || version.deployment_id != config.expected_deployment_id
             || version.management_protocol_version != config.expected_protocol_version
         {
@@ -211,7 +209,7 @@ impl TrustedChannel {
             self.get_authed("/v1/models/image", api_key, max_body),
         )
         .await
-        .map_err(|_| TrustedChannelError::IoError("catalog timeout".into()))?
+        .map_err(|_| TrustedChannelError::Timeout)?
     }
 
     /// Sends a generation request to `/v1/images/generations` with an API key.
@@ -227,7 +225,7 @@ impl TrustedChannel {
             self.post_authed("/v1/images/generations", api_key, request_body, max_body),
         )
         .await
-        .map_err(|_| TrustedChannelError::IoError("generation timeout".into()))?
+        .map_err(|_| TrustedChannelError::Timeout)?
     }
 
     async fn get_bounded(&mut self, path: &str, max_body: usize) -> TrustedResult<Vec<u8>> {
@@ -286,6 +284,13 @@ impl TrustedChannel {
         if self.connection_closed {
             return Err(TrustedChannelError::ConnectionClose);
         }
+        debug_assert!(
+            body.is_none()
+                || headers
+                    .iter()
+                    .any(|(name, _)| name.eq_ignore_ascii_case("Content-Length")),
+            "requests with a body require Content-Length"
+        );
         let mut request = Zeroizing::new(format!(
             "{method} {path} HTTP/1.1\r\nHost: {}\r\n",
             self.host
@@ -617,12 +622,11 @@ mod tests {
         stream.flush().await.unwrap();
     }
 
-    fn trusted_config(address: std::net::SocketAddr, started_at: &str) -> TrustedChannelConfig {
+    fn trusted_config(address: std::net::SocketAddr) -> TrustedChannelConfig {
         let identity = router_process::inspect(std::process::id()).unwrap();
         TrustedChannelConfig {
             listen_address: format!("http://{address}"),
             expected_pid: identity.pid,
-            expected_started_at: started_at.into(),
             expected_process_started_at: identity.started_at,
             expected_process_executable: identity.executable.clone(),
             expected_deployment_id: "prod-a".into(),
@@ -681,7 +685,6 @@ mod tests {
         let config = TrustedChannelConfig {
             listen_address: address.to_string(),
             expected_pid: 1,
-            expected_started_at: "start".into(),
             expected_process_started_at: "process-start".into(),
             expected_process_executable: "/router".into(),
             expected_deployment_id: "prod-a".into(),
@@ -703,13 +706,17 @@ mod tests {
     async fn trust_and_authentication_share_one_tcp_connection() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
-        let started_at = "2026-08-01T00:00:00Z";
+        let router_started_at = "2026-08-01T00:00:00Z";
         let server = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
             assert!(read_request_head(&mut stream)
                 .await
                 .starts_with("GET /version HTTP/1.1\r\n"));
-            write_json_response(&mut stream, &version_json(started_at, std::process::id())).await;
+            write_json_response(
+                &mut stream,
+                &version_json(router_started_at, std::process::id()),
+            )
+            .await;
 
             assert!(read_request_head(&mut stream)
                 .await
@@ -721,7 +728,9 @@ mod tests {
             assert!(catalog_request.contains("Authorization: Bearer fixture-key\r\n"));
             write_json_response(&mut stream, r#"{"object":"list","data":[]}"#).await;
         });
-        let config = trusted_config(address, started_at);
+        // Manager state has its own creation timestamp; only the OS process
+        // identity is suitable for correlating process start time.
+        let config = trusted_config(address);
 
         let mut channel = TrustedChannel::connect(&config).await.unwrap();
         channel.verify_trust(&config).await.unwrap();
@@ -815,7 +824,7 @@ mod tests {
                     "{scenario} attempted to redial"
                 );
             });
-            let mut config = trusted_config(address, started_at);
+            let mut config = trusted_config(address);
             if scenario == "process" {
                 config.expected_process_started_at.push_str("-changed");
             }
@@ -847,13 +856,13 @@ mod tests {
             assert!(!request.contains("Authorization:"));
             tokio::time::sleep(Duration::from_millis(100)).await;
         });
-        let config = trusted_config(address, "2026-08-01T00:00:00Z");
+        let config = trusted_config(address);
         let mut channel = TrustedChannel::connect(&config).await.unwrap();
         assert!(matches!(
             channel
                 .verify_trust_with_timeout(&config, Duration::from_millis(20))
                 .await,
-            Err(TrustedChannelError::IoError(message)) if message.contains("timeout")
+            Err(TrustedChannelError::Timeout)
         ));
         server.await.unwrap();
     }

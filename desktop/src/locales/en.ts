@@ -642,6 +642,7 @@ export const en: Record<TranslationKey, string> = {
   "conversations.heading": "Image conversations",
   "conversations.overline": "Trusted local image data plane",
   "conversations.new": "New conversation",
+  "conversations.messageCount": "Messages: {count}",
   "conversations.empty":
     'No conversations yet. Click "New conversation" to start.',
   "conversations.delete": "Delete",

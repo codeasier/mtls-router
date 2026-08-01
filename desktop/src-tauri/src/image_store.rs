@@ -69,20 +69,15 @@ pub enum MessageRole {
     Assistant,
 }
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum MessageStatus {
     Running,
+    #[default]
     Succeeded,
     Failed,
     Cancelled,
     Interrupted,
-}
-
-impl Default for MessageStatus {
-    fn default() -> Self {
-        Self::Succeeded
-    }
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]

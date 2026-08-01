@@ -10,13 +10,13 @@ import { renderWithI18n } from "./test/render";
 const GPT_MODEL = "cx/gpt-5.5-image";
 const GEMINI_MODEL = "ag/gemini-3.1-flash-image";
 
-function conversation(model = GPT_MODEL): ImageConversation {
+function conversation(model = GPT_MODEL, messageCount = 0): ImageConversation {
   return {
     id: "conversation-1",
     selected: true,
     title: "Fixture conversation",
     selected_model: model,
-    message_count: 0,
+    message_count: messageCount,
     created_at: "2026-08-01T00:00:00Z",
     updated_at: "2026-08-01T00:00:00Z",
   };
@@ -40,6 +40,17 @@ function deferred<T>() {
 }
 
 describe("ConversationsPage", () => {
+  it("labels the total conversation message count neutrally", async () => {
+    renderPage({
+      imageConversations: vi
+        .fn()
+        .mockResolvedValue([conversation(GPT_MODEL, 2)]),
+    });
+
+    expect(await screen.findByText("消息：2")).toBeVisible();
+    expect(screen.queryByText("2 完成")).not.toBeInTheDocument();
+  });
+
   it("persists an explicit model selection and submits that exact model", async () => {
     const user = userEvent.setup();
     const api = renderPage();

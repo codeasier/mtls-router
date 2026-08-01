@@ -49,9 +49,15 @@ impl std::fmt::Display for ImageValidationError {
 
 impl std::error::Error for ImageValidationError {}
 
-/// Validates a single `b64_json` field from a generation response.
-/// Returns the decoded bytes, format, and dimensions.
+/// Validates a single `b64_json` field and returns its metadata.
 pub fn validate_b64_image(b64: &str) -> Result<ValidatedImage, ImageValidationError> {
+    decode_and_validate_b64_image(b64).map(|(_, validated)| validated)
+}
+
+/// Decodes and validates a single `b64_json` field without a second decode.
+pub fn decode_and_validate_b64_image(
+    b64: &str,
+) -> Result<(Vec<u8>, ValidatedImage), ImageValidationError> {
     if b64.is_empty() {
         return Err(ImageValidationError::Empty);
     }
@@ -76,7 +82,8 @@ pub fn validate_b64_image(b64: &str) -> Result<ValidatedImage, ImageValidationEr
     if decoded.len() > MAX_IMAGE_BYTES {
         return Err(ImageValidationError::ExceedsMaxBytes);
     }
-    validate_image_bytes(&decoded)
+    let validated = validate_image_bytes(&decoded)?;
+    Ok((decoded, validated))
 }
 
 /// Validates raw image bytes: magic bytes, format, dimensions, and size.
@@ -214,13 +221,16 @@ fn read_jpeg_dimensions(data: &[u8]) -> Result<(u32, u32), ImageValidationError>
 }
 
 fn read_webp_dimensions(data: &[u8]) -> Result<(u32, u32), ImageValidationError> {
-    if data.len() < 30 {
+    if data.len() < 16 {
         return Err(ImageValidationError::DimensionsUnreadable);
     }
     let fourcc = &data[12..16];
     match fourcc {
         b"VP8 " => {
             // Lossy VP8
+            if data.len() < 30 {
+                return Err(ImageValidationError::DimensionsUnreadable);
+            }
             let width = u16::from_le_bytes([data[26], data[27]]) as u32 & 0x3fff;
             let height = u16::from_le_bytes([data[28], data[29]]) as u32 & 0x3fff;
             if width == 0 || height == 0 {
@@ -230,17 +240,10 @@ fn read_webp_dimensions(data: &[u8]) -> Result<(u32, u32), ImageValidationError>
         }
         b"VP8L" => {
             // Lossless VP8L
-            if data.len() < 25 {
+            if data.len() < 25 || data[20] != 0x2f {
                 return Err(ImageValidationError::DimensionsUnreadable);
             }
-            // VP8L signature byte at data[21] should be 0x2f
-            let bits = u32::from_le_bytes([data[22], data[23], data[24], {
-                if data.len() > 25 {
-                    data[25]
-                } else {
-                    0
-                }
-            }]);
+            let bits = u32::from_le_bytes([data[21], data[22], data[23], data[24]]);
             let width = (bits & 0x3fff) + 1;
             let height = ((bits >> 14) & 0x3fff) + 1;
             if width == 0 || height == 0 {
@@ -250,6 +253,9 @@ fn read_webp_dimensions(data: &[u8]) -> Result<(u32, u32), ImageValidationError>
         }
         b"VP8X" => {
             // Extended VP8X
+            if data.len() < 30 {
+                return Err(ImageValidationError::DimensionsUnreadable);
+            }
             let width = 1 + u32::from_le_bytes([data[24], data[25], data[26], 0]);
             let height = 1 + u32::from_le_bytes([data[27], data[28], data[29], 0]);
             if width == 0 || height == 0 {
@@ -279,6 +285,13 @@ mod tests {
         data.push(0); // compression
         data.push(0); // filter
         data.push(0); // interlace
+        data
+    }
+
+    fn make_vp8l(width: u32, height: u32) -> Vec<u8> {
+        let bits = (width - 1) | ((height - 1) << 14);
+        let mut data = b"RIFF\x00\x00\x00\x00WEBPVP8L\x05\x00\x00\x00\x2f".to_vec();
+        data.extend(bits.to_le_bytes());
         data
     }
 
@@ -369,6 +382,26 @@ mod tests {
             result,
             Err(ImageValidationError::DimensionsUnreadable)
         ));
+    }
+
+    #[test]
+    fn validates_vp8l_dimensions_from_bytes_after_signature() {
+        let result = validate_image_bytes(&make_vp8l(2, 3)).unwrap();
+        assert_eq!((result.width, result.height), (2, 3));
+    }
+
+    #[test]
+    fn rejects_truncated_or_excessive_pixel_count_vp8l() {
+        let mut truncated = make_vp8l(2, 3);
+        truncated.pop();
+        assert_eq!(
+            validate_image_bytes(&truncated),
+            Err(ImageValidationError::DimensionsUnreadable)
+        );
+        assert_eq!(
+            validate_image_bytes(&make_vp8l(MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION)),
+            Err(ImageValidationError::ExceedsMaxPixels)
+        );
     }
 
     #[test]

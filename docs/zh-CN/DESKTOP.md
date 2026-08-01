@@ -115,7 +115,7 @@ Rebuild 输出有意只包含托管内容：Claude `settings.json` 只包含托�
 
 对话 metadata 和按内容寻址的图片资产保存在当前用户应用数据目录的 `image-conversations/` 下。它们受当前用户文件权限保护，但不额外加密。删除对话时先提交保留内容的快照，再删除不再被其他对话引用的资产；中断的清理由后续启动时的孤儿恢复继续处理。损坏或未知版本的快照会原样保留并 fail closed，直到用户显式确认**重建图片数据**；该操作会删除全部图片对话和资产。卸载不会自动删除这些对话或资产。
 
-Webview 只接收 conversation/message/asset/model ID、提示词、状态和只读 `image-asset` custom URI；不会获得 API key、base64 图片正文、绝对路径、任意文件访问或网络能力。Rust 读取已保存 key 前，会从 manager 获取完整私有信任状态，并在同一个 loopback HTTP/1.1 连接上校验 `/version`、PID/启动/可执行文件身份和 `/health`；认证目录与 generation 请求继续使用该不可重拨连接。
+Webview 只接收 conversation/message/asset/model ID、提示词、状态和只读 `image-asset` custom URI；不会获得 API key、base64 图片正文、绝对路径、任意文件访问或网络能力。Rust 读取已保存 key 前，会从 manager 获取完整私有信任状态，并在同一个 loopback HTTP/1.1 连接上校验 `/version`、PID/启动/可执行文件身份和 `/health`。图片就绪状态会刻意要求 `/health` 返回 `status: "ok"`；上游降级时，即使 router 的健康端点仍返回 HTTP 200，图片凭据通道也保持关闭。认证目录与 generation 请求继续使用该不可重拨连接。
 
 ## API key 边界和限制
 

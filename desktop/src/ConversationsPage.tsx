@@ -462,7 +462,9 @@ export function ConversationsPage({ api }: { api: DesktopApi }) {
                     {conv.title || t("conversations.new")}
                   </span>
                   <span className="conversations-item-meta">
-                    {conv.message_count} {t("conversations.status.succeeded")}
+                    {t("conversations.messageCount", {
+                      count: conv.message_count,
+                    })}
                   </span>
                 </button>
                 <button

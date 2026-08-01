@@ -1,11 +1,12 @@
 {
-  "description": "Language-agnostic conformance vectors for trusted channel security boundaries. Both Go trustedrouter.Channel and Rust image client tests consume these vectors. Any change to security semantics must update both sides.",
+  "description": "Shared superset of trusted-channel security scenarios. Go and Rust tests consume the matrix according to explicit implementation applicability; their trust chains are not identical.",
   "vectors": [
     {
       "name": "version_pid_mismatch",
       "scenario": "Router /version returns a PID that does not match the expected PID from manager state.",
       "expected_outcome": "fail_before_auth",
       "auth_must_never_be_sent": true,
+      "go_applicability": "channel",
       "go_error_code": "MODEL_CATALOG_STALE",
       "rust_error": "VersionMismatch"
     },
@@ -14,6 +15,7 @@
       "scenario": "Router /version returns a deployment_id that does not match the expected deployment from manager state.",
       "expected_outcome": "fail_before_auth",
       "auth_must_never_be_sent": true,
+      "go_applicability": "channel",
       "go_error_code": "MODEL_CATALOG_STALE",
       "rust_error": "VersionMismatch"
     },
@@ -22,6 +24,7 @@
       "scenario": "Router /version returns a management_protocol_version that does not match the expected protocol.",
       "expected_outcome": "fail_before_auth",
       "auth_must_never_be_sent": true,
+      "go_applicability": "channel",
       "go_error_code": "MODEL_CATALOG_STALE",
       "rust_error": "VersionMismatch"
     },
@@ -30,6 +33,7 @@
       "scenario": "The live process at the expected PID does not match the expected binary path or start time.",
       "expected_outcome": "fail_before_auth",
       "auth_must_never_be_sent": true,
+      "go_applicability": "channel",
       "go_error_code": "MODEL_CATALOG_STALE",
       "rust_error": "ProcessMismatch"
     },
@@ -38,6 +42,7 @@
       "scenario": "The listen address is not a loopback address (e.g., 10.0.0.1 or 0.0.0.0).",
       "expected_outcome": "fail_before_auth",
       "auth_must_never_be_sent": true,
+      "go_applicability": "listener",
       "go_error_code": null,
       "rust_error": "NonLoopbackAddress"
     },
@@ -46,6 +51,7 @@
       "scenario": "The server responds with a 3xx redirect to any request in the trust chain.",
       "expected_outcome": "fail_before_auth",
       "auth_must_never_be_sent": true,
+      "go_applicability": "channel",
       "go_error_code": "MODEL_DISCOVERY_FAILED",
       "rust_error": "Redirect"
     },
@@ -54,6 +60,7 @@
       "scenario": "The server sends Connection: close in the /version response, requiring a redial for /health or authenticated request.",
       "expected_outcome": "fail_before_auth",
       "auth_must_never_be_sent": true,
+      "go_applicability": "channel",
       "go_error_code": "MODEL_DISCOVERY_FAILED",
       "rust_error": "ConnectionClose"
     },
@@ -62,6 +69,7 @@
       "scenario": "The server responds with 101 Switching Protocols or an Upgrade header.",
       "expected_outcome": "fail_before_auth",
       "auth_must_never_be_sent": true,
+      "go_applicability": "channel",
       "go_error_code": "MODEL_DISCOVERY_FAILED",
       "rust_error": "ProtocolUpgrade"
     },
@@ -70,14 +78,17 @@
       "scenario": "The /version request times out beyond the connect/handshake timeout.",
       "expected_outcome": "fail_before_auth",
       "auth_must_never_be_sent": true,
+      "go_applicability": "channel",
       "go_error_code": "MODEL_DISCOVERY_FAILED",
-      "rust_error": "IoError"
+      "rust_error": "Timeout"
     },
     {
       "name": "cancel_during_generation",
       "scenario": "The user cancels an in-progress generation request.",
       "expected_outcome": "fail_after_auth",
       "auth_must_never_be_sent": false,
+      "go_applicability": "not_applicable",
+      "go_reason": "Generation cancellation belongs to the Rust image data plane; Go trustedrouter only fetches model catalogs.",
       "go_error_code": null,
       "rust_error": "Cancelled"
     },
@@ -86,20 +97,23 @@
       "scenario": "The connection drops after /version and the client attempts to establish a new connection for the authenticated request.",
       "expected_outcome": "fail_before_auth",
       "auth_must_never_be_sent": true,
+      "go_applicability": "channel",
       "go_error_code": "MODEL_DISCOVERY_FAILED",
-      "rust_error": "Redial"
+      "rust_error": "ConnectionClose"
     },
     {
       "name": "health_not_ok",
       "scenario": "The /health endpoint returns a status other than 'ok'.",
       "expected_outcome": "fail_before_auth",
       "auth_must_never_be_sent": true,
+      "go_applicability": "not_applicable",
+      "go_reason": "The Go catalog channel has no /health step; the Rust image credential path intentionally adds this gate.",
       "go_error_code": null,
       "rust_error": "HealthNotOk"
     }
   ],
   "invariants": [
-    "Authorization header is only sent after /version, process identity, and /health all pass on the same TCP connection.",
+    "Authorization is sent only after each implementation's declared trust chain passes on the same TCP connection; Rust image requests additionally require /health status ok.",
     "Any failure in the trust chain closes the connection and never sends the API key on a new connection.",
     "Redirect, proxy, and protocol upgrade are never followed.",
     "The listen address must be loopback (127.0.0.0/8 or ::1).",
