@@ -142,6 +142,16 @@ impl LifecycleState {
         true
     }
 
+    pub fn prepare_restart(&self) -> bool {
+        let mut inner = self.lock();
+        if inner.operation_active || inner.quit != QuitState::Idle {
+            return false;
+        }
+        inner.draft_dirty = false;
+        inner.quit = QuitState::Exiting;
+        true
+    }
+
     fn lock(&self) -> MutexGuard<'_, LifecycleInner> {
         self.inner.lock().unwrap_or_else(|error| error.into_inner())
     }
@@ -270,6 +280,25 @@ mod tests {
             assert!(state.try_begin_quit_operation());
             assert!(!state.try_begin_quit_operation());
             assert!(state.run_operation(async {}).await.is_none());
+        });
+    }
+
+    #[test]
+    fn approved_restart_is_allowed_only_after_the_update_operation_finishes() {
+        tauri::async_runtime::block_on(async {
+            let state = LifecycleState::default();
+            state.set_draft_dirty(true);
+
+            let output = state
+                .run_operation(async { assert!(!state.prepare_restart()) })
+                .await
+                .unwrap();
+            assert_eq!(output.quit_action, QuitAction::None);
+
+            assert!(state.prepare_restart());
+            assert!(state.is_exiting());
+            assert!(!state.prepare_restart());
+            assert_eq!(state.request_quit(true), QuitAction::None);
         });
     }
 

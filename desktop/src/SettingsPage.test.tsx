@@ -1,4 +1,5 @@
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -25,7 +26,7 @@ describe("SettingsPage", () => {
     await openSettings();
 
     expect(screen.getByRole("switch", { name: /开机时启动/ })).toBeChecked();
-    expect(screen.getByText("desktop-v1")).toBeInTheDocument();
+    expect(screen.getAllByText("desktop-v1")).not.toHaveLength(0);
     expect(screen.getByText("manager-v1")).toBeInTheDocument();
     expect(screen.getByText("router-v1")).toBeInTheDocument();
     expect(
@@ -51,6 +52,75 @@ describe("SettingsPage", () => {
       screen.getByRole("switch", { name: /开机时启动/ }),
     ).not.toBeChecked();
     expect(screen.getByText("开机启动设置已更新。")).toBeInTheDocument();
+  });
+
+  it("shows current update state and supports a manual recheck", async () => {
+    const api = await openSettings();
+
+    expect(await screen.findByText("当前已是最新版本")).toBeVisible();
+    expect(screen.getAllByText("desktop-v1")[0]).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "检查更新" }));
+
+    await waitFor(() => expect(api.checkForUpdate).toHaveBeenCalledTimes(2));
+    expect(
+      screen.queryByRole("button", { name: "安装并重启" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("requires confirmation before install and reports download progress", async () => {
+    const progressListener = {
+      current: null as
+        ((progress: { downloaded: number; total?: number }) => void) | null,
+    };
+    let finishInstall!: () => void;
+    const installPromise = new Promise<void>((resolve) => {
+      finishInstall = resolve;
+    });
+    const api = await openSettings(
+      createMockApi({
+        checkForUpdate: vi.fn().mockResolvedValue({
+          available: true,
+          current_version: "1.0.0",
+          update: {
+            version: "1.1.0",
+            notes: "Security and reliability fixes.",
+            published_at: "2026-08-01T00:00:00Z",
+          },
+        }),
+        subscribeUpdateProgress: vi.fn(async (listener) => {
+          progressListener.current = listener;
+          return () => undefined;
+        }),
+        installUpdate: vi.fn(() => installPromise),
+      }),
+    );
+    await screen.findByText("Security and reliability fixes.");
+
+    vi.spyOn(window, "confirm").mockReturnValueOnce(false);
+    fireEvent.click(screen.getByRole("button", { name: "安装并重启" }));
+    expect(api.installUpdate).not.toHaveBeenCalled();
+
+    vi.spyOn(window, "confirm").mockReturnValueOnce(true);
+    fireEvent.click(screen.getByRole("button", { name: "安装并重启" }));
+    await waitFor(() =>
+      expect(api.installUpdate).toHaveBeenCalledWith("1.1.0"),
+    );
+    expect(api.subscribeUpdateProgress).toHaveBeenCalledOnce();
+
+    act(() => progressListener.current?.({ downloaded: 50, total: 100 }));
+    const progress = await screen.findByRole("progressbar", {
+      name: "更新下载进度",
+    });
+    expect(progress).toHaveAttribute("aria-valuenow", "50");
+    expect(progress).toHaveAttribute("aria-valuemax", "100");
+    expect(screen.getByText("已下载 50 / 100 字节")).toBeVisible();
+
+    await act(async () => finishInstall());
+    expect(
+      await screen.findByText("更新已安装，正在重启...", {
+        selector: ".update-panel__state",
+      }),
+    ).toBeVisible();
   });
 
   it("defaults to Chinese, switches to English, and stores only language", async () => {

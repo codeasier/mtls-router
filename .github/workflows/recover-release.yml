@@ -119,7 +119,6 @@ jobs:
           matches = [release for page in pages for release in page if release["tag_name"] == os.environ["RELEASE_TAG"]]
           assert len(matches) <= 1
           if matches:
-              assert matches[0]["draft"] is True
               assert matches[0]["prerelease"] is False
           PY
           printf 'tag_sha=%s\n' "$tag_sha" >>"$GITHUB_OUTPUT"
@@ -146,6 +145,7 @@ jobs:
       - name: Preflight and package
         env:
           DOWNLOAD_BASE_URL: https://downloads.codeasier.top/${{ github.event.repository.name }}/${{ inputs.release_tag }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
           SOURCE_DATE_EPOCH: '0'
         run: ./scripts/package-release.sh
       - name: Upload assembled release
@@ -167,6 +167,34 @@ jobs:
         with:
           name: recovered-release-${{ inputs.release_tag }}
           path: release
+      - name: Validate recovered updater assets
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          DOWNLOAD_BASE_URL: https://downloads.codeasier.top/${{ github.event.repository.name }}/${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          (cd release && sha256sum -c SHA256SUMS)
+          jq -e --arg version "${RELEASE_TAG#v}" --arg base "$DOWNLOAD_BASE_URL/" '
+            .version == $version and
+            (.platforms | keys | sort) == ([
+              "darwin-aarch64", "darwin-x86_64", "linux-aarch64",
+              "linux-x86_64", "windows-aarch64", "windows-x86_64"
+            ] | sort) and
+            ([.platforms[] | select((.signature | length) == 0 or (.url | startswith($base) | not))] | length) == 0
+          ' release/latest.json >/dev/null
+          while read -r target name; do
+            test -s "release/$name"
+            test -s "release/$name.sig"
+            test "$(jq -r --arg target "$target" '.platforms[$target].url' release/latest.json)" = "$DOWNLOAD_BASE_URL/$name"
+            test "$(jq -r --arg target "$target" '.platforms[$target].signature' release/latest.json)" = "$(cat "release/$name.sig")"
+          done <<'TARGETS'
+          linux-x86_64 CodeasierRouter-linux-amd64.AppImage
+          linux-aarch64 CodeasierRouter-linux-arm64.AppImage
+          windows-x86_64 CodeasierRouter-windows-amd64.exe
+          windows-aarch64 CodeasierRouter-windows-arm64.exe
+          darwin-x86_64 CodeasierRouter-darwin-amd64.app.tar.gz
+          darwin-aarch64 CodeasierRouter-darwin-arm64.app.tar.gz
+          TARGETS
       - name: Revalidate tag and prepare draft Release
         id: prepare-release
         env:
@@ -181,7 +209,7 @@ jobs:
           if [[ -n "$current_latest" ]]; then
             test "$(printf '%s\n%s\n' "$current_latest" "$RELEASE_TAG" | sort -V | tail -n1)" = "$RELEASE_TAG"
           fi
-          find_draft_id() {
+          find_release() {
             local releases
             releases="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --slurp)"
             RELEASES="$releases" RELEASE_TAG="$RELEASE_TAG" EXPECTED_SHA="$EXPECTED_SHA" python3 - <<'PY'
@@ -193,28 +221,34 @@ jobs:
           assert len(matches) <= 1
           if matches:
               release = matches[0]
-              assert release["draft"] is True
               assert release["prerelease"] is False
-              assert release["target_commitish"] == os.environ["EXPECTED_SHA"]
-              print(release["id"])
+              if release["draft"]:
+                  assert release["target_commitish"] == os.environ["EXPECTED_SHA"]
+              print(f'{release["id"]}\t{str(release["draft"]).lower()}')
           PY
           }
-          release_id="$(find_draft_id)"
-          if [[ -z "$release_id" ]]; then
+          release_record="$(find_release)"
+          if [[ -z "$release_record" ]]; then
             gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft --title "$RELEASE_TAG" --target "$EXPECTED_SHA"
-            release_id="$(find_draft_id)"
-            test -n "$release_id"
+            release_record="$(find_release)"
+            test -n "$release_record"
           fi
+          IFS=$'\t' read -r release_id release_is_draft <<<"$release_record"
+          test -n "$release_id"
           printf '%s\n' release/* | sed 's#^release/##' | LC_ALL=C sort >expected-assets.txt
-          gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" --jq '.[].id' | while read -r asset_id; do
-            gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
-          done
-          for asset in release/*; do
-            gh api --method POST \
-              -H 'Content-Type: application/octet-stream' \
-              "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$release_id/assets?name=$(basename "$asset")" \
-              --input "$asset" >/dev/null
-          done
+          if [[ "$release_is_draft" == true ]]; then
+            gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" --jq '.[].id' | while read -r asset_id; do
+              gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
+            done
+            for asset in release/*; do
+              gh api --method POST \
+                -H 'Content-Type: application/octet-stream' \
+                "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$release_id/assets?name=$(basename "$asset")" \
+                --input "$asset" >/dev/null
+            done
+          else
+            test "$release_is_draft" = false
+          fi
           gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" --jq '.[].name' | LC_ALL=C sort >actual-assets.txt
           cmp expected-assets.txt actual-assets.txt
           printf 'release_id=%s\n' "$release_id" >>"$GITHUB_OUTPUT"
@@ -248,6 +282,12 @@ jobs:
             tag='${{ inputs.release_tag }}'
             base="/home/codeasier/downloads/$repo"
             test -d "$base/$tag"
+            test ! -e "$base/latest" || test -L "$base/latest"
+            if test -L "$base/latest"; then
+              current="$(basename "$(readlink "$base/latest")")"
+              [[ "$current" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+              test "$(printf '%s\n%s\n' "$current" "$tag" | sort -V | tail -n1)" = "$tag"
+            fi
             ln -sfn "$tag" "$base/latest.tmp"
             mv -Tf "$base/latest.tmp" "$base/latest"
       - name: Revalidate tag before publication

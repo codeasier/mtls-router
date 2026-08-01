@@ -10,6 +10,8 @@ LOCK="$ROOT/desktop/package-lock.json"
 SIDECARS="$ROOT/desktop/scripts/build-sidecars.sh"
 PREPARE="$ROOT/desktop/scripts/prepare-version.sh"
 CREATE_DMG="$ROOT/desktop/scripts/create-macos-dmg.sh"
+CREATE_MACOS_UPDATER="$ROOT/desktop/scripts/create-macos-updater.sh"
+PREPARE_UPDATER="$ROOT/desktop/scripts/prepare-updater-config.sh"
 CONFIG="$ROOT/desktop/src-tauri/tauri.conf.json"
 HOOKS="$ROOT/desktop/src-tauri/windows/uninstall-hooks.nsh"
 
@@ -406,7 +408,7 @@ for block in "$unsigned_macos_block" "$signed_macos_block"; do
   [[ "$block" == *'./scripts/create-macos-dmg.sh ${{ matrix.target }} "$VERSION"'* ]] || \
     fail 'each macOS package path must use the controlled DMG helper'
 done
-[[ "$unsigned_macos_block" == *'npm exec tauri -- build --target ${{ matrix.target }} --bundles app --no-sign --ci'* ]] || \
+[[ "$unsigned_macos_block" == *'npm exec tauri -- build --target ${{ matrix.target }} --bundles app --config "$TAURI_UPDATER_CONFIG" --no-sign --ci'* ]] || \
   fail 'unsigned macOS packaging must ask Tauri for an app bundle'
 [[ "$unsigned_macos_block" == *'codesign --force --sign - "src-tauri/binaries/mtls-router-${{ matrix.target }}"'* ]] || \
   fail 'fallback macOS packaging must ad-hoc sign the router sidecar before bundling'
@@ -414,7 +416,7 @@ done
   fail 'fallback macOS packaging must ad-hoc sign the manager sidecar before bundling'
 [[ "$unsigned_macos_block" == *'codesign --force --sign - "$app/Contents/MacOS/mtls-router-desktop"'* ]] || \
   fail 'fallback macOS packaging must ad-hoc sign the desktop executable before sealing the bundle'
-[[ "$unsigned_macos_block" == *'codesign --force --sign - "src-tauri/binaries/mtls-router-${{ matrix.target }}"'*'codesign --force --sign - "src-tauri/binaries/mtls-router-manager-${{ matrix.target }}"'*'npm exec tauri -- build --target ${{ matrix.target }} --bundles app --no-sign --ci'*'codesign --force --sign - "$app/Contents/MacOS/mtls-router-desktop"'*'codesign --force --sign - "$app"'*'./scripts/create-macos-dmg.sh ${{ matrix.target }} "$VERSION"'* ]] || \
+[[ "$unsigned_macos_block" == *'codesign --force --sign - "src-tauri/binaries/mtls-router-${{ matrix.target }}"'*'codesign --force --sign - "src-tauri/binaries/mtls-router-manager-${{ matrix.target }}"'*'npm exec tauri -- build --target ${{ matrix.target }} --bundles app --config "$TAURI_UPDATER_CONFIG" --no-sign --ci'*'codesign --force --sign - "$app/Contents/MacOS/mtls-router-desktop"'*'codesign --force --sign - "$app"'*'./scripts/create-macos-dmg.sh ${{ matrix.target }} "$VERSION"'*'./scripts/create-macos-updater.sh ${{ matrix.target }}'* ]] || \
   fail 'fallback macOS executables and app bundle must be signed in dependency order before DMG creation'
 if [[ "$unsigned_macos_block" == *'codesign --force --deep'* ]]; then
   fail 'fallback macOS bundle signing must not recursively modify hashed sidecars'
@@ -689,18 +691,38 @@ contains "$RELEASE" 'status="signed (notarization credentials unavailable)"'
 contains "$RELEASE" 'status="signed and notarized"'
 contains "$RELEASE" 'status="signed"'
 contains "$RELEASE" 'status="unsigned (credentials unavailable)"'
-contains "$RELEASE" 'needs: [build, desktop]'
+contains "$RELEASE" 'needs: [prepare, build, desktop]'
 contains "$RELEASE" './scripts/package-release.sh'
 contains "$RELEASE_PACKAGE" '(cd desktop-packages && sha256sum -c CodeasierRouter-*.sha256)'
 
 if grep -Eqi 'dmg.*(uninstall hook|delete hook)|appimage.*(uninstall hook|delete hook)' "$RELEASE" "$CONFIG"; then
   fail 'DMG/AppImage configuration claims an unavailable uninstall hook'
 fi
-if grep -Eqi 'updater|update endpoint' "$CI" "$RELEASE"; then
-  fail 'workflow enables or references an updater'
-fi
-if grep -Fq 'tauri-plugin-updater' "$ROOT/desktop/src-tauri/Cargo.toml" "$ROOT/desktop/src-tauri/Cargo.lock"; then
-  fail 'desktop workspace enables the Tauri updater plugin'
+[[ -x "$PREPARE_UPDATER" && -x "$CREATE_MACOS_UPDATER" ]] || fail 'release updater helpers must be executable'
+contains "$PREPARE_UPDATER" 'createUpdaterArtifacts: process.env.ENABLED === "true"'
+contains "$PREPARE_UPDATER" 'TAURI_UPDATER_PUBKEY'
+contains "$PREPARE_UPDATER" 'TAURI_UPDATER_PUBKEY_SHA256'
+contains "$PREPARE_UPDATER" 'does not match the pinned fingerprint'
+contains "$PREPARE_UPDATER" '^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$'
+contains "$CREATE_MACOS_UPDATER" 'npm exec tauri -- signer sign "$archive"'
+contains "$ROOT/desktop/scripts/verify-package.sh" 'CodeasierRouter-$os-$arch.app.tar.gz'
+contains "$ROOT/desktop/scripts/verify-package.sh" '--example verify_updater_signature'
+for secret in TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD TAURI_UPDATER_PUBKEY; do
+  contains "$RELEASE" "$secret: "'${{ secrets.'"$secret"' }}'
+done
+contains "$RELEASE" 'UPDATER_ENDPOINT: https://downloads.codeasier.top/${{ github.event.repository.name }}/latest/latest.json'
+contains "$RELEASE" 'TAURI_UPDATER_PUBKEY_SHA256: ${{ vars.TAURI_UPDATER_PUBKEY_SHA256 }}'
+contains "$RELEASE" 'npm exec tauri -- signer sign "$package"'
+contains "$RELEASE" 'if: needs.prepare.outputs.online-update == '\''true'\'''
+contains "$RELEASE_PACKAGE" '"linux-x86_64": "CodeasierRouter-linux-amd64.AppImage"'
+contains "$RELEASE_PACKAGE" '"linux-aarch64": "CodeasierRouter-linux-arm64.AppImage"'
+contains "$RELEASE_PACKAGE" '"windows-x86_64": "CodeasierRouter-windows-amd64.exe"'
+contains "$RELEASE_PACKAGE" '"windows-aarch64": "CodeasierRouter-windows-arm64.exe"'
+contains "$RELEASE_PACKAGE" '"darwin-x86_64": "CodeasierRouter-darwin-amd64.app.tar.gz"'
+contains "$RELEASE_PACKAGE" '"darwin-aarch64": "CodeasierRouter-darwin-arm64.app.tar.gz"'
+contains "$RELEASE_PACKAGE" '(release / "latest.json").write_text'
+if grep -Eq 'BEGIN (OPENSSH |RSA |EC )?PRIVATE KEY|untrusted comment: minisign public key' "$RELEASE" "$PREPARE_UPDATER" "$CREATE_MACOS_UPDATER"; then
+  fail 'updater implementation contains embedded key material'
 fi
 
 printf 'PASS: desktop CI and release workflow configuration\n'

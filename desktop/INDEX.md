@@ -10,40 +10,43 @@ React UI ──Tauri invoke──▶ Rust commands.rs ──stdin/stdout JSON─
                               scheduler.rs ──poll──▶ manager ──emit──▶ "router-poll-snapshot" event ──▶ React
                                     │
                               port_recovery.rs ──约 10 秒采样──▶ released / reoccupied
+                                    │
+                              updater.rs ──HTTPS + Tauri signature──▶ downloads.codeasier.top
 ```
 
 桌面应用绝不直接与 router 通信。它以长驻子进程方式拉起 `mtls-router-manager serve`，带 `--desktop-session`、`--parent-pid/start/executable` flag。
 
 - **协议与启动失败诊断**：桌面端严格校验 management protocol v4 结构；预启动失败按稳定阶段和可选数值 OS 错误码生成安全诊断，启动后失败会终止并等待自有子进程。lifecycle 保留有界原始输出，而 app 协议仅暴露脱敏的会话作用域诊断。
 - **端口恢复**：RouterPage 只按结构化 action/reason 渲染按钮或 SCM/systemd 人工引导，不执行命令、不提权、不猜测 launchd label；Windows copy command 只生成适用于管理员 PowerShell 的安全引用文本，不适用于 `cmd.exe`。Rust `port_recovery.rs` 在 manager 报告分模式成功证据与首次释放后，由 scheduler 在约 10 秒内定期采样；只有持续的 `absent` 状态可产生 `released`，`unknown_occupant` 产生 `reoccupied`，其他状态、主动启动和 manager session 变化会取消观察。
+- **桌面整包更新**：仅精确 stable `vX.Y.Z` release 配置 `https://downloads.codeasier.top/mtls-router/latest/latest.json` 与 updater 公钥；启动时静默检查一次，Settings 可手动复查。用户确认后 `updater.rs` 重新检查精确 stable SemVer、下载并强制校验 Tauri 签名，只停止经验证的 desktop-owned router，安装包含 manager/router sidecar 的完整包并重启；不停止 external router，也不改变 CLI 更新路径。
 
 ## 前端（src/）
 
-| 文件                                                      | 职责                                                                                                                    |
-| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `ipc.ts`                                                  | `DesktopApi` 类型化包装；严格定义 cleanup detection/preview、`replace/delete/backup` effect 与精确无 key invoke payload |
-| `dev/fixtures.ts`                                         | 与 Vitest 解耦的浏览器/单测共用 fixture 数据、cleanup preview/result 与 mock 场景解析                                   |
-| `dev/mockDesktopApi.ts`                                   | 仅开发 mock 的内存 `DesktopApi`；模拟 cleanup preview/write，但不读写真实凭据或 Agent 配置                              |
-| `dev/resolveDesktopApi.ts`                                | mock 入口门控：仅 `DEV && VITE_MOCK=true` 时启用；生产构建始终走真实 Tauri API                                          |
-| `App.tsx`                                                 | 根布局、区块导航与注册式 Agent leave guard；面板存续期同步原生退出保护并共用可访问确认框                                |
-| `RouterPage.tsx`                                          | router 状态、start/stop、health、占用者检查/终止                                                                        |
-| `AgentPage.tsx`                                           | Agents 页面协调器：本地检测总览、互斥的单 Agent 配置/cleanup 目标、cleanup busy leave guard、完成后刷新与返回焦点恢复   |
-| `AgentOverview.tsx`                                       | Claude Code / OpenCode / Codex 总览；展示配置与 cleanup 状态；只为 managed/available Agent 提供单 Agent 清理入口        |
-| `AgentPanel.tsx`                                          | 持久单 Agent 面板：编辑器与 sticky preview/status rail 共存，覆盖导入导出、刷新冲突、写入、结果 dismiss 与 guard        |
-| `useAgentPanelController.ts`                              | 单 Agent detection/discovery flow、草稿基线、刷新冲突、preview/write/reload 的持久状态机                                |
-| `AgentConfigFields.tsx`                                   | Claude Code / OpenCode / Codex 结构化配置字段；提供 imperative snapshot 以同步本地 JSON 草稿                            |
-| `AgentPreviewPane.tsx`                                    | 脱敏 preview、文件影响、漂移/auth 审批、rebuild 确认与写入结果；导出配置/cleanup 共用的 `AgentFileEffectCard`           |
-| `AgentCleanupPanel.tsx`                                   | 独立的无 key cleanup 审阅：removed paths、replace/delete、敏感备份、漂移批准、stale/retry 与结果                        |
-| `agentCleanupState.ts`                                    | Cleanup-only reducer：`loading-preview/previewing/writing/result/stale/failed` 与写入门控                               |
-| `useAgentCleanupController.ts`                            | 单 Agent cleanup preview/write/repreview/retry 编排；generation guard 丢弃迟到结果，不调用凭据/目录/model flow          |
-| `AgentCleanupPanel.test.tsx`、`agentCleanupState.test.ts` | Cleanup UI、漂移门控、stale/retry、重复提交、保留数据警告与 reducer transition 测试                                     |
-| `agentPresentation.tsx`                                   | Agent 名称/logo、完整 detection 校验、安装/配置状态与 recovery 文案的共享展示模型                                       |
-| `ApiKeysPage.tsx`                                         | 全局 API key 保存、替换、删除及摘要展示；提交后清空输入，不提供明文回读                                                 |
-| `LogsPage.tsx`                                            | 有界的、安全过滤的 router 日志，手动刷新                                                                                |
-| `SettingsPage.tsx`                                        | 自启动、诊断、卸载准备、语言                                                                                            |
-| `model.ts`                                                | 共享类型（`SectionId`、`navigationItems`）                                                                              |
-| `i18n.tsx`                                                | I18n context provider，含 `zh-CN` 与 `en` locale                                                                        |
-| `locales/zh-CN.ts`、`locales/en.ts`                       | 翻译字典                                                                                                                |
+| 文件                                                      | 职责                                                                                                                   |
+| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `ipc.ts`                                                  | `DesktopApi` 类型化包装；严格定义 cleanup detection/preview、update check/install/progress event 与精确 invoke payload |
+| `dev/fixtures.ts`                                         | 与 Vitest 解耦的浏览器/单测共用 fixture 数据、cleanup preview/result 与 mock 场景解析                                  |
+| `dev/mockDesktopApi.ts`                                   | 仅开发 mock 的内存 `DesktopApi`；模拟 cleanup 与 updater 状态，但不读写真实凭据、Agent 配置或网络                      |
+| `dev/resolveDesktopApi.ts`                                | mock 入口门控：仅 `DEV && VITE_MOCK=true` 时启用；生产构建始终走真实 Tauri API                                         |
+| `App.tsx`                                                 | 根布局、区块导航、单次静默启动更新检查与注册式 Agent leave guard；面板存续期同步原生退出保护并共用可访问确认框         |
+| `RouterPage.tsx`                                          | router 状态、start/stop、health、占用者检查/终止                                                                       |
+| `AgentPage.tsx`                                           | Agents 页面协调器：本地检测总览、互斥的单 Agent 配置/cleanup 目标、cleanup busy leave guard、完成后刷新与返回焦点恢复  |
+| `AgentOverview.tsx`                                       | Claude Code / OpenCode / Codex 总览；展示配置与 cleanup 状态；只为 managed/available Agent 提供单 Agent 清理入口       |
+| `AgentPanel.tsx`                                          | 持久单 Agent 面板：编辑器与 sticky preview/status rail 共存，覆盖导入导出、刷新冲突、写入、结果 dismiss 与 guard       |
+| `useAgentPanelController.ts`                              | 单 Agent detection/discovery flow、草稿基线、刷新冲突、preview/write/reload 的持久状态机                               |
+| `AgentConfigFields.tsx`                                   | Claude Code / OpenCode / Codex 结构化配置字段；提供 imperative snapshot 以同步本地 JSON 草稿                           |
+| `AgentPreviewPane.tsx`                                    | 脱敏 preview、文件影响、漂移/auth 审批、rebuild 确认与写入结果；导出配置/cleanup 共用的 `AgentFileEffectCard`          |
+| `AgentCleanupPanel.tsx`                                   | 独立的无 key cleanup 审阅：removed paths、replace/delete、敏感备份、漂移批准、stale/retry 与结果                       |
+| `agentCleanupState.ts`                                    | Cleanup-only reducer：`loading-preview/previewing/writing/result/stale/failed` 与写入门控                              |
+| `useAgentCleanupController.ts`                            | 单 Agent cleanup preview/write/repreview/retry 编排；generation guard 丢弃迟到结果，不调用凭据/目录/model flow         |
+| `AgentCleanupPanel.test.tsx`、`agentCleanupState.test.ts` | Cleanup UI、漂移门控、stale/retry、重复提交、保留数据警告与 reducer transition 测试                                    |
+| `agentPresentation.tsx`                                   | Agent 名称/logo、完整 detection 校验、安装/配置状态与 recovery 文案的共享展示模型                                      |
+| `ApiKeysPage.tsx`                                         | 全局 API key 保存、替换、删除及摘要展示；提交后清空输入，不提供明文回读                                                |
+| `LogsPage.tsx`                                            | 有界的、安全过滤的 router 日志，手动刷新                                                                               |
+| `SettingsPage.tsx`                                        | 自启动、组件版本、手动更新检查、确认后安装/进度、诊断、卸载准备与语言                                                  |
+| `model.ts`                                                | 共享类型（`SectionId`、`navigationItems`）                                                                             |
+| `i18n.tsx`                                                | I18n context provider，含 `zh-CN` 与 `en` locale                                                                       |
+| `locales/zh-CN.ts`、`locales/en.ts`                       | 翻译字典                                                                                                               |
 
 ## 后端（src-tauri/src/）
 
@@ -55,6 +58,7 @@ React UI ──Tauri invoke──▶ Rust commands.rs ──stdin/stdout JSON─
 | `manager.rs`          | `ManagerClient` + `TauriTransportFactory` —— spawn/通信；cleanup watchdog 对齐 Go 5/30 秒 deadline 再加 1 秒，cleanup write 不在不确定投递后 replay |
 | `scheduler.rs`        | `PollScheduler` —— 周期性 router 状态/健康轮询；推进端口释放观察；emit `router-poll-snapshot` 事件；可见性感知间隔                                  |
 | `port_recovery.rs`    | `PortRecovery` —— manager session epoch 绑定的约 10 秒定期采样状态；区分 `observing`、`released`、`reoccupied`                                      |
+| `updater.rs`          | Tauri updater command：stable-only 比较、有限网络超时与二次版本绑定、下载进度、desktop-owned router 停止/失败恢复、整包安装和重启                   |
 | `sidecar.rs`          | `SidecarPaths::resolve()` —— 在 app 二进制旁定位 `mtls-router[.exe]` 与 `mtls-router-manager[.exe]`（运行时纯名字）；校验 SHA-256 + 原生架构/格式   |
 | `tray.rs`             | 系统托盘图标/菜单；状态感知标签；关闭主窗口隐藏到托盘（macOS 先 `AppHandle::hide` 让出原生全屏 Space，再隐藏窗口）；托盘/二次实例共用激活路径       |
 | `orchestration.rs`    | `first_launch()` —— sidecar 有效且无 router 运行时自动启动 router                                                                                   |
@@ -62,7 +66,7 @@ React UI ──Tauri invoke──▶ Rust commands.rs ──stdin/stdout JSON─
 | `paths.rs`            | 桌面数据目录解析（委托给 `MTLS_ROUTER_DESKTOP_DATA_DIR` 或 OS 默认），并派生 `credentials.json` 路径                                                |
 | `process_identity.rs` | `current()` —— 捕获 PID + 启动时间 + 可执行文件用于父身份 flag                                                                                      |
 | `autostart.rs`        | 登录启动插件包装；首次启动默认启用                                                                                                                  |
-| `types.rs`            | 镜像 manager 协议结果的严格 serde 类型，含 `AgentCleanupState`、`AgentCleanupPreview` 与 delete/backup 文件影响                                     |
+| `types.rs`            | 镜像 manager 协议结果及桌面更新状态的严格 serde 类型，含 cleanup preview、update info/check/progress 与文件影响                                     |
 | `error.rs`            | `CommandError` —— 将 manager 协议错误映射为用户可见字符串                                                                                           |
 
 ## 安全约束
@@ -74,6 +78,7 @@ React UI ──Tauri invoke──▶ Rust commands.rs ──stdin/stdout JSON─
 - Cleanup IPC 精确只发送 Agent、revision token 和漂移批准，不访问 `CredentialStore`、model flow、router 或模型目录；cleanup write 属于 non-replayable lifecycle 操作。
 - CSP：`default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost; style-src 'self' 'unsafe-inline'`。
 - manager 握手在启动时校验：version、management protocol v4、deployment ID；v4 occupant 响应枚举、字段组合、标识上限和 token 规则均 fail closed。
+- Updater 公钥与 endpoint 只在 stable tag 构建的 runner 临时配置中注入；公钥指纹由 repository variable 固定，每个原生产物上传前均验证签名与公钥匹配。Tauri updater 签名独立于 Windows/macOS 平台签名/notarization；非 stable 构建不生成 updater 产物，私钥和密码只来自 GitHub Secrets，不写入仓库配置或日志。
 
 ## 分层本地开发
 
@@ -97,6 +102,8 @@ npm exec tauri -- build   # 完整 Tauri 构建（需 sidecar 已就位）
 ```
 
 sidecar 命名：`src-tauri/binaries/` 下的构建输入使用 target-triple 名（`mtls-router-<target-triple>`，如 `mtls-router-aarch64-apple-darwin`）；Tauri 打包后安装的二进制使用纯名字（`mtls-router`、`mtls-router-manager`，Windows 带 `.exe`）。
+
+Release updater 辅助脚本：`scripts/prepare-updater-config.sh` 只为 stable tag 生成权限受限的 Tauri overlay config，并校验 updater 公钥固定指纹及完整签名输入；`scripts/updater-public-key-fingerprint.mjs` 从公钥文件生成该指纹；`scripts/create-macos-updater.sh` 在最终签名 app bundle 后生成并签名 `.app.tar.gz`；`scripts/verify-package.sh` 规范化六平台 updater 产物及 `.sig`，再通过 `src-tauri/examples/verify_updater_signature.rs` 验证签名。仓库根 `scripts/package-release.sh` 只为 stable tag 汇总六平台 `latest.json`、产物与签名并纳入 `SHA256SUMS`。
 
 ## 测试
 

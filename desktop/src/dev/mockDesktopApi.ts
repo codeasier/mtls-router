@@ -148,6 +148,17 @@ export function createMockDesktopApi(
       router: "mock-router",
       management_protocol: "4",
     }),
+    checkForUpdate: async () => ({
+      available: true,
+      current_version: "0.1.0-mock",
+      update: {
+        version: "0.2.0-mock",
+        notes: "Mock update for browser-only UX testing.",
+        published_at: "2026-08-01T00:00:00Z",
+      },
+    }),
+    installUpdate: async () => undefined,
+    subscribeUpdateProgress: async () => noopUnlisten(),
     getRouterLogs: async () => ({
       lines: [
         "mock: router ready on 127.0.0.1:19099",

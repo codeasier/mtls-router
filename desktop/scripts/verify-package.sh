@@ -186,4 +186,25 @@ artifact="$output_dir/CodeasierRouter-$os-$arch.$suffix"
 cp "$package" "$artifact"
 hash="$(sha256 "$artifact")"
 printf '%s  %s\n' "$hash" "$(basename "$artifact")" >"$output_dir/CodeasierRouter-$os-$arch.sha256"
+
+if [[ "${ONLINE_UPDATE:-false}" == true ]]; then
+  : "${TAURI_UPDATER_PUBKEY:?TAURI_UPDATER_PUBKEY is required to verify updater artifacts}"
+  case "$os" in
+    darwin)
+      updater_source="$(set -- "$bundle_root/macos"/*.app.tar.gz; [[ $# -eq 1 && -f "$1" ]] || exit 1; printf '%s' "$1")"
+      updater="$output_dir/CodeasierRouter-$os-$arch.app.tar.gz"
+      cp "$updater_source" "$updater"
+      ;;
+    linux|windows)
+      updater_source="$package"
+      updater="$artifact"
+      ;;
+  esac
+  [[ -s "$updater_source.sig" ]] || { printf 'updater signature is missing for %s\n' "$(basename "$updater_source")" >&2; exit 1; }
+  cp "$updater_source.sig" "$updater.sig"
+  [[ -s "$updater" && -s "$updater.sig" ]] || { printf 'normalized updater artifacts are incomplete\n' >&2; exit 1; }
+  cargo run --quiet --manifest-path "$desktop_dir/src-tauri/Cargo.toml" \
+    --example verify_updater_signature -- "$updater" "$updater.sig"
+fi
+
 printf 'validated target=%s version=%s deployment_id=%s protocol=%s package=%s\n' "$target" "$expected_version" "$expected_deployment" "$expected_protocol" "$(basename "$artifact")"

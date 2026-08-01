@@ -42,6 +42,7 @@ jobs:
     outputs:
       cli-matrix: ${{ steps.matrix.outputs.cli-matrix }}
       desktop-matrix: ${{ steps.matrix.outputs.desktop-matrix }}
+      online-update: ${{ steps.matrix.outputs.online-update }}
       simplify: ${{ steps.simplify.outputs.simplify }}
     steps:
       - uses: actions/checkout@v4
@@ -102,6 +103,9 @@ jobs:
           fi
           printf 'cli-matrix={"include":%s}\n' "$(jq -c . <<<"$cli")" >>"$GITHUB_OUTPUT"
           printf 'desktop-matrix={"include":%s}\n' "$(jq -c . <<<"$desktop")" >>"$GITHUB_OUTPUT"
+          online_update=false
+          if [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then online_update=true; fi
+          printf 'online-update=%s\n' "$online_update" >>"$GITHUB_OUTPUT"
 
   build:
     name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
@@ -183,6 +187,7 @@ jobs:
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
       WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+      ONLINE_UPDATE: ${{ needs.prepare.outputs.online-update }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -222,6 +227,11 @@ jobs:
         shell: bash
         env:
           DISPATCH_VERSION: ${{ inputs.version }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
+          TAURI_UPDATER_PUBKEY_SHA256: ${{ vars.TAURI_UPDATER_PUBKEY_SHA256 }}
+          UPDATER_ENDPOINT: https://downloads.codeasier.top/${{ github.event.repository.name }}/latest/latest.json
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             version="${GITHUB_REF_NAME#v}"
@@ -229,6 +239,9 @@ jobs:
             version="$DISPATCH_VERSION"
           fi
           ./desktop/scripts/prepare-version.sh "$version"
+          updater_config="$RUNNER_TEMP/tauri-updater.conf.json"
+          ./desktop/scripts/prepare-updater-config.sh "$updater_config"
+          printf 'TAURI_UPDATER_CONFIG=%s\n' "$updater_config" >>"$GITHUB_ENV"
           printf 'version=%s\n' "$version" >>"$GITHUB_OUTPUT"
           printf 'VERSION=%s\n' "$version" >>"$GITHUB_ENV"
       - name: Validate production inputs and build credential-injected sidecars
@@ -255,41 +268,63 @@ jobs:
       - name: Build unsigned Linux package
         if: runner.os == 'Linux'
         working-directory: desktop
-        run: npm exec tauri -- build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --no-sign --ci
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm exec tauri -- build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config "$TAURI_UPDATER_CONFIG" --no-sign --ci
       - name: Build unsigned Windows package
         if: runner.os == 'Windows' && (env.WINDOWS_CERTIFICATE == '' || env.WINDOWS_CERTIFICATE_PASSWORD == '')
         working-directory: desktop
-        run: npm exec tauri -- build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --no-sign --ci
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm exec tauri -- build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config "$TAURI_UPDATER_CONFIG" --no-sign --ci
       - name: Build signed Windows package
         if: runner.os == 'Windows' && env.WINDOWS_CERTIFICATE != '' && env.WINDOWS_CERTIFICATE_PASSWORD != ''
         shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           Push-Location desktop
-          npm exec tauri -- build --target ${{ matrix.target }} --no-bundle --no-sign --ci
+          npm exec tauri -- build --target ${{ matrix.target }} --no-bundle --config "$env:TAURI_UPDATER_CONFIG" --no-sign --ci
           Pop-Location
           $desktop = "desktop/src-tauri/target/${{ matrix.target }}/release/mtls-router-desktop.exe"
           & signtool sign /sha1 $env:WINDOWS_CERTIFICATE_THUMBPRINT /fd sha256 /tr https://timestamp.digicert.com /td sha256 $desktop
           if ($LASTEXITCODE -ne 0) { throw 'desktop executable signing failed' }
           Push-Location desktop
-          npm exec tauri -- bundle --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --no-sign --ci
+          npm exec tauri -- bundle --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config "$env:TAURI_UPDATER_CONFIG" --no-sign --ci
           Pop-Location
-          $package = Get-ChildItem desktop/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*-setup.exe
+          $package = (Get-ChildItem desktop/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*-setup.exe).FullName
           & signtool sign /sha1 $env:WINDOWS_CERTIFICATE_THUMBPRINT /fd sha256 /tr https://timestamp.digicert.com /td sha256 $package
           if ($LASTEXITCODE -ne 0) { throw 'installer signing failed' }
+          if ($env:ONLINE_UPDATE -eq 'true') {
+            Push-Location desktop
+            npm exec tauri -- signer sign "$package"
+            Pop-Location
+            if (-not (Test-Path "$package.sig")) { throw 'updater signature is missing' }
+          }
       - name: Build unsigned macOS package
         if: runner.os == 'macOS' && (env.APPLE_CERTIFICATE == '' || env.APPLE_CERTIFICATE_PASSWORD == '')
         working-directory: desktop
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           codesign --force --sign - "src-tauri/binaries/mtls-router-${{ matrix.target }}"
           codesign --force --sign - "src-tauri/binaries/mtls-router-manager-${{ matrix.target }}"
-          npm exec tauri -- build --target ${{ matrix.target }} --bundles app --no-sign --ci
+          npm exec tauri -- build --target ${{ matrix.target }} --bundles app --config "$TAURI_UPDATER_CONFIG" --no-sign --ci
           app=src-tauri/target/${{ matrix.target }}/release/bundle/macos/CodeasierRouter.app
           codesign --force --sign - "$app/Contents/MacOS/mtls-router-desktop"
           codesign --force --sign - "$app"
           ./scripts/create-macos-dmg.sh ${{ matrix.target }} "$VERSION"
+          ./scripts/create-macos-updater.sh ${{ matrix.target }}
       - name: Import macOS signing certificate and pre-sign sidecars
         if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != '' && env.APPLE_CERTIFICATE_PASSWORD != ''
         shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           certificate="$RUNNER_TEMP/mtls-router-signing.p12"
           keychain="$RUNNER_TEMP/mtls-router-signing.keychain-db"
@@ -311,7 +346,7 @@ jobs:
         shell: bash
         run: |
           cd desktop
-          npm exec tauri -- build --target ${{ matrix.target }} --bundles app --no-sign --ci
+          npm exec tauri -- build --target ${{ matrix.target }} --bundles app --config "$TAURI_UPDATER_CONFIG" --no-sign --ci
           app=src-tauri/target/${{ matrix.target }}/release/bundle/macos/CodeasierRouter.app
           codesign --force --options runtime --timestamp --keychain "$APPLE_SIGNING_KEYCHAIN" --sign "$APPLE_SIGNING_IDENTITY" "$app/Contents/MacOS/mtls-router-desktop"
           codesign --force --options runtime --timestamp --keychain "$APPLE_SIGNING_KEYCHAIN" --sign "$APPLE_SIGNING_IDENTITY" "$app"
@@ -322,10 +357,27 @@ jobs:
           fi
           ./scripts/create-macos-dmg.sh ${{ matrix.target }} "$VERSION"
           codesign --force --timestamp --keychain "$APPLE_SIGNING_KEYCHAIN" --sign "$APPLE_SIGNING_IDENTITY" "src-tauri/target/${{ matrix.target }}/release/bundle/dmg/CodeasierRouter_${VERSION}.dmg"
+          ./scripts/create-macos-updater.sh ${{ matrix.target }}
+      - name: Sign final Linux or unsigned Windows updater package
+        if: env.ONLINE_UPDATE == 'true' && (runner.os == 'Linux' || (runner.os == 'Windows' && (env.WINDOWS_CERTIFICATE == '' || env.WINDOWS_CERTIFICATE_PASSWORD == '')))
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [[ '${{ runner.os }}' == Linux ]]; then
+            package="$(printf '%s\n' desktop/src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage)"
+          else
+            package="$(printf '%s\n' desktop/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*-setup.exe)"
+          fi
+          [[ -f "$package" ]]
+          (cd desktop && npm exec tauri -- signer sign "$GITHUB_WORKSPACE/$package")
+          [[ -s "$package.sig" ]]
       - name: Inspect package and sidecars
         shell: bash
         env:
           PACKAGE_OUTPUT_DIR: ${{ github.workspace }}/desktop/release-artifacts
+          TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
         run: ./desktop/scripts/verify-package.sh ${{ matrix.target }}
       - name: Record release protocol metadata
         shell: bash
@@ -390,7 +442,7 @@ jobs:
   release:
     name: Package and publish release
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [build, desktop]
+    needs: [prepare, build, desktop]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -413,6 +465,7 @@ jobs:
       - name: Preflight and package
         env:
           DOWNLOAD_BASE_URL: https://downloads.codeasier.top/${{ github.event.repository.name }}/${{ github.ref_name }}
+          RELEASE_TAG: ${{ github.ref_name }}
           SOURCE_DATE_EPOCH: '0'
         run: ./scripts/package-release.sh
       - name: Publish GitHub release
@@ -439,6 +492,7 @@ jobs:
           # The target is isolated to this repository tag, so deletion only removes stale assets for this release.
           ARGS: -avz --delete
       - name: Update latest symlink
+        if: needs.prepare.outputs.online-update == 'true'
         uses: appleboy/ssh-action@v1.2.2
         with:
           host: ssh.codeasier.top
@@ -450,5 +504,11 @@ jobs:
             tag='${{ github.ref_name }}'
             base="/home/codeasier/downloads/$repo"
             test -d "$base/$tag"
+            test ! -e "$base/latest" || test -L "$base/latest"
+            if test -L "$base/latest"; then
+              current="$(basename "$(readlink "$base/latest")")"
+              [[ "$current" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+              test "$(printf '%s\n%s\n' "$current" "$tag" | sort -V | tail -n1)" = "$tag"
+            fi
             ln -sfn "$tag" "$base/latest.tmp"
             mv -Tf "$base/latest.tmp" "$base/latest"
