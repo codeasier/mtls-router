@@ -18,12 +18,14 @@ fn command_error(code: &'static str, message: &'static str) -> CommandError {
     CommandError::recoverable(code, message)
 }
 
+fn is_new_stable_version(current: &Version, remote: &Version) -> bool {
+    remote.pre.is_empty() && remote.build.is_empty() && remote > current
+}
+
 fn updater(app: &AppHandle, timeout: Duration) -> Result<tauri_plugin_updater::Updater> {
     app.updater_builder()
         .timeout(timeout)
-        .version_comparator(|current, remote| {
-            remote.version.pre.is_empty() && remote.version > current
-        })
+        .version_comparator(|current, remote| is_new_stable_version(&current, &remote.version))
         .build()
         .map_err(|_| {
             command_error(
@@ -164,6 +166,18 @@ mod tests {
         );
         for invalid in ["v1.2.3", "1.2", "1.2.3-beta.1", "1.2.3+build"] {
             assert!(parse_expected_version(invalid).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn update_comparison_rejects_prerelease_build_metadata_and_downgrades() {
+        let current = Version::new(1, 2, 3);
+        assert!(is_new_stable_version(&current, &Version::new(1, 2, 4)));
+        for remote in ["1.2.4-beta.1", "1.2.4+build", "1.2.3", "1.2.2"] {
+            assert!(!is_new_stable_version(
+                &current,
+                &Version::parse(remote).unwrap()
+            ));
         }
     }
 
