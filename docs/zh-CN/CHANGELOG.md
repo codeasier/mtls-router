@@ -2,6 +2,33 @@
 
 [English](../CHANGELOG.md)
 
+## v0.3.3 - 2026-08-01
+
+本次发布新增按单 Agent 安全清理 CodeasierRouter 托管设置的能力，引入分层桌面开发工作流，统一 CodeasierRouter 品牌，并在应用关闭到托盘时保留 macOS 全屏 Space。
+
+### 新增
+
+- 新增独立的 cleanup 预览与写入流程，用于移除单个 Agent 中由 CodeasierRouter 托管的 provider、model 和文件凭据设置，同时保留无关用户配置、桌面端全局 API key 与历史备份。
+- 新增仅限浏览器的 mock 开发模式、已有 Tauri sidecar 复用和一次性真实 Agent 配置路径，并让生产构建拒绝打包 mock 代码。
+
+### 变更
+
+- 在 provider 展示、model-config 导出与 schema 元数据、桌面诊断和桌面发布产物中统一使用 CodeasierRouter 名称，同时保留兼容性敏感的内部标识符。
+
+### 修复
+
+- macOS 关闭到托盘时先隐藏应用再隐藏窗口，使全屏窗口保留其 Space，且不改变 Windows 或 Linux 的关闭顺序。
+
+### 安全与恢复
+
+- Cleanup 要求可信 sidecar 所有权，使用签名 revision 绑定无 key 预览，在托管状态漂移后要求确认，通过私有事务备份和支持删除的 journal 执行恢复，并在投递结果不确定后要求重新预览。
+
+### 测试
+
+- 扩展 Go、前端、Rust 和工作流覆盖，验证 cleanup 所有权、revision、文件竞态、备份与回滚恢复、不确定投递、响应式交互、mock 隔离、命名一致性和原生托盘顺序。
+
+---
+
 ## v0.3.2 - 2026-07-29
 
 本次发布恢复桌面应用关闭到托盘时符合预期的 macOS 焦点行为，并提升 Agent 配置发现过程与表单的可读性。

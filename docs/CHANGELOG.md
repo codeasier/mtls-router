@@ -2,6 +2,33 @@
 
 [中文](zh-CN/CHANGELOG.md)
 
+## v0.3.3 - 2026-08-01
+
+This release adds safe per-Agent cleanup of CodeasierRouter-managed settings, introduces layered desktop development workflows, unifies CodeasierRouter branding, and preserves the macOS fullscreen Space when closing the app to the tray.
+
+### Added
+
+- Added independent cleanup preview and write flows for removing one Agent's CodeasierRouter-managed provider, model, and file-backed authentication settings while preserving unrelated user configuration, the desktop global API key, and historical backups.
+- Added browser-only mock development, reuse of existing Tauri sidecars, and disposable real-Agent configuration paths, with production builds rejecting bundled mock code.
+
+### Changed
+
+- Standardized the CodeasierRouter name across provider presentation, model-config exports and schema metadata, desktop diagnostics, and desktop release artifacts while preserving compatibility-sensitive internal identifiers.
+
+### Fixed
+
+- Hid the macOS application before hiding its window during close-to-tray so fullscreen windows keep their Space, without changing the Windows or Linux close sequence.
+
+### Security and recovery
+
+- Required trusted sidecar ownership for cleanup, bound key-free previews to signed revisions, required confirmation after managed-state drift, used private transactional backups with delete-capable journal recovery, and required a fresh preview after ambiguous delivery.
+
+### Tests
+
+- Expanded Go, frontend, Rust, and workflow coverage for cleanup ownership, revisions, file races, backup and rollback recovery, ambiguous delivery, responsive interaction, mock isolation, naming consistency, and native tray ordering.
+
+---
+
 ## v0.3.2 - 2026-07-29
 
 This release restores expected macOS focus behavior when closing the desktop app to the tray and improves Agent configuration discovery and form readability.
