@@ -569,6 +569,48 @@ describe("typed desktop API", () => {
     expect(cleanupPreviewFixture.files[0]).not.toHaveProperty("warning");
   });
 
+  it("persists an image conversation model through a narrow command", async () => {
+    const invoke = vi.fn().mockResolvedValue(undefined);
+    const api = createDesktopApi(invoke as InvokeFn);
+
+    await api.imageSetConversationModel(
+      "conversation-1",
+      "ag/gemini-3.1-flash-image",
+    );
+
+    expect(invoke).toHaveBeenCalledWith(COMMANDS.imageSetConversationModel, {
+      request: {
+        conversation_id: "conversation-1",
+        model: "ag/gemini-3.1-flash-image",
+      },
+    });
+  });
+
+  it("resets image storage without sending paths or image data", async () => {
+    const invoke = vi.fn().mockResolvedValue(undefined);
+    const api = createDesktopApi(invoke as InvokeFn);
+
+    await api.imageResetStore();
+
+    expect(invoke).toHaveBeenCalledWith(COMMANDS.imageResetStore);
+  });
+
+  it("reads only bounded image operation identity", async () => {
+    const invoke = vi.fn().mockResolvedValue({
+      operation_id: "operation-1",
+      conversation_id: "conversation-1",
+      message_id: "message-1",
+    });
+    const api = createDesktopApi(invoke as InvokeFn);
+
+    await expect(api.imageCurrentOperation()).resolves.toEqual({
+      operation_id: "operation-1",
+      conversation_id: "conversation-1",
+      message_id: "message-1",
+    });
+    expect(invoke).toHaveBeenCalledWith(COMMANDS.imageCurrentOperation);
+  });
+
   it("exposes credential management without a credential readback API", async () => {
     const invoke = vi.fn().mockResolvedValue({
       present: true,

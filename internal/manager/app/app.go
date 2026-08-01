@@ -258,6 +258,7 @@ func newWithDependencies(config Config, deps dependencies) *App {
 		protocol.MethodRouterStop:                   app.routerStop,
 		protocol.MethodRouterHealth:                 app.routerHealth,
 		protocol.MethodRouterVersion:                app.routerVersion,
+		protocol.MethodRouterTrustedChannel:         app.routerTrustedChannel,
 		protocol.MethodRouterLogs:                   app.routerLogs,
 		protocol.MethodRouterInspectOccupant:        app.routerInspectOccupant,
 		protocol.MethodRouterForceTerminateOccupant: app.routerForceTerminateOccupant,
@@ -442,6 +443,34 @@ func (a *App) routerVersion(ctx context.Context, params json.RawMessage) (any, *
 	}
 	return protocol.RouterVersionResult{
 		Version: versionValue, DeploymentID: deploymentID, ManagementProtocolVersion: protocolVersion,
+	}, nil
+}
+
+func (a *App) routerTrustedChannel(ctx context.Context, params json.RawMessage) (any, *protocol.Error) {
+	if err := decodeEmpty(params); err != nil {
+		return nil, err
+	}
+	found := a.deps.discoverStatus(ctx)
+	if ctx.Err() != nil {
+		return nil, timeoutError()
+	}
+	if err := discoveryError(found, false); err != nil {
+		return nil, err
+	}
+	value := found.State
+	if value.PID <= 0 || value.ListenAddr == "" || value.StartedAt == "" ||
+		value.ProcessStartedAt == "" || value.ProcessExecutable == "" || value.BinaryPath == "" ||
+		value.DeploymentID == "" || value.ManagementProtocolVersion == "" ||
+		found.ListenAddr != value.ListenAddr || found.Version.PID != value.PID ||
+		found.Version.DeploymentID != value.DeploymentID ||
+		found.Version.ManagementProtocolVersion != value.ManagementProtocolVersion {
+		return nil, &protocol.Error{Code: protocol.CodeRouterStateStale, Message: "router trust state is stale"}
+	}
+	return protocol.RouterTrustedChannelResult{
+		ListenAddr: value.ListenAddr, PID: value.PID, StartedAt: value.StartedAt,
+		ProcessStartedAt: value.ProcessStartedAt, ProcessExecutable: value.ProcessExecutable,
+		BinaryPath: value.BinaryPath, DeploymentID: value.DeploymentID,
+		ManagementProtocolVersion: value.ManagementProtocolVersion,
 	}, nil
 }
 

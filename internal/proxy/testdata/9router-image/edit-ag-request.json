@@ -1,0 +1,6 @@
+{
+  "model": "ag/gemini-3.1-flash-image",
+  "prompt": "Add a reflective water element in the foreground",
+  "n": 1,
+  "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAEElEQVR4nGP4z8AARwzEcQCukw/x0F8jngAAAABJRU5ErkJggg=="
+}

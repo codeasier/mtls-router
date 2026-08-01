@@ -68,6 +68,23 @@ describe("createMockDesktopApi", () => {
     expect(JSON.stringify(written)).not.toMatch(/sk-|BEGIN |api[_-]?key/i);
   });
 
+  it("keeps image conversation model changes in memory", async () => {
+    const api = createMockDesktopApi();
+    const conversation = await api.imageCreateConversation("cx/gpt-5.5-image");
+
+    await api.imageSetConversationModel(
+      conversation.id,
+      "ag/gemini-3.1-flash-image",
+    );
+
+    expect(await api.imageConversations()).toEqual([
+      expect.objectContaining({
+        id: conversation.id,
+        selected_model: "ag/gemini-3.1-flash-image",
+      }),
+    ]);
+  });
+
   it.each([
     ["protocol-error", "AGENT_DETECT_IO"],
     ["preview-stale", "AGENT_PREVIEW_REVISION_MISMATCH"],

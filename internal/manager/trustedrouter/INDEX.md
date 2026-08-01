@@ -9,6 +9,8 @@
 | `coordinator.go` | `Coordinator`、`Fetch(ctx, owner, apiKey)`、`Revalidate(ctx, owner, apiKey, binding)`；`Binding`、`Result`、`Lifecycle` 接口 |
 | `channel.go` | `Channel.Fetch(...)` —— 在已确认可信的 router 上取目录；`versionMatches`、`trustedStateMatches` 等信任判据 |
 | `listener.go` | `Listener`、`NormalizeListener(value)` —— 规范化监听地址并派生 `RouterBaseURL` / `APIBaseURL` |
+| `testdata/conformance_vectors.json` | Go trusted router 与 Rust 图片数据面共同消费的语言无关信任/认证失败向量 |
+| `conformance_vectors_test.go` | 校验向量 schema、必需场景和认证发送边界 |
 
 ## 行为
 

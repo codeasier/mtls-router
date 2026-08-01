@@ -1,12 +1,12 @@
 # internal/manager/app
 
-把各 manager 服务装配到私有 JSON 协议上：17 个方法的 handler、错误码映射、API key 清零，以及无 key Agent cleanup 的直接分发。
+把各 manager 服务装配到私有 JSON 协议上：18 个方法的 handler、错误码映射、API key 清零，以及无 key Agent cleanup 的直接分发。
 
 ## 文件
 
 | 文件 | 职责 |
 |------|------|
-| `app.go` | `App`、`New(Config, simplify)`、`Serve(ctx, input, output)`；17 个方法 handler；cleanup detection/preview/write 显式映射；结果与错误码映射；启动失败锁存与诊断 |
+| `app.go` | `App`、`New(Config, simplify)`、`Serve(ctx, input, output)`；18 个方法 handler；私有图片 trust state、cleanup detection/preview/write 显式映射；结果与错误码映射；启动失败锁存与诊断 |
 
 ## 结构
 
@@ -21,6 +21,7 @@
 - **诊断脱敏**：`lifecycle` 保留有界的**原始**子进程输出，`app` 只向客户端暴露脱敏的、会话作用域的诊断（`startupDiagnostic`）。
 - **启动失败锁存**：`latchStartupFailure` / `failedStatus` / `clearFailureAfterStart` 让一次失败的启动在后续 `router.status` 中仍可见，而不是被下一次轮询抹掉。
 - **受保护 PID**：`protectedStatePID` 阻止强制终止落到状态文件记录的自有进程上。
+- **图片 trust state**：`router.trusted_channel` 仅在 discovery 的 listener、远端 version 与持久 state 的 PID/deployment/protocol 完整关联，且 state 含 router/OS 启动身份、可执行文件和 binary path 时返回；该结果只供原生桌面后端使用。
 - 服务层的错误（`agent.OperationError`、`lifecycle.Error`、`modelcatalog.Error`）在此统一映射为稳定的 `protocol.ErrorCode`；错误消息只作诊断用途。
 
 ## 依赖
