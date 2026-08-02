@@ -180,7 +180,7 @@ async function assertPortAvailable(port, label) {
 export function snapshotFiles(files) {
   return files.map((file) =>
     existsSync(file)
-      ? { file, data: readFileSync(file), mode: statSync(file).mode }
+      ? { file, data: readFileSync(file), mode: statSync(file).mode & 0o777 }
       : { file, data: undefined, mode: undefined },
   );
 }
@@ -191,6 +191,7 @@ export function restoreFiles(snapshots) {
       rmSync(snapshot.file, { force: true });
     } else {
       writeFileSync(snapshot.file, snapshot.data, { mode: snapshot.mode });
+      chmodSync(snapshot.file, snapshot.mode);
     }
   }
 }

@@ -9,6 +9,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import http from "node:http";
@@ -54,6 +55,14 @@ async function availablePort() {
   const port = await listen(server);
   await close(server);
   return port;
+}
+
+async function portIsAvailable(port) {
+  const server = net.createServer();
+  return new Promise((resolve) => {
+    server.once("error", () => resolve(false));
+    server.listen(port, "127.0.0.1", () => server.close(() => resolve(true)));
+  });
 }
 
 function requestBridge({
@@ -162,9 +171,11 @@ test("sidecar snapshots restore existing files and remove generated files", () =
     writeFileSync(existing, "before", { mode: 0o700 });
     const snapshots = snapshotFiles([existing, generated]);
     writeFileSync(existing, "debug");
+    chmodSync(existing, 0o755);
     writeFileSync(generated, "debug");
     restoreFiles(snapshots);
     assert.equal(readFileSync(existing, "utf8"), "before");
+    assert.equal(statSync(existing).mode & 0o777, 0o700);
     assert.equal(existsSync(generated), false);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
@@ -174,7 +185,11 @@ test("sidecar snapshots restore existing files and remove generated files", () =
 test(
   "launcher terminates its child and removes short-lived TLS on SIGTERM",
   { skip: process.platform === "win32" },
-  async () => {
+  async (context) => {
+    if (!(await portIsAvailable(19099))) {
+      context.skip("fixed router port 19099 is already in use");
+      return;
+    }
     const tempDir = mkdtempSync(
       path.join(os.tmpdir(), "mtls-router-dev-image-signal-test-"),
     );
