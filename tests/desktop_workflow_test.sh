@@ -67,6 +67,7 @@ const required = {
   'dev:mock': 'node ./scripts/dev-mock.mjs',
   'dev:tauri:reuse': 'node ./scripts/dev-tauri-reuse.mjs',
   'dev:agent': 'node ./scripts/dev-agent.mjs',
+  'dev:image': 'node ./scripts/dev-image.mjs',
 };
 for (const [name, value] of Object.entries(required)) {
   if (pkg.scripts?.[name] !== value) {
@@ -97,6 +98,10 @@ contains "$ROOT/desktop/src/main.tsx" 'await import("./dev/mockDesktopApi")'
 contains "$ROOT/docs/BUILD.md" 'npm run dev:mock'
 contains "$ROOT/docs/zh-CN/BUILD.md" 'npm run dev:mock'
 contains "$ROOT/desktop/INDEX.md" 'npm run dev:mock'
+contains "$ROOT/docs/BUILD.md" 'npm run dev:image -- --upstream'
+contains "$ROOT/docs/zh-CN/BUILD.md" 'npm run dev:image -- --upstream'
+contains "$ROOT/desktop/INDEX.md" 'npm run dev:image -- --upstream'
+contains "$ROOT/desktop/scripts/build-sidecars.sh" 'MTLS_ROUTER_DEV_CERT_DIR is forbidden for release builds'
 
 node --input-type=module - \
   "$ROOT/desktop/scripts/dev-agent.mjs" \
@@ -527,7 +532,8 @@ assert_filter_paths go "$ci_scope_block" \
   '*.go' 'cmd/**/*.go' 'internal/**/*.go' 'go.mod' 'go.sum' 'setup.sh' \
   'setup.ps1' 'scripts/**' 'tests/setup_*.sh' 'Dockerfile' 'systemd/**'
 assert_filter_paths frontend "$ci_scope_block" \
-  'desktop/src/**' 'desktop/package.json' 'desktop/package-lock.json' \
+  'desktop/src/**' 'desktop/scripts/*.mjs' 'desktop/scripts/build-sidecars.sh' \
+  'desktop/package.json' 'desktop/package-lock.json' \
   'desktop/.npmrc' 'desktop/.prettierignore' 'desktop/index.html' \
   'desktop/app-icon.svg' 'desktop/src-tauri/tauri.conf.json' \
   'desktop/src-tauri/capabilities/default.json' 'desktop/eslint.config.js' \
