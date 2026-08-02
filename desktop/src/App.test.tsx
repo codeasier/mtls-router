@@ -129,7 +129,7 @@ describe("App navigation", () => {
     expect(screen.getByText("桌面控制面板")).toBeInTheDocument();
   });
 
-  it("checks once on startup and surfaces an accessible update notice", async () => {
+  it("checks once on startup and surfaces an accessible sidebar update badge", async () => {
     const api = createMockApi({
       checkForUpdate: vi.fn().mockResolvedValue({
         available: true,
@@ -139,13 +139,12 @@ describe("App navigation", () => {
     });
     render(<App api={api} />);
 
-    const notice = await screen.findByRole("status", {
-      name: "应用更新通知",
+    const settingsNav = await screen.findByRole("button", {
+      name: "系统设置 - 有新版本可用",
     });
-    expect(notice).toHaveTextContent("1.1.0");
     expect(api.checkForUpdate).toHaveBeenCalledOnce();
 
-    fireEvent.click(screen.getByRole("button", { name: "查看更新" }));
+    fireEvent.click(settingsNav);
     expect(screen.getByRole("heading", { name: "系统设置" })).toBeVisible();
     expect(await screen.findByText("Safer updates.")).toBeVisible();
   });

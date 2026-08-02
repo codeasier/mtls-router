@@ -150,7 +150,6 @@ export function SettingsPage({
     ["B", t("router.manager"), versions?.manager],
     ["C", t("router.router"), versions?.router],
   ];
-
   return (
     <section className="settings-panel" aria-labelledby="settings-heading">
       <div className="settings-heading">
@@ -228,111 +227,103 @@ export function SettingsPage({
               </li>
             ))}
           </ol>
-          <div className="update-panel" aria-labelledby="update-heading">
-            <div className="update-panel__versions">
-              <div>
-                <span>{t("update.currentVersion")}</span>
-                <code>
-                  {updateResult?.current_version ??
-                    versions?.desktop ??
-                    t("settings.unavailable")}
-                </code>
-              </div>
-              <div>
-                <span>{t("update.latestVersion")}</span>
-                <code>
-                  {updateResult?.update?.version ??
-                    updateResult?.current_version ??
-                    t("settings.unavailable")}
-                </code>
-              </div>
-            </div>
 
-            <h4 id="update-heading">
-              {checkingForUpdate
-                ? t("update.checking")
-                : updateResult?.available
-                  ? t("update.available")
-                  : updateResult
-                    ? t("update.current")
-                    : t("update.statusUnavailable")}
-            </h4>
-
-            {updateResult?.update?.published_at && (
-              <p className="update-panel__published">
-                {t("update.publishedAt", {
-                  date: updateResult.update.published_at,
-                })}
-              </p>
-            )}
-            {updateResult?.update?.notes && (
-              <div className="update-release-notes">
-                <strong>{t("update.releaseNotes")}</strong>
-                <p>{updateResult.update.notes}</p>
-              </div>
-            )}
-
-            {installState === "downloading" && updateProgress && (
-              <div className="update-progress" role="status">
-                <div
-                  className={
-                    updateProgress.total
-                      ? "update-progress__track"
-                      : "update-progress__track is-indeterminate"
-                  }
-                  role="progressbar"
-                  aria-label={t("update.downloadProgress")}
-                  aria-valuemin={0}
-                  aria-valuenow={updateProgress.downloaded}
-                  aria-valuemax={updateProgress.total}
-                >
-                  <span
-                    style={
-                      updateProgress.total
-                        ? {
-                            width: `${Math.min(
-                              (updateProgress.downloaded /
-                                updateProgress.total) *
-                                100,
-                              100,
-                            )}%`,
-                          }
-                        : undefined
-                    }
-                  />
-                </div>
-                <span>
-                  {updateProgress.total
-                    ? t("update.progressKnown", {
-                        downloaded: updateProgress.downloaded,
-                        total: updateProgress.total,
-                      })
-                    : t("update.progressUnknown", {
-                        downloaded: updateProgress.downloaded,
-                      })}
+          {updateResult?.available && updateResult.update && (
+            <div className="settings-block__update">
+              <header className="settings-block__update-head">
+                <strong>{t("update.available")}</strong>
+                <span className="settings-block__update-version">
+                  {updateResult.update.version}
                 </span>
+              </header>
+
+              <div className="settings-block__update-versions">
+                <div>
+                  <span>{t("update.currentVersion")}</span>
+                  <code>
+                    {updateResult?.current_version ??
+                      versions?.desktop ??
+                      t("settings.unavailable")}
+                  </code>
+                </div>
+                <div>
+                  <span>{t("update.latestVersion")}</span>
+                  <code>{updateResult.update.version}</code>
+                </div>
               </div>
-            )}
 
-            {(updateCheckError || installState === "error") && (
-              <p className="update-panel__error" role="alert">
-                {installState === "error"
-                  ? t("update.error.install")
-                  : t("update.error.check")}
-              </p>
-            )}
-            {installState === "restarting" && (
-              <p className="update-panel__state" role="status">
-                {t("update.restarting")}
-              </p>
-            )}
+              {updateResult.update.published_at && (
+                <p className="settings-block__update-published">
+                  {t("update.publishedAt", {
+                    date: updateResult.update.published_at,
+                  })}
+                </p>
+              )}
 
-            {updateResult?.available &&
-              updateResult.update &&
-              installState !== "restarting" && (
+              {updateResult.update.notes && (
+                <div className="settings-block__update-notes">
+                  <strong>{t("update.releaseNotes")}</strong>
+                  <p>{updateResult.update.notes}</p>
+                </div>
+              )}
+
+              {installState === "downloading" && updateProgress && (
+                <div className="update-progress" role="status">
+                  <div
+                    className={
+                      updateProgress.total
+                        ? "update-progress__track"
+                        : "update-progress__track is-indeterminate"
+                    }
+                    role="progressbar"
+                    aria-label={t("update.downloadProgress")}
+                    aria-valuemin={0}
+                    aria-valuenow={updateProgress.downloaded}
+                    aria-valuemax={updateProgress.total}
+                  >
+                    <span
+                      style={
+                        updateProgress.total
+                          ? {
+                              width: `${Math.min(
+                                (updateProgress.downloaded /
+                                  updateProgress.total) *
+                                  100,
+                                100,
+                              )}%`,
+                            }
+                          : undefined
+                      }
+                    />
+                  </div>
+                  <span>
+                    {updateProgress.total
+                      ? t("update.progressKnown", {
+                          downloaded: updateProgress.downloaded,
+                          total: updateProgress.total,
+                        })
+                      : t("update.progressUnknown", {
+                          downloaded: updateProgress.downloaded,
+                        })}
+                  </span>
+                </div>
+              )}
+
+              {installState === "error" && (
+                <p className="settings-block__update-error" role="alert">
+                  {t("update.error.install")}
+                </p>
+              )}
+              {installState === "restarting" && (
+                <p className="settings-block__update-state" role="status">
+                  {t("update.restarting")}
+                </p>
+              )}
+
+              {installState !== "restarting" && (
                 <button
                   type="button"
-                  className="control-button"
+                  className="control-button settings-block__update-action"
                   onClick={() => void installUpdate()}
                   disabled={installState === "downloading"}
                 >
@@ -341,7 +332,33 @@ export function SettingsPage({
                     : t("update.installAction")}
                 </button>
               )}
-          </div>
+            </div>
+          )}
+
+          {updateCheckError && !updateResult?.available && (
+            <p className="settings-block__update-error" role="alert">
+              {t("update.error.check")}
+            </p>
+          )}
+
+          <p
+            className={
+              updateResult?.available
+                ? "settings-block__status settings-block__status--update"
+                : "settings-block__status"
+            }
+            role="status"
+          >
+            {checkingForUpdate
+              ? t("update.checking")
+              : updateResult?.available
+                ? t("update.available")
+                : updateCheckError
+                  ? t("update.error.check")
+                  : updateResult
+                    ? t("update.current")
+                    : t("update.statusUnavailable")}
+          </p>
         </section>
 
         <section className="settings-block settings-block--locations">
@@ -357,24 +374,24 @@ export function SettingsPage({
             </div>
           </dl>
         </section>
-
-        {paths?.can_prepare_for_uninstall && (
-          <section className="settings-block settings-block--danger">
-            <div>
-              <h3>{t("settings.prepareTitle")}</h3>
-              <p>{t("settings.prepareDescription")}</p>
-            </div>
-            <button
-              type="button"
-              className="control-button control-button--stop"
-              onClick={prepareForUninstall}
-              disabled={preparing}
-            >
-              {t("settings.prepareAction")}
-            </button>
-          </section>
-        )}
       </div>
+
+      {paths?.can_prepare_for_uninstall && (
+        <section className="settings-block settings-block--danger">
+          <div>
+            <h3>{t("settings.prepareTitle")}</h3>
+            <p>{t("settings.prepareDescription")}</p>
+          </div>
+          <button
+            type="button"
+            className="control-button control-button--stop"
+            onClick={prepareForUninstall}
+            disabled={preparing}
+          >
+            {t("settings.prepareAction")}
+          </button>
+        </section>
+      )}
 
       <p className="settings-status" role="status">
         {message ? t(message) : ""}

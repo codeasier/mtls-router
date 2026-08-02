@@ -7,6 +7,7 @@ export const zhCN = {
   "app.sidebarCollapse": "收起侧栏",
   "app.sidebarExpand": "展开侧栏",
   "app.sidebarExpandShort": "展开",
+  "app.updateBadgeAria": "有新版本可用",
   "nav.router": "路由控制",
   "nav.routerShort": "路由",
   "nav.agents": "Agent 配置",
@@ -194,10 +195,6 @@ export const zhCN = {
   "settings.dataLocation": "应用数据",
   "settings.logLocation": "日志文件",
   "settings.unavailable": "不可用",
-  "update.noticeAria": "应用更新通知",
-  "update.noticeTitle": "发现新版本",
-  "update.noticeDescription": "CodeasierRouter {version} 已可用。",
-  "update.viewAction": "查看更新",
   "update.checkAction": "检查更新",
   "update.checking": "正在检查...",
   "update.currentVersion": "当前版本",
@@ -244,7 +241,7 @@ export const zhCN = {
   "apikey.explainer.usage.agentFiles":
     "写入 Claude Code、OpenCode 与 Codex 的凭据配置。",
   "apikey.explainer.usage.catalog": "从本地路由获取可用模型目录。",
-  "apikey.explainer.storage.heading": "存储位置",
+  "apikey.storage.label": "存储位置",
   "apikey.explainer.storage.note":
     "Unix 文件权限固定为 0600；Windows 使用当前用户数据目录的访问控制。",
   "apikey.path.loading": "正在读取存储位置...",

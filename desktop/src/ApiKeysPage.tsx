@@ -110,19 +110,15 @@ export function ApiKeysPage({ api }: { api: DesktopApi }) {
         </p>
       )}
 
-      <div className="apikey-grid">
-        <section
-          className="apikey-status-card"
-          data-state={
-            summary ? (summary.present ? "saved" : "absent") : "loading"
-          }
-          aria-live="polite"
-        >
-          <span className="apikey-status-card__index" aria-hidden="true">
-            KEY / 01
-          </span>
-          <div className="apikey-status-card__signal">
-            <span aria-hidden="true" />
+      <section
+        className="apikey-card"
+        data-state={
+          summary ? (summary.present ? "saved" : "absent") : "loading"
+        }
+      >
+        <header className="apikey-card__status" aria-live="polite">
+          <span className="apikey-card__indicator" aria-hidden="true" />
+          <div className="apikey-card__status-text">
             <strong>
               {summary
                 ? t(
@@ -132,10 +128,12 @@ export function ApiKeysPage({ api }: { api: DesktopApi }) {
                   )
                 : t("apikey.status.loading")}
             </strong>
+            <span className="apikey-card__status-note">
+              {t("apikey.status.note")}
+            </span>
           </div>
-          <p>{t("apikey.status.note")}</p>
           {summary?.present && (
-            <dl>
+            <dl className="apikey-card__meta">
               <div>
                 <dt>{t("apikey.fingerprint")}</dt>
                 <dd>...{summary.fingerprint}</dd>
@@ -146,11 +144,11 @@ export function ApiKeysPage({ api }: { api: DesktopApi }) {
               </div>
             </dl>
           )}
-        </section>
+        </header>
 
-        <form className="apikey-form" onSubmit={save}>
+        <form className="apikey-card__form" onSubmit={save}>
           <label htmlFor="apikey-input">{t("apikey.label")}</label>
-          <div className="apikey-input-row">
+          <div className="apikey-card__input-row">
             <input
               ref={inputRef}
               id="apikey-input"
@@ -170,7 +168,7 @@ export function ApiKeysPage({ api }: { api: DesktopApi }) {
               {t(show ? "apikey.hide" : "apikey.show")}
             </button>
           </div>
-          <div className="action-row">
+          <div className="apikey-card__actions">
             <button className="control-button" disabled={Boolean(operation)}>
               {operation === "save"
                 ? t("apikey.saving")
@@ -190,23 +188,24 @@ export function ApiKeysPage({ api }: { api: DesktopApi }) {
             )}
           </div>
         </form>
-      </div>
 
-      <section className="apikey-explainer">
-        <div>
-          <span aria-hidden="true">A</span>
-          <h3>{t("apikey.explainer.usage.heading")}</h3>
+        <dl className="apikey-card__location">
+          <dt>{t("apikey.storage.label")}</dt>
+          <dd>
+            <code>{paths?.credentials_path ?? t("apikey.path.loading")}</code>
+          </dd>
+        </dl>
+
+        <aside className="apikey-card__tips">
+          <strong>{t("apikey.explainer.usage.heading")}</strong>
           <ul>
             <li>{t("apikey.explainer.usage.agentFiles")}</li>
             <li>{t("apikey.explainer.usage.catalog")}</li>
           </ul>
-        </div>
-        <div>
-          <span aria-hidden="true">B</span>
-          <h3>{t("apikey.explainer.storage.heading")}</h3>
-          <code>{paths?.credentials_path ?? t("apikey.path.loading")}</code>
-          <p>{t("apikey.explainer.storage.note")}</p>
-        </div>
+          <p className="apikey-card__tips-note">
+            {t("apikey.explainer.storage.note")}
+          </p>
+        </aside>
       </section>
     </section>
   );
