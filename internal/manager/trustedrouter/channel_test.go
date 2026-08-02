@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/codeasier/mtls-router/internal/manager/discovery"
 	"github.com/codeasier/mtls-router/internal/manager/process"
@@ -166,6 +167,63 @@ func TestChannelRejectsVersionIdentityMismatchBeforeKeyTransmission(t *testing.T
 	_, err := (Channel{ValidateProcess: genuineProcess}).Fetch(context.Background(), listener, trustedFixture(listener), channelKeyCanary)
 	if err == nil || err.Code != protocol.CodeModelCatalogStale || keyObserved.Load() {
 		t.Fatalf("error=%+v key observed=%t", err, keyObserved.Load())
+	}
+}
+
+func TestChannelRejectsNonOKVersionBeforeKeyTransmission(t *testing.T) {
+	tests := []struct {
+		name    string
+		respond func(w http.ResponseWriter, r *http.Request)
+		timeout bool
+	}{
+		{
+			name: "redirect_response",
+			respond: func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Location", "/other")
+				w.WriteHeader(http.StatusFound)
+			},
+		},
+		{
+			name: "protocol_upgrade",
+			respond: func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Connection", "Upgrade")
+				w.Header().Set("Upgrade", "websocket")
+				w.WriteHeader(http.StatusSwitchingProtocols)
+			},
+		},
+		{
+			name: "timeout_during_version",
+			respond: func(_ http.ResponseWriter, r *http.Request) {
+				<-r.Context().Done()
+			},
+			timeout: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var keyObserved atomic.Bool
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("Authorization") != "" {
+					keyObserved.Store(true)
+				}
+				tt.respond(w, r)
+			}))
+			defer server.Close()
+			listener := listenerForServer(t, server.URL)
+			ctx := context.Background()
+			if tt.timeout {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, 20*time.Millisecond)
+				defer cancel()
+			}
+			_, err := (Channel{ValidateProcess: genuineProcess}).Fetch(ctx, listener, trustedFixture(listener), channelKeyCanary)
+			if err == nil || err.Code != protocol.CodeModelDiscoveryFailed {
+				t.Fatalf("Fetch() error = %+v, want MODEL_DISCOVERY_FAILED", err)
+			}
+			if keyObserved.Load() {
+				t.Fatal("Authorization was sent before trust completed")
+			}
+		})
 	}
 }
 

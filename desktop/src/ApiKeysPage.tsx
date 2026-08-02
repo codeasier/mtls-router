@@ -59,11 +59,7 @@ export function ApiKeysPage({ api }: { api: DesktopApi }) {
     event.preventDefault();
     if (operation || !inputRef.current) return;
     const key = inputRef.current.value.trim();
-    if (
-      !key ||
-      new TextEncoder().encode(key).length > MAX_KEY_BYTES ||
-      !/^[\x21-\x7e]+$/.test(key)
-    ) {
+    if (!key || new TextEncoder().encode(key).length > MAX_KEY_BYTES) {
       clearInput();
       setError("apikey.error.length");
       return;
