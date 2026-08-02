@@ -407,6 +407,9 @@ contains "$ROOT/desktop/scripts/verify-package.sh" '[[ "$(readlink "$application
 
 unsigned_macos_block="$(workflow_step "$RELEASE" 'Build unsigned macOS package')"
 signed_macos_block="$(workflow_step "$RELEASE" 'Create signed macOS package')"
+unsigned_windows_block="$(workflow_step "$RELEASE" 'Build unsigned Windows package')"
+[[ "$unsigned_windows_block" == *'npm exec tauri -- build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config "$env:TAURI_UPDATER_CONFIG" --no-sign --ci'* ]] || \
+  fail 'unsigned Windows packaging must read the updater config from the PowerShell environment'
 for block in "$unsigned_macos_block" "$signed_macos_block"; do
   [[ "$block" == *'./scripts/create-macos-dmg.sh ${{ matrix.target }} "$VERSION"'* ]] || \
     fail 'each macOS package path must use the controlled DMG helper'

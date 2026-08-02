@@ -278,7 +278,7 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npm exec tauri -- build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config "$TAURI_UPDATER_CONFIG" --no-sign --ci
+        run: npm exec tauri -- build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config "$env:TAURI_UPDATER_CONFIG" --no-sign --ci
       - name: Build signed Windows package
         if: runner.os == 'Windows' && env.WINDOWS_CERTIFICATE != '' && env.WINDOWS_CERTIFICATE_PASSWORD != ''
         shell: pwsh
