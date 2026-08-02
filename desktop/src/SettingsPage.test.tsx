@@ -118,7 +118,7 @@ describe("SettingsPage", () => {
     await act(async () => finishInstall());
     expect(
       await screen.findByText("更新已安装，正在重启...", {
-        selector: ".update-panel__state",
+        selector: ".settings-block__update-state",
       }),
     ).toBeVisible();
   });

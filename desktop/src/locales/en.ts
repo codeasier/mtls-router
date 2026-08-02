@@ -9,6 +9,7 @@ export const en: Record<TranslationKey, string> = {
   "app.sidebarCollapse": "Collapse sidebar",
   "app.sidebarExpand": "Expand sidebar",
   "app.sidebarExpandShort": "Expand",
+  "app.updateBadgeAria": "A new version is available",
   "nav.router": "Router control",
   "nav.routerShort": "Router",
   "nav.agents": "Agent configuration",
@@ -211,10 +212,6 @@ export const en: Record<TranslationKey, string> = {
   "settings.dataLocation": "Application data",
   "settings.logLocation": "Log file",
   "settings.unavailable": "Unavailable",
-  "update.noticeAria": "Application update notification",
-  "update.noticeTitle": "A new version is available",
-  "update.noticeDescription": "CodeasierRouter {version} is ready to install.",
-  "update.viewAction": "View update",
   "update.checkAction": "Check for updates",
   "update.checking": "Checking...",
   "update.currentVersion": "Current version",
@@ -264,7 +261,7 @@ export const en: Record<TranslationKey, string> = {
     "Writing credential configuration for Claude Code, OpenCode, and Codex.",
   "apikey.explainer.usage.catalog":
     "Fetching the available model catalog through the local router.",
-  "apikey.explainer.storage.heading": "Where it is stored",
+  "apikey.storage.label": "Storage location",
   "apikey.explainer.storage.note":
     "Unix file permissions are fixed at 0600. Windows uses the current-user data directory access controls.",
   "apikey.path.loading": "Reading storage location...",

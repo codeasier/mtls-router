@@ -287,6 +287,9 @@ function AppContent({ api }: { api: DesktopApi }) {
     });
   }
 
+  const updateAvailable =
+    Boolean(updateResult?.available) && Boolean(updateResult?.update);
+
   return (
     <div
       className="app-frame"
@@ -315,17 +318,25 @@ function AppContent({ api }: { api: DesktopApi }) {
               className={
                 activeSection === item.id ? "nav-item is-active" : "nav-item"
               }
-              aria-label={t(navigationKeys[item.id])}
+              aria-label={
+                item.id === "settings" && updateAvailable
+                  ? `${t(navigationKeys[item.id])}，${t("app.updateBadgeAria")}`
+                  : t(navigationKeys[item.id])
+              }
               aria-current={activeSection === item.id ? "page" : undefined}
               onClick={(event) => navigate(item.id, event.currentTarget)}
             >
-              <span>{item.index}</span>
               <strong className="nav-label--full">
                 {t(navigationKeys[item.id])}
               </strong>
               <strong className="nav-label--short">
                 {t(shortNavigationKeys[item.id])}
               </strong>
+              {item.id === "settings" && updateAvailable && (
+                <span className="nav-badge" aria-hidden="true">
+                  1
+                </span>
+              )}
             </button>
           ))}
         </nav>
@@ -365,30 +376,6 @@ function AppContent({ api }: { api: DesktopApi }) {
         </header>
 
         <div className="main-scroll">
-          {updateResult?.available && updateResult.update && (
-            <aside
-              className="update-notice"
-              role="status"
-              aria-label={t("update.noticeAria")}
-            >
-              <div>
-                <strong>{t("update.noticeTitle")}</strong>
-                <span>
-                  {t("update.noticeDescription", {
-                    version: updateResult.update.version,
-                  })}
-                </span>
-              </div>
-              <button
-                type="button"
-                className="text-button"
-                onClick={() => navigate("settings")}
-              >
-                {t("update.viewAction")}
-              </button>
-            </aside>
-          )}
-
           {blockedLeaveAttempt > 0 && (
             <p
               key={blockedLeaveAttempt}
