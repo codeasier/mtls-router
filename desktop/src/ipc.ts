@@ -5,6 +5,7 @@ export const POLL_SNAPSHOT_EVENT = "router-poll-snapshot";
 export const MAIN_WINDOW_FOCUSED_EVENT = "main-window-focused";
 export const AGENT_DRAFT_QUIT_REQUESTED_EVENT = "agent-draft-quit-requested";
 export const UPDATE_PROGRESS_EVENT = "update-download-progress";
+export const IMAGE_OPERATION_EVENT = "image-operation";
 
 export const COMMANDS = {
   routerStatus: "router_status",
@@ -42,6 +43,18 @@ export const COMMANDS = {
   resolveAppQuit: "resolve_app_quit",
   updateCheck: "update_check",
   updateInstall: "update_install",
+  imageReadiness: "image_readiness",
+  imageCurrentOperation: "image_current_operation",
+  imageConversations: "image_conversations",
+  imageCreateConversation: "image_create_conversation",
+  imageSelectConversation: "image_select_conversation",
+  imageSetConversationModel: "image_set_conversation_model",
+  imageDeleteConversation: "image_delete_conversation",
+  imageResetStore: "image_reset_store",
+  imageMessages: "image_messages",
+  imageSelectReference: "image_select_reference",
+  imageStartGeneration: "image_start_generation",
+  imageCancelGeneration: "image_cancel_generation",
 } as const;
 
 export const MAX_LOG_LINES = 200;
@@ -698,6 +711,85 @@ export interface AgentWriteResult {
   state_backup?: AgentBackupFileEffect;
 }
 
+export interface PresetModelSummary {
+  id: string;
+  display_name: string;
+  available: boolean;
+}
+
+export interface ImageReadiness {
+  ready: boolean;
+  available_models: PresetModelSummary[];
+  reason: string;
+}
+
+export interface ImageConversation {
+  id: string;
+  selected: boolean;
+  title: string;
+  selected_model: string;
+  message_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ImageMessageStatus =
+  "running" | "succeeded" | "failed" | "cancelled" | "interrupted";
+
+export interface ImageMessage {
+  id: string;
+  role: "user" | "assistant";
+  prompt: string;
+  reference_asset_id: string;
+  model_id: string;
+  status: ImageMessageStatus;
+  output_asset_id: string;
+  error_category: string;
+  created_at: string;
+  completed_at: string;
+}
+
+export interface ImageImportResult {
+  asset_id: string;
+  format: string;
+  width: number;
+  height: number;
+}
+
+export interface ImageGenerationStart {
+  operation_id: string;
+  message_id: string;
+}
+
+export interface ImageCurrentOperation {
+  operation_id: string;
+  conversation_id: string;
+  message_id: string;
+}
+
+export interface ImageStartGenerationRequest {
+  conversation_id: string;
+  model: string;
+  prompt: string;
+  reference_asset_id: string;
+}
+
+export interface ImageOperationEvent {
+  operation_id: string;
+  conversation_id: string;
+  message_id: string;
+  status: "succeeded" | "failed" | "cancelled";
+}
+
+export const IMAGE_PRESET_MODELS = [
+  { id: "cx/gpt-5.5-image", display_name: "GPT 5.5 Image" },
+  { id: "ag/gemini-3.1-flash-image", display_name: "Gemini 3.1 Flash Image" },
+] as const;
+
+export function imageAssetUri(assetId: string): string {
+  return `image-asset://localhost/${assetId}`;
+}
+
 export interface DesktopApi {
   getPollSnapshot(): Promise<PollSnapshot>;
   subscribePollSnapshots(
@@ -776,6 +868,26 @@ export interface DesktopApi {
   setNativeLanguage(language: NativeLanguage): Promise<void>;
   getDesktopPaths(): Promise<DesktopPaths>;
   prepareForUninstall(): Promise<void>;
+  imageReadiness(): Promise<ImageReadiness>;
+  imageCurrentOperation(): Promise<ImageCurrentOperation | null>;
+  imageConversations(): Promise<ImageConversation[]>;
+  imageCreateConversation(model: string): Promise<ImageConversation>;
+  imageSelectConversation(conversationId: string): Promise<void>;
+  imageSetConversationModel(
+    conversationId: string,
+    model: string,
+  ): Promise<void>;
+  imageDeleteConversation(conversationId: string): Promise<void>;
+  imageResetStore(): Promise<void>;
+  imageMessages(conversationId: string): Promise<ImageMessage[]>;
+  imageSelectReference(): Promise<ImageImportResult>;
+  imageStartGeneration(
+    request: ImageStartGenerationRequest,
+  ): Promise<ImageGenerationStart>;
+  imageCancelGeneration(): Promise<void>;
+  subscribeImageOperations(
+    listener: (event: ImageOperationEvent) => void,
+  ): Promise<UnlistenFn>;
 }
 
 export type InvokeFn = <T>(
@@ -927,6 +1039,41 @@ export function createDesktopApi(
       invoke(COMMANDS.nativeLanguageSet, { language }),
     getDesktopPaths: () => invoke(COMMANDS.desktopPaths),
     prepareForUninstall: () => invoke(COMMANDS.prepareForUninstall),
+    imageReadiness: () => invoke(COMMANDS.imageReadiness),
+    imageCurrentOperation: () => invoke(COMMANDS.imageCurrentOperation),
+    imageConversations: () => invoke(COMMANDS.imageConversations),
+    imageCreateConversation: (model) =>
+      invoke(COMMANDS.imageCreateConversation, { request: { model } }),
+    imageSelectConversation: (conversationId) =>
+      invoke(COMMANDS.imageSelectConversation, {
+        request: { conversation_id: conversationId },
+      }),
+    imageSetConversationModel: (conversationId, model) =>
+      invoke(COMMANDS.imageSetConversationModel, {
+        request: { conversation_id: conversationId, model },
+      }),
+    imageDeleteConversation: (conversationId) =>
+      invoke(COMMANDS.imageDeleteConversation, {
+        request: { conversation_id: conversationId },
+      }),
+    imageResetStore: () => invoke(COMMANDS.imageResetStore),
+    imageMessages: (conversationId) =>
+      invoke(COMMANDS.imageMessages, { conversationId }),
+    imageSelectReference: () => invoke(COMMANDS.imageSelectReference),
+    imageStartGeneration: (request) =>
+      invoke(COMMANDS.imageStartGeneration, {
+        request: {
+          conversation_id: request.conversation_id,
+          model: request.model,
+          prompt: request.prompt,
+          reference_asset_id: request.reference_asset_id,
+        },
+      }),
+    imageCancelGeneration: () => invoke(COMMANDS.imageCancelGeneration),
+    subscribeImageOperations: (listener) =>
+      listen<ImageOperationEvent>(IMAGE_OPERATION_EVENT, (event) =>
+        listener(event.payload),
+      ),
   };
 }
 

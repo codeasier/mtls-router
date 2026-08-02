@@ -641,6 +641,47 @@ func TestRouterVersionUsesStatusDiscovery(t *testing.T) {
 	}
 }
 
+func TestRouterTrustedChannelReturnsOnlyCompleteCorrelatedState(t *testing.T) {
+	found := discovery.Result{
+		Classification: discovery.DesktopOwned,
+		ListenAddr:     "http://127.0.0.1:19099",
+		Version: discovery.Version{
+			PID: 42, DeploymentID: "prod-a", ManagementProtocolVersion: "4",
+		},
+		State: state.RouterState{
+			PID: 42, ListenAddr: "http://127.0.0.1:19099", StartedAt: "router-start",
+			ProcessStartedAt: "process-start", ProcessExecutable: "/router",
+			BinaryPath: "/router", DeploymentID: "prod-a", ManagementProtocolVersion: "4",
+		},
+	}
+	manager := newWithDependencies(Config{}, dependencies{
+		discoverStatus: func(context.Context) discovery.Result { return found },
+	})
+
+	result, responseErr := manager.routerTrustedChannel(context.Background(), json.RawMessage(`{}`))
+	if responseErr != nil {
+		t.Fatal(responseErr)
+	}
+	trust := result.(protocol.RouterTrustedChannelResult)
+	if trust.PID != 42 || trust.ProcessStartedAt != "process-start" || trust.BinaryPath != "/router" {
+		t.Fatalf("trust result = %#v", trust)
+	}
+
+	found.Version.PID = 43
+	_, responseErr = manager.routerTrustedChannel(context.Background(), json.RawMessage(`{}`))
+	if responseErr == nil || responseErr.Code != protocol.CodeRouterStateStale {
+		t.Fatalf("mismatched trust error = %#v", responseErr)
+	}
+
+	found.Version.PID = found.State.PID
+	found.Version.Version = "router-v1"
+	found.Classification = discovery.Degraded
+	_, responseErr = manager.routerTrustedChannel(context.Background(), json.RawMessage(`{}`))
+	if responseErr == nil || responseErr.Code != protocol.CodeRouterDegraded {
+		t.Fatalf("degraded trust error = %#v", responseErr)
+	}
+}
+
 func TestSanitizeTextRedactsURLUserinfoBeforeQueryValues(t *testing.T) {
 	for _, tc := range []struct {
 		name  string

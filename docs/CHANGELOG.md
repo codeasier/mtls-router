@@ -2,6 +2,23 @@
 
 [中文](zh-CN/CHANGELOG.md)
 
+## Unreleased
+
+### Added
+
+- Added persistent desktop image conversations for the exact `cx/gpt-5.5-image` and `ag/gemini-3.1-flash-image` presets, including prompt-only generation, explicit single-image editing, cancellation, and content-addressed local assets.
+
+### Security and recovery
+
+- Added a single-connection Rust image data plane that validates manager trust state, router metadata, process identity, and health before reading the saved API key; bounded prompts, catalogs, HTTP framing, base64 responses, image formats, dimensions, and global concurrency fail closed.
+- Added atomic versioned conversation snapshots, interrupted-operation recovery, post-commit asset deletion, orphan cleanup, and a read-only `image-asset` protocol without granting webview file, dialog, or network permissions.
+
+### Tests
+
+- Added fixed 9Router `v0.5.45` contract fixtures plus Go, Rust, and React coverage for proxy transparency, trust/auth ordering, cancellation, storage recovery, exact model selection, stale events, and data limits.
+
+---
+
 ## v0.3.3 - 2026-08-01
 
 This release adds safe per-Agent cleanup of CodeasierRouter-managed settings and signed whole-package desktop updates, introduces layered desktop development workflows, unifies CodeasierRouter branding, and preserves the macOS fullscreen Space when closing the app to the tray.

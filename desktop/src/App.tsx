@@ -8,6 +8,7 @@ import {
 
 import { AgentPage, type LeaveGuard } from "./AgentPage";
 import { ApiKeysPage } from "./ApiKeysPage";
+import { ConversationsPage } from "./ConversationsPage";
 import { I18nProvider, useI18n } from "./i18n";
 import { desktopApi, type DesktopApi, type UpdateCheckResult } from "./ipc";
 import { LogsPage } from "./LogsPage";
@@ -20,6 +21,7 @@ const sectionKeys: Record<SectionId, string> = {
   router: "section.router",
   agents: "section.agents",
   "api-keys": "section.apiKeys",
+  conversations: "section.conversations",
   logs: "section.logs",
   settings: "section.settings",
 };
@@ -28,6 +30,7 @@ const navigationKeys: Record<SectionId, TranslationKey> = {
   router: "nav.router",
   agents: "nav.agents",
   "api-keys": "nav.apiKeys",
+  conversations: "nav.conversations",
   logs: "nav.logs",
   settings: "nav.settings",
 };
@@ -36,6 +39,7 @@ const shortNavigationKeys: Record<SectionId, TranslationKey> = {
   router: "nav.routerShort",
   agents: "nav.agentsShort",
   "api-keys": "nav.apiKeysShort",
+  conversations: "nav.conversationsShort",
   logs: "nav.logsShort",
   settings: "nav.settingsShort",
 };
@@ -417,6 +421,7 @@ function AppContent({ api }: { api: DesktopApi }) {
             />
           )}
           {activeSection === "api-keys" && <ApiKeysPage api={api} />}
+          {activeSection === "conversations" && <ConversationsPage api={api} />}
           {activeSection === "settings" && (
             <SettingsPage
               api={api}

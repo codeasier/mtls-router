@@ -30,6 +30,10 @@ pub struct AppState {
     pub pending_occupant: Arc<Mutex<Option<PendingOccupant>>>,
     pub credentials: Arc<CredentialStore>,
     pub lifecycle: Arc<LifecycleState>,
+    pub image_store: Arc<crate::image_store::ImageStore>,
+    pub image_store_lock: Arc<Mutex<()>>,
+    pub image_operation: Arc<Mutex<Option<crate::image_commands::ImageOperationGuard>>>,
+    pub image_readiness: Arc<Mutex<crate::image_commands::ImageReadiness>>,
 }
 
 #[derive(Deserialize)]
@@ -803,7 +807,14 @@ pub async fn save_credential(
     api_key: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<CredentialSummary> {
-    save_credential_command(api_key, &state.credentials).await
+    let summary = save_credential_command(api_key, &state.credentials).await?;
+    crate::image_commands::refresh_image_readiness(
+        &state.manager,
+        &state.credentials,
+        &state.image_readiness,
+    )
+    .await;
+    Ok(summary)
 }
 
 async fn delete_credential_command(credentials: &CredentialStore) -> Result<CredentialSummary> {
@@ -813,7 +824,9 @@ async fn delete_credential_command(credentials: &CredentialStore) -> Result<Cred
 
 #[tauri::command]
 pub async fn delete_credential(state: tauri::State<'_, AppState>) -> Result<CredentialSummary> {
-    delete_credential_command(&state.credentials).await
+    let summary = delete_credential_command(&state.credentials).await?;
+    *state.image_readiness.lock().await = crate::image_commands::ImageReadiness::default();
+    Ok(summary)
 }
 
 #[tauri::command]
@@ -1527,6 +1540,12 @@ mod tests {
                 pending_occupant: Default::default(),
                 credentials,
                 lifecycle: Default::default(),
+                image_store: std::sync::Arc::new(crate::image_store::ImageStore::from_data_dir("")),
+                image_store_lock: Default::default(),
+                image_operation: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+                image_readiness: std::sync::Arc::new(tokio::sync::Mutex::new(
+                    crate::image_commands::ImageReadiness::default(),
+                )),
             };
 
             state.set_window_visibility(false);

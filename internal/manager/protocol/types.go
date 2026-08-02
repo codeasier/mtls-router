@@ -18,6 +18,7 @@ const (
 	MethodRouterStop                   Method = "router.stop"
 	MethodRouterHealth                 Method = "router.health"
 	MethodRouterVersion                Method = "router.version"
+	MethodRouterTrustedChannel         Method = "router.trusted_channel"
 	MethodRouterLogs                   Method = "router.logs"
 	MethodRouterInspectOccupant        Method = "router.inspect_occupant"
 	MethodRouterForceTerminateOccupant Method = "router.force_terminate_occupant"
@@ -118,6 +119,7 @@ func Deadlines() map[Method]time.Duration {
 		MethodRouterStop:                   7 * time.Second,
 		MethodRouterHealth:                 12 * time.Second,
 		MethodRouterVersion:                time.Second,
+		MethodRouterTrustedChannel:         time.Second,
 		MethodRouterLogs:                   2 * time.Second,
 		MethodRouterInspectOccupant:        2 * time.Second,
 		MethodRouterForceTerminateOccupant: 3 * time.Second,
@@ -215,6 +217,18 @@ type RouterHealthResult struct {
 
 type RouterVersionResult struct {
 	Version                   string `json:"version"`
+	DeploymentID              string `json:"deployment_id"`
+	ManagementProtocolVersion string `json:"management_protocol_version"`
+}
+
+// RouterTrustedChannelResult is private manager-to-desktop trust material.
+// It must never be returned by a WebView-facing command.
+type RouterTrustedChannelResult struct {
+	ListenAddr                string `json:"listen_addr"`
+	PID                       int    `json:"pid"`
+	ProcessStartedAt          string `json:"process_started_at"`
+	ProcessExecutable         string `json:"process_executable"`
+	BinaryPath                string `json:"binary_path"`
 	DeploymentID              string `json:"deployment_id"`
 	ManagementProtocolVersion string `json:"management_protocol_version"`
 }

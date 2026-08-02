@@ -2,6 +2,23 @@
 
 [English](../CHANGELOG.md)
 
+## 未发布
+
+### 新增
+
+- 新增桌面图片持久化对话，精确支持 `cx/gpt-5.5-image` 与 `ag/gemini-3.1-flash-image` 两个预置，包括纯提示词生图、显式单图编辑、取消和按内容寻址的本地资产。
+
+### 安全与恢复
+
+- 新增单连接 Rust 图片数据面：读取已保存 API key 前验证 manager 信任状态、router metadata、进程身份和健康；提示词、目录、HTTP framing、base64 响应、图片格式、尺寸和全局并发均有界且 fail closed。
+- 新增原子化版本快照、中断操作恢复、快照提交后资产删除、孤儿清理和只读 `image-asset` 协议，且不授予 webview 文件、对话框或网络权限。
+
+### 测试
+
+- 新增固定 9Router `v0.5.45` 契约 fixture，以及 Go、Rust 和 React 覆盖，验证 proxy 透明转发、信任/认证顺序、取消、存储恢复、精确模型选择、陈旧事件和数据上限。
+
+---
+
 ## v0.3.3 - 2026-08-01
 
 本次发布新增按单 Agent 安全清理 CodeasierRouter 托管设置和桌面签名整包更新的能力，引入分层桌面开发工作流，统一 CodeasierRouter 品牌，并在应用关闭到托盘时保留 macOS 全屏 Space。

@@ -8,7 +8,7 @@ mtls-router 的控制面：路由生命周期管理、Agent 配置、端口冲�
 
 | 包 | 职责 | 关键导出 |
 |---------|------|-------------|
-| [`app`](app/INDEX.md) | 协议会话装配；将全部 17 个方法映射到服务；强制 API key 清零；直接分发无 key cleanup | `App`、`New(Config, simplify)`、`Serve(ctx, input, output)` |
+| [`app`](app/INDEX.md) | 协议会话装配；将全部 18 个方法映射到服务；强制 API key 清零；直接分发无 key cleanup | `App`、`New(Config, simplify)`、`Serve(ctx, input, output)` |
 | [`protocol`](protocol/INDEX.md) | JSON 请求/响应类型、方法常量、错误码、按方法超时 | `Request`、`Response`、`Error`、`Method*`、`Code*`、`Deadlines()` |
 | [`lifecycle`](lifecycle/INDEX.md) | router 进程 spawn/stop/reclaim；桌面前台 + CLI 分离模式；父进程监控；异常退出检测 | `Manager`、`Start(ctx, owner)`、`Stop(ctx)`、`Reclaim()`、`MonitorParent(ctx)` |
 | [`discovery`](discovery/INDEX.md) | 通过关联 HTTP `/version` + `/health` 与持久状态文件及 OS 进程身份来分类 router 状态 | `Discoverer`、`Discover(ctx)`、`DiscoverStatus(ctx)`、`DiscoverStartupStatus(ctx, owner)`、`Classification` 常量 |
@@ -23,12 +23,13 @@ mtls-router 的控制面：路由生命周期管理、Agent 配置、端口冲�
 | [`paths`](paths/INDEX.md) | 跨平台按用户路径解析（CLI 状态目录 + 桌面数据目录） | `Paths`、`Resolve()` |
 | [`modelcatalog`](modelcatalog/INDEX.md) | 模型目录 HTTP 客户端与 simplify 策略（链接期 `Simplify` 变量过滤含 `/` 的模型 ID） | `ParseSimplify()`、`Client` |
 
-## 协议方法（17 个）
+## 协议方法（18 个）
 
 ```
 manager.info              diagnostics.collect
 router.status             router.start            router.stop
-router.health             router.version          router.logs
+router.health             router.version          router.trusted_channel
+router.logs
 router.inspect_occupant   router.force_terminate_occupant
 agent.detect              agent.models            agent.render
 agent.preview             agent.write

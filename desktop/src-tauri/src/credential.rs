@@ -147,7 +147,10 @@ fn parse(content: &[u8]) -> Result<(String, Zeroizing<String>), CredentialError>
 }
 
 fn validate_key(key: &str) -> Result<(), CredentialError> {
-    if key.is_empty() || key.len() > MAX_KEY_BYTES {
+    if key.is_empty()
+        || key.len() > MAX_KEY_BYTES
+        || !key.bytes().all(|byte| (0x21..=0x7e).contains(&byte))
+    {
         return Err(CredentialError::InvalidFormat(
             "key length is invalid".into(),
         ));
@@ -413,10 +416,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn invalid_key_lengths_are_rejected() {
+    async fn invalid_key_values_are_rejected() {
         let dir = temp_dir("length");
         let store = CredentialStore::new(dir.credential());
-        for key in [String::new(), "x".repeat(MAX_KEY_BYTES + 1)] {
+        for key in [
+            String::new(),
+            "x".repeat(MAX_KEY_BYTES + 1),
+            "key\r\nInjected: value".into(),
+            "non-ascii-key-密钥".into(),
+        ] {
             let error = store.write(Zeroizing::new(key)).await.unwrap_err();
             assert!(matches!(error, CredentialError::InvalidFormat(_)));
         }
