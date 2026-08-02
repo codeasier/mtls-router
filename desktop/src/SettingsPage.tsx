@@ -309,11 +309,9 @@ export function SettingsPage({
                 </div>
               )}
 
-              {(updateCheckError || installState === "error") && (
+              {installState === "error" && (
                 <p className="settings-block__update-error" role="alert">
-                  {installState === "error"
-                    ? t("update.error.install")
-                    : t("update.error.check")}
+                  {t("update.error.install")}
                 </p>
               )}
               {installState === "restarting" && (
@@ -337,6 +335,12 @@ export function SettingsPage({
             </div>
           )}
 
+          {updateCheckError && !updateResult?.available && (
+            <p className="settings-block__update-error" role="alert">
+              {t("update.error.check")}
+            </p>
+          )}
+
           <p
             className={
               updateResult?.available
@@ -349,9 +353,11 @@ export function SettingsPage({
               ? t("update.checking")
               : updateResult?.available
                 ? t("update.available")
-                : updateResult
-                  ? t("update.current")
-                  : t("update.statusUnavailable")}
+                : updateCheckError
+                  ? t("update.error.check")
+                  : updateResult
+                    ? t("update.current")
+                    : t("update.statusUnavailable")}
           </p>
         </section>
 

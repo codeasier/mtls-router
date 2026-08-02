@@ -115,9 +115,8 @@ export function ApiKeysPage({ api }: { api: DesktopApi }) {
         data-state={
           summary ? (summary.present ? "saved" : "absent") : "loading"
         }
-        aria-live="polite"
       >
-        <header className="apikey-card__status">
+        <header className="apikey-card__status" aria-live="polite">
           <span className="apikey-card__indicator" aria-hidden="true" />
           <div className="apikey-card__status-text">
             <strong>
@@ -190,12 +189,12 @@ export function ApiKeysPage({ api }: { api: DesktopApi }) {
           </div>
         </form>
 
-        <div className="apikey-card__location">
+        <dl className="apikey-card__location">
           <dt>{t("apikey.storage.label")}</dt>
           <dd>
             <code>{paths?.credentials_path ?? t("apikey.path.loading")}</code>
           </dd>
-        </div>
+        </dl>
 
         <aside className="apikey-card__tips">
           <strong>{t("apikey.explainer.usage.heading")}</strong>

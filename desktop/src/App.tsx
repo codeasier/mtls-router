@@ -320,7 +320,7 @@ function AppContent({ api }: { api: DesktopApi }) {
               }
               aria-label={
                 item.id === "settings" && updateAvailable
-                  ? `${t(navigationKeys[item.id])}，${t("app.updateBadgeAria")}`
+                  ? `${t(navigationKeys[item.id])} - ${t("app.updateBadgeAria")}`
                   : t(navigationKeys[item.id])
               }
               aria-current={activeSection === item.id ? "page" : undefined}

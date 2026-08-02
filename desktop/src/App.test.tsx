@@ -140,7 +140,7 @@ describe("App navigation", () => {
     render(<App api={api} />);
 
     const settingsNav = await screen.findByRole("button", {
-      name: "系统设置，有新版本可用",
+      name: "系统设置 - 有新版本可用",
     });
     expect(api.checkForUpdate).toHaveBeenCalledOnce();
 

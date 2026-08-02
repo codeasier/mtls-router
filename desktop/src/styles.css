@@ -1705,7 +1705,6 @@ main {
 
 .settings-block--danger {
   display: flex;
-  grid-column: 1 / -1;
   justify-content: space-between;
   gap: 24px;
   align-items: center;
@@ -1775,7 +1774,7 @@ main {
   box-shadow: 0 0 0 5px var(--danger-soft);
   transition:
     background-color var(--duration-normal) var(--ease-out),
-    box-shadow-color var(--duration-normal) var(--ease-out);
+    box-shadow var(--duration-normal) var(--ease-out);
 }
 
 .apikey-card[data-state="loading"] .apikey-card__indicator {
@@ -3528,12 +3527,6 @@ main {
   overflow-wrap: anywhere;
 }
 
-@media (max-width: 1200px) {
-  .settings-block--danger {
-    grid-column: 1 / -1;
-  }
-}
-
 @media (max-width: 800px) {
   .app-frame {
     grid-template-columns: 82px minmax(0, 1fr);
@@ -3628,10 +3621,6 @@ main {
     display: grid;
   }
 
-  .settings-block--danger {
-    grid-column: auto;
-  }
-
   .agent-card {
     min-height: 0;
   }
@@ -3695,10 +3684,6 @@ main {
 
   .settings-block__heading .text-button {
     width: 100%;
-  }
-
-  .update-panel__versions {
-    grid-template-columns: 1fr;
   }
 
   .apikey-card__input-row {
@@ -3777,10 +3762,6 @@ main {
   .typed-grid,
   .omission-grid {
     grid-template-columns: 1fr;
-  }
-
-  .settings-block--danger {
-    grid-column: auto;
   }
 
   .control-button,

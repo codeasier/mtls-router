@@ -67,6 +67,21 @@ describe("SettingsPage", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("surfaces an accessible error when the update check rejects", async () => {
+    const api = await openSettings(
+      createMockApi({
+        checkForUpdate: vi.fn().mockRejectedValue(new Error("network")),
+      }),
+    );
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("无法检查更新");
+    expect(api.checkForUpdate).toHaveBeenCalledOnce();
+    expect(
+      screen.queryByRole("button", { name: "安装并重启" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("requires confirmation before install and reports download progress", async () => {
     const progressListener = {
       current: null as
