@@ -117,6 +117,12 @@ if [[ "$os" != windows ]]; then
   [[ -x "$packaged_desktop" && -x "$packaged_router" && -x "$packaged_manager" ]] || { printf 'packaged executables have invalid permissions\n' >&2; exit 1; }
 fi
 
+if [[ "$os" == linux && -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
+  command -v xvfb-run >/dev/null || { printf 'xvfb-run is required for headless Linux startup verification\n' >&2; exit 1; }
+  xvfb-run -a "$packaged_desktop" --verify-app-startup
+else
+  "$packaged_desktop" --verify-app-startup
+fi
 "$packaged_desktop" --verify-manager-handshake
 
 PACKAGED_DESKTOP="$packaged_desktop" PACKAGED_ROUTER="$packaged_router" PACKAGED_MANAGER="$packaged_manager" \

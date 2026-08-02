@@ -6,7 +6,7 @@
 
 ## 包被阻止或 release 状态不明确
 
-Workflow 会构建六个原生桌面包，并在匹配的目标 runner 上检查每个包，但签名是有条件的，而且包检查不会安装或启动应用。
+Workflow 会构建六个原生桌面包，并在匹配的目标 runner 上检查每个包，包括只覆盖初始化的启动 smoke test，但签名是有条件的，而且包检查不会安装或正常启动应用。
 
 1. 确认包与操作系统和架构匹配：Windows x86_64/arm64 NSIS、macOS Intel/Apple Silicon DMG，或 Linux x86_64/arm64 AppImage。
 2. 使用配套 `.sha256` 文件验证包。

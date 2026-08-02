@@ -6,7 +6,7 @@ Use the Router, Logs, and Settings pages before deleting state. Diagnostic summa
 
 ## Package is blocked or release status is unclear
 
-The workflows build six native desktop packages and inspect each one on a matching target runner, but signing is conditional and package inspection does not install or launch the application.
+The workflows build six native desktop packages and inspect each one on a matching target runner, including an initialization-only startup smoke test, but signing is conditional and package inspection does not install or normally launch the application.
 
 1. Match the package to the operating system and architecture: Windows x86_64/arm64 NSIS, macOS Intel/Apple Silicon DMG, or Linux x86_64/arm64 AppImage.
 2. Verify the package with its `.sha256` file.

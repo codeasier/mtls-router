@@ -4,7 +4,7 @@
 
 The Tauri desktop application is a current-user control panel for the fixed-service `mtls-router`. It packages architecture-matching `mtls-router-manager` and `mtls-router` sidecars; it does not install either sidecar into `PATH` and does not provide certificate, upstream, or sidecar replacement controls.
 
-> The checked-in CI and release workflows build six native desktop packages: Windows x86_64/arm64 NSIS installers, macOS Intel/Apple Silicon DMGs, and Linux x86_64/arm64 AppImages. Each package job runs inspection on a matching target runner. Release signing is conditional on platform credentials, and macOS notarization/stapling additionally requires complete Apple notarization credentials; the per-target status file records the result. Inspection does not install or launch the package, so separate successful target-runner launch evidence remains required. See [Build and Release](BUILD.md).
+> The checked-in CI and release workflows build six native desktop packages: Windows x86_64/arm64 NSIS installers, macOS Intel/Apple Silicon DMGs, and Linux x86_64/arm64 AppImages. Each package job runs inspection and an initialization-only startup smoke test on a matching target runner. Release signing is conditional on platform credentials, and macOS notarization/stapling additionally requires complete Apple notarization credentials; the per-target status file records the result. Inspection does not install or normally launch the package, so separate successful target-runner launch evidence remains required. See [Build and Release](BUILD.md).
 
 ## Install
 

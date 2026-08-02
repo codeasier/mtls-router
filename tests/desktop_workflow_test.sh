@@ -153,6 +153,9 @@ contains "$RELEASE" "printf 'VERSION=%s\\n' \"\$version\" >>\"\$GITHUB_ENV\""
 contains "$ROOT/desktop/scripts/verify-package.sh" '"$packaged_desktop" --verify-manager-handshake'
 contains "$ROOT/desktop/src-tauri/src/main.rs" '"--verify-manager-handshake"'
 contains "$ROOT/desktop/src-tauri/src/main.rs" 'verify_manager_handshake()'
+contains "$ROOT/desktop/scripts/verify-package.sh" '"$packaged_desktop" --verify-app-startup'
+contains "$ROOT/desktop/src-tauri/src/main.rs" '"--verify-app-startup"'
+contains "$ROOT/desktop/src-tauri/src/main.rs" 'verify_app_startup()'
 contains "$ROOT/desktop/scripts/build-sidecars.sh" 'management_protocol_version="${MANAGEMENT_PROTOCOL_VERSION:-4}"'
 contains "$ROOT/desktop/scripts/build-sidecars.sh" 'node -p "require('\''./package.json'\'').version"'
 contains "$ROOT/desktop/scripts/verify-package.sh" 'node -p "require('\''./package.json'\'').version"'
@@ -653,6 +656,8 @@ preset_preflight_line="$(printf '%s\n' "$release_prepare_block" | awk '/name: Pr
 assert_npm_job frontend "$ci_frontend_block"
 assert_npm_job desktop-package "$ci_package_block"
 assert_npm_job release-desktop "$release_desktop_block"
+[[ "$ci_package_block" == *'xauth xvfb'* ]] || fail 'CI package job must install Xvfb for startup verification'
+[[ "$release_desktop_block" == *'xauth xvfb'* ]] || fail 'release desktop job must install Xvfb for startup verification'
 
 for metadata in 'VERSION: 0.1.0' 'DEPLOYMENT_ID: dev' "MANAGEMENT_PROTOCOL_VERSION: '4'"; do
   [[ "$ci_package_block" == *"$metadata"* ]] || fail "desktop-package job missing inherited $metadata"
@@ -674,6 +679,11 @@ if grep -Eq 'softprops/action-gh-release|ssh-deploy|appleboy/ssh-action' "$CI"; 
 fi
 
 contains "$CONFIG" '"createUpdaterArtifacts": false'
+node - "$CONFIG" <<'NODE' || fail 'base updater configuration must be valid when updates are disabled'
+const config = require(process.argv[2]);
+if (config.plugins?.updater?.pubkey !== '') process.exit(1);
+if (!Array.isArray(config.plugins?.updater?.endpoints) || config.plugins.updater.endpoints.length !== 0) process.exit(1);
+NODE
 contains "$CONFIG" '"installMode": "currentUser"'
 contains "$CONFIG" '"installerHooks": "./windows/uninstall-hooks.nsh"'
 contains "$HOOKS" 'DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "mtls-router-desktop"'
@@ -699,6 +709,27 @@ if grep -Eqi 'dmg.*(uninstall hook|delete hook)|appimage.*(uninstall hook|delete
   fail 'DMG/AppImage configuration claims an unavailable uninstall hook'
 fi
 [[ -x "$PREPARE_UPDATER" && -x "$CREATE_MACOS_UPDATER" ]] || fail 'release updater helpers must be executable'
+disabled_updater_config="$prepare_work/updater-disabled.json"
+ONLINE_UPDATE=false bash "$PREPARE_UPDATER" "$disabled_updater_config"
+node - "$disabled_updater_config" <<'NODE' || fail 'disabled updater overlay must only disable artifacts'
+const config = require(process.argv[2]);
+if (config.bundle?.createUpdaterArtifacts !== false || config.plugins !== undefined) process.exit(1);
+NODE
+fixture_updater_key='fixture updater public key'
+fixture_updater_fingerprint="$(node -e 'const crypto=require("node:crypto"); process.stdout.write(crypto.createHash("sha256").update(process.argv[1]).digest("hex"))' "$fixture_updater_key")"
+stable_updater_config="$prepare_work/updater-stable.json"
+ONLINE_UPDATE=true GITHUB_REF=refs/tags/v1.2.3 \
+  TAURI_UPDATER_PUBKEY="$fixture_updater_key" \
+  TAURI_UPDATER_PUBKEY_SHA256="$fixture_updater_fingerprint" \
+  TAURI_SIGNING_PRIVATE_KEY=fixture TAURI_SIGNING_PRIVATE_KEY_PASSWORD=fixture \
+  UPDATER_ENDPOINT=https://updates.example.test/latest.json \
+  bash "$PREPARE_UPDATER" "$stable_updater_config"
+node - "$stable_updater_config" "$fixture_updater_key" <<'NODE' || fail 'stable updater overlay must retain its key and HTTPS endpoint'
+const config = require(process.argv[2]);
+if (config.bundle?.createUpdaterArtifacts !== true) process.exit(1);
+if (config.plugins?.updater?.pubkey !== process.argv[3]) process.exit(1);
+if (JSON.stringify(config.plugins?.updater?.endpoints) !== JSON.stringify(['https://updates.example.test/latest.json'])) process.exit(1);
+NODE
 contains "$PREPARE_UPDATER" 'createUpdaterArtifacts: process.env.ENABLED === "true"'
 contains "$PREPARE_UPDATER" 'TAURI_UPDATER_PUBKEY'
 contains "$PREPARE_UPDATER" 'TAURI_UPDATER_PUBKEY_SHA256'

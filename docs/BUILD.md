@@ -2,7 +2,7 @@
 
 [中文](zh-CN/BUILD.md)
 
-This document is for maintainers building the router, Go manager, or Tauri desktop application. The checked-in CI and release workflows build all six native desktop package targets and inspect each package on a matching runner. Exact stable `vX.Y.Z` tag releases publish those desktop packages with signed updater artifacts and the CLI router/manager binaries and archives. Windows/macOS signing and macOS notarization/stapling are conditional on complete platform credentials; Tauri updater signing is separately mandatory for stable releases. Package inspection does not install, launch, or update the application; retain separate signing-status and successful target-runner install/launch/update evidence for every released package.
+This document is for maintainers building the router, Go manager, or Tauri desktop application. The checked-in CI and release workflows build all six native desktop package targets and inspect each package on a matching runner. Exact stable `vX.Y.Z` tag releases publish those desktop packages with signed updater artifacts and the CLI router/manager binaries and archives. Windows/macOS signing and macOS notarization/stapling are conditional on complete platform credentials; Tauri updater signing is separately mandatory for stable releases. Package inspection performs an initialization-only startup smoke test but does not install, normally launch, or update the application; retain separate signing-status and successful target-runner install/launch/update evidence for every released package.
 
 ## Toolchains and lockfiles
 
@@ -251,9 +251,9 @@ Do not use command-line secret setters for the three Secrets: command arguments,
 
 ## Package verification
 
-Both workflows invoke `desktop/scripts/verify-package.sh` for every one of the six packages on a native matching runner. The script rejects a host/target mismatch; unpacks the NSIS, DMG, or AppImage; checks package/version identity; checks desktop, manager, and router formats and architectures; compares packaged sidecar hashes with the sidecars built for that job; checks executable permissions on macOS/Linux; and validates manager version, target, deployment ID, and protocol. The release workflow then verifies each generated `.sha256` before publication.
+Both workflows invoke `desktop/scripts/verify-package.sh` for every one of the six packages on a native matching runner. The script rejects a host/target mismatch; unpacks the NSIS, DMG, or AppImage; checks package/version identity; checks desktop, manager, and router formats and architectures; compares packaged sidecar hashes with the sidecars built for that job; checks executable permissions on macOS/Linux; constructs the packaged Tauri application to initialize its registered plugins without entering the event loop; and validates manager version, target, deployment ID, and protocol. Headless Linux verification runs the initialization smoke under Xvfb. The release workflow then verifies each generated `.sha256` before publication.
 
-That automated inspection does not install or launch the packaged application. Before publication, retain the workflow inspection outputs and separate evidence from every matching target runner for the full release checklist:
+That automated inspection does not install the package or exercise a normal GUI launch, setup hook, event loop, first-launch behavior, or updater network path. Before publication, retain the workflow inspection outputs and separate evidence from every matching target runner for the full release checklist:
 
 1. Confirm package and executable architecture match the target.
 2. Inspect package contents for exactly one architecture-compatible manager and router sidecar and no raw PEM/key files.

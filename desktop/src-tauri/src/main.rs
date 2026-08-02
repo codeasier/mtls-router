@@ -23,5 +23,20 @@ fn main() {
         );
         return;
     }
+    if args
+        .first()
+        .is_some_and(|arg| arg == "--verify-app-startup")
+    {
+        if args.len() != 1 {
+            eprintln!("--verify-app-startup accepts no arguments");
+            std::process::exit(2);
+        }
+        if let Err(error) = mtls_router_desktop_lib::verify_app_startup() {
+            eprintln!("application startup verification failed: {error}");
+            std::process::exit(1);
+        }
+        println!("verified application startup initialization");
+        return;
+    }
     mtls_router_desktop_lib::run();
 }
