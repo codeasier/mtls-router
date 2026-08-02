@@ -4,13 +4,12 @@
 
 ## v0.3.3 - 2026-08-01
 
-This release adds safe per-Agent cleanup of CodeasierRouter-managed settings and signed whole-package desktop updates, introduces layered desktop development workflows, unifies CodeasierRouter branding, and preserves the macOS fullscreen Space when closing the app to the tray.
+This release adds safe per-Agent cleanup of CodeasierRouter-managed settings, introduces layered desktop development workflows, unifies CodeasierRouter branding, and preserves the macOS fullscreen Space when closing the app to the tray.
 
 ### Added
 
 - Added independent cleanup preview and write flows for removing one Agent's CodeasierRouter-managed provider, model, and file-backed authentication settings while preserving unrelated user configuration, the desktop global API key, and historical backups.
 - Added browser-only mock development, reuse of existing Tauri sidecars, and disposable real-Agent configuration paths, with production builds rejecting bundled mock code.
-- Added stable-channel desktop updates for all six desktop targets, with a silent startup check, a manual Settings check, and user-confirmed signed whole-package installation and restart that includes the manager and router sidecars without changing the CLI updater path.
 
 ### Changed
 
@@ -23,11 +22,36 @@ This release adds safe per-Agent cleanup of CodeasierRouter-managed settings and
 ### Security and recovery
 
 - Required trusted sidecar ownership for cleanup, bound key-free previews to signed revisions, required confirmation after managed-state drift, used private transactional backups with delete-capable journal recovery, and required a fresh preview after ambiguous delivery.
+
+### Tests
+
+- Expanded Go, frontend, Rust, and workflow coverage for cleanup ownership, revisions, file races, backup and rollback recovery, ambiguous delivery, responsive interaction, mock isolation, naming consistency, and native tray ordering.
+
+---
+
+## v0.3.4 - 2026-08-02
+
+This release adds signed whole-package desktop updates, keeps validation packages launchable, and polishes the desktop layout and micro-interactions.
+
+### Added
+
+- Added stable-channel desktop updates for all six desktop targets, with a silent startup check, a manual Settings check, and user-confirmed signed whole-package installation and restart that includes the manager and router sidecars without changing the CLI updater path.
+
+### Changed
+
+- Refined desktop spacing, responsive layout, settings presentation, and interaction feedback across supported viewport sizes.
+
+### Fixed
+
+- Kept validation-only desktop packages launchable by providing stable application metadata and a safe startup path outside production releases.
+
+### Security and recovery
+
 - Required Tauri updater signatures and a stable SemVer feed from `downloads.codeasier.top`; updater signing remains independent from Windows/macOS platform signing and notarization.
 
 ### Tests
 
-- Expanded Go, frontend, Rust, and workflow coverage for cleanup ownership, revisions, file races, backup and rollback recovery, ambiguous delivery, online update state/signing/artifacts, responsive interaction, mock isolation, naming consistency, and native tray ordering.
+- Expanded frontend, Rust, and workflow coverage for online update state, signing, artifacts, validation-package startup, responsive interaction, and layout regressions.
 
 ---
 
