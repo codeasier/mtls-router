@@ -170,6 +170,7 @@ src-tauri/binaries/mtls-router-<target-triple>[.exe]
 | 仅 React/UI | `cd desktop && npm run dev:mock` | 只跑 Vite + HMR。通过现有 `App` 边界注入内存 `DesktopApi`。绝不读写真实凭据或 Agent 配置。可选场景：`?mockScenario=success\|protocol-error\|preview-stale\|write-fail`（或 `window.__MTLS_MOCK_SCENARIO__`）。生产构建无法启用 mock（仅 `DEV && VITE_MOCK=true`）。 |
 | Rust/Tauri（sidecar 未变） | `cd desktop && npm run dev:tauri:reuse` | 启动 `tauri dev` 但不跑 `sidecars:build`。host target sidecar 缺失时 fail closed 并提示先完整准备。运行时仍校验嵌入哈希与 manager 握手。 |
 | 真实 Agent 链路（隔离路径） | `cd desktop && npm run dev:agent` | 显式覆盖 `MTLS_ROUTER_DESKTOP_DATA_DIR`、`CLAUDE_CONFIG_DIR`、`OPENCODE_CONFIG`、`CODEX_HOME` 到可丢弃根目录（或 `MTLS_ROUTER_DEV_AGENT_ROOT`），再包装 reuse。**不**隔离固定 router 端口 `127.0.0.1:19099`；请避免与日常 router 实例并行。 |
+| 自定义 upstream 图片生成 | `cd desktop && npm run dev:image -- --upstream <base-url>` | 为 loopback mTLS bridge 重建经过验证的 host sidecar，以可丢弃的桌面/Agent/router 数据启动 Tauri，并保留正常 Rust 凭据链路。base URL 必须以 `/v1` 结尾。 |
 | Manager/router、preset 或证书 | `npm run sidecars:build` 后 reuse 或 `npm run tauri -- dev` | Go sidecar 字节变化后必须重建，以便 Rust 重新嵌入 SHA-256。 |
 | 安装器 / 发布布局 | `make desktop-package-current` | 完整打包路径。 |
 
@@ -181,6 +182,21 @@ DEPLOYMENT_ID=dev VERSION=dev MANAGEMENT_PROTOCOL_VERSION=4 npm run tauri -- dev
 ```
 
 `npm run tauri` 始终先执行 `sidecars:build`。当 `src-tauri/binaries/` 下已有有效 host target sidecar 时，优先使用 `dev:tauri:reuse`。
+
+#### 自定义图片 upstream 调试
+
+当生产 router 不是所需图片 API upstream 时，使用隔离图片开发流程：
+
+```bash
+cd desktop
+npm run dev:image -- --upstream http://10.66.0.2:20128/v1
+```
+
+Upstream 必须是以 `/v1` 结尾的绝对 API base URL。HTTPS upstream 均可使用；明文 HTTP 只允许 private 或 loopback IP 地址，避免把 Bearer 凭据发送到公网明文端点。launcher 默认在 `127.0.0.1:19443` 启动 bridge；端口不可用时可传 `--bridge-port <port>`。Bridge 只暴露精确图片目录、generation 路径和私有 readiness 路径，过滤 hop-by-hop header，执行与桌面端一致的 1 MiB 图片目录和 32 MiB generation 响应上限，且不记录请求体或 Authorization header。
+
+Launcher 会生成短期 CA、服务端及客户端证书，临时以 bridge readiness URL 重建 host router/manager sidecar，再通过 `dev:tauri:reuse` 启动。Sidecar 哈希、manager 握手、router 身份校验、`/health` 和 Rust trusted-channel 校验全部保持启用。退出时会恢复运行前已有的 sidecar；运行前不存在时则删除本次生成的 sidecar。`MTLS_ROUTER_DEV_CERT_DIR` 是 launcher/build 内部输入，`RELEASE_BUILD=1` 时会被拒绝；它不是受支持的打包或 release 凭据来源。
+
+在运行中应用的 **API Keys** 页面输入自定义 upstream API key。不得把 key 放进命令、环境变量或 launcher 使用的文件。默认情况下，桌面、Agent、router、凭据及生成 TLS 数据均位于临时根目录，并在命令退出时删除。如需让隔离桌面凭据跨运行保留，可将 `MTLS_ROUTER_DEV_IMAGE_ROOT` 设为专用本地目录；每次运行结束后仍会删除生成的 TLS 材料。固定 router 端口 `127.0.0.1:19099` 不会重映射；该端口已占用时，launcher 会在重建前失败。
 
 本机 bundle 构建需要显式设置 release 元数据：
 

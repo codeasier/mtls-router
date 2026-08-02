@@ -102,10 +102,13 @@ React UI ──Tauri invoke──▶ Rust commands.rs ──stdin/stdout JSON─
 | 仅 React/UI                 | `npm run dev:mock`                                                              | 只跑 Vite + HMR；注入内存 `DesktopApi`；可选 `?mockScenario=success\|protocol-error\|preview-stale\|write-fail`                               |
 | Rust/Tauri（sidecar 未变）  | `npm run dev:tauri:reuse`                                                       | 启动 `tauri dev` 但跳过 `sidecars:build`；sidecar 缺失则 fail closed                                                                          |
 | 真实 Agent 链路（隔离路径） | `npm run dev:agent`                                                             | 显式覆盖 `MTLS_ROUTER_DESKTOP_DATA_DIR` / `CLAUDE_CONFIG_DIR` / `OPENCODE_CONFIG` / `CODEX_HOME` 后走 reuse；不隔离固定端口 `127.0.0.1:19099` |
+| 自定义 upstream 图片链路    | `npm run dev:image -- --upstream <base-url>`                                    | 短期 mTLS bridge + 重建 sidecar + 隔离桌面/Agent/router 数据；API key 仍只经 API Keys 页面写入                                                |
 | Manager/router 或嵌入元数据 | `npm run sidecars:build` 后 `npm run dev:tauri:reuse` 或 `npm run tauri -- dev` | Go sidecar 变化后必须重建；Rust 会重新嵌入哈希                                                                                                |
 | 安装器/发布验证             | `make desktop-package-current`                                                  | 完整打包                                                                                                                                      |
 
 `npm run tauri` 仍始终先执行 `sidecars:build`，适合首次准备与完整本地启动。
+
+`scripts/dev-image.mjs` 负责生成并清理短期 TLS、隔离本地数据、临时重建并在退出时恢复 host sidecar，以及启动/终止 Tauri 子进程；`scripts/dev-image-bridge.mjs` 仅在 loopback 暴露 readiness、`/v1/models/image` 与 `/v1/images/generations`，透明转发认证 header 但不读取或记录 API key。明文 upstream 只允许 private/loopback IP，`build-sidecars.sh` 的开发证书目录输入在 release 构建中 fail closed。
 
 ## 构建
 
@@ -121,7 +124,7 @@ Release updater 辅助脚本：`scripts/prepare-updater-config.sh` 只为 stable
 ## 测试
 
 ```bash
-npm test                  # vitest（前端单测，jsdom）
+npm test                  # vitest（前端单测，jsdom）+ Node 开发脚本测试
 npm run rust:test         # cargo test（Rust 后端测试）
-npm run verify            # 全套：eslint + prettier + tsc + vitest + vite build + cargo fmt + cargo test
+npm run verify            # 全套：eslint + prettier + tsc + 前端/脚本测试 + vite build + cargo fmt + cargo test
 ```
