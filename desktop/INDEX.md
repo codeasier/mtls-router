@@ -22,7 +22,7 @@ React UI ──Tauri invoke──▶ Rust commands.rs ──stdin/stdout JSON─
 
 - **协议与启动失败诊断**：桌面端严格校验 management protocol v4 结构；预启动失败按稳定阶段和可选数值 OS 错误码生成安全诊断，启动后失败会终止并等待自有子进程。lifecycle 保留有界原始输出，而 app 协议仅暴露脱敏的会话作用域诊断。
 - **端口恢复**：RouterPage 只按结构化 action/reason 渲染按钮或 SCM/systemd 人工引导，不执行命令、不提权、不猜测 launchd label；Windows copy command 只生成适用于管理员 PowerShell 的安全引用文本，不适用于 `cmd.exe`。Rust `port_recovery.rs` 在 manager 报告分模式成功证据与首次释放后，由 scheduler 在约 10 秒内定期采样；只有持续的 `absent` 状态可产生 `released`，`unknown_occupant` 产生 `reoccupied`，其他状态、主动启动和 manager session 变化会取消观察。
-- **桌面整包更新**：仅精确 stable `vX.Y.Z` release 配置 `https://downloads.codeasier.top/mtls-router/latest/latest.json` 与 updater 公钥；启动时静默检查一次，Settings 可手动复查。用户确认后 `updater.rs` 重新检查精确 stable SemVer、下载并强制校验 Tauri 签名，只停止经验证的 desktop-owned router，安装包含 manager/router sidecar 的完整包并重启；不停止 external router，也不改变 CLI 更新路径。
+- **桌面整包更新**：仅精确 stable `vX.Y.Z` release 配置 `https://downloads.codeasier.top/mtls-router/latest/latest.json` 与 updater 公钥；非 stable 构建保留可反序列化但无 endpoint 的禁用配置。启动时静默检查一次，Settings 可手动复查。用户确认后 `updater.rs` 重新检查精确 stable SemVer、下载并强制校验 Tauri 签名，只停止经验证的 desktop-owned router，安装包含 manager/router sidecar 的完整包并重启；不停止 external router，也不改变 CLI 更新路径。
 
 ## 前端（src/）
 
@@ -116,7 +116,7 @@ npm exec tauri -- build   # 完整 Tauri 构建（需 sidecar 已就位）
 
 sidecar 命名：`src-tauri/binaries/` 下的构建输入使用 target-triple 名（`mtls-router-<target-triple>`，如 `mtls-router-aarch64-apple-darwin`）；Tauri 打包后安装的二进制使用纯名字（`mtls-router`、`mtls-router-manager`，Windows 带 `.exe`）。
 
-Release updater 辅助脚本：`scripts/prepare-updater-config.sh` 只为 stable tag 生成权限受限的 Tauri overlay config，并校验 updater 公钥固定指纹及完整签名输入；`scripts/updater-public-key-fingerprint.mjs` 从公钥文件生成该指纹；`scripts/create-macos-updater.sh` 在最终签名 app bundle 后生成并签名 `.app.tar.gz`；`scripts/verify-package.sh` 规范化六平台 updater 产物及 `.sig`，再通过 `src-tauri/examples/verify_updater_signature.rs` 验证签名。仓库根 `scripts/package-release.sh` 只为 stable tag 汇总六平台 `latest.json`、产物与签名并纳入 `SHA256SUMS`。
+Release updater 辅助脚本：`scripts/prepare-updater-config.sh` 只为 stable tag 生成权限受限的 Tauri overlay config，并校验 updater 公钥固定指纹及完整签名输入；`scripts/updater-public-key-fingerprint.mjs` 从公钥文件生成该指纹；`scripts/create-macos-updater.sh` 在最终签名 app bundle 后生成并签名 `.app.tar.gz`；`scripts/verify-package.sh` 从包内 desktop executable 构造一次 Tauri app 以覆盖插件初始化，再验证 manager 握手、规范化六平台 updater 产物及 `.sig`，并通过 `src-tauri/examples/verify_updater_signature.rs` 验证签名。仓库根 `scripts/package-release.sh` 只为 stable tag 汇总六平台 `latest.json`、产物与签名并纳入 `SHA256SUMS`。
 
 ## 测试
 

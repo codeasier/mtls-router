@@ -4,7 +4,7 @@
 
 Tauri 桌面应用是固定服务 `mtls-router` 的当前用户控制面板。它打包了架构匹配的 `mtls-router-manager` 和 `mtls-router` sidecar；不会把任一 sidecar 安装到 `PATH`，也不提供证书、上游或 sidecar 替换控件。
 
-> 当前仓库中的 CI 和 release workflow 会构建六个原生桌面包：Windows x86_64/arm64 NSIS 安装器、macOS Intel/Apple Silicon DMG，以及 Linux x86_64/arm64 AppImage。每个 package job 都在匹配的目标 runner 上执行检查。Release 签名取决于平台凭据，macOS notarization/stapling 还需要完整的 Apple notarization 凭据；每个目标的状态文件会记录结果。包检查不会安装或启动应用，因此仍需单独提供目标 runner 上成功启动的证据。详见[构建与发布](BUILD.md)。
+> 当前仓库中的 CI 和 release workflow 会构建六个原生桌面包：Windows x86_64/arm64 NSIS 安装器、macOS Intel/Apple Silicon DMG，以及 Linux x86_64/arm64 AppImage。每个 package job 都在匹配的目标 runner 上执行检查和只覆盖初始化的启动 smoke test。Release 签名取决于平台凭据，macOS notarization/stapling 还需要完整的 Apple notarization 凭据；每个目标的状态文件会记录结果。包检查不会安装或正常启动应用，因此仍需单独提供目标 runner 上成功启动的证据。详见[构建与发布](BUILD.md)。
 
 ## 安装
 

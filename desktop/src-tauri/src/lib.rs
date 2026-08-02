@@ -118,8 +118,7 @@ pub fn verify_manager_handshake() -> Result<(), String> {
     result
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
+fn build_app() -> tauri::Result<tauri::App<tauri::Wry>> {
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
@@ -380,6 +379,17 @@ pub fn run() {
             image_commands::image_cancel_generation,
         ])
         .build(tauri::generate_context!())
+}
+
+pub fn verify_app_startup() -> Result<(), String> {
+    build_app()
+        .map(drop)
+        .map_err(|error| format!("application initialization failed: {error}"))
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    build_app()
         .expect("error while building CodeasierRouter desktop")
         .run(|app, event| {
             if let tauri::RunEvent::ExitRequested { api, .. } = event {

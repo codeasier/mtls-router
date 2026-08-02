@@ -2,7 +2,7 @@
 
 [English](../BUILD.md)
 
-本文档面向构建 router、Go manager 或 Tauri 桌面应用的维护者。当前仓库中的 CI 和 release workflow 会构建全部六个原生桌面包目标，并在匹配的 runner 上检查每个包。精确 stable `vX.Y.Z` tag release 会把这些桌面包、签名 updater 产物与 CLI router/manager 二进制及压缩包一起发布。Windows/macOS 签名和 macOS notarization/stapling 取决于完整平台凭据；Tauri updater 签名则是 stable release 的独立强制要求。包检查不会安装、启动或更新应用；每个发布包都必须保留独立签名状态和目标 runner 上成功安装/启动/更新的证据。
+本文档面向构建 router、Go manager 或 Tauri 桌面应用的维护者。当前仓库中的 CI 和 release workflow 会构建全部六个原生桌面包目标，并在匹配的 runner 上检查每个包。精确 stable `vX.Y.Z` tag release 会把这些桌面包、签名 updater 产物与 CLI router/manager 二进制及压缩包一起发布。Windows/macOS 签名和 macOS notarization/stapling 取决于完整平台凭据；Tauri updater 签名则是 stable release 的独立强制要求。包检查会执行只覆盖初始化的启动 smoke test，但不会安装、正常启动或更新应用；每个发布包都必须保留独立签名状态和目标 runner 上成功安装/启动/更新的证据。
 
 ## 工具链和 lockfile
 
@@ -235,9 +235,9 @@ npm exec tauri -- signer generate -w /secure/offline/CodeasierRouter-updater.key
 
 ## 包验证
 
-两个 workflow 都会在原生匹配 runner 上对六个包逐一调用 `desktop/scripts/verify-package.sh`。该脚本会拒绝 host/target 不匹配；解包 NSIS、DMG 或 AppImage；检查包/版本身份；检查 desktop、manager 和 router 的格式及架构；比较打包 sidecar 与本 job 构建 sidecar 的哈希；检查 macOS/Linux 可执行权限；并验证 manager 版本、目标、deployment ID 和 protocol。Release workflow 还会在发布前验证每个生成的 `.sha256`。
+两个 workflow 都会在原生匹配 runner 上对六个包逐一调用 `desktop/scripts/verify-package.sh`。该脚本会拒绝 host/target 不匹配；解包 NSIS、DMG 或 AppImage；检查包/版本身份；检查 desktop、manager 和 router 的格式及架构；比较打包 sidecar 与本 job 构建 sidecar 的哈希；检查 macOS/Linux 可执行权限；从包内 desktop executable 构造 Tauri 应用以初始化已注册插件但不进入事件循环；并验证 manager 版本、目标、deployment ID 和 protocol。无图形环境的 Linux 检查会在 Xvfb 下执行初始化 smoke test。Release workflow 还会在发布前验证每个生成的 `.sha256`。
 
-这些自动包检查不会安装或启动打包应用。发布前，必须保留 workflow 检查输出，并从每个匹配目标 runner 保留完整 release checklist 的独立证据：
+这些自动包检查不会安装包，也不覆盖正常 GUI 启动、setup hook、事件循环、首次启动行为或 updater 网络路径。发布前，必须保留 workflow 检查输出，并从每个匹配目标 runner 保留完整 release checklist 的独立证据：
 
 1. 确认包和可执行文件架构与目标一致。
 2. 检查包内容，确保只有一组架构兼容的 manager/router sidecar，且不存在原始 PEM/key 文件。
