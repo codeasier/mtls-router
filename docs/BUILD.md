@@ -186,7 +186,6 @@ Choose the shortest loop for the change type. None of these commands bypass side
 | React/UI only | `cd desktop && npm run dev:mock` | Vite + HMR only. Injects an in-memory `DesktopApi` through the existing `App` boundary. Never reads or writes real credentials or Agent config files. Optional scenarios: `?mockScenario=success\|protocol-error\|preview-stale\|write-fail` (or `window.__MTLS_MOCK_SCENARIO__`). Production builds cannot enable mock mode (`DEV && VITE_MOCK=true` only). |
 | Rust/Tauri with unchanged sidecars | `cd desktop && npm run dev:tauri:reuse` | Runs `tauri dev` without `sidecars:build`. Fails closed if host-target sidecars are missing and prompts for a full prepare. Runtime still validates embedded hashes and the manager handshake. |
 | Real Agent path against disposable dirs | `cd desktop && npm run dev:agent` | Explicitly overrides `MTLS_ROUTER_DESKTOP_DATA_DIR`, `CLAUDE_CONFIG_DIR`, `OPENCODE_CONFIG`, and `CODEX_HOME` to a disposable root (or `MTLS_ROUTER_DEV_AGENT_ROOT`), then wraps reuse. Does **not** isolate the fixed router port `127.0.0.1:19099`; avoid a concurrent daily router instance. |
-| Image generation against a custom upstream | `cd desktop && npm run dev:image -- --upstream <base-url>` | Rebuilds verified host sidecars for a loopback mTLS bridge, launches Tauri with disposable desktop/Agent/router data, and preserves the normal Rust credential path. The base URL must end in `/v1`. |
 | Manager/router, presets, or certs | `npm run sidecars:build` then reuse or `npm run tauri -- dev` | Go sidecar byte changes require rebuild so Rust can re-embed SHA-256 values. |
 | Installer / release layout | `make desktop-package-current` | Full package path. |
 
@@ -198,21 +197,6 @@ DEPLOYMENT_ID=dev VERSION=dev MANAGEMENT_PROTOCOL_VERSION=4 npm run tauri -- dev
 ```
 
 `npm run tauri` always runs `sidecars:build` first. Prefer `dev:tauri:reuse` once valid host-target sidecars already exist under `src-tauri/binaries/`.
-
-#### Custom image upstream debugging
-
-Use the isolated image workflow when the production router is not the desired image API upstream:
-
-```bash
-cd desktop
-npm run dev:image -- --upstream http://10.66.0.2:20128/v1
-```
-
-The upstream must be an absolute API base URL ending in `/v1`. HTTPS upstreams are accepted; plain HTTP is accepted only for a private or loopback IP address so a Bearer credential cannot be sent to a public plaintext endpoint. The launcher starts a bridge on `127.0.0.1:19443` by default; use `--bridge-port <port>` if that port is unavailable. It exposes only the exact image catalog and generation paths plus a private readiness path, strips hop-by-hop headers, applies the same 1 MiB catalog and 32 MiB generation response bounds as the desktop, and does not log request bodies or authorization headers.
-
-The launcher generates short-lived CA, server, and client certificates, temporarily rebuilds the host router/manager sidecars with the bridge readiness URL, and launches through `dev:tauri:reuse`. Sidecar hashes, the manager handshake, router identity checks, `/health`, and the Rust trusted-channel checks remain active. On exit it restores the sidecars that existed before the run (or removes its generated sidecars when none existed). `MTLS_ROUTER_DEV_CERT_DIR` is an internal launcher/build input and is rejected whenever `RELEASE_BUILD=1`; it is not a supported package or release credential source.
-
-Enter the custom upstream API key in the running application's **API Keys** page. Do not put it in the command, an environment variable, or a file used by the launcher. By default all desktop, Agent, router, credential, and generated TLS data is placed under a temporary root and removed when the command exits. Set `MTLS_ROUTER_DEV_IMAGE_ROOT` to a dedicated local directory if the isolated desktop credential should persist between runs; generated TLS material is still removed after every run. The fixed router port `127.0.0.1:19099` is not remapped, and the launcher fails before rebuilding when that port is occupied.
 
 For a native bundle build, set release metadata explicitly:
 

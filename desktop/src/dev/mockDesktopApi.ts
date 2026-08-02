@@ -3,9 +3,6 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AgentId,
   DesktopApi,
-  ImageConversation,
-  ImageCurrentOperation,
-  ImageOperationEvent,
   ModelConfig,
   PollSnapshot,
   RouterStatus,
@@ -77,11 +74,6 @@ export function createMockDesktopApi(
   let flowCounter = 0;
   const pollListeners = new Set<PollListener>();
   const activeFlows = new Set<string>();
-  let imageConversations: ImageConversation[] = [];
-  let imageOperation: ImageCurrentOperation | null = null;
-  const imageOperationListeners = new Set<
-    (event: ImageOperationEvent) => void
-  >();
 
   function currentScenario(): MockScenario {
     if (typeof window !== "undefined") {
@@ -297,105 +289,6 @@ export function createMockDesktopApi(
     setNativeLanguage: async () => undefined,
     getDesktopPaths: async () => structuredClone(fixtureDesktopPaths),
     prepareForUninstall: async () => undefined,
-    imageReadiness: async () => ({
-      ready: true,
-      available_models: [
-        {
-          id: "cx/gpt-5.5-image",
-          display_name: "GPT 5.5 Image",
-          available: true,
-        },
-        {
-          id: "ag/gemini-3.1-flash-image",
-          display_name: "Gemini 3.1 Flash Image",
-          available: true,
-        },
-      ],
-      reason: "ok",
-    }),
-    imageCurrentOperation: async () => structuredClone(imageOperation),
-    imageConversations: async () => structuredClone(imageConversations),
-    imageCreateConversation: async (model: string) => {
-      const now = new Date().toISOString();
-      const conversation = {
-        id: crypto.randomUUID(),
-        selected: true,
-        title: "",
-        selected_model: model,
-        message_count: 0,
-        created_at: now,
-        updated_at: now,
-      };
-      imageConversations = [
-        conversation,
-        ...imageConversations.map((item) => ({ ...item, selected: false })),
-      ];
-      return structuredClone(conversation);
-    },
-    imageSelectConversation: async (conversationId) => {
-      imageConversations = imageConversations.map((conversation) => ({
-        ...conversation,
-        selected: conversation.id === conversationId,
-      }));
-    },
-    imageSetConversationModel: async (conversationId, model) => {
-      imageConversations = imageConversations.map((conversation) =>
-        conversation.id === conversationId
-          ? {
-              ...conversation,
-              selected_model: model,
-              updated_at: new Date().toISOString(),
-            }
-          : conversation,
-      );
-    },
-    imageDeleteConversation: async (conversationId) => {
-      imageConversations = imageConversations.filter(
-        (conversation) => conversation.id !== conversationId,
-      );
-    },
-    imageResetStore: async () => {
-      imageConversations = [];
-    },
-    imageMessages: async () => [],
-    imageSelectReference: async () => ({
-      asset_id: "a".repeat(64),
-      format: "png",
-      width: 4,
-      height: 4,
-    }),
-    imageStartGeneration: async (request) => {
-      if (imageOperation) throw mockCommandError("IMAGE_BUSY");
-      imageOperation = {
-        operation_id: crypto.randomUUID(),
-        conversation_id: request.conversation_id,
-        message_id: crypto.randomUUID(),
-      };
-      const started = structuredClone(imageOperation);
-      window.setTimeout(() => {
-        if (imageOperation?.operation_id !== started.operation_id) return;
-        imageOperation = null;
-        const event: ImageOperationEvent = { ...started, status: "succeeded" };
-        for (const listener of imageOperationListeners) listener(event);
-      }, 50);
-      return {
-        operation_id: started.operation_id,
-        message_id: started.message_id,
-      };
-    },
-    imageCancelGeneration: async () => {
-      if (!imageOperation) return;
-      const event: ImageOperationEvent = {
-        ...imageOperation,
-        status: "cancelled",
-      };
-      imageOperation = null;
-      for (const listener of imageOperationListeners) listener(event);
-    },
-    subscribeImageOperations: async (listener) => {
-      imageOperationListeners.add(listener);
-      return () => imageOperationListeners.delete(listener);
-    },
   };
 }
 

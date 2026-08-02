@@ -105,21 +105,9 @@ Rebuild 输出有意只包含托管内容：Claude `settings.json` 只包含托�
 
 对于 Claude，规范配置会分别存储认证 base model ID 和可选精确字段 `context: "1m"`。启用 Fable 会渲染 `ANTHROPIC_DEFAULT_FABLE_MODEL` 及可选的 `ANTHROPIC_DEFAULT_FABLE_MODEL_NAME`；省略 Fable 时不会渲染或认领这两个 key。启用 Fable 要认领已有未托管值时，预览会显示 collision；禁用时只删除能证明之前由 manager 所有的 stale 路径，并保留从未取得所有权的手工 key。Manager 只在渲染 Claude 模型环境变量时追加 `[1m]`；它不会推断 1M 支持，也不会写入 `CLAUDE_CODE_DISABLE_1M_CONTEXT`。运行时拒绝不会触发 fallback 或重写。Fable alias 要求 Claude Code 2.1.170 或更高版本。与此独立，数值 custom-model context override 从 Claude Code 2.1.193 起可直接作用于未知模型名称；更早版本可能忽略它。Preset discovery 本身不会写 Agent 文件或 manager 事务状态，preset 数据在桌面 flow 中只作为不含 key 的模型状态保存。
 
-## 图片对话
-
-图片区为两个不可变预置提供多个本地对话：`cx/gpt-5.5-image` 和 `ag/gemini-3.1-flash-image`。可用性采用 fail-closed 规则，只接受认证后的 `GET /v1/models/image` 返回的精确 ID；该契约固定核验于 9Router `v0.5.45` commit `6fcd27337a7893642c7fe630840d0a641743f28f`。ID 缺失、重命名、别名或近似匹配都保持不可用；应用保留当前选择，绝不自动替换模型。该来源版本中的两个 upstream adapter 都带有 deprecated/risk notice，依赖前应重新核验目录和 release 契约。
-
-没有参考图的提示词会向 `POST /v1/images/generations` 发送一次生图请求。上传一张经过验证的本地图片，或对已有结果选择**继续编辑**，会显式向同一 JSON 端点增加一个 data URI `image` 字段。应用绝不会隐式引用上一张结果，不支持远程图片 URL 或多参考图，且只接受 `data[0].b64_json` 输出。全应用最多执行一个图片操作；用户可以取消，系统不会自动重试，退出时中断的操作会在下次启动时标记为 interrupted，绝不会重放。
-
-提示词 UTF-8 上限为 20 KiB。每张导入或生成图片的解码后上限为 20 MiB，单边不超过 16,384 像素，总像素不超过 64 MP；generation JSON 响应上限为 32 MiB。Rust 只接受 magic bytes、尺寸和静态格式校验都通过的 PNG、JPEG 与 WebP。
-
-对话 metadata 和按内容寻址的图片资产保存在当前用户应用数据目录的 `image-conversations/` 下。它们受当前用户文件权限保护，但不额外加密。删除对话时先提交保留内容的快照，再删除不再被其他对话引用的资产；中断的清理由后续启动时的孤儿恢复继续处理。损坏或未知版本的快照会原样保留并 fail closed，直到用户显式确认**重建图片数据**；该操作会删除全部图片对话和资产。卸载不会自动删除这些对话或资产。
-
-Webview 只接收 conversation/message/asset/model ID、提示词、状态和只读 `image-asset` custom URI；不会获得 API key、base64 图片正文、绝对路径、任意文件访问或网络能力。Rust 读取已保存 key 前，会从 manager 获取完整私有信任状态，并在同一个 loopback HTTP/1.1 连接上校验 `/version`、PID/启动/可执行文件身份和 `/health`。图片就绪状态会刻意要求 `/health` 返回 `status: "ok"`；上游降级时，即使 router 的健康端点仍返回 HTTP 200，图片凭据通道也保持关闭。认证目录与 generation 请求继续使用该不可重拨连接。
-
 ## API key 边界和限制
 
-API 密钥页面会在桌面凭据存储中保存、替换或删除一个全局 API key；只接受不含空格或控制字符的可打印 ASCII key。Webview 只能读取摘要，绝不能回读明文。Agent 总览既不读取也不验证该 key。只有点击卡片操作后，Rust 才会按需为 `agent.models` 加载它，并在 `agent.write` 前再次加载当前保存值。桌面 `ModelFlow` 只包含 Agent、目录和预览模式状态，不包含 API key。Timeout、malformed response、manager restart 或 uncertain delivery 后，secret-bearing 调用绝不会自动 replay。除凭据存储以及 Agent 文件或已批准备份外，应用不会有意把 key 放入桌面或 manager 持久状态、进程参数、环境变量、日志、诊断、model config、catalog/revision token、预览响应或写入响应。
+API 密钥页面会在桌面凭据存储中保存、替换或删除一个全局 API key；webview 只能读取摘要，绝不能回读明文。Agent 总览既不读取也不验证该 key。只有点击卡片操作后，Rust 才会按需为 `agent.models` 加载它，并在 `agent.write` 前再次加载当前保存值。桌面 `ModelFlow` 只包含 Agent、目录和预览模式状态，不包含 API key。Timeout、malformed response、manager restart 或 uncertain delivery 后，secret-bearing 调用绝不会自动 replay。除凭据存储以及 Agent 文件或已批准备份外，应用不会有意把 key 放入桌面或 manager 持久状态、进程参数、环境变量、日志、诊断、model config、catalog/revision token、预览响应或写入响应。
 
 在清理该 Agent 前，目标 Agent 的配置文件仍需按该 Agent 的要求持久化 key。单 Agent 清理会删除 Agent 文件中的托管凭据，但有意保留桌面全局 key。用户批准的恢复与清理备份也可能持久化旧 key。Rust 每次按需使用 key 时都会把它保存在 zeroizing 内存中，但清除应用引用只是 best effort，不保证能从进程或操作系统内存中进行取证级擦除。
 

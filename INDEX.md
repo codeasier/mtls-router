@@ -14,7 +14,7 @@
 Tauri UI (React) ──invoke──▶ Rust commands ──stdin/stdout JSON──▶ mtls-router-manager ──spawn/HTTP──▶ mtls-router ──mTLS──▶ upstream
 ```
 
-桌面控制面不直接与 router 通信：它以长驻子进程方式拉起 `mtls-router-manager serve`，通过 stdin/stdout 交换换行分隔的 JSON 请求/响应。图片数据面是受限例外，按下文信任链直连 loopback router。
+桌面应用绝不直接与 router 通信。它以长驻子进程方式拉起 `mtls-router-manager serve`，通过 stdin/stdout 交换换行分隔的 JSON 请求/响应。
 
 ## Router（`main.go` + `internal/`）
 
@@ -30,10 +30,10 @@ Tauri UI (React) ──invoke──▶ Rust commands ──stdin/stdout JSON─�
 
 ## Manager（`cmd/mtls-router-manager/` + `internal/manager/`）
 
-Manager 是一个基本无状态、按请求处理的 management protocol v4 JSON 服务（`internal/manager/protocol/`）；一个例外是 `occupant.Service`，它只为允许强制终止的目标在 `Inspect` 与 `ForceTerminate` 之间持有一个内存中一次性确认 token（30 秒后过期；其他长生命周期状态位于 `lifecycle.Manager` 与 `agent.Service`）。它暴露 18 个方法，分组如下：
+Manager 是一个基本无状态、按请求处理的 management protocol v4 JSON 服务（`internal/manager/protocol/`）；一个例外是 `occupant.Service`，它只为允许强制终止的目标在 `Inspect` 与 `ForceTerminate` 之间持有一个内存中一次性确认 token（30 秒后过期；其他长生命周期状态位于 `lifecycle.Manager` 与 `agent.Service`）。它暴露 17 个方法，分组如下：
 
 - `manager.info`、`diagnostics.collect` — 元数据
-- `router.status/start/stop/health/version/logs/trusted_channel` — 路由生命周期与原生图片数据面私有信任材料（spawn/监控 router 二进制）
+- `router.status/start/stop/health/version/logs` — 路由生命周期（spawn/监控 router 二进制）
 - `router.inspect_occupant/force_terminate_occupant` — 端口冲突解决
 - `agent.detect/models/render/preview/write`、`agent.cleanup.preview/write` — Agent 配置及按单 Agent 清理（Claude Code、opencode、Codex）
 
@@ -75,21 +75,19 @@ key 绝不出现于环境变量、CLI 参数、model config、日志或 journal 
 
 完整文件映射见 [desktop/INDEX.md](desktop/INDEX.md)；下面只列主干。
 
-桌面应用分两层：**控制面**（manager 生命周期、Agent 配置）和**图片数据面**（Rust 直连 loopback router 的受信任图片客户端、会话与资产存储）。图片数据面在 manager 控制面之外建立独立 TCP 连接，在同一连接上验证 `/version`、进程身份和 `/health`，通过后才读取凭据并发送认证请求。
-
 **前端**（React 19 + TypeScript + Vite）：
 
-- `src/ipc.ts` — 类型化的 `DesktopApi` 接口，包装 Tauri invoke 命令、updater 下载进度与图片 operation 事件；所有敏感文本在客户端脱敏
-- `src/App.tsx` — 根布局与侧边栏导航，分发到 6 个页面组件，并在启动时执行一次静默更新检查
-- `src/RouterPage.tsx`、`src/AgentPage.tsx`、`src/ApiKeysPage.tsx`、`src/ConversationsPage.tsx`、`src/LogsPage.tsx`、`src/SettingsPage.tsx` — 各区块页面；Agent 页面协调独立配置与 cleanup 目标；Conversations 页面是图片专用对话区
+- `src/ipc.ts` — 类型化的 `DesktopApi` 接口，包装 Tauri invoke 命令与 updater 下载进度事件；所有敏感文本在客户端脱敏
+- `src/App.tsx` — 根布局与侧边栏导航，分发到 4 个页面组件，并在启动时执行一次静默更新检查
+- `src/RouterPage.tsx`、`src/AgentPage.tsx`、`src/LogsPage.tsx`、`src/SettingsPage.tsx` — 各区块页面；Agent 页面协调独立配置与 cleanup 目标
 - `src/AgentCleanupPanel.tsx`、`src/agentCleanupState.ts`、`src/useAgentCleanupController.ts` — 单 Agent cleanup 审阅、状态机与无 key preview/write 编排
 - `src/model.ts` — 共享类型与导航模型
 - i18n：`src/i18n.tsx`（context provider）+ `src/locales/zh-CN.ts`、`src/locales/en.ts`
 
 **后端**（Rust，Tauri 2）：
 
-- `src/lib.rs` — 应用入口：插件注册、`image-asset` custom URI handler、setup、invoke handler 注册
-- `src/commands.rs` — Tauri 命令处理器，代理到 manager client；`AppState`（含图片 store、operation guard、readiness）、`ModelFlow`，以及不接收凭据/model flow 的 cleanup preview/write command
+- `src/lib.rs` — 应用入口：插件注册、setup、invoke handler 注册
+- `src/commands.rs` — Tauri 命令处理器，代理到 manager client；`AppState`、`ModelFlow`，以及不接收凭据/model flow 的 cleanup preview/write command
 - `src/manager.rs` — spawn 并通过 stdin/stdout 与 `mtls-router-manager serve` 通信；握手校验；cleanup write 禁止不确定投递后的自动 replay
 - `src/scheduler.rs` — 轮询调度器，向前端 emit `router-poll-snapshot` 事件
 - `src/port_recovery.rs` — manager 报告首次释放后约 10 秒定期采样，区分未检测到重新占用与已采样到重新占用
@@ -101,18 +99,10 @@ key 绝不出现于环境变量、CLI 参数、model config、日志或 journal 
 - `src/autostart.rs` — 登录启动插件包装（首次启动默认启用）
 - `src/paths.rs` — 桌面数据目录解析
 - `src/process_identity.rs` — 捕获 PID + 启动时间 + 可执行文件，用于父身份 flag
-- `src/types.rs` — 镜像 manager 协议结果与桌面更新状态的严格 serde 类型，包含 cleanup detection、preview 与 delete/backup 文件影响
+- `src/types.rs` — 镜像 manager 协议结果的严格 serde 类型，包含 cleanup detection、preview 与 delete/backup 文件影响
 - `src/error.rs` — 将 manager 协议错误映射为用户可见字符串
-- `src/image_limits.rs` — 图片数据面资源上限常量（20 KiB prompt、20 MiB 图片、32 MiB 响应、16,384 px、64 MP）
-- `src/router_process.rs` — 跨平台 router 进程身份读取与校验，镜像 Go `internal/manager/process`
-- `src/trusted_channel.rs` — 绑定单个 loopback `TcpStream` 的不可重拨 HTTP/1.1 客户端，验证 `/version`、进程身份、`/health` 后发送认证请求
-- `src/image_models.rs` — `/v1/models/image` 严格解析器和两个不可变预置模型
-- `src/image_client.rs` — 固定 generation JSON 客户端，支持生图和 data URI 单图编辑
-- `src/image_validation.rs` — 有界 `b64_json` 解析和 PNG/JPEG/WebP magic-byte、尺寸校验
-- `src/image_store.rs` — 版本化 JSON 快照、SHA-256 内容寻址资产、原子写入、孤儿清理、fail-closed 读取
-- `src/image_commands.rs` — 图片 Tauri IPC 命令、`image-asset` URI 验证、全局 operation guard、`rfd` 文件选择
 
-Rust 侧绝不向 webview 暴露 shell/fs/http 权限（由 `lib.rs` 中的测试强制保证）。图片展示通过 `image-asset:` custom URI scheme，仅接受规范 SHA-256 asset ID。
+Rust 侧绝不向 webview 暴露 shell/fs/http 权限（由 `lib.rs` 中的测试强制保证）。
 
 桌面在线更新仅由精确 stable `vX.Y.Z` release 启用，固定检查 `https://downloads.codeasier.top/mtls-router/latest/latest.json`。更新包包含桌面应用及匹配的 manager/router sidecar，必须通过独立 Tauri updater 签名校验并经用户确认后安装；该能力不改变 CLI router、manager 或 setup 脚本的更新行为。
 
@@ -144,7 +134,7 @@ Rust 侧绝不向 webview 暴露 shell/fs/http 权限（由 `lib.rs` 中的测�
 | `internal/version`    | [INDEX.md](internal/version/INDEX.md)    | 链接期构建元数据变量                                                                                                                 |
 | `internal/log`        | [INDEX.md](internal/log/INDEX.md)        | 访问日志响应记录器                                                                                                                   |
 | `internal/tlspolicy`  | [INDEX.md](internal/tlspolicy/INDEX.md)  | TLS 最低版本解析                                                                                                                     |
-| `internal/manager`    | [INDEX.md](internal/manager/INDEX.md)    | 控制面：18 个协议方法、生命周期、发现、Agent 配置与清理。其 14 个子包各有专属 INDEX，导航见 [子包表](internal/manager/INDEX.md#子包) |
+| `internal/manager`    | [INDEX.md](internal/manager/INDEX.md)    | 控制面：17 个协议方法、生命周期、发现、Agent 配置与清理。其 14 个子包各有专属 INDEX，导航见 [子包表](internal/manager/INDEX.md#子包) |
 | `desktop`             | [INDEX.md](desktop/INDEX.md)             | Tauri 2 应用：React 前端 + Rust 后端、sidecar 管理                                                                                   |
 
 ## 辅助参考

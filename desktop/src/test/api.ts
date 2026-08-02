@@ -130,50 +130,6 @@ export function createMockApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
       can_prepare_for_uninstall: true,
     }),
     prepareForUninstall: vi.fn().mockResolvedValue(undefined),
-    imageReadiness: vi.fn().mockResolvedValue({
-      ready: true,
-      available_models: [
-        {
-          id: "cx/gpt-5.5-image",
-          display_name: "GPT 5.5 Image",
-          available: true,
-        },
-        {
-          id: "ag/gemini-3.1-flash-image",
-          display_name: "Gemini 3.1 Flash Image",
-          available: true,
-        },
-      ],
-      reason: "ok",
-    }),
-    imageCurrentOperation: vi.fn().mockResolvedValue(null),
-    imageConversations: vi.fn().mockResolvedValue([]),
-    imageCreateConversation: vi.fn().mockResolvedValue({
-      id: "conv-1",
-      selected: true,
-      title: "",
-      selected_model: "cx/gpt-5.5-image",
-      message_count: 0,
-      created_at: "2026-01-01T00:00:00Z",
-      updated_at: "2026-01-01T00:00:00Z",
-    }),
-    imageSelectConversation: vi.fn().mockResolvedValue(undefined),
-    imageSetConversationModel: vi.fn().mockResolvedValue(undefined),
-    imageDeleteConversation: vi.fn().mockResolvedValue(undefined),
-    imageResetStore: vi.fn().mockResolvedValue(undefined),
-    imageMessages: vi.fn().mockResolvedValue([]),
-    imageSelectReference: vi.fn().mockResolvedValue({
-      asset_id: "a".repeat(64),
-      format: "png",
-      width: 4,
-      height: 4,
-    }),
-    imageStartGeneration: vi.fn().mockResolvedValue({
-      operation_id: "op-1",
-      message_id: "msg-1",
-    }),
-    imageCancelGeneration: vi.fn().mockResolvedValue(undefined),
-    subscribeImageOperations: vi.fn().mockResolvedValue(() => undefined),
     ...overrides,
   };
 

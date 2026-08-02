@@ -19,14 +19,11 @@ export const en: Record<TranslationKey, string> = {
   "nav.logsShort": "Logs",
   "nav.settings": "Settings",
   "nav.settingsShort": "Settings",
-  "nav.conversations": "Image conversations",
-  "nav.conversationsShort": "Images",
   "section.router.title": "Router control",
   "section.agents.title": "Agent configuration",
   "section.apiKeys.title": "API key",
   "section.logs.title": "Runtime logs",
   "section.settings.title": "Settings",
-  "section.conversations.title": "Image conversations",
   "placeholder.overline": "STABLE MODULE BOUNDARY",
   "placeholder.heading": "Module not connected",
   "placeholder.description":
@@ -639,54 +636,4 @@ export const en: Record<TranslationKey, string> = {
     "The desktop-saved Agent management state cannot be verified. Restart the app; if this persists, inspect the configuration manually.",
   "agents.cleanup.diagnostic.writesDisabled":
     "Agent configuration writes are unavailable. Recover the pending transaction or restart the app first.",
-  "conversations.heading": "Image conversations",
-  "conversations.overline": "Trusted local image data plane",
-  "conversations.new": "New conversation",
-  "conversations.messageCount": "Messages: {count}",
-  "conversations.empty":
-    'No conversations yet. Click "New conversation" to start.',
-  "conversations.delete": "Delete",
-  "conversations.deleteConfirm": "Delete this conversation and all its images?",
-  "conversations.reset": "Rebuild image data",
-  "conversations.resetConfirm":
-    "Delete all local image conversations and assets and rebuild the image data area? This cannot be undone.",
-  "conversations.model": "Model",
-  "conversations.modelUnavailable": "Model is currently unavailable",
-  "conversations.modelRisk":
-    "This model is marked as risk/deprecated in 9Router.",
-  "conversations.prompt": "Enter prompt",
-  "conversations.promptPlaceholder":
-    "Describe the image you want to generate...",
-  "conversations.submit": "Generate",
-  "conversations.cancel": "Cancel",
-  "conversations.busy":
-    "A generation is in progress. Wait for it to finish or cancel.",
-  "conversations.upload": "Upload reference image",
-  "conversations.removeReference": "Remove reference",
-  "conversations.continueEdit": "Continue editing",
-  "conversations.status.running": "Generating...",
-  "conversations.status.succeeded": "Done",
-  "conversations.status.failed": "Failed",
-  "conversations.status.cancelled": "Cancelled",
-  "conversations.status.interrupted": "Interrupted",
-  "conversations.error.notReady":
-    "Image feature is not ready. Check router status and API key.",
-  "conversations.error.busy": "A generation is already in progress.",
-  "conversations.error.invalidPrompt":
-    "Prompt is empty or exceeds the 20 KiB limit.",
-  "conversations.error.invalidModel": "Selected model is unavailable.",
-  "conversations.error.channel":
-    "Failed to connect to router. Check router status.",
-  "conversations.error.response":
-    "Generation response is invalid or exceeds limits.",
-  "conversations.error.cancelled": "Generation was cancelled.",
-  "conversations.error.timeout": "Generation timed out.",
-  "conversations.error.store": "Local storage error.",
-  "conversations.dataNotice":
-    "Conversations and images are stored locally in your user directory without additional encryption.",
-  "conversations.limitPrompt": "Prompt limit: 20 KiB",
-  "conversations.limitImage": "Image limit: 20 MiB / 16,384 px / 64 MP",
-  "conversations.rebuild":
-    "Storage is corrupted. Click to rebuild image data area.",
-  "conversations.rebuildAction": "Rebuild",
 };

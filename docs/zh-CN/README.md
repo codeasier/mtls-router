@@ -20,7 +20,7 @@
 
 ## 桌面应用
 
-Tauri 桌面应用提供当前用户 router 控制、托盘操作、默认登录时启动、健康/日志视图、受 supervisor 管理的端口冲突恢复、整包在线更新、图片对话，以及 Claude Code、opencode 和 Codex 的显式预览/写入流程。图片工作区仅在认证后的 `/v1/models/image` 目录返回精确 ID 时提供 `cx/gpt-5.5-image` 和 `ag/gemini-3.1-flash-image` 两个预置，支持纯提示词生图和显式单图编辑。端口恢复会报告结构化原因和 supervisor 人工引导，绝不提权或执行停止命令，并在约 10 秒内定期采样端口，报告是否检测到重新占用。它把 manager 和 router 作为经过验证的 sidecar 打包，首次启动绝不会修改 Agent 文件。
+Tauri 桌面应用提供当前用户 router 控制、托盘操作、默认登录时启动、健康/日志视图、受 supervisor 管理的端口冲突恢复、整包在线更新，以及 Claude Code、opencode 和 Codex 的显式预览/写入流程。端口恢复会报告结构化原因和 supervisor 人工引导，绝不提权或执行停止命令，并在约 10 秒内定期采样端口，报告是否检测到重新占用。它把 manager 和 router 作为经过验证的 sidecar 打包，首次启动绝不会修改 Agent 文件。
 
 当前仓库中的 CI 和 release workflow 会构建六个原生桌面包：Windows x86_64/arm64 NSIS 安装器、macOS Intel/Apple Silicon DMG，以及 Linux x86_64/arm64 AppImage。Stable 桌面构建会在启动时静默检查 `https://downloads.codeasier.top/mtls-router/latest/latest.json`，设置中也可以手动检查。发现更新后，只有用户确认才会下载、校验 updater 签名、安装并重启；更新会替换包括匹配 manager/router sidecar 在内的完整桌面包，不会新增或改变 CLI updater。每个匹配的目标 runner 都会检查对应包的内容、架构、版本/deployment 身份、sidecar 哈希和可执行权限，再构造包内 Tauri 应用以捕获插件初始化失败，但不进入事件循环。Release job 仅在签名凭据完整时签名 Windows 和 macOS 包，仅在额外 Apple 凭据完整时 notarize 并 staple macOS 应用，并为每个目标发布一个明确的签名状态文件。包检查不会安装、正常启动应用或执行上一版本到下一版本的真实更新，因此在把桌面 release 视为完整验证之前，仍需单独提供目标 runner 证据。安装、更新、首次启动、Agent、凭据和卸载行为见[桌面应用](DESKTOP.md)，恢复指导见[桌面应用故障排查](TROUBLESHOOTING.md)，精确证据边界见[构建与发布](BUILD.md)。
 

@@ -49,8 +49,6 @@ jobs:
               - 'systemd/**'
             frontend:
               - 'desktop/src/**'
-              - 'desktop/scripts/*.mjs'
-              - 'desktop/scripts/build-sidecars.sh'
               - 'desktop/package.json'
               - 'desktop/package-lock.json'
               - 'desktop/.npmrc'

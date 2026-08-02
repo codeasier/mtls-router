@@ -21,29 +21,14 @@ mkdir -p "$out_dir"
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/mtls-router-sidecars.XXXXXX")"
 trap 'rm -rf "$tmp_dir"' EXIT
 
-dev_cert_dir="${MTLS_ROUTER_DEV_CERT_DIR:-}"
-if [[ -n "$dev_cert_dir" && "${RELEASE_BUILD:-0}" == 1 ]]; then
-  printf 'MTLS_ROUTER_DEV_CERT_DIR is forbidden for release builds\n' >&2
-  exit 1
-fi
-if [[ -n "$dev_cert_dir" ]]; then
-  cert="$dev_cert_dir/client.pem"
-  key="$dev_cert_dir/client.key"
-  ca="$dev_cert_dir/upstream-ca.pem"
-else
-  cert="$repo_dir/secrets/client.pem"
-  key="$repo_dir/secrets/client.key"
-  ca="$repo_dir/secrets/upstream-ca.pem"
-fi
+cert="$repo_dir/secrets/client.pem"
+key="$repo_dir/secrets/client.key"
+ca="$repo_dir/secrets/upstream-ca.pem"
 upstream_url="${UPSTREAM_URL:-https://upstream.placeholder.invalid}"
 present=0
 for path in "$cert" "$key" "$ca"; do
   [[ -f "$path" ]] && present=$((present + 1))
 done
-if [[ -n "$dev_cert_dir" && "$present" -ne 3 ]]; then
-  printf 'development certificate directory must contain client.pem, client.key, and upstream-ca.pem\n' >&2
-  exit 1
-fi
 if [[ "$present" -ne 0 && "$present" -ne 3 ]]; then
   printf 'partial secrets set; provide all three files or none\n' >&2
   exit 1
