@@ -4,13 +4,12 @@
 
 ## v0.3.3 - 2026-08-01
 
-本次发布新增按单 Agent 安全清理 CodeasierRouter 托管设置和桌面签名整包更新的能力，引入分层桌面开发工作流，统一 CodeasierRouter 品牌，并在应用关闭到托盘时保留 macOS 全屏 Space。
+本次发布新增按单 Agent 安全清理 CodeasierRouter 托管设置，引入分层桌面开发工作流，统一 CodeasierRouter 品牌，并在应用关闭到托盘时保留 macOS 全屏 Space。
 
 ### 新增
 
 - 新增独立的 cleanup 预览与写入流程，用于移除单个 Agent 中由 CodeasierRouter 托管的 provider、model 和文件凭据设置，同时保留无关用户配置、桌面端全局 API key 与历史备份。
 - 新增仅限浏览器的 mock 开发模式、已有 Tauri sidecar 复用和一次性真实 Agent 配置路径，并让生产构建拒绝打包 mock 代码。
-- 为全部六个桌面目标新增 stable channel 更新：启动时静默检查，设置中可手动检查；用户确认后才安装并重启经过 updater 签名的完整桌面包，其中包含 manager/router sidecar，且不改变 CLI updater 路径。
 
 ### 变更
 
@@ -23,11 +22,36 @@
 ### 安全与恢复
 
 - Cleanup 要求可信 sidecar 所有权，使用签名 revision 绑定无 key 预览，在托管状态漂移后要求确认，通过私有事务备份和支持删除的 journal 执行恢复，并在投递结果不确定后要求重新预览。
+
+### 测试
+
+- 扩展 Go、前端、Rust 和工作流覆盖，验证 cleanup 所有权、revision、文件竞态、备份与回滚恢复、不确定投递、响应式交互、mock 隔离、命名一致性和原生托盘顺序。
+
+---
+
+## v0.3.4 - 2026-08-02
+
+本次发布新增签名整包桌面更新，确保验证包可启动，并优化桌面布局与微交互。
+
+### 新增
+
+- 为全部六个桌面目标新增 stable channel 更新：启动时静默检查，设置中可手动检查；用户确认后才安装并重启经过 updater 签名的完整桌面包，其中包含 manager/router sidecar，且不改变 CLI updater 路径。
+
+### 变更
+
+- 优化支持视口尺寸下的桌面间距、响应式布局、设置页呈现和交互反馈。
+
+### 修复
+
+- 通过提供稳定的应用元数据和安全启动路径，确保仅用于验证的桌面包可以启动，且不影响正式发布流程。
+
+### 安全与恢复
+
 - 要求 Tauri updater 签名和来自 `downloads.codeasier.top` 的 stable SemVer feed；updater 签名与 Windows/macOS 平台签名及 notarization 相互独立。
 
 ### 测试
 
-- 扩展 Go、前端、Rust 和工作流覆盖，验证 cleanup 所有权、revision、文件竞态、备份与回滚恢复、不确定投递、在线更新状态/签名/产物、响应式交互、mock 隔离、命名一致性和原生托盘顺序。
+- 扩展前端、Rust 和工作流覆盖，验证在线更新状态、签名、产物、验证包启动、响应式交互和布局回归。
 
 ---
 
