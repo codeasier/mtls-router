@@ -271,6 +271,21 @@ jobs:
           SOURCE: release/
           TARGET: /home/codeasier/downloads/${{ github.event.repository.name }}/${{ inputs.release_tag }}/
           ARGS: -avz --delete
+      - name: Revalidate tag before publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          EXPECTED_SHA: ${{ needs.package.outputs.tag_sha }}
+        run: test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$EXPECTED_SHA"
+      - name: Publish draft Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.prepare-release.outputs.release_id }}
+        run: |
+          set -euo pipefail
+          test -n "$RELEASE_ID"
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            -F draft=false -F make_latest=true >/dev/null
       - name: Update latest symlink
         uses: appleboy/ssh-action@v1.2.2
         with:
@@ -291,18 +306,3 @@ jobs:
             fi
             ln -sfn "$tag" "$base/latest.tmp"
             mv -Tf "$base/latest.tmp" "$base/latest"
-      - name: Revalidate tag before publication
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-          EXPECTED_SHA: ${{ needs.package.outputs.tag_sha }}
-        run: test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$EXPECTED_SHA"
-      - name: Publish draft Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_ID: ${{ steps.prepare-release.outputs.release_id }}
-        run: |
-          set -euo pipefail
-          test -n "$RELEASE_ID"
-          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
-            -F draft=false -F make_latest=true >/dev/null

@@ -270,6 +270,8 @@ done
 for value in \
   'RELEASE_TAG: ${{ github.ref_name }}' \
   'if: needs.prepare.outputs.online-update == '\''true'\''' \
+  'Validate stable GitHub channel advancement' \
+  'current_latest="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '\''.tag_name'\''' \
   'test ! -e "$base/latest" || test -L "$base/latest"' \
   'current="$(basename "$(readlink "$base/latest")")"' \
   'sort -V | tail -n1' \
@@ -284,6 +286,10 @@ package_contains 'DESKTOP_DOWNLOAD_BASE_URL:?DESKTOP_DOWNLOAD_BASE_URL is requir
 package_contains 'DESKTOP_DOWNLOAD_BASE_URL="$DESKTOP_DOWNLOAD_BASE_URL"'
 [[ "$(grep -Fc 'DESKTOP_DOWNLOAD_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ inputs.release_tag }}' "$RECOVERY")" -eq 2 ]] || \
   fail 'recovery workflow must pass the GitHub desktop download base in both package and validate steps'
+recovery_publish_line="$(grep -nF '      - name: Publish draft Release' "$RECOVERY" | cut -d: -f1)"
+recovery_symlink_line="$(grep -nF '      - name: Update latest symlink' "$RECOVERY" | cut -d: -f1)"
+[[ -n "$recovery_publish_line" && -n "$recovery_symlink_line" && "$recovery_publish_line" -lt "$recovery_symlink_line" ]] || \
+  fail 'recovery workflow must publish GitHub assets before advancing the mirror latest symlink'
 if grep -Fq -- '--hostname uploads.github.com' "$RECOVERY"; then
   fail 'gh api must use the full uploads.github.com URL'
 fi
