@@ -104,7 +104,7 @@ key 绝不出现于环境变量、CLI 参数、model config、日志或 journal 
 
 Rust 侧绝不向 webview 暴露 shell/fs/http 权限（由 `lib.rs` 中的测试强制保证）。
 
-桌面在线更新仅由精确 stable `vX.Y.Z` release 启用，固定检查 `https://downloads.codeasier.top/mtls-router/latest/latest.json`。更新包包含桌面应用及匹配的 manager/router sidecar，必须通过独立 Tauri updater 签名校验并经用户确认后安装；该能力不改变 CLI router、manager 或 setup 脚本的更新行为。
+桌面在线更新仅由精确 stable `vX.Y.Z` release 启用，固定检查 `https://github.com/codeasier/mtls-router/releases/latest/download/latest.json`，`latest.json` 中各平台产物 URL 指向 `https://github.com/codeasier/mtls-router/releases/download/<tag>/`。更新包包含桌面应用及匹配的 manager/router sidecar，必须通过独立 Tauri updater 签名校验并经用户确认后安装；该能力不改变 CLI router、manager 或 setup 脚本的更新行为。
 
 ## Setup 脚本（`setup.sh` / `setup.ps1`）
 
@@ -141,6 +141,6 @@ Rust 侧绝不向 webview 暴露 shell/fs/http 权限（由 `lib.rs` 中的测�
 
 - `scripts/build.sh` 在 `secrets/` 下生成占位 PEM 供本地构建；真实发布密钥来自 GitHub secrets/vars。
 - `desktop/scripts/prepare-updater-config.sh` 为 stable tag 生成私有 Tauri updater overlay 并校验固定公钥指纹；`desktop/scripts/updater-public-key-fingerprint.mjs` 生成该指纹；`desktop/scripts/create-macos-updater.sh` 从最终 macOS app 生成签名 `.app.tar.gz`；`desktop/scripts/verify-package.sh` 收集六平台 updater 产物及 `.sig` 并验证签名与公钥匹配。
-- `scripts/package-release.sh` 对精确 stable tag 汇总六平台 updater artifact/signature、生成 `latest.json` 并纳入 `SHA256SUMS`；release/recovery workflow 镜像 tag 目录后仅单调、原子推进 `downloads.codeasier.top` 的 `latest` symlink。Updater 签名密钥与 Windows/macOS 平台签名凭据属于独立信任链。
+- `scripts/package-release.sh` 对精确 stable tag 汇总六平台 updater artifact/signature、生成 `latest.json`（平台 URL 指向 GitHub releases）并纳入 `SHA256SUMS`；release/recovery workflow 另将 tag 目录镜像至 `downloads.codeasier.top` 并单调、原子推进其 `latest` symlink 作为二级分发点，但 updater feed 与产物下载均以 GitHub releases 为准。Updater 签名密钥与 Windows/macOS 平台签名凭据属于独立信任链。
 - `.worktrees/` 目录含 git worktree 产物，已在 `.gitignore` 中忽略；分析产品代码时忽略。
 - 管理协议当前版本为 `4`；router、manager、setup receipt、release metadata 与桌面端必须同版本，桌面端在启动握手时校验并拒绝混合代。

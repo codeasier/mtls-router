@@ -231,7 +231,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
           TAURI_UPDATER_PUBKEY_SHA256: ${{ vars.TAURI_UPDATER_PUBKEY_SHA256 }}
-          UPDATER_ENDPOINT: https://downloads.codeasier.top/${{ github.event.repository.name }}/latest/latest.json
+          UPDATER_ENDPOINT: https://github.com/${{ github.repository }}/releases/latest/download/latest.json
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             version="${GITHUB_REF_NAME#v}"
@@ -465,6 +465,7 @@ jobs:
       - name: Preflight and package
         env:
           DOWNLOAD_BASE_URL: https://downloads.codeasier.top/${{ github.event.repository.name }}/${{ github.ref_name }}
+          DESKTOP_DOWNLOAD_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}
           RELEASE_TAG: ${{ github.ref_name }}
           SOURCE_DATE_EPOCH: '0'
         run: ./scripts/package-release.sh

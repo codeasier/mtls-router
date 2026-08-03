@@ -213,7 +213,7 @@ Tauri updater 签名与操作系统平台签名保护不同的信任边界，二
 - Tauri updater 签名证明在线更新产物由已安装应用内嵌公钥所对应的私钥签发。Windows、macOS 和 Linux 都必须先通过该签名校验才能安装更新。
 - Windows Authenticode 与 macOS code signing/notarization 为下载和安装的软件建立 publisher/platform 信任。即使 Tauri updater 签名有效，只要分发策略要求，它们仍然是必需的。Linux 当前没有配置平台包签名，但其在线更新产物仍强制要求 Tauri 签名。
 
-只有精确 stable `vX.Y.Z` tag 才会生成在线更新。Validation dispatch、prerelease tag 和其他 ref 都保持 `createUpdaterArtifacts` 关闭，也不会推进 channel。Stable 构建内嵌 endpoint `https://downloads.codeasier.top/mtls-router/latest/latest.json`。Release 汇总会发布含六个平台的 `latest.json`、每个平台 updater 产物及 `.sig`，然后原子推进镜像上的 `latest` symlink。Windows 和 Linux 直接复用最终 NSIS/AppImage 包作为 updater 产物；macOS 还会发布签名的 `CodeasierRouter-darwin-<arch>.app.tar.gz`。每个 updater 产物、签名和 `latest.json` 都由 `SHA256SUMS` 覆盖。
+只有精确 stable `vX.Y.Z` tag 才会生成在线更新。Validation dispatch、prerelease tag 和其他 ref 都保持 `createUpdaterArtifacts` 关闭，也不会推进 channel。Stable 构建内嵌 endpoint `https://github.com/codeasier/mtls-router/releases/latest/download/latest.json`，且每次 release 生成的 `latest.json` 中各平台 URL 均指向 `https://github.com/codeasier/mtls-router/releases/download/<tag>/`。Release 汇总会发布含六个平台的 `latest.json`、每个平台 updater 产物及 `.sig`，同时将 tag 目录镜像至 `downloads.codeasier.top` 并原子推进其 `latest` symlink 作为二级分发点；updater feed 与产物下载均由 GitHub releases 提供。Windows 和 Linux 直接复用最终 NSIS/AppImage 包作为 updater 产物；macOS 还会发布签名的 `CodeasierRouter-darwin-<arch>.app.tar.gz`。每个 updater 产物、签名和 `latest.json` 都由 `SHA256SUMS` 覆盖。
 
 在可信且不被录屏/记录的 operator 工作站上，从 `desktop/` 目录一次性生成 updater keypair。下面的命令只包含输出路径，密码由交互提示读取，不包含任何 key 或密码值：
 
