@@ -744,7 +744,9 @@ contains "$ROOT/desktop/scripts/verify-package.sh" '--example verify_updater_sig
 for secret in TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD TAURI_UPDATER_PUBKEY; do
   contains "$RELEASE" "$secret: "'${{ secrets.'"$secret"' }}'
 done
-contains "$RELEASE" 'UPDATER_ENDPOINT: https://downloads.codeasier.top/${{ github.event.repository.name }}/latest/latest.json'
+contains "$RELEASE" 'UPDATER_ENDPOINT: https://github.com/${{ github.repository }}/releases/latest/download/latest.json'
+contains "$RELEASE" 'prerelease: ${{ needs.prepare.outputs.online-update != '\''true'\'' }}'
+contains "$RELEASE" 'make_latest: ${{ needs.prepare.outputs.online-update == '\''true'\'' }}'
 contains "$RELEASE" 'TAURI_UPDATER_PUBKEY_SHA256: ${{ vars.TAURI_UPDATER_PUBKEY_SHA256 }}'
 contains "$RELEASE" 'npm exec tauri -- signer sign "$package"'
 contains "$RELEASE" 'if: needs.prepare.outputs.online-update == '\''true'\'''

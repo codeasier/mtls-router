@@ -6,6 +6,10 @@ case "$DOWNLOAD_BASE_URL" in https://*) ;; *) printf 'DOWNLOAD_BASE_URL must use
 release_tag="${RELEASE_TAG:-}"
 online_update=false
 if [[ "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then online_update=true; fi
+if [[ "$online_update" == true ]]; then
+  : "${DESKTOP_DOWNLOAD_BASE_URL:?DESKTOP_DOWNLOAD_BASE_URL is required for stable releases}"
+  case "$DESKTOP_DOWNLOAD_BASE_URL" in https://*) ;; *) printf 'DESKTOP_DOWNLOAD_BASE_URL must use HTTPS\n' >&2; exit 1 ;; esac
+fi
 
 test "$(grep -Fxc 'DEFAULT_DOWNLOAD_BASE_URL=""' setup.sh)" -eq 1
 test "$(grep -Fxc '$DefaultDownloadBaseUrl = '\'''\''' setup.ps1)" -eq 1
@@ -76,7 +80,7 @@ test "$(find release -maxdepth 1 -type f -name 'signing-status-*' | wc -l)" -eq 
 if [[ "$online_update" == true ]]; then
   test "$(find release -maxdepth 1 -type f -name 'CodeasierRouter-*.sig' | wc -l)" -eq 6
   test "$(find release -maxdepth 1 -type f -name 'CodeasierRouter-darwin-*.app.tar.gz' | wc -l)" -eq 2
-  RELEASE_TAG="$release_tag" DOWNLOAD_BASE_URL="$DOWNLOAD_BASE_URL" python3 - <<'PY'
+  RELEASE_TAG="$release_tag" DESKTOP_DOWNLOAD_BASE_URL="$DESKTOP_DOWNLOAD_BASE_URL" python3 - <<'PY'
 import json
 import os
 from pathlib import Path
@@ -84,7 +88,7 @@ from pathlib import Path
 release = Path("release")
 tag = os.environ["RELEASE_TAG"]
 version = tag.removeprefix("v")
-base_url = os.environ["DOWNLOAD_BASE_URL"].rstrip("/")
+base_url = os.environ["DESKTOP_DOWNLOAD_BASE_URL"].rstrip("/")
 targets = {
     "linux-x86_64": "CodeasierRouter-linux-amd64.AppImage",
     "linux-aarch64": "CodeasierRouter-linux-arm64.AppImage",

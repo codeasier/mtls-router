@@ -36,7 +36,7 @@ Release asset 集中每个桌面包都有一个 `.sha256` 文件和一个 `signi
 
 Stable 桌面 release 在 Windows x86_64/arm64、macOS Intel/Apple Silicon 和 Linux x86_64/arm64 上支持整包在线更新。更新会同时替换桌面应用及其匹配的 `mtls-router-manager` 和 `mtls-router` sidecar，不是只更新 sidecar。该能力仅属于桌面应用，不会新增或改变 CLI 二进制或安装脚本的更新行为。
 
-应用每次启动会静默检查一次 `https://downloads.codeasier.top/mtls-router/latest/latest.json`；检查失败不会阻断启动。设置页面会显示当前和最新桌面版本、release 提供的更新说明，以及手动**检查更新**操作。应用只接受更高版本的 stable SemVer release；不会提供 prerelease 或含 build metadata 的版本，validation/非 stable 构建也不会发布到桌面更新 channel。
+应用每次启动会静默检查一次 `https://github.com/codeasier/mtls-router/releases/latest/download/latest.json`；检查失败不会阻断启动。设置页面会显示当前和最新桌面版本、release 提供的更新说明，以及手动**检查更新**操作。应用只接受更高版本的 stable SemVer release；不会提供 prerelease 或含 build metadata 的版本，validation/非 stable 构建也不会发布到桌面更新 channel。
 
 应用绝不会在未经确认时下载或安装更新。你确认界面显示的 stable 版本后，应用才会下载平台包、报告进度、校验强制的 Tauri updater 签名、只停止经过验证且由桌面端所有的 router、安装完整包并重启应用。兼容的外部 router 不会被停止。如果停止桌面端所属 router 后安装失败，应用会尝试重新启动该 router。
 

@@ -145,6 +145,7 @@ jobs:
       - name: Preflight and package
         env:
           DOWNLOAD_BASE_URL: https://downloads.codeasier.top/${{ github.event.repository.name }}/${{ inputs.release_tag }}
+          DESKTOP_DOWNLOAD_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ inputs.release_tag }}
           RELEASE_TAG: ${{ inputs.release_tag }}
           SOURCE_DATE_EPOCH: '0'
         run: ./scripts/package-release.sh
@@ -170,11 +171,11 @@ jobs:
       - name: Validate recovered updater assets
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
-          DOWNLOAD_BASE_URL: https://downloads.codeasier.top/${{ github.event.repository.name }}/${{ inputs.release_tag }}
+          DESKTOP_DOWNLOAD_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ inputs.release_tag }}
         run: |
           set -euo pipefail
           (cd release && sha256sum -c SHA256SUMS)
-          jq -e --arg version "${RELEASE_TAG#v}" --arg base "$DOWNLOAD_BASE_URL/" '
+          jq -e --arg version "${RELEASE_TAG#v}" --arg base "$DESKTOP_DOWNLOAD_BASE_URL/" '
             .version == $version and
             (.platforms | keys | sort) == ([
               "darwin-aarch64", "darwin-x86_64", "linux-aarch64",
@@ -185,7 +186,7 @@ jobs:
           while read -r target name; do
             test -s "release/$name"
             test -s "release/$name.sig"
-            test "$(jq -r --arg target "$target" '.platforms[$target].url' release/latest.json)" = "$DOWNLOAD_BASE_URL/$name"
+            test "$(jq -r --arg target "$target" '.platforms[$target].url' release/latest.json)" = "$DESKTOP_DOWNLOAD_BASE_URL/$name"
             test "$(jq -r --arg target "$target" '.platforms[$target].signature' release/latest.json)" = "$(cat "release/$name.sig")"
           done <<'TARGETS'
           linux-x86_64 CodeasierRouter-linux-amd64.AppImage
@@ -270,6 +271,21 @@ jobs:
           SOURCE: release/
           TARGET: /home/codeasier/downloads/${{ github.event.repository.name }}/${{ inputs.release_tag }}/
           ARGS: -avz --delete
+      - name: Revalidate tag before publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          EXPECTED_SHA: ${{ needs.package.outputs.tag_sha }}
+        run: test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$EXPECTED_SHA"
+      - name: Publish draft Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.prepare-release.outputs.release_id }}
+        run: |
+          set -euo pipefail
+          test -n "$RELEASE_ID"
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            -F draft=false -F make_latest=true >/dev/null
       - name: Update latest symlink
         uses: appleboy/ssh-action@v1.2.2
         with:
@@ -290,18 +306,3 @@ jobs:
             fi
             ln -sfn "$tag" "$base/latest.tmp"
             mv -Tf "$base/latest.tmp" "$base/latest"
-      - name: Revalidate tag before publication
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-          EXPECTED_SHA: ${{ needs.package.outputs.tag_sha }}
-        run: test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')" = "$EXPECTED_SHA"
-      - name: Publish draft Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_ID: ${{ steps.prepare-release.outputs.release_id }}
-        run: |
-          set -euo pipefail
-          test -n "$RELEASE_ID"
-          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
-            -F draft=false -F make_latest=true >/dev/null

@@ -133,16 +133,16 @@ for os_arch in linux-amd64 linux-arm64 windows-amd64 windows-arm64 darwin-amd64 
   fi
   printf 'trusted updater signature %s\n' "$os_arch" >"$package_tmp/desktop-packages/$updater.sig"
 done
-(cd "$package_tmp" && PATH="$package_tmp/bin:$PATH" RELEASE_TAG=v1.2.3 DOWNLOAD_BASE_URL=https://downloads.codeasier.top/mtls-router/v1.2.3 SOURCE_DATE_EPOCH=0 ./scripts/package-release.sh) || \
+(cd "$package_tmp" && PATH="$package_tmp/bin:$PATH" RELEASE_TAG=v1.2.3 DOWNLOAD_BASE_URL=https://downloads.codeasier.top/mtls-router/v1.2.3 DESKTOP_DOWNLOAD_BASE_URL=https://github.com/codeasier/mtls-router/releases/download/v1.2.3 SOURCE_DATE_EPOCH=0 ./scripts/package-release.sh) || \
   fail 'stable updater release fixture failed to package'
 [[ "$(find "$package_tmp/release" -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 46 ]] || \
   fail 'stable updater release fixture has the wrong exact asset count'
 jq -e '
   .version == "1.2.3" and
   (.platforms | length) == 6 and
-  .platforms["darwin-aarch64"].url == "https://downloads.codeasier.top/mtls-router/v1.2.3/CodeasierRouter-darwin-arm64.app.tar.gz" and
-  .platforms["linux-x86_64"].url == "https://downloads.codeasier.top/mtls-router/v1.2.3/CodeasierRouter-linux-amd64.AppImage" and
-  .platforms["windows-x86_64"].url == "https://downloads.codeasier.top/mtls-router/v1.2.3/CodeasierRouter-windows-amd64.exe"
+  .platforms["darwin-aarch64"].url == "https://github.com/codeasier/mtls-router/releases/download/v1.2.3/CodeasierRouter-darwin-arm64.app.tar.gz" and
+  .platforms["linux-x86_64"].url == "https://github.com/codeasier/mtls-router/releases/download/v1.2.3/CodeasierRouter-linux-amd64.AppImage" and
+  .platforms["windows-x86_64"].url == "https://github.com/codeasier/mtls-router/releases/download/v1.2.3/CodeasierRouter-windows-amd64.exe"
 ' "$package_tmp/release/latest.json" >/dev/null || fail 'stable updater latest.json is invalid'
 (cd "$package_tmp/release" && sha256sum -c SHA256SUMS >/dev/null) || fail 'stable updater release checksums are invalid'
 
@@ -270,6 +270,8 @@ done
 for value in \
   'RELEASE_TAG: ${{ github.ref_name }}' \
   'if: needs.prepare.outputs.online-update == '\''true'\''' \
+  'Validate stable GitHub channel advancement' \
+  'current_latest="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '\''.tag_name'\''' \
   'test ! -e "$base/latest" || test -L "$base/latest"' \
   'current="$(basename "$(readlink "$base/latest")")"' \
   'sort -V | tail -n1' \
@@ -279,6 +281,15 @@ done
 for target in linux-x86_64 linux-aarch64 windows-x86_64 windows-aarch64 darwin-x86_64 darwin-aarch64; do
   grep -Fq -- "\"$target\"" "$PACKAGE_SCRIPT" || fail "latest feed is missing target $target"
 done
+contains 'DESKTOP_DOWNLOAD_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}'
+package_contains 'DESKTOP_DOWNLOAD_BASE_URL:?DESKTOP_DOWNLOAD_BASE_URL is required for stable releases'
+package_contains 'DESKTOP_DOWNLOAD_BASE_URL="$DESKTOP_DOWNLOAD_BASE_URL"'
+[[ "$(grep -Fc 'DESKTOP_DOWNLOAD_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ inputs.release_tag }}' "$RECOVERY")" -eq 2 ]] || \
+  fail 'recovery workflow must pass the GitHub desktop download base in both package and validate steps'
+recovery_publish_line="$(grep -nF '      - name: Publish draft Release' "$RECOVERY" | cut -d: -f1)"
+recovery_symlink_line="$(grep -nF '      - name: Update latest symlink' "$RECOVERY" | cut -d: -f1)"
+[[ -n "$recovery_publish_line" && -n "$recovery_symlink_line" && "$recovery_publish_line" -lt "$recovery_symlink_line" ]] || \
+  fail 'recovery workflow must publish GitHub assets before advancing the mirror latest symlink'
 if grep -Fq -- '--hostname uploads.github.com' "$RECOVERY"; then
   fail 'gh api must use the full uploads.github.com URL'
 fi
