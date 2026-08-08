@@ -30,6 +30,22 @@ var (
 	upstreamURL   string
 )
 
+type runFailure struct {
+	reason   string
+	err      error
+	reported bool
+}
+
+func (e *runFailure) Error() string { return e.reason }
+func (e *runFailure) Unwrap() error { return e.err }
+
+func failRun(reason string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &runFailure{reason: reason, err: err}
+}
+
 func main() {
 	if err := run(); err != nil {
 		logRunFailure(slog.Default(), err)
@@ -37,14 +53,24 @@ func main() {
 	}
 }
 
-// Startup errors can embed configured URLs and raw transport details.
-func logRunFailure(logger *slog.Logger, _ error) {
-	logger.Error("fatal", "reason", "router_failure")
+// Startup errors can embed configured URLs and raw transport details. Emit only
+// a closed reason code that remains useful in desktop diagnostics.
+func logRunFailure(logger *slog.Logger, err error) {
+	reason := "router_failure"
+	var failure *runFailure
+	if errors.As(err, &failure) {
+		if failure.reported {
+			return
+		}
+		reason = failure.reason
+		failure.reported = true
+	}
+	logger.Error("fatal", "reason", reason)
 }
 
-func run() error {
+func run() (runErr error) {
 	if handled, err := handleMetaFlags(os.Args[1:]); handled || err != nil {
-		return err
+		return failRun("arguments_invalid", err)
 	}
 
 	defaults := config.Defaults{
@@ -57,13 +83,13 @@ func run() error {
 
 	cfg, err := config.Load(defaults, os.Args[1:])
 	if err != nil {
-		return err
+		return failRun("config_invalid", err)
 	}
 	if err := cfg.Validate(); err != nil {
-		return err
+		return failRun("config_invalid", err)
 	}
 	if cfg.Backend {
-		return startBackend(cfg.LogPath)
+		return failRun("backend_start_failed", startBackend(cfg.LogPath))
 	}
 
 	level := slog.LevelInfo
@@ -72,15 +98,22 @@ func run() error {
 	}
 	writer, closeLog, err := logWriter(cfg.LogPath)
 	if err != nil {
-		return err
+		return failRun("log_open_failed", err)
 	}
-	defer closeLog()
 	logger := slog.New(slog.NewTextHandler(writer, &slog.HandlerOptions{Level: level}))
 	slog.SetDefault(logger)
+	defer func() {
+		// Report while the configured writer is still open. main() observes the
+		// reported marker and does not emit a duplicate after closeLog.
+		if runErr != nil {
+			logRunFailure(logger, runErr)
+		}
+		closeLog()
+	}()
 
 	transport, err := proxy.NewMTLSTransport(clientCertPEM, clientKeyPEM, upstreamCAPEM, proxy.WithTLSMin(cfg.TLSMin))
 	if err != nil {
-		return err
+		return failRun("tls_material_invalid", err)
 	}
 
 	probeOptions := health.ProbeOptions{
@@ -93,16 +126,16 @@ func run() error {
 	}
 	prober, err := health.NewProber(probeOptions)
 	if err != nil {
-		return err
+		return failRun("probe_setup_failed", err)
 	}
 	defer prober.Close()
 	if err := prober.Probe(); err != nil {
-		return err
+		return failRun("upstream_probe_failed", err)
 	}
 
 	parsedUpstream, err := url.Parse(cfg.UpstreamURL)
 	if err != nil {
-		return err
+		return failRun("config_invalid", err)
 	}
 	reverseProxy := proxy.New(proxy.Options{
 		Upstream:  parsedUpstream,
@@ -142,14 +175,14 @@ func run() error {
 		logger.Info("shutdown signal received", "signal", sig.String())
 	case err := <-errCh:
 		if err != nil {
-			return err
+			return failRun("listen_failed", err)
 		}
 		return nil
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	return server.Shutdown(ctx)
+	return failRun("shutdown_failed", server.Shutdown(ctx))
 }
 
 func logListening(logger *slog.Logger, addr string, upstream *url.URL) {

@@ -171,6 +171,49 @@ func TestStartupLogsSanitizeUpstreamAndFailureDetails(t *testing.T) {
 	}
 }
 
+func TestStartupLogsClosedFailureReason(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&output, nil))
+
+	logRunFailure(logger, failRun("upstream_probe_failed", errors.New("private upstream detail")))
+
+	logged := output.String()
+	if !strings.Contains(logged, "reason=upstream_probe_failed") {
+		t.Fatalf("startup log missing closed failure reason: %s", logged)
+	}
+	if strings.Contains(logged, "private upstream detail") {
+		t.Fatalf("startup log exposed raw failure: %s", logged)
+	}
+}
+
+func TestRunLogsPostSetupFailureBeforeClosingLog(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "router.log")
+	for _, name := range []string{"MTLS_BACKEND", "MTLS_DEBUG", "MTLS_LISTEN_ADDR", "MTLS_TIMEOUT", "MTLS_TLS_MIN"} {
+		t.Setenv(name, "")
+	}
+	oldArgs := os.Args
+	oldLogger := slog.Default()
+	os.Args = []string{"mtls-router", "-upstream", "https://upstream.example", "-log", logPath}
+	t.Cleanup(func() {
+		os.Args = oldArgs
+		slog.SetDefault(oldLogger)
+	})
+
+	err := run()
+	if err == nil {
+		t.Fatal("run() unexpectedly succeeded without embedded TLS material")
+	}
+	logRunFailure(slog.Default(), err)
+
+	logged, readErr := os.ReadFile(logPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if count := strings.Count(string(logged), "reason=tls_material_invalid"); count != 1 {
+		t.Fatalf("closed failure reason count = %d, log = %s", count, logged)
+	}
+}
+
 func TestProxyStreamsFirstChunkThroughAccessLog(t *testing.T) {
 	tests := []struct {
 		name        string

@@ -26,9 +26,15 @@ import (
 type StartupStage string
 
 const (
-	StartupStageLogDirectory  StartupStage = "log_directory"
-	StartupStageLogOpen       StartupStage = "log_open"
-	StartupStageProcessLaunch StartupStage = "process_launch"
+	StartupStageLogDirectory   StartupStage = "log_directory"
+	StartupStageLogOpen        StartupStage = "log_open"
+	StartupStageProcessLaunch  StartupStage = "process_launch"
+	StartupStageProcessInspect StartupStage = "process_inspect"
+	StartupStageReadiness      StartupStage = "readiness"
+	StartupStageIdentity       StartupStage = "identity_validate"
+	StartupStageStateReconcile StartupStage = "state_reconcile"
+	StartupStageStatePersist   StartupStage = "state_persist"
+	StartupStageProcessExit    StartupStage = "process_exit"
 )
 
 type Error struct {
@@ -201,7 +207,7 @@ func (m *Manager) startDesktop(ctx context.Context) (state.RouterState, *Error) 
 		return state.RouterState{}, lifecycleError(protocol.CodeInvalidParams, "complete session, manager, and parent identity are required")
 	}
 	if err := m.acquireLock(); err != nil {
-		return state.RouterState{}, lifecycleError(protocol.CodeRouterAlreadyRunning, "desktop ownership is locked")
+		return state.RouterState{}, startupError(StartupStageStateReconcile, protocol.CodeRouterAlreadyRunning, "desktop ownership is locked", err)
 	}
 	keepLock := false
 	defer func() {
@@ -216,7 +222,12 @@ func (m *Manager) startDesktop(ctx context.Context) (state.RouterState, *Error) 
 				keepLock = true
 				return existing, nil
 			}
-			return state.RouterState{}, lifecycleError(protocol.CodeRouterAlreadyRunning, "a desktop router is already owned")
+			return state.RouterState{}, stagedError(StartupStageStateReconcile, protocol.CodeRouterAlreadyRunning, "a desktop router is already owned")
+		}
+		if m.recordedProcessAbsent(existing, status) {
+			if err := m.deps.RemoveState(m.config.DesktopStatePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return state.RouterState{}, startupError(StartupStageStateReconcile, protocol.CodeRouterStateStale, "obsolete desktop state could not be removed", err)
+			}
 		}
 	}
 	if m.deps.Discover != nil {
@@ -230,13 +241,13 @@ func (m *Manager) startDesktop(ctx context.Context) (state.RouterState, *Error) 
 				m.releaseLock()
 				return found.State, &Error{Code: protocol.CodeRouterDegraded, Err: errors.New("external router has unavailable endpoint or upstream")}
 			}
-			return state.RouterState{}, lifecycleError(protocol.CodeRouterAlreadyRunning, "a desktop router is already running but degraded")
+			return state.RouterState{}, stagedError(StartupStageStateReconcile, protocol.CodeRouterAlreadyRunning, "a desktop router is already running but degraded")
 		case discovery.UnknownOccupant:
 			return state.RouterState{}, lifecycleError(protocol.CodePortOccupied, "router port is occupied")
 		case discovery.Stale:
-			return state.RouterState{}, lifecycleError(protocol.CodeRouterStateStale, "router state is stale")
+			return state.RouterState{}, stagedError(StartupStageStateReconcile, protocol.CodeRouterStateStale, "router state is stale")
 		case discovery.DesktopOwned:
-			return state.RouterState{}, lifecycleError(protocol.CodeRouterAlreadyRunning, "a desktop router is already running")
+			return state.RouterState{}, stagedError(StartupStageStateReconcile, protocol.CodeRouterAlreadyRunning, "a desktop router is already running")
 		}
 	}
 
@@ -277,7 +288,7 @@ func (m *Manager) startDesktop(ctx context.Context) (state.RouterState, *Error) 
 	}
 	value := m.routerState("desktop", identity, versionInfo)
 	if err := m.deps.WriteState(m.config.DesktopStatePath, value); err != nil {
-		return state.RouterState{}, m.cleanupFailedDesktopStart(child, run, lifecycleError(protocol.CodeRouterStartFailed, "cannot persist verified router state"))
+		return state.RouterState{}, m.cleanupFailedDesktopStart(child, run, startupError(StartupStageStatePersist, protocol.CodeRouterStartFailed, "cannot persist verified router state", err))
 	}
 	run.identity = identity
 	m.mu.Lock()
@@ -285,7 +296,7 @@ func (m *Manager) startDesktop(ctx context.Context) (state.RouterState, *Error) 
 	case <-run.done:
 		m.mu.Unlock()
 		_ = m.deps.RemoveState(m.config.DesktopStatePath)
-		return state.RouterState{}, m.cleanupFailedDesktopStart(child, run, lifecycleError(protocol.CodeRouterStartFailed, "router exited before startup completed"))
+		return state.RouterState{}, m.cleanupFailedDesktopStart(child, run, stagedError(StartupStageProcessExit, protocol.CodeRouterStartFailed, "router exited before startup completed"))
 	default:
 	}
 	m.desktopRun = run
@@ -329,7 +340,7 @@ func (m *Manager) startCLI(ctx context.Context) (state.RouterState, *Error) {
 func (m *Manager) waitUntilReady(ctx context.Context, pid int, childExit <-chan struct{}) (process.Identity, discovery.Version, discovery.Health, *Error) {
 	identity, err := m.deps.Inspect(pid)
 	if err != nil {
-		return process.Identity{PID: pid}, discovery.Version{}, discovery.Health{}, lifecycleError(protocol.CodeRouterStartFailed, "cannot inspect launched router")
+		return process.Identity{PID: pid}, discovery.Version{}, discovery.Health{}, startupError(StartupStageProcessInspect, protocol.CodeRouterStartFailed, "cannot inspect launched router", err)
 	}
 	startupCtx, cancel := context.WithTimeout(ctx, m.config.StartupTimeout)
 	defer cancel()
@@ -337,7 +348,7 @@ func (m *Manager) waitUntilReady(ctx context.Context, pid int, childExit <-chan 
 		if childExit != nil {
 			select {
 			case <-childExit:
-				return identity, discovery.Version{}, discovery.Health{}, lifecycleError(protocol.CodeRouterStartFailed, "router exited during startup")
+				return identity, discovery.Version{}, discovery.Health{}, stagedError(StartupStageProcessExit, protocol.CodeRouterStartFailed, "router exited during startup")
 			default:
 			}
 		}
@@ -347,10 +358,10 @@ func (m *Manager) waitUntilReady(ctx context.Context, pid int, childExit <-chan 
 			if validateErr == nil && status == process.StatusGenuine {
 				return identity, versionInfo, healthInfo, nil
 			}
-			return identity, discovery.Version{}, discovery.Health{}, lifecycleError(protocol.CodeRouterStateStale, "launched router identity changed")
+			return identity, discovery.Version{}, discovery.Health{}, stagedError(StartupStageIdentity, protocol.CodeRouterStateStale, "launched router identity changed")
 		}
 		if err := m.deps.Sleep(startupCtx, m.config.PollInterval); err != nil {
-			return identity, discovery.Version{}, discovery.Health{}, lifecycleError(protocol.CodeRouterNotReady, "router did not become ready before timeout")
+			return identity, discovery.Version{}, discovery.Health{}, stagedError(StartupStageReadiness, protocol.CodeRouterNotReady, "router did not become ready before timeout")
 		}
 	}
 }
@@ -579,6 +590,20 @@ func (m *Manager) cleanupFailedChild(identity process.Identity) {
 	}
 }
 
+// Old desktop states can omit modern identity fields. Discard them only when
+// the recorded PID is independently proven absent; otherwise startup remains
+// fail closed and never signals the process.
+func (m *Manager) recordedProcessAbsent(value state.RouterState, status process.Status) bool {
+	if status == process.StatusAbsent {
+		return true
+	}
+	if status != process.StatusStale || value.PID <= 0 {
+		return false
+	}
+	_, err := m.deps.Inspect(value.PID)
+	return errors.Is(err, process.ErrNotFound)
+}
+
 func (m *Manager) cleanupFailedDesktopStart(child foregroundProcess, run *desktopRun, startErr *Error) *Error {
 	_ = child.Kill()
 	<-run.done
@@ -699,9 +724,13 @@ func sleepContext(ctx context.Context, delay time.Duration) error {
 func lifecycleError(code protocol.ErrorCode, message string) *Error {
 	return &Error{Code: code, Err: errors.New(message)}
 }
-func startupError(stage StartupStage, code protocol.ErrorCode, message string, cause error) *Error {
+func stagedError(stage StartupStage, code protocol.ErrorCode, message string) *Error {
 	result := lifecycleError(code, message)
 	result.Stage = stage
+	return result
+}
+func startupError(stage StartupStage, code protocol.ErrorCode, message string, cause error) *Error {
+	result := stagedError(stage, code, message)
 	var errno syscall.Errno
 	if errors.As(cause, &errno) {
 		result.OSErrorCode = uint64(errno)

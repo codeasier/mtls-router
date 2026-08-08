@@ -18,7 +18,7 @@
 
 - **API key 清零**：请求成功 decode 后立刻把 `request.APIKey` 置空（尽力而为 —— 底层 JSON/Scanner 缓冲区由 GC 管理，不保证清零）。key 绝不进入日志、状态文件或 journal。
 - **cleanup 直接分发**：`agent.cleanup.preview/write` 严格解码单 Agent 参数后直接调用 `agent.Service`，不调用 catalog binder、trusted router、普通 preview/write handler，也不接收或清理 API key；`AGENT_NOT_MANAGED` 映射为稳定协议错误。
-- **诊断脱敏**：`lifecycle` 保留有界的**原始**子进程输出，`app` 只向客户端暴露脱敏的、会话作用域的诊断（`startupDiagnostic`）。
+- **诊断脱敏**：`lifecycle` 保留有界的**原始**子进程输出，`app` 只向客户端暴露脱敏的、会话作用域的稳定启动阶段、数值 OS 错误码和同次启动输出（`startupDiagnostic`）。
 - **启动失败锁存**：`latchStartupFailure` / `failedStatus` / `clearFailureAfterStart` 让一次失败的启动在后续 `router.status` 中仍可见，而不是被下一次轮询抹掉。
 - **受保护 PID**：`protectedStatePID` 阻止强制终止落到状态文件记录的自有进程上。
 - 服务层的错误（`agent.OperationError`、`lifecycle.Error`、`modelcatalog.Error`）在此统一映射为稳定的 `protocol.ErrorCode`；错误消息只作诊断用途。

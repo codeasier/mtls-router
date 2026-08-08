@@ -27,6 +27,7 @@ Tauri UI (React) ──invoke──▶ Rust commands ──stdin/stdout JSON─�
 - 反向代理的 `FlushInterval: -1` 启用无缓冲 SSE 流式
 - mTLS 凭证为链接期变量（`main.clientCertPEM`、`main.clientKeyPEM`、`main.upstreamCAPEM`、`main.upstreamURL`），通过 `-ldflags -X` 注入
 - 启动探针失败即非零退出；router 绝不在 upstream 异常时接收流量
+- 致命启动日志只输出封闭的安全原因码（配置、TLS 凭据、探针、监听等），不输出原始 transport/URL/证书细节
 
 ## Manager（`cmd/mtls-router-manager/` + `internal/manager/`）
 
@@ -40,7 +41,7 @@ Manager 是一个基本无状态、按请求处理的 management protocol v4 JSO
 子包职责：
 
 - `app` — 装配所有服务，映射协议错误，强制 API key 清零，并把无 key cleanup 请求直接分发到 Agent service
-- `lifecycle` — 进程 spawn、状态文件、父进程监控、异常退出检测
+- `lifecycle` — 进程 spawn、状态文件、父进程监控、异常退出检测；稳定启动阶段与已证明 PID 不存在时的旧 desktop 状态协调
 - `discovery` — 分类 router 状态（desktop_owned / external_compatible / degraded / stale / absent）
 - `agent` — 检测、配置渲染（按 agent 格式：JSON/TOML）、基于 sidecar 所有权的清理、支持 replace/delete 与备份/回滚的事务性写入
 - `agent/modelconfig` — 无 key 的规范化 model config schema v1：`Decode`/`DecodeStructural`/`Canonical`/`DeepMerge`、目录/写入/cleanup token 签名
