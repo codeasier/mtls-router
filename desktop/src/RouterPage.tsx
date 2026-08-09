@@ -895,7 +895,7 @@ export function RouterPage({
           </div>
         </dl>
 
-        {message && (
+        {message && !failureGuidance && (
           <p className="inline-alert" role="alert">
             {t(message)}
           </p>

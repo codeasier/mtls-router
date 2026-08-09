@@ -714,6 +714,12 @@ describe("RouterPage actions", () => {
     expect(
       await screen.findByRole("heading", { name: "路由启动失败" }),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByText("启动失败。请查看安全过滤后的日志并重试。"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "系统未能启动路由组件" }),
+    ).toBeVisible();
     expect(await screen.findAllByText(diagnostic)).not.toHaveLength(0);
     expect(api.getPollSnapshot).toHaveBeenCalledTimes(2);
   });
