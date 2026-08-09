@@ -6,7 +6,7 @@
 
 | 文件 | 职责 |
 |------|------|
-| `lifecycle.go` | `Manager`、`New(Config, Dependencies)`；`Start(ctx, owner)`/`Stop`/`Reclaim`/`MonitorParent`/`RecentOutput`/`UnexpectedExit`；`Error`（含 `Code`、`Stage`、`OSErrorCode`、`RecentOutput`）、`StartupStage`、`UnexpectedExit` 结构 |
+| `lifecycle.go` | `Manager`、`New(Config, Dependencies)`；`Start(ctx, owner)`/`Stop`/`Reclaim`/`MonitorParent`/`RecentOutput`/`LogPath`/`UnexpectedExit`；`Error`（含 `Code`、`Stage`、`OSErrorCode`、`RecentOutput`）、`StartupStage`、`UnexpectedExit` 结构 |
 | `launch.go` | `foregroundProcess` 接口与 `launchForeground` 分派 |
 | `launch_unix.go` | Unix 前台子进程启动 |
 | `launch_windows.go` | Windows 启动：creation flags + kill-on-close job object，保证 manager 退出时子进程不残留 |
@@ -23,6 +23,7 @@
 - `Config` 覆盖路径（router 二进制、桌面/CLI 状态文件、锁文件、日志）、身份（manager 与父进程的 `process.Identity`、版本、deployment ID、协议版本）与各类超时。
 - `Dependencies` 把发现、进程校验、发信号、启动、状态读写、加锁、时钟全部做成可注入函数，因此生命周期逻辑可在无真实进程的情况下测试。
 - `MonitorParent` 监控父进程消失；`Reclaim` 用于重新接管此前记录在状态文件中的 router。
+- 每次启动预留按本地日期和启动时间命名的独立日志文件；`LogPath` 与持久状态指向当前或最近一次会话，而不是跨启动聚合文件。
 
 ## 关键不变量
 

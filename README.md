@@ -114,7 +114,7 @@ On Windows PowerShell:
 .\mtls-router.exe -backend
 ```
 
-When `-backend` is used without `-log`, logs are written to `mtls-router.log` next to the binary. To choose an explicit log file, pass `-log`:
+When `-backend` is used without a configured `-log` or `MTLS_LOG`, each launch writes to a separate file next to the binary under `mtls-router-logs/YYYY-MM-DD/HH-MM-SS.log`. Launches within the same second receive a numeric suffix. To write to one explicit file instead, pass `-log`:
 
 ```bash
 ./mtls-router -backend -log /tmp/mtls-router.log
@@ -126,12 +126,12 @@ When `-backend` is used without `-log`, logs are written to `mtls-router.log` ne
 
 This mode is convenient for local background use. For production supervision, prefer systemd, Docker, launchd, or a Windows service wrapper so the process can be restarted and managed by the platform.
 
-When started via the one-click setup script, the log file lives outside the install directory:
+When started via the one-click setup script, session logs live outside the install directory:
 
-- macOS / Linux: `~/.mtls-router/mtls-router.log`
-- Windows: `%USERPROFILE%\.mtls-router\mtls-router.log`
+- macOS / Linux: `~/.mtls-router/mtls-router-logs/YYYY-MM-DD/HH-MM-SS.log`
+- Windows: `%USERPROFILE%\.mtls-router\mtls-router-logs\YYYY-MM-DD\HH-MM-SS.log`
 
-The exact path is recorded in `setup-state.json` after each start and can be overridden with `MTLS_ROUTER_LOG_PATH`.
+The exact session path is recorded in `setup-state.json` after each start. `MTLS_ROUTER_LOG_PATH` overrides the base path; for example, `/var/log/router.log` groups managed launches under `/var/log/router-logs/`.
 
 Setup-managed `router status` and `router stop` do not trust a PID alone. They validate the PID together with the recorded OS process start identity and executable path, including that the executable matches the managed binary. Missing or mismatched identity is reported as stale state; the state is retained for diagnosis, and `router stop` sends no signal to that process. Identity is checked again while stopping and immediately before any forced termination, preventing a reused PID from being signaled.
 
@@ -250,7 +250,7 @@ flag > env > build-time > default
 | Non-stream timeout | `MTLS_TIMEOUT` | `-timeout` | `0` means no timeout |
 | Debug body logging | `MTLS_DEBUG=1` | `-debug` | off |
 | Backend mode | `MTLS_BACKEND` | `-backend` | off |
-| Log file | `MTLS_LOG` | `-log` | stderr in foreground; `<binary-dir>/mtls-router.log` in backend mode |
+| Log file | `MTLS_LOG` | `-log` | stderr in foreground; grouped files under `<binary-dir>/mtls-router-logs/` in default backend mode |
 
 The upstream URL must use HTTPS. Plain HTTP upstreams are rejected because they cannot provide mTLS and would transmit requests without transport encryption.
 

@@ -114,7 +114,7 @@ Windows PowerShell：
 .\mtls-router.exe -backend
 ```
 
-如果使用 `-backend` 但没有指定 `-log`，日志会写入二进制文件旁边的 `mtls-router.log`。如需显式指定日志文件，请传入 `-log`：
+如果使用 `-backend` 且没有通过 `-log` 或 `MTLS_LOG` 配置日志路径，每次启动会分别写入二进制文件旁边的 `mtls-router-logs/YYYY-MM-DD/HH-MM-SS.log`；同一秒内重复启动会增加数字后缀。如需改为写入一个明确的文件，请传入 `-log`：
 
 ```bash
 ./mtls-router -backend -log /tmp/mtls-router.log
@@ -126,12 +126,12 @@ Windows PowerShell：
 
 该模式适合本地后台使用。生产环境建议使用 systemd、Docker、launchd 或 Windows service wrapper，以便由平台负责重启和进程管理。
 
-通过一键安装脚本启动时，日志文件不会放在安装目录下：
+通过一键安装脚本启动时，会话日志不会放在安装目录下：
 
-- macOS / Linux：`~/.mtls-router/mtls-router.log`
-- Windows：`%USERPROFILE%\.mtls-router\mtls-router.log`
+- macOS / Linux：`~/.mtls-router/mtls-router-logs/YYYY-MM-DD/HH-MM-SS.log`
+- Windows：`%USERPROFILE%\.mtls-router\mtls-router-logs\YYYY-MM-DD\HH-MM-SS.log`
 
-启动后，路径会写入 `setup-state.json`；也可用 `MTLS_ROUTER_LOG_PATH` 覆盖默认路径。
+每次启动后，精确的会话路径会写入 `setup-state.json`。`MTLS_ROUTER_LOG_PATH` 用于覆盖 base 路径；例如 `/var/log/router.log` 会把受管理的各次启动分组到 `/var/log/router-logs/`。
 
 安装脚本管理的 `router status` 和 `router stop` 不会只信任 PID。它们会同时校验 PID、记录的操作系统进程启动标识和可执行文件路径，并确认可执行文件与受管理的二进制一致。标识缺失或不匹配会报告为 stale state（陈旧状态）；该状态会保留用于诊断，`router stop` 不会向对应进程发送信号。停止期间以及强制终止前还会再次校验完整标识，避免向 PID 复用后的其他进程发送信号。
 
@@ -250,7 +250,7 @@ flag > env > build-time > default
 | 非流式超时 | `MTLS_TIMEOUT` | `-timeout` | `0` 表示不超时 |
 | Debug body 日志 | `MTLS_DEBUG=1` | `-debug` | 关闭 |
 | 后台模式 | `MTLS_BACKEND` | `-backend` | 关闭 |
-| 日志文件 | `MTLS_LOG` | `-log` | 前台为 stderr；后台为 `<binary-dir>/mtls-router.log` |
+| 日志文件 | `MTLS_LOG` | `-log` | 前台为 stderr；默认后台模式按会话写入 `<binary-dir>/mtls-router-logs/` |
 
 上游 URL 必须使用 HTTPS。普通 HTTP 上游无法提供 mTLS，并会在没有传输加密的情况下发送请求，因此会被拒绝。
 

@@ -196,7 +196,10 @@ func startBackend(logPath string) error {
 		return err
 	}
 	if logPath == "" {
-		logPath = background.DefaultLogPath(exePath)
+		logPath, err = background.PrepareSessionLogPath(background.DefaultLogPath(exePath), time.Now())
+		if err != nil {
+			return err
+		}
 	}
 	childArgs := background.ChildArgs(os.Args[1:], logPath)
 	pid, err := background.Start(exePath, childArgs, logPath)

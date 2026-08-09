@@ -42,7 +42,11 @@ func TestDesktopStartUsesControlledForegroundLaunchAndWritesVerifiedState(t *tes
 	if containsArg(args, "-backend") || containsArg(args, "--backend") {
 		t.Fatalf("desktop args contain backend mode: %#v", args)
 	}
-	for _, want := range []string{"-listen", "127.0.0.1:19099", "-log", fixture.config.DesktopLogPath, "-tls-min", "tls1.2", "-timeout", "10s", "-debug=false"} {
+	wantLogPath := filepath.Join(filepath.Dir(fixture.config.DesktopLogPath), "desktop-logs", "2026-07-12", "00-00-00.log")
+	if value.LogPath != wantLogPath {
+		t.Fatalf("log path = %q, want %q", value.LogPath, wantLogPath)
+	}
+	for _, want := range []string{"-listen", "127.0.0.1:19099", "-log", wantLogPath, "-tls-min", "tls1.2", "-timeout", "10s", "-debug=false"} {
 		if !containsArg(args, want) {
 			t.Fatalf("args %#v missing %q", args, want)
 		}
@@ -62,13 +66,12 @@ func TestCLIStartUsesDetachedLaunchAndPersistsOnlyAfterVerification(t *testing.T
 	fixture := newFixture(t)
 	fixture.discovered = discovery.Result{Classification: discovery.Absent}
 	var args []string
+	var launchedLog string
 	fixture.deps.LaunchDetached = func(_ string, got []string, log string) (int, error) {
 		args = got
+		launchedLog = log
 		if fixture.writes != 0 {
 			t.Fatal("state written before child verification")
-		}
-		if log != fixture.config.CLILogPath {
-			t.Fatalf("log = %q", log)
 		}
 		return 202, nil
 	}
@@ -79,11 +82,29 @@ func TestCLIStartUsesDetachedLaunchAndPersistsOnlyAfterVerification(t *testing.T
 	if value.PID != 202 || value.Owner != "cli" {
 		t.Fatalf("state = %+v", value)
 	}
+	wantLogPath := filepath.Join(filepath.Dir(fixture.config.CLILogPath), "cli-logs", "2026-07-12", "00-00-00.log")
+	if launchedLog != wantLogPath || value.LogPath != wantLogPath || argAfter(args, "-log") != wantLogPath {
+		t.Fatalf("log paths: launch=%q state=%q args=%#v, want %q", launchedLog, value.LogPath, args, wantLogPath)
+	}
 	if containsArg(args, "-backend") {
 		t.Fatalf("manager detached child must not recursively backend: %#v", args)
 	}
 	if fixture.cliState.PID != 202 || fixture.writes != 1 {
 		t.Fatalf("CLI state = %+v, writes=%d", fixture.cliState, fixture.writes)
+	}
+}
+
+func TestNewRestoresLatestDesktopSessionLog(t *testing.T) {
+	dir := t.TempDir()
+	basePath := filepath.Join(dir, "desktop.log")
+	want, err := background.PrepareSessionLogPath(basePath, time.Date(2026, 8, 9, 14, 5, 7, 0, time.Local))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	manager := New(Config{DesktopLogPath: basePath}, Dependencies{})
+	if got := manager.LogPath(); got != want {
+		t.Fatalf("LogPath() = %q, want %q", got, want)
 	}
 }
 
@@ -589,10 +610,13 @@ func TestDesktopFailureOutputIsScopedToCurrentLaunch(t *testing.T) {
 		return process.Identity{}, errors.New("inspect failed")
 	}
 	launch := 0
-	fixture.deps.LaunchDesktop = func(_ string, _ []string, _ []string, output io.Writer) (foregroundProcess, error) {
+	var logPaths []string
+	fixture.deps.LaunchDesktop = func(_ string, args []string, _ []string, output io.Writer) (foregroundProcess, error) {
 		launch++
+		logPath := argAfter(args, "-log")
+		logPaths = append(logPaths, logPath)
 		_, _ = fmt.Fprintf(output, "inherited attempt %d\n", launch)
-		direct, err := background.OpenLogFile(fixture.config.DesktopLogPath)
+		direct, err := background.OpenLogFile(logPath)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -620,17 +644,25 @@ func TestDesktopFailureOutputIsScopedToCurrentLaunch(t *testing.T) {
 	if secondErr.RecentOutput != "inherited attempt 2\ndirect attempt 2\n" {
 		t.Fatalf("second failure output = %q", secondErr.RecentOutput)
 	}
-	fullLog, err := os.ReadFile(fixture.config.DesktopLogPath)
+	if len(logPaths) != 2 || logPaths[0] == logPaths[1] || !strings.HasSuffix(logPaths[1], "00-00-00-2.log") {
+		t.Fatalf("session log paths = %#v", logPaths)
+	}
+	firstLog, err := os.ReadFile(logPaths[0])
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"historical output", "inherited attempt 1", "direct attempt 1", "inherited attempt 2", "direct attempt 2"} {
-		if !strings.Contains(string(fullLog), want) {
-			t.Fatalf("full log %q missing %q", fullLog, want)
-		}
+	secondLog, err := os.ReadFile(logPaths[1])
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := manager.RecentOutput(); got != string(fullLog) {
-		t.Fatalf("manager recent output = %q, want full log %q", got, fullLog)
+	if got, want := string(firstLog), "inherited attempt 1\ndirect attempt 1\n"; got != want {
+		t.Fatalf("first session log = %q, want %q", got, want)
+	}
+	if got, want := string(secondLog), "inherited attempt 2\ndirect attempt 2\n"; got != want {
+		t.Fatalf("second session log = %q, want %q", got, want)
+	}
+	if got := manager.RecentOutput(); got != string(secondLog) {
+		t.Fatalf("manager recent output = %q, want latest log %q", got, secondLog)
 	}
 }
 
@@ -1164,4 +1196,13 @@ func containsArg(args []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func argAfter(args []string, name string) string {
+	for index := 0; index+1 < len(args); index++ {
+		if args[index] == name {
+			return args[index+1]
+		}
+	}
+	return ""
 }
