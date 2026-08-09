@@ -39,7 +39,6 @@ export function reuseEnvironment(env = process.env) {
     ...env,
     VITE_MOCK: "false",
     DEPLOYMENT_ID: env.DEPLOYMENT_ID || "dev",
-    VERSION: env.VERSION || "dev",
     MANAGEMENT_PROTOCOL_VERSION: env.MANAGEMENT_PROTOCOL_VERSION || "4",
   };
 }

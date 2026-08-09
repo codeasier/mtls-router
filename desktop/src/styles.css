@@ -713,16 +713,147 @@ main {
   border-radius: var(--radius-control);
 }
 
+.failure-guidance {
+  position: relative;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 14px;
+  margin-top: 18px;
+  padding: 18px;
+  overflow: hidden;
+  border: 1px solid rgba(150, 60, 47, 0.3);
+  border-radius: 14px;
+  background:
+    linear-gradient(
+      125deg,
+      rgba(255, 250, 244, 0.98),
+      rgba(246, 225, 220, 0.9)
+    ),
+    var(--surface-raised);
+  box-shadow: var(--shadow-subtle);
+}
+
+.failure-guidance::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: var(--danger);
+  content: "";
+}
+
+.failure-guidance__marker {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  color: #fffaf4;
+  border-radius: 50%;
+  background: var(--danger);
+  box-shadow: 0 6px 14px rgba(150, 60, 47, 0.2);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.failure-guidance .overline {
+  margin: 1px 0 5px;
+  color: var(--danger);
+}
+
+.failure-guidance h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 17px;
+  letter-spacing: -0.01em;
+}
+
+.failure-guidance__detail {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.failure-guidance__action {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 12px;
+  margin-top: 14px;
+  padding-top: 13px;
+  border-top: 1px solid rgba(150, 60, 47, 0.18);
+}
+
+.failure-guidance__action strong {
+  color: var(--danger);
+  font-size: 11px;
+}
+
+.failure-guidance__action p {
+  margin: 0;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 .failure-diagnostics {
+  margin-top: 10px;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-raised);
+}
+
+.failure-diagnostics summary {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) 10px;
+  gap: 10px;
+  align-items: center;
+  padding: 12px 14px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.failure-diagnostics summary::-webkit-details-marker {
+  display: none;
+}
+
+.failure-diagnostics summary span {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.failure-diagnostics summary small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.failure-diagnostics summary::after {
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--muted);
+  border-bottom: 1.5px solid var(--muted);
+  content: "";
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.failure-diagnostics[open] summary::after {
+  transform: translateY(2px) rotate(225deg);
+}
+
+.failure-diagnostics__body {
   display: grid;
   gap: 12px;
   max-height: 260px;
-  margin-top: 18px;
   padding: 14px;
   overflow: auto;
   color: var(--danger);
-  border: 1px solid rgba(150, 60, 47, 0.28);
-  border-radius: 12px;
+  border-top: 1px solid var(--line);
   background: var(--danger-soft);
 }
 
@@ -3762,6 +3893,30 @@ main {
   .typed-grid,
   .omission-grid {
     grid-template-columns: 1fr;
+  }
+
+  .failure-guidance {
+    grid-template-columns: 1fr;
+    padding: 16px;
+  }
+
+  .failure-guidance__marker {
+    width: 34px;
+    height: 34px;
+    font-size: 16px;
+  }
+
+  .failure-guidance__action {
+    grid-template-columns: 1fr;
+    gap: 5px;
+  }
+
+  .failure-diagnostics summary {
+    grid-template-columns: minmax(0, 1fr) 10px;
+  }
+
+  .failure-diagnostics summary small {
+    display: none;
   }
 
   .control-button,

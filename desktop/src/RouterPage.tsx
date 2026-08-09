@@ -11,6 +11,7 @@ import type {
   RouterStatus,
 } from "./ipc";
 import { sanitizeSensitiveText, validOccupantInspection } from "./ipc";
+import type { TranslationKey } from "./locales/zh-CN";
 
 type Operation = "starting" | "stopping" | null;
 type RouterMessage =
@@ -50,6 +51,108 @@ interface StateCopy {
   detail: string;
   tone: "idle" | "active" | "warning" | "danger";
   light: "off" | "green" | "yellow" | "red";
+}
+
+interface FailureDiagnostics {
+  lastError: string;
+  recentLogs: string[];
+}
+
+type FailureKind =
+  | "upstream"
+  | "credentials"
+  | "configuration"
+  | "log-storage"
+  | "local-port"
+  | "process-launch"
+  | "process-identity"
+  | "readiness"
+  | "component-identity"
+  | "state-reconcile"
+  | "state-storage"
+  | "shutdown"
+  | "unexpected-exit"
+  | "process-exit"
+  | "internal";
+
+interface FailureGuide {
+  title: string;
+  detail: string;
+  action: string;
+}
+
+const failureReasonKinds: Record<string, FailureKind> = {
+  arguments_invalid: "configuration",
+  config_invalid: "configuration",
+  backend_start_failed: "internal",
+  log_open_failed: "log-storage",
+  tls_material_invalid: "credentials",
+  probe_setup_failed: "configuration",
+  upstream_probe_failed: "upstream",
+  listen_failed: "local-port",
+  shutdown_failed: "shutdown",
+  router_failure: "internal",
+};
+
+const failureStageKinds: Record<string, FailureKind> = {
+  log_directory: "log-storage",
+  log_open: "log-storage",
+  process_launch: "process-launch",
+  process_inspect: "process-identity",
+  readiness: "readiness",
+  identity_validate: "component-identity",
+  state_reconcile: "state-reconcile",
+  state_persist: "state-storage",
+  process_exit: "process-exit",
+};
+
+function knownDiagnosticKind(
+  lines: string[],
+  pattern: RegExp,
+  kinds: Record<string, FailureKind>,
+): FailureKind | null {
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const value = pattern.exec(lines[index])?.[1];
+    if (value && kinds[value]) return kinds[value];
+  }
+  return null;
+}
+
+function failureKind(diagnostics: FailureDiagnostics): FailureKind {
+  const lines = [diagnostics.lastError, ...diagnostics.recentLogs].filter(
+    Boolean,
+  );
+  const reasonKind = knownDiagnosticKind(
+    lines,
+    /(?:^|\s)reason=([a-z_]+)(?=\s|$)/,
+    failureReasonKinds,
+  );
+  if (reasonKind) return reasonKind;
+
+  const stageKind = knownDiagnosticKind(
+    lines,
+    /(?:^|\s)stage=([a-z_]+)(?=\s|$)/,
+    failureStageKinds,
+  );
+  if (stageKind) return stageKind;
+  if (lines.some((line) => line.includes("exited unexpectedly"))) {
+    return "unexpected-exit";
+  }
+  return "internal";
+}
+
+function failureGuide(
+  t: Translator,
+  diagnostics: FailureDiagnostics,
+): FailureGuide {
+  const kind = failureKind(diagnostics);
+  const key = (part: "title" | "detail" | "action") =>
+    `router.failureGuide.${kind}.${part}` as TranslationKey;
+  return {
+    title: t(key("title")),
+    detail: t(key("detail")),
+    action: t(key("action")),
+  };
 }
 
 function getStateCopy(t: Translator): Record<ViewState, StateCopy> {
@@ -135,10 +238,9 @@ function isAvailable(status: RouterStatus | null): boolean {
   );
 }
 
-function sanitizedFailureDiagnostics(status: RouterStatus | null): {
-  lastError: string;
-  recentLogs: string[];
-} {
+function sanitizedFailureDiagnostics(
+  status: RouterStatus | null,
+): FailureDiagnostics {
   if (status?.state !== "start_failed") {
     return { lastError: "", recentLogs: [] };
   }
@@ -593,6 +695,10 @@ export function RouterPage({
   );
   const copy = getStateCopy(t)[currentState];
   const failureDiagnostics = sanitizedFailureDiagnostics(status);
+  const failureGuidance =
+    failureDiagnostics.lastError || failureDiagnostics.recentLogs.length > 0
+      ? failureGuide(t, failureDiagnostics)
+      : null;
   const canStart =
     !operation &&
     !reinstallRequired &&
@@ -813,38 +919,62 @@ export function RouterPage({
           </section>
         )}
 
-        {(failureDiagnostics.lastError ||
-          failureDiagnostics.recentLogs.length > 0) && (
-          <section
+        {failureGuidance && (
+          <section className="failure-guidance" role="alert">
+            <span className="failure-guidance__marker" aria-hidden="true">
+              !
+            </span>
+            <div>
+              <p className="overline">{t("router.failureGuide.overline")}</p>
+              <h3>{failureGuidance.title}</h3>
+              <p className="failure-guidance__detail">
+                {failureGuidance.detail}
+              </p>
+              <div className="failure-guidance__action">
+                <strong>{t("router.failureGuide.nextStep")}</strong>
+                <p>{failureGuidance.action}</p>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {failureGuidance && (
+          <details
             className="failure-diagnostics"
             aria-label={t("router.failureDiagnostics")}
           >
-            {failureDiagnostics.lastError && (
-              <div>
-                <strong>{t("router.failureLastError")}</strong>
-                <code>{failureDiagnostics.lastError}</code>
-              </div>
-            )}
-            {failureDiagnostics.recentLogs.length > 0 && (
-              <div>
-                <strong>{t("router.failureRecentLogs")}</strong>
-                <ol>
-                  {failureDiagnostics.recentLogs.map((line, index) => (
-                    <li key={`${index}-${line}`}>
-                      <code>{line}</code>
-                    </li>
-                  ))}
-                </ol>
-              </div>
-            )}
-            <button
-              type="button"
-              className="text-button failure-diagnostics__action"
-              onClick={onNavigateToLogs}
-            >
-              {t("router.viewFullRuntimeLogs")}
-            </button>
-          </section>
+            <summary>
+              <span>{t("router.failureTechnicalDetails")}</span>
+              <small>{t("router.failureTechnicalHint")}</small>
+            </summary>
+            <div className="failure-diagnostics__body">
+              {failureDiagnostics.lastError && (
+                <div>
+                  <strong>{t("router.failureLastError")}</strong>
+                  <code>{failureDiagnostics.lastError}</code>
+                </div>
+              )}
+              {failureDiagnostics.recentLogs.length > 0 && (
+                <div>
+                  <strong>{t("router.failureRecentLogs")}</strong>
+                  <ol>
+                    {failureDiagnostics.recentLogs.map((line, index) => (
+                      <li key={`${index}-${line}`}>
+                        <code>{line}</code>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              )}
+              <button
+                type="button"
+                className="text-button failure-diagnostics__action"
+                onClick={onNavigateToLogs}
+              >
+                {t("router.viewFullRuntimeLogs")}
+              </button>
+            </div>
+          </details>
         )}
 
         {currentState === "occupied" && (
