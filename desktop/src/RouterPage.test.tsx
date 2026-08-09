@@ -512,6 +512,63 @@ describe("RouterPage states", () => {
     expect(screen.getByLabelText("路由失败诊断")).not.toHaveAttribute("open");
   });
 
+  it.each([
+    [
+      "status failure",
+      { code: "MANAGER_FAILED" },
+      "无法读取路由状态。请重新启动桌面应用或查看日志。",
+    ],
+    [
+      "sidecar failure",
+      { code: "SIDECAR_INVALID" },
+      "必要的打包组件缺失或无效。请重新安装桌面应用；应用不会自动下载任何组件。",
+    ],
+  ])(
+    "shows a newer %s alongside cached startup guidance",
+    async (_name, statusError, warning) => {
+      let observer: ((snapshot: PollSnapshot) => void) | undefined;
+      const diagnostic = "stage=process_launch code=ROUTER_START_FAILED";
+      const api = createMockApi({
+        getPollSnapshot: vi.fn().mockResolvedValue({
+          revision: 1,
+          status: {
+            state: "start_failed",
+            last_error: diagnostic,
+          },
+        }),
+        subscribePollSnapshots: vi.fn(async (listener) => {
+          observer = listener;
+          return () => undefined;
+        }),
+      });
+
+      renderWithI18n(
+        <RouterPage
+          api={api}
+          onNavigateToAgents={vi.fn()}
+          onNavigateToLogs={vi.fn()}
+        />,
+      );
+      expect(
+        await screen.findByRole("heading", {
+          name: "系统未能启动路由组件",
+        }),
+      ).toBeVisible();
+
+      act(() =>
+        observer?.({
+          revision: 2,
+          status_error: statusError,
+        }),
+      );
+
+      expect(await screen.findByText(warning)).toBeVisible();
+      expect(
+        screen.getByRole("heading", { name: "系统未能启动路由组件" }),
+      ).toBeVisible();
+    },
+  );
+
   it.each(["SIDECAR_MISSING", "SIDECAR_INVALID"])(
     "shows localized reinstall guidance for %s without offering a download",
     async (code) => {

@@ -338,29 +338,55 @@ func (m *Manager) startCLI(ctx context.Context) (state.RouterState, *Error) {
 }
 
 func (m *Manager) waitUntilReady(ctx context.Context, pid int, childExit <-chan struct{}) (process.Identity, discovery.Version, discovery.Health, *Error) {
+	hasChildExited := func() bool {
+		if childExit == nil {
+			return false
+		}
+		select {
+		case <-childExit:
+			return true
+		default:
+			return false
+		}
+	}
+	processExitError := func(identity process.Identity) (process.Identity, discovery.Version, discovery.Health, *Error) {
+		return identity, discovery.Version{}, discovery.Health{}, stagedError(StartupStageProcessExit, protocol.CodeRouterStartFailed, "router exited during startup")
+	}
+
+	if hasChildExited() {
+		return processExitError(process.Identity{PID: pid})
+	}
 	identity, err := m.deps.Inspect(pid)
 	if err != nil {
+		if hasChildExited() {
+			return processExitError(process.Identity{PID: pid})
+		}
 		return process.Identity{PID: pid}, discovery.Version{}, discovery.Health{}, startupError(StartupStageProcessInspect, protocol.CodeRouterStartFailed, "cannot inspect launched router", err)
 	}
 	startupCtx, cancel := context.WithTimeout(ctx, m.config.StartupTimeout)
 	defer cancel()
 	for {
-		if childExit != nil {
-			select {
-			case <-childExit:
-				return identity, discovery.Version{}, discovery.Health{}, stagedError(StartupStageProcessExit, protocol.CodeRouterStartFailed, "router exited during startup")
-			default:
-			}
+		if hasChildExited() {
+			return processExitError(identity)
 		}
 		versionInfo, healthInfo, err := m.deps.Verify(startupCtx, "http://"+m.config.ListenAddr, pid, m.config.DeploymentID, m.config.ManagementProtocolVersion)
+		if hasChildExited() {
+			return processExitError(identity)
+		}
 		if err == nil {
 			status, validateErr := m.deps.Validate(identity, identity.Executable)
+			if hasChildExited() {
+				return processExitError(identity)
+			}
 			if validateErr == nil && status == process.StatusGenuine {
 				return identity, versionInfo, healthInfo, nil
 			}
 			return identity, discovery.Version{}, discovery.Health{}, stagedError(StartupStageIdentity, protocol.CodeRouterStateStale, "launched router identity changed")
 		}
 		if err := m.deps.Sleep(startupCtx, m.config.PollInterval); err != nil {
+			if hasChildExited() {
+				return processExitError(identity)
+			}
 			return identity, discovery.Version{}, discovery.Health{}, stagedError(StartupStageReadiness, protocol.CodeRouterNotReady, "router did not become ready before timeout")
 		}
 	}

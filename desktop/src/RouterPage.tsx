@@ -895,7 +895,7 @@ export function RouterPage({
           </div>
         </dl>
 
-        {message && !failureGuidance && (
+        {message && (message !== "router.error.start" || !failureGuidance) && (
           <p className="inline-alert" role="alert">
             {t(message)}
           </p>

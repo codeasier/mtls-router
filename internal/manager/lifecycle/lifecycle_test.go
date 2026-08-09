@@ -300,6 +300,65 @@ func TestFailedAndTimedOutStartCleanUpWithoutWritingState(t *testing.T) {
 	}
 }
 
+func TestWaitUntilReadyPrefersChildExitAtRaceBoundaries(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(*testing.T, *fixture, chan struct{})
+	}{
+		{name: "before inspection", configure: func(t *testing.T, fixture *fixture, childExit chan struct{}) {
+			close(childExit)
+			fixture.deps.Inspect = func(int) (process.Identity, error) {
+				t.Fatal("exited child must not be inspected")
+				return process.Identity{}, nil
+			}
+		}},
+		{name: "during failed inspection", configure: func(_ *testing.T, fixture *fixture, childExit chan struct{}) {
+			fixture.deps.Inspect = func(int) (process.Identity, error) {
+				close(childExit)
+				return process.Identity{}, errors.New("process unavailable")
+			}
+		}},
+		{name: "during verification", configure: func(t *testing.T, fixture *fixture, childExit chan struct{}) {
+			fixture.deps.Verify = func(context.Context, string, int, string, string) (discovery.Version, discovery.Health, error) {
+				close(childExit)
+				return discovery.Version{}, discovery.Health{}, errors.New("not ready")
+			}
+			fixture.deps.Sleep = func(context.Context, time.Duration) error {
+				t.Fatal("known child exit must not be reported as readiness")
+				return nil
+			}
+		}},
+		{name: "during identity validation", configure: func(_ *testing.T, fixture *fixture, childExit chan struct{}) {
+			fixture.validate = func(process.Identity, string) (process.Status, error) {
+				close(childExit)
+				return process.StatusStale, nil
+			}
+		}},
+		{name: "during timeout sleep", configure: func(_ *testing.T, fixture *fixture, childExit chan struct{}) {
+			fixture.deps.Verify = func(context.Context, string, int, string, string) (discovery.Version, discovery.Health, error) {
+				return discovery.Version{}, discovery.Health{}, errors.New("not ready")
+			}
+			fixture.deps.Sleep = func(context.Context, time.Duration) error {
+				close(childExit)
+				return context.DeadlineExceeded
+			}
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fixture := newFixture(t)
+			childExit := make(chan struct{})
+			tt.configure(t, fixture, childExit)
+
+			_, _, _, startErr := fixture.manager().waitUntilReady(context.Background(), 101, childExit)
+			if startErr == nil || startErr.Code != protocol.CodeRouterStartFailed || startErr.Stage != StartupStageProcessExit {
+				t.Fatalf("start error = %+v, want process exit", startErr)
+			}
+		})
+	}
+}
+
 func TestDesktopStateWriteFailureDrainsOwnedChild(t *testing.T) {
 	fixture := newFixture(t)
 	fixture.deps.WriteState = func(string, state.RouterState) error {
