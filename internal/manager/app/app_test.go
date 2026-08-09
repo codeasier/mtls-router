@@ -38,6 +38,7 @@ type fakeLifecycle struct {
 	reclaim func() (state.RouterState, *lifecycle.Error)
 	stop    func(context.Context) *lifecycle.Error
 	recent  string
+	logPath string
 	exits   chan lifecycle.UnexpectedExit
 }
 
@@ -52,6 +53,7 @@ func (f *fakeLifecycle) Reclaim() (state.RouterState, *lifecycle.Error) {
 func (f *fakeLifecycle) Stop(ctx context.Context) *lifecycle.Error       { return f.stop(ctx) }
 func (f *fakeLifecycle) MonitorParent(context.Context) *lifecycle.Error  { return nil }
 func (f *fakeLifecycle) RecentOutput() string                            { return f.recent }
+func (f *fakeLifecycle) LogPath() string                                 { return f.logPath }
 func (f *fakeLifecycle) UnexpectedExit() <-chan lifecycle.UnexpectedExit { return f.exits }
 
 type fakeAgent struct {
@@ -1780,6 +1782,33 @@ func TestRouterLogsFallsBackToMemoryWhenDiskIsEmpty(t *testing.T) {
 		t.Fatal(gotErr)
 	}
 	if got := value.(protocol.RouterLogsResult).Lines; fmt.Sprint(got) != fmt.Sprint([]string{"memory fallback"}) {
+		t.Fatalf("lines = %v", got)
+	}
+}
+
+func TestRouterLogsUsesLatestLifecycleSessionInsteadOfLegacyAggregate(t *testing.T) {
+	dir := t.TempDir()
+	legacyPath := filepath.Join(dir, "mtls-router.log")
+	if err := os.WriteFile(legacyPath, []byte("legacy aggregate\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sessionPath := filepath.Join(dir, "mtls-router-logs", "2026-08-09", "14-05-07.log")
+	if err := os.MkdirAll(filepath.Dir(sessionPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sessionPath, []byte("current session\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manager := newWithDependencies(Config{Paths: managerpaths.Paths{DesktopLogFile: legacyPath}}, dependencies{
+		discoverStatus: func(context.Context) discovery.Result { return discovery.Result{Classification: discovery.Absent} },
+		lifecycle:      &fakeLifecycle{logPath: sessionPath},
+	})
+
+	value, gotErr := manager.routerLogs(context.Background(), json.RawMessage(`{"limit":10}`))
+	if gotErr != nil {
+		t.Fatal(gotErr)
+	}
+	if got := value.(protocol.RouterLogsResult).Lines; fmt.Sprint(got) != fmt.Sprint([]string{"current session"}) {
 		t.Fatalf("lines = %v", got)
 	}
 }

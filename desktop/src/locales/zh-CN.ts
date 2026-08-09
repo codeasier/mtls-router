@@ -272,7 +272,7 @@ export const zhCN = {
   "settings.components": "组件版本",
   "settings.locations": "存储位置",
   "settings.dataLocation": "应用数据",
-  "settings.logLocation": "日志文件",
+  "settings.logLocation": "日志目录",
   "settings.unavailable": "不可用",
   "update.checkAction": "检查更新",
   "update.checking": "正在检查...",

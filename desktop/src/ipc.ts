@@ -439,7 +439,7 @@ export interface Diagnostics {
 
 export interface DesktopPaths {
   data_dir: string;
-  log_file: string;
+  log_directory: string;
   credentials_path: string;
   can_prepare_for_uninstall: boolean;
 }

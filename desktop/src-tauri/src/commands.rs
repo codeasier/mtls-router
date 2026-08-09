@@ -434,12 +434,17 @@ pub async fn diagnostics_collect(state: tauri::State<'_, AppState>) -> Result<Di
 
 #[tauri::command]
 pub fn open_log_location(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<()> {
-    let directory = PathBuf::from(&state.paths.log_file)
-        .parent()
-        .map(PathBuf::from)
-        .ok_or_else(|| CommandError::new("INVALID_PATH", "log location is unavailable"))?;
+    let directory = PathBuf::from(&state.paths.log_directory);
+    let location = if directory.is_dir() {
+        directory
+    } else {
+        directory
+            .parent()
+            .map(PathBuf::from)
+            .ok_or_else(|| CommandError::new("INVALID_PATH", "log location is unavailable"))?
+    };
     app.opener()
-        .open_path(directory.to_string_lossy(), None::<&str>)
+        .open_path(location.to_string_lossy(), None::<&str>)
         .map_err(|_| CommandError::new("OPEN_FAILED", "cannot open the log location"))
 }
 
@@ -1519,7 +1524,7 @@ mod tests {
                 scheduler,
                 paths: DesktopPaths {
                     data_dir: String::new(),
-                    log_file: String::new(),
+                    log_directory: String::new(),
                     credentials_path: String::new(),
                     can_prepare_for_uninstall: false,
                 },

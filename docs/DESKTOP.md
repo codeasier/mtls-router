@@ -56,6 +56,8 @@ The Router page distinguishes the local process from upstream health. A running 
 - **Stale state:** a PID or executable mismatch is reported as stale and no signal is sent. Inspect the process and state before making a manual cleanup.
 - **Degraded or stale health:** the router process may still accept local connections, but upstream service is not currently proven reachable. Use Retry health check and inspect Logs; do not treat stale health as healthy.
 
+Each desktop-managed launch writes a separate log under the application data directory at `mtls-router-logs/YYYY-MM-DD/HH-MM-SS.log`. The Logs page follows the current or most recent launch, while **Open log location** exposes the grouped history for manual inspection.
+
 See [Troubleshooting](TROUBLESHOOTING.md) for recovery steps.
 
 ## Tray, close, and quit

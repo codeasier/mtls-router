@@ -36,7 +36,7 @@ describe("SettingsPage", () => {
     ).toHaveLength(3);
     expect(screen.getByText("/safe/app-data")).toBeInTheDocument();
     expect(
-      screen.getByText("/safe/app-data/mtls-router.log"),
+      screen.getByText("/safe/app-data/mtls-router-logs"),
     ).toBeInTheDocument();
     expect(
       screen.queryByText(/上游 URL|证书导入|自动更新|PATH/),
@@ -201,8 +201,8 @@ describe("SettingsPage", () => {
       createMockApi({
         getDesktopPaths: vi.fn().mockResolvedValue({
           data_dir: "C:\\Users\\test\\AppData\\Roaming\\mtls-router",
-          log_file:
-            "C:\\Users\\test\\AppData\\Roaming\\mtls-router\\mtls-router.log",
+          log_directory:
+            "C:\\Users\\test\\AppData\\Roaming\\mtls-router\\mtls-router-logs",
           can_prepare_for_uninstall: false,
         }),
       }),

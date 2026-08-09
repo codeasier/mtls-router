@@ -155,7 +155,7 @@ fn build_app() -> tauri::Result<tauri::App<tauri::Wry>> {
                 app,
                 manager.clone(),
                 scheduler.clone(),
-                &paths.log_file,
+                &paths.log_directory,
                 lifecycle.clone(),
             )?;
             app.manage(AppState {

@@ -612,7 +612,7 @@ describe("typed desktop API", () => {
       .mockResolvedValueOnce(false)
       .mockResolvedValueOnce({
         data_dir: "/safe/app-data",
-        log_file: "/safe/app-data/mtls-router.log",
+        log_directory: "/safe/app-data/mtls-router-logs",
         credentials_path: "/safe/app-data/credentials.json",
         can_prepare_for_uninstall: true,
       })

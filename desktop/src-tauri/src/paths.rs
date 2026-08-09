@@ -11,8 +11,8 @@ pub fn resolve() -> Result<DesktopPaths> {
         platform_data_dir()?
     };
     Ok(DesktopPaths {
-        log_file: data_dir
-            .join("mtls-router.log")
+        log_directory: data_dir
+            .join("mtls-router-logs")
             .to_string_lossy()
             .into_owned(),
         credentials_path: data_dir

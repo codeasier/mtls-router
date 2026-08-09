@@ -51,7 +51,7 @@ agent.cleanup.preview     agent.cleanup.write
 | 路径 | 内容 |
 |------|---------|
 | `~/.mtls-router/setup-state.json` | CLI router 状态 |
-| `~/.mtls-router/mtls-router.log` | CLI router 日志 |
+| `~/.mtls-router/mtls-router-logs/YYYY-MM-DD/HH-MM-SS[-N].log` | CLI router 会话日志 |
 | `~/Library/Application Support/com.codeasier.mtls-router/`（macOS） | 桌面数据目录 |
 | `%APPDATA%/com.codeasier.mtls-router/`（Windows） | 桌面数据目录 |
 | `~/.local/share/com.codeasier.mtls-router/`（Linux） | 桌面数据目录 |

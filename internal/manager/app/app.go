@@ -63,6 +63,7 @@ type lifecycleService interface {
 	Stop(context.Context) *lifecycle.Error
 	MonitorParent(context.Context) *lifecycle.Error
 	RecentOutput() string
+	LogPath() string
 	UnexpectedExit() <-chan lifecycle.UnexpectedExit
 }
 
@@ -461,7 +462,10 @@ func (a *App) routerLogs(ctx context.Context, params json.RawMessage) (any, *pro
 	trustedExternal := trustedResult(found) && found.Owner != string(protocol.RouterOwnerDesktop)
 	path := trustedLogPath(found)
 	if path == "" && !trustedExternal {
-		path = a.config.Paths.DesktopLogFile
+		path = a.deps.lifecycle.LogPath()
+		if path == "" {
+			path = a.config.Paths.DesktopLogFile
+		}
 	}
 	var recent []string
 	if !trustedExternal {

@@ -79,7 +79,7 @@ export const fixtureCredentialAbsent: CredentialSummary = {
 
 export const fixtureDesktopPaths: DesktopPaths = {
   data_dir: "/mock/app-data",
-  log_file: "/mock/app-data/mtls-router.log",
+  log_directory: "/mock/app-data/mtls-router-logs",
   credentials_path: "/mock/app-data/credentials.json",
   can_prepare_for_uninstall: true,
 };

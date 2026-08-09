@@ -16,10 +16,10 @@ manager 自有的按用户文件路径解析，不依赖桌面运行时。
 |------|--------|
 | `CLIStateDir` | `MTLS_ROUTER_STATE_DIR`，否则 `~/.mtls-router` |
 | `CLIStateFile` | `<CLIStateDir>/setup-state.json` |
-| `CLILogFile` | `MTLS_ROUTER_LOG_PATH`，否则 `<CLIStateDir>/mtls-router.log` |
+| `CLILogFile` | `MTLS_ROUTER_LOG_PATH`，否则 `<CLIStateDir>/mtls-router.log`；作为会话日志路径的 base |
 | `DesktopDataDir` | `MTLS_ROUTER_DESKTOP_DATA_DIR`，否则按平台：Windows `%APPDATA%/com.codeasier.mtls-router`、macOS `~/Library/Application Support/com.codeasier.mtls-router`、其他 `${XDG_DATA_HOME:-~/.local/share}/com.codeasier.mtls-router` |
 | `DesktopStateFile` | `<DesktopDataDir>/desktop-state.json` |
-| `DesktopLogFile` | `<DesktopDataDir>/mtls-router.log` |
+| `DesktopLogFile` | `<DesktopDataDir>/mtls-router.log`；作为会话日志路径的 base |
 | `DesktopLockFile` | `<DesktopDataDir>/desktop-owner.lock` |
 
 ## 关键不变量

@@ -106,6 +106,7 @@ type Manager struct {
 	lock        io.Closer
 	desktopRun  *desktopRun
 	recent      *boundedOutput
+	latestLog   string
 	exitCh      chan UnexpectedExit
 }
 
@@ -115,6 +116,7 @@ type desktopRun struct {
 	err          error
 	recentOutput string
 	logBaseline  os.FileInfo
+	logPath      string
 	inherited    *boundedOutput
 	intentional  bool
 }
@@ -186,7 +188,15 @@ func New(config Config, deps Dependencies) *Manager {
 	if deps.Now == nil {
 		deps.Now = time.Now
 	}
-	return &Manager{config: config, deps: deps, recent: newBoundedOutput(config.RecentOutputBytes), exitCh: make(chan UnexpectedExit, 1)}
+	latestLog := ""
+	initialLogBase := config.CLILogPath
+	if config.SessionID != "" {
+		initialLogBase = config.DesktopLogPath
+	}
+	if initialLogBase != "" {
+		latestLog, _ = background.LatestSessionLogPath(initialLogBase)
+	}
+	return &Manager{config: config, deps: deps, recent: newBoundedOutput(config.RecentOutputBytes), latestLog: latestLog, exitCh: make(chan UnexpectedExit, 1)}
 }
 
 func (m *Manager) Start(ctx context.Context, owner protocol.RouterOwner) (state.RouterState, *Error) {
@@ -219,6 +229,8 @@ func (m *Manager) startDesktop(ctx context.Context) (state.RouterState, *Error) 
 		status, _ := m.deps.Validate(routerIdentity(existing), existing.BinaryPath)
 		if status == process.StatusGenuine {
 			if completeDesktopState(existing) && existing.DesktopSessionID == m.config.SessionID && managerMatches(existing, m.config.ManagerIdentity) && existing.DeploymentID == m.config.DeploymentID && existing.ManagementProtocolVersion == m.config.ManagementProtocolVersion {
+				m.setLatestLog(existing.LogPath, nil)
+				_ = background.RecordLatestSessionLogPath(m.config.DesktopLogPath, existing.LogPath)
 				keepLock = true
 				return existing, nil
 			}
@@ -257,7 +269,11 @@ func (m *Manager) startDesktop(ctx context.Context) (state.RouterState, *Error) 
 	if err := os.Chmod(filepath.Dir(m.config.DesktopLogPath), 0o700); err != nil {
 		return state.RouterState{}, startupError(StartupStageLogDirectory, protocol.CodeRouterStartFailed, "cannot restrict desktop log directory", err)
 	}
-	logFile, err := m.deps.OpenLog(m.config.DesktopLogPath)
+	logPath, err := background.PrepareSessionLogPath(m.config.DesktopLogPath, m.deps.Now())
+	if err != nil {
+		return state.RouterState{}, startupError(StartupStageLogDirectory, protocol.CodeRouterStartFailed, "cannot create desktop log session", err)
+	}
+	logFile, err := m.deps.OpenLog(logPath)
 	if err != nil {
 		return state.RouterState{}, startupError(StartupStageLogOpen, protocol.CodeRouterStartFailed, "cannot open desktop log", err)
 	}
@@ -266,15 +282,19 @@ func (m *Manager) startDesktop(ctx context.Context) (state.RouterState, *Error) 
 		_ = logFile.Close()
 		return state.RouterState{}, startupError(StartupStageLogOpen, protocol.CodeRouterStartFailed, "cannot inspect desktop log", err)
 	}
+	recent := newBoundedOutput(m.config.RecentOutputBytes)
 	inherited := newBoundedOutput(m.config.RecentOutputBytes)
-	output := io.MultiWriter(logFile, m.recent, inherited)
-	args := []string{"-listen", m.config.ListenAddr, "-log", m.config.DesktopLogPath, "-tls-min", "tls1.2", "-timeout", "10s", "-debug=false"}
+	output := io.MultiWriter(logFile, recent, inherited)
+	args := []string{"-listen", m.config.ListenAddr, "-log", logPath, "-tls-min", "tls1.2", "-timeout", "10s", "-debug=false"}
 	child, err := m.deps.LaunchDesktop(m.config.RouterPath, args, background.DesktopChildEnv(m.deps.Environ()), output)
 	if err != nil {
 		_ = logFile.Close()
+		removeEmptyLog(logPath)
 		return state.RouterState{}, startupError(StartupStageProcessLaunch, protocol.CodeRouterStartFailed, "router launch failed", err)
 	}
-	run := &desktopRun{done: make(chan struct{}), logBaseline: logInfo, inherited: inherited}
+	m.setLatestLog(logPath, recent)
+	_ = background.RecordLatestSessionLogPath(m.config.DesktopLogPath, logPath)
+	run := &desktopRun{done: make(chan struct{}), logBaseline: logInfo, logPath: logPath, inherited: inherited}
 	go func() {
 		run.err = child.Wait()
 		_ = logFile.Close()
@@ -286,7 +306,7 @@ func (m *Manager) startDesktop(ctx context.Context) (state.RouterState, *Error) 
 	if startErr != nil {
 		return state.RouterState{}, m.cleanupFailedDesktopStart(child, run, startErr)
 	}
-	value := m.routerState("desktop", identity, versionInfo)
+	value := m.routerState("desktop", identity, versionInfo, logPath)
 	if err := m.deps.WriteState(m.config.DesktopStatePath, value); err != nil {
 		return state.RouterState{}, m.cleanupFailedDesktopStart(child, run, startupError(StartupStageStatePersist, protocol.CodeRouterStartFailed, "cannot persist verified router state", err))
 	}
@@ -316,17 +336,24 @@ func (m *Manager) startCLI(ctx context.Context) (state.RouterState, *Error) {
 			return state.RouterState{}, lifecycleError(protocol.CodeRouterAlreadyRunning, "router endpoint is already in use")
 		}
 	}
-	args := []string{"-listen", m.config.ListenAddr, "-log", m.config.CLILogPath}
-	pid, err := m.deps.LaunchDetached(m.config.RouterPath, args, m.config.CLILogPath)
+	logPath, err := background.PrepareSessionLogPath(m.config.CLILogPath, m.deps.Now())
 	if err != nil {
+		return state.RouterState{}, lifecycleError(protocol.CodeRouterStartFailed, "cannot create detached router log session")
+	}
+	args := []string{"-listen", m.config.ListenAddr, "-log", logPath}
+	pid, err := m.deps.LaunchDetached(m.config.RouterPath, args, logPath)
+	if err != nil {
+		removeEmptyLog(logPath)
 		return state.RouterState{}, lifecycleError(protocol.CodeRouterStartFailed, "detached router launch failed")
 	}
+	m.setLatestLog(logPath, newBoundedOutput(m.config.RecentOutputBytes))
+	_ = background.RecordLatestSessionLogPath(m.config.CLILogPath, logPath)
 	identity, versionInfo, healthInfo, startErr := m.waitUntilReady(ctx, pid, nil)
 	if startErr != nil {
 		m.cleanupFailedChild(identity)
 		return state.RouterState{}, startErr
 	}
-	value := m.routerState("cli", identity, versionInfo)
+	value := m.routerState("cli", identity, versionInfo, logPath)
 	if err := m.deps.WriteState(m.config.CLIStatePath, value); err != nil {
 		m.cleanupFailedChild(identity)
 		return state.RouterState{}, lifecycleError(protocol.CodeRouterStartFailed, "cannot persist verified router state")
@@ -511,6 +538,8 @@ func (m *Manager) Reclaim() (state.RouterState, *Error) {
 	if err := m.deps.WriteState(m.config.DesktopStatePath, value); err != nil {
 		return state.RouterState{}, lifecycleError(protocol.CodeRouterStartFailed, "cannot persist reclaimed ownership")
 	}
+	m.setLatestLog(value.LogPath, newBoundedOutput(m.config.RecentOutputBytes))
+	_ = background.RecordLatestSessionLogPath(m.config.DesktopLogPath, value.LogPath)
 	success = true
 	return value, nil
 }
@@ -535,14 +564,23 @@ func (m *Manager) MonitorParent(ctx context.Context) *Error {
 }
 
 func (m *Manager) RecentOutput() string {
-	limit := m.recent.limit
-	if data, err := os.ReadFile(m.config.DesktopLogPath); err == nil && len(data) > 0 {
+	m.mu.Lock()
+	logPath := m.latestLog
+	recent := m.recent
+	m.mu.Unlock()
+	limit := recent.limit
+	if data, err := os.ReadFile(logPath); err == nil && len(data) > 0 {
 		if len(data) > limit {
 			data = data[len(data)-limit:]
 		}
 		return string(data)
 	}
-	return m.recent.String()
+	return recent.String()
+}
+func (m *Manager) LogPath() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.latestLog
 }
 func (m *Manager) UnexpectedExit() <-chan UnexpectedExit { return m.exitCh }
 
@@ -586,11 +624,7 @@ func (m *Manager) cancelIntentionalStop(run *desktopRun) {
 	m.mu.Unlock()
 }
 
-func (m *Manager) routerState(owner string, identity process.Identity, info discovery.Version) state.RouterState {
-	logPath := m.config.DesktopLogPath
-	if owner == "cli" {
-		logPath = m.config.CLILogPath
-	}
+func (m *Manager) routerState(owner string, identity process.Identity, info discovery.Version, logPath string) state.RouterState {
 	value := state.RouterState{
 		PID: identity.PID, ListenAddr: "http://" + m.config.ListenAddr, BinaryPath: identity.Executable, LogPath: logPath,
 		StartedAt: m.deps.Now().UTC().Format(time.RFC3339), ProcessStartedAt: identity.StartedAt, ProcessExecutable: identity.Executable,
@@ -640,7 +674,11 @@ func (m *Manager) cleanupFailedDesktopStart(child foregroundProcess, run *deskto
 
 func (m *Manager) recentOutputForRun(run *desktopRun) string {
 	inherited := run.inherited.String()
-	file, err := os.Open(m.config.DesktopLogPath)
+	logPath := run.logPath
+	if logPath == "" {
+		logPath = m.config.DesktopLogPath
+	}
+	file, err := os.Open(logPath)
 	if err != nil {
 		return inherited
 	}
@@ -668,6 +706,21 @@ func (m *Manager) recentOutputForRun(run *desktopRun) string {
 		appended = appended[len(appended)-int(limit):]
 	}
 	return string(appended)
+}
+
+func (m *Manager) setLatestLog(path string, recent *boundedOutput) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.latestLog = path
+	if recent != nil {
+		m.recent = recent
+	}
+}
+
+func removeEmptyLog(path string) {
+	if info, err := os.Stat(path); err == nil && info.Size() == 0 {
+		_ = os.Remove(path)
+	}
 }
 
 func readBoundedOutput(reader io.Reader, limit int64) ([]byte, error) {
