@@ -140,6 +140,118 @@ func TestRepeatedDesktopStartDoesNotLaunchSecondChild(t *testing.T) {
 	}
 }
 
+func TestDesktopStartRemovesLegacyStateOnlyAfterPIDIsProvenAbsent(t *testing.T) {
+	fixture := newFixture(t)
+	fixture.managerState = state.RouterState{PID: 77, Owner: "desktop"}
+	fixture.validate = func(identity process.Identity, _ string) (process.Status, error) {
+		if identity.PID == 77 {
+			return process.StatusStale, nil
+		}
+		return process.StatusGenuine, nil
+	}
+	fixture.deps.Inspect = func(pid int) (process.Identity, error) {
+		if pid == 77 {
+			return process.Identity{}, process.ErrNotFound
+		}
+		return process.Identity{PID: pid, StartedAt: "router-start", Executable: "/router"}, nil
+	}
+
+	if _, startErr := fixture.manager().Start(context.Background(), protocol.RouterOwnerDesktop); startErr != nil {
+		t.Fatal(startErr)
+	}
+	if !fixture.removed || fixture.desktopLaunches != 1 {
+		t.Fatalf("removed=%t desktop launches=%d", fixture.removed, fixture.desktopLaunches)
+	}
+}
+
+func TestDesktopStartRemovesCompleteStateWhenValidationProvesPIDAbsent(t *testing.T) {
+	fixture := newFixture(t)
+	fixture.managerState = fixture.desktopState(77)
+	fixture.validate = func(identity process.Identity, _ string) (process.Status, error) {
+		if identity.PID == 77 {
+			return process.StatusAbsent, nil
+		}
+		return process.StatusGenuine, nil
+	}
+
+	if _, startErr := fixture.manager().Start(context.Background(), protocol.RouterOwnerDesktop); startErr != nil {
+		t.Fatal(startErr)
+	}
+	if !fixture.removed || fixture.desktopLaunches != 1 {
+		t.Fatalf("removed=%t desktop launches=%d", fixture.removed, fixture.desktopLaunches)
+	}
+}
+
+func TestDesktopStartRetainsLegacyStateWhenPIDCannotBeProvenAbsent(t *testing.T) {
+	fixture := newFixture(t)
+	fixture.managerState = state.RouterState{PID: 77, Owner: "desktop"}
+	fixture.discovered = discovery.Result{Classification: discovery.Stale}
+	fixture.validate = func(process.Identity, string) (process.Status, error) {
+		return process.StatusStale, nil
+	}
+	fixture.deps.Inspect = func(pid int) (process.Identity, error) {
+		return process.Identity{PID: pid, StartedAt: "unknown", Executable: "/unknown"}, nil
+	}
+
+	_, startErr := fixture.manager().Start(context.Background(), protocol.RouterOwnerDesktop)
+	if startErr == nil || startErr.Code != protocol.CodeRouterStateStale {
+		t.Fatalf("start error = %v", startErr)
+	}
+	if startErr.Stage != StartupStageStateReconcile {
+		t.Fatalf("startup stage = %q, want %q", startErr.Stage, StartupStageStateReconcile)
+	}
+	if fixture.removed || fixture.desktopLaunches != 0 {
+		t.Fatalf("removed=%t desktop launches=%d", fixture.removed, fixture.desktopLaunches)
+	}
+}
+
+func TestDesktopStartRetainsLegacyStateWhenPIDInspectionFails(t *testing.T) {
+	fixture := newFixture(t)
+	fixture.managerState = state.RouterState{PID: 77, Owner: "desktop"}
+	fixture.discovered = discovery.Result{Classification: discovery.Stale}
+	fixture.validate = func(process.Identity, string) (process.Status, error) {
+		return process.StatusStale, nil
+	}
+	fixture.deps.Inspect = func(int) (process.Identity, error) {
+		return process.Identity{}, errors.New("inspection unavailable")
+	}
+
+	_, startErr := fixture.manager().Start(context.Background(), protocol.RouterOwnerDesktop)
+	if startErr == nil || startErr.Code != protocol.CodeRouterStateStale || startErr.Stage != StartupStageStateReconcile {
+		t.Fatalf("start error = %+v", startErr)
+	}
+	if fixture.removed || fixture.desktopLaunches != 0 {
+		t.Fatalf("removed=%t desktop launches=%d", fixture.removed, fixture.desktopLaunches)
+	}
+}
+
+func TestDesktopStartReportsLegacyStateRemovalFailure(t *testing.T) {
+	fixture := newFixture(t)
+	fixture.managerState = fixture.desktopState(77)
+	fixture.validate = func(process.Identity, string) (process.Status, error) {
+		return process.StatusAbsent, nil
+	}
+	fixture.deps.RemoveState = func(string) error { return syscall.Errno(5) }
+
+	_, startErr := fixture.manager().Start(context.Background(), protocol.RouterOwnerDesktop)
+	if startErr == nil || startErr.Code != protocol.CodeRouterStateStale || startErr.Stage != StartupStageStateReconcile || startErr.OSErrorCode != 5 {
+		t.Fatalf("start error = %+v", startErr)
+	}
+	if fixture.desktopLaunches != 0 {
+		t.Fatalf("desktop launches = %d", fixture.desktopLaunches)
+	}
+}
+
+func TestLegacyStateWithoutPIDRemainsFailClosed(t *testing.T) {
+	manager := New(Config{}, Dependencies{Inspect: func(int) (process.Identity, error) {
+		t.Fatal("zero PID must not be inspected")
+		return process.Identity{}, nil
+	}})
+	if manager.recordedProcessAbsent(state.RouterState{}, process.StatusStale) {
+		t.Fatal("legacy state without PID was treated as safely removable")
+	}
+}
+
 func TestFailedAndTimedOutStartCleanUpWithoutWritingState(t *testing.T) {
 	for _, tt := range []struct {
 		name           string
@@ -188,6 +300,65 @@ func TestFailedAndTimedOutStartCleanUpWithoutWritingState(t *testing.T) {
 	}
 }
 
+func TestWaitUntilReadyPrefersChildExitAtRaceBoundaries(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(*testing.T, *fixture, chan struct{})
+	}{
+		{name: "before inspection", configure: func(t *testing.T, fixture *fixture, childExit chan struct{}) {
+			close(childExit)
+			fixture.deps.Inspect = func(int) (process.Identity, error) {
+				t.Fatal("exited child must not be inspected")
+				return process.Identity{}, nil
+			}
+		}},
+		{name: "during failed inspection", configure: func(_ *testing.T, fixture *fixture, childExit chan struct{}) {
+			fixture.deps.Inspect = func(int) (process.Identity, error) {
+				close(childExit)
+				return process.Identity{}, errors.New("process unavailable")
+			}
+		}},
+		{name: "during verification", configure: func(t *testing.T, fixture *fixture, childExit chan struct{}) {
+			fixture.deps.Verify = func(context.Context, string, int, string, string) (discovery.Version, discovery.Health, error) {
+				close(childExit)
+				return discovery.Version{}, discovery.Health{}, errors.New("not ready")
+			}
+			fixture.deps.Sleep = func(context.Context, time.Duration) error {
+				t.Fatal("known child exit must not be reported as readiness")
+				return nil
+			}
+		}},
+		{name: "during identity validation", configure: func(_ *testing.T, fixture *fixture, childExit chan struct{}) {
+			fixture.validate = func(process.Identity, string) (process.Status, error) {
+				close(childExit)
+				return process.StatusStale, nil
+			}
+		}},
+		{name: "during timeout sleep", configure: func(_ *testing.T, fixture *fixture, childExit chan struct{}) {
+			fixture.deps.Verify = func(context.Context, string, int, string, string) (discovery.Version, discovery.Health, error) {
+				return discovery.Version{}, discovery.Health{}, errors.New("not ready")
+			}
+			fixture.deps.Sleep = func(context.Context, time.Duration) error {
+				close(childExit)
+				return context.DeadlineExceeded
+			}
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fixture := newFixture(t)
+			childExit := make(chan struct{})
+			tt.configure(t, fixture, childExit)
+
+			_, _, _, startErr := fixture.manager().waitUntilReady(context.Background(), 101, childExit)
+			if startErr == nil || startErr.Code != protocol.CodeRouterStartFailed || startErr.Stage != StartupStageProcessExit {
+				t.Fatalf("start error = %+v, want process exit", startErr)
+			}
+		})
+	}
+}
+
 func TestDesktopStateWriteFailureDrainsOwnedChild(t *testing.T) {
 	fixture := newFixture(t)
 	fixture.deps.WriteState = func(string, state.RouterState) error {
@@ -200,6 +371,9 @@ func TestDesktopStateWriteFailureDrainsOwnedChild(t *testing.T) {
 	}
 	if !startErr.Launched || startErr.RecentOutput != "owned child output" {
 		t.Fatalf("failure metadata = %+v", startErr)
+	}
+	if startErr.Stage != StartupStageStatePersist {
+		t.Fatalf("startup stage = %q, want %q", startErr.Stage, StartupStageStatePersist)
 	}
 	if got := startErr.Error(); got != "ROUTER_START_FAILED: cannot persist verified router state" {
 		t.Fatalf("generic error text = %q", got)
@@ -240,6 +414,12 @@ func TestStartupErrorUsesClosedStageAndNumericErrno(t *testing.T) {
 		StartupStageLogDirectory,
 		StartupStageLogOpen,
 		StartupStageProcessLaunch,
+		StartupStageProcessInspect,
+		StartupStageReadiness,
+		StartupStageIdentity,
+		StartupStageStateReconcile,
+		StartupStageStatePersist,
+		StartupStageProcessExit,
 	} {
 		t.Run(string(stage), func(t *testing.T) {
 			got := startupError(stage, protocol.CodeRouterStartFailed, "safe message", fmt.Errorf("wrapped: %w", syscall.Errno(5)))

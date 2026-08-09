@@ -140,6 +140,31 @@ try {
     rmSync(isolated.stateRoot, { recursive: true, force: true });
   }
 }
+
+const reuseDefaults = reuseEnvironment({});
+if (Object.hasOwn(reuseDefaults, 'VERSION')) {
+  throw new Error('dev:tauri:reuse must let the desktop package supply the default version');
+}
+if (reuseEnvironment({ VERSION: '9.8.7' }).VERSION !== '9.8.7') {
+  throw new Error('dev:tauri:reuse must preserve an explicit version');
+}
+
+const agentDefaults = createAgentEnvironment({});
+const agentExplicit = createAgentEnvironment({ VERSION: '9.8.7' });
+try {
+  if (Object.hasOwn(agentDefaults.env, 'VERSION')) {
+    throw new Error('dev:agent must let the desktop package supply the default version');
+  }
+  if (agentExplicit.env.VERSION !== '9.8.7') {
+    throw new Error('dev:agent must preserve an explicit version');
+  }
+} finally {
+  for (const agent of [agentDefaults, agentExplicit]) {
+    if (agent.temporary) {
+      rmSync(agent.stateRoot, { recursive: true, force: true });
+    }
+  }
+}
 NODE
 contains "$CI" 'sudo apt-get install -y libappindicator3-dev librsvg2-dev libwebkit2gtk-4.1-dev xdg-utils'
 contains "$RELEASE" 'sudo apt-get install -y libappindicator3-dev librsvg2-dev libwebkit2gtk-4.1-dev xdg-utils'

@@ -56,7 +56,7 @@ export const zhCN = {
   "router.state.failed.title": "路由启动失败",
   "router.state.failed.signal": "需要处理",
   "router.state.failed.detail":
-    "路由未能进入可用状态。请查看日志并在排除问题后重试。",
+    "已识别到启动失败。请按下方建议处理后重试；技术详情仍会保留。",
   "router.state.unavailable.title": "路由状态暂时不可用",
   "router.state.unavailable.signal": "状态不可用",
   "router.state.unavailable.detail": "桌面端暂时无法读取路由状态，将自动重试。",
@@ -79,7 +79,86 @@ export const zhCN = {
   "router.error.health": "健康检查失败。路由进程状态未受影响。",
   "router.error.sidecarReinstall":
     "必要的打包组件缺失或无效。请重新安装桌面应用；应用不会自动下载任何组件。",
+  "router.failureGuide.overline": "问题定位",
+  "router.failureGuide.nextStep": "建议处理",
+  "router.failureGuide.upstream.title": "无法连接到上游服务",
+  "router.failureGuide.upstream.detail":
+    "启动前的 mTLS 安全连接检查未通过，因此路由没有开放本地地址，也不会接收 Agent 请求。",
+  "router.failureGuide.upstream.action":
+    "先确认网络、VPN 或代理可用后重试。若持续失败，请联系服务管理员确认上游状态和客户端凭据。",
+  "router.failureGuide.credentials.title": "路由凭据无法使用",
+  "router.failureGuide.credentials.detail":
+    "打包的客户端证书、私钥或信任链无法用于建立 mTLS 连接。",
+  "router.failureGuide.credentials.action":
+    "安装服务管理员提供的最新可信安装包后重试；不要手动替换单个凭据文件。",
+  "router.failureGuide.configuration.title": "路由启动配置无效",
+  "router.failureGuide.configuration.detail":
+    "本地监听、上游地址或连接探测配置不符合路由的启动要求。",
+  "router.failureGuide.configuration.action":
+    "重新启动桌面应用；若再次出现，请使用最新可信安装包重新安装。",
+  "router.failureGuide.log-storage.title": "无法准备运行日志",
+  "router.failureGuide.log-storage.detail":
+    "路由无法创建或打开本地日志位置，因此为避免不可观测运行而停止启动。",
+  "router.failureGuide.log-storage.action":
+    "检查磁盘空间和应用数据目录写入权限，关闭可能锁定日志文件的程序后重试。",
+  "router.failureGuide.local-port.title": "无法打开本地端口",
+  "router.failureGuide.local-port.detail":
+    "路由未能监听本地地址，Agent 请求目前无法进入路由。",
+  "router.failureGuide.local-port.action":
+    "确认 127.0.0.1:19099 未被其他程序占用后重试；必要时重新启动桌面应用。",
+  "router.failureGuide.process-launch.title": "系统未能启动路由组件",
+  "router.failureGuide.process-launch.detail":
+    "桌面应用已验证组件，但操作系统没有成功创建路由进程。",
+  "router.failureGuide.process-launch.action":
+    "重新启动桌面应用后重试；若持续失败，请检查安全软件拦截或重新安装可信安装包。",
+  "router.failureGuide.process-identity.title": "无法安全确认路由进程",
+  "router.failureGuide.process-identity.detail":
+    "路由进程已创建，但桌面应用无法完整验证其身份，因此没有继续接管。",
+  "router.failureGuide.process-identity.action":
+    "重新启动桌面应用后重试。若问题重复出现，请使用最新可信安装包重新安装。",
+  "router.failureGuide.readiness.title": "路由启动超时",
+  "router.failureGuide.readiness.detail":
+    "路由进程未能在限定时间内提供可验证的本地状态。",
+  "router.failureGuide.readiness.action":
+    "查看技术详情确认是否存在连接错误，检查网络后重试；持续超时请联系服务管理员。",
+  "router.failureGuide.component-identity.title": "路由组件身份不匹配",
+  "router.failureGuide.component-identity.detail":
+    "已启动进程报告的版本或部署身份与当前桌面应用不一致，应用已拒绝接管。",
+  "router.failureGuide.component-identity.action":
+    "退出其他 CodeasierRouter 实例，并使用同一可信安装包重新安装桌面应用。",
+  "router.failureGuide.state-reconcile.title": "无法确认现有路由状态",
+  "router.failureGuide.state-reconcile.detail":
+    "桌面应用无法安全验证或清理已有状态记录，因此没有启动新的路由进程。",
+  "router.failureGuide.state-reconcile.action":
+    "退出其他桌面实例并停止单独运行的路由后重试；不要手动删除仍在使用的状态文件。",
+  "router.failureGuide.state-storage.title": "无法保存路由运行状态",
+  "router.failureGuide.state-storage.detail":
+    "路由进程已启动，但桌面应用无法安全保存所有权状态，因此取消了启动。",
+  "router.failureGuide.state-storage.action":
+    "检查磁盘空间和应用数据目录写入权限，重新启动桌面应用后重试。",
+  "router.failureGuide.shutdown.title": "路由未能正常关闭",
+  "router.failureGuide.shutdown.detail":
+    "路由在停止服务时遇到错误，桌面应用已将其标记为不可用。",
+  "router.failureGuide.shutdown.action":
+    "重新启动桌面应用并查看运行日志；若重复出现，请将技术详情提供给服务管理员。",
+  "router.failureGuide.unexpected-exit.title": "运行中的路由意外退出",
+  "router.failureGuide.unexpected-exit.detail":
+    "此前可用的路由进程已经结束，本地地址不再接收 Agent 请求。",
+  "router.failureGuide.unexpected-exit.action":
+    "查看运行日志后重试启动；若再次退出，请将技术详情提供给服务管理员。",
+  "router.failureGuide.process-exit.title": "路由进程在启动期间退出",
+  "router.failureGuide.process-exit.detail":
+    "组件已被系统执行，但在完成本地监听和身份确认前结束。",
+  "router.failureGuide.process-exit.action":
+    "按技术详情中的具体原因处理后重试；若没有具体原因，请重新启动桌面应用。",
+  "router.failureGuide.internal.title": "路由启动未完成",
+  "router.failureGuide.internal.detail":
+    "桌面应用没有获得足以安全归类的失败原因，路由保持停止状态。",
+  "router.failureGuide.internal.action":
+    "查看运行日志并重试；若问题持续，请将技术详情提供给服务管理员。",
   "router.failureDiagnostics": "路由失败诊断",
+  "router.failureTechnicalDetails": "技术详情",
+  "router.failureTechnicalHint": "原始错误码与安全过滤日志",
   "router.failureLastError": "最近错误",
   "router.failureRecentLogs": "最近安全过滤日志",
   "router.viewFullRuntimeLogs": "查看运行日志",

@@ -125,9 +125,10 @@ type App struct {
 }
 
 type routerFailure struct {
-	identity   process.Identity
-	lastError  string
-	recentLogs []string
+	identity      process.Identity
+	lastError     string
+	recentLogs    []string
+	absentStartOK bool
 }
 
 type monitorResult struct {
@@ -1086,7 +1087,12 @@ func (a *App) failureLogLines(limit int) ([]string, bool) {
 	}
 	lines := a.failure.recentLogs
 	if len(lines) > limit {
-		lines = lines[len(lines)-limit:]
+		if limit > 0 && lines[0] == a.failure.lastError {
+			tail := lines[len(lines)-(limit-1):]
+			lines = append([]string{lines[0]}, tail...)
+		} else {
+			lines = lines[len(lines)-limit:]
+		}
 	}
 	return append([]string(nil), lines...), true
 }
@@ -1096,7 +1102,12 @@ func (a *App) latchStartupFailure(startErr *lifecycle.Error) {
 	defer a.failureMu.Unlock()
 	if startErr.Stage != "" {
 		diagnostic := startupDiagnostic(startErr)
-		a.failure = &routerFailure{lastError: diagnostic, recentLogs: []string{diagnostic}}
+		recentLogs := lastLines(sanitizeText(startErr.RecentOutput), defaultLogLines-1)
+		recentLogs = append([]string{diagnostic}, recentLogs...)
+		a.failure = &routerFailure{
+			lastError: diagnostic, recentLogs: recentLogs,
+			absentStartOK: startErr.Stage == lifecycle.StartupStageStateReconcile && !startErr.Launched,
+		}
 	} else {
 		a.failure = newRouterFailure(process.Identity{}, "desktop-owned router failed during startup", startErr.RecentOutput)
 	}
@@ -1106,7 +1117,15 @@ func (a *App) latchStartupFailure(startErr *lifecycle.Error) {
 func startupDiagnostic(startErr *lifecycle.Error) string {
 	stage := "unknown"
 	switch startErr.Stage {
-	case lifecycle.StartupStageLogDirectory, lifecycle.StartupStageLogOpen, lifecycle.StartupStageProcessLaunch:
+	case lifecycle.StartupStageLogDirectory,
+		lifecycle.StartupStageLogOpen,
+		lifecycle.StartupStageProcessLaunch,
+		lifecycle.StartupStageProcessInspect,
+		lifecycle.StartupStageReadiness,
+		lifecycle.StartupStageIdentity,
+		lifecycle.StartupStageStateReconcile,
+		lifecycle.StartupStageStatePersist,
+		lifecycle.StartupStageProcessExit:
 		stage = string(startErr.Stage)
 	}
 	diagnostic := fmt.Sprintf("stage=%s code=%s", stage, startErr.Code)
@@ -1399,7 +1418,7 @@ func (a *App) absentStartOK() bool {
 	a.captureUnexpectedExits()
 	a.failureMu.Lock()
 	defer a.failureMu.Unlock()
-	return a.failure == nil
+	return a.failure == nil || a.failure.absentStartOK
 }
 
 func invalidParams(message string) *protocol.Error {

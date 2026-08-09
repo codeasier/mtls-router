@@ -406,7 +406,9 @@ describe("RouterPage states", () => {
       />,
     );
 
-    expect(await screen.findByLabelText("路由失败诊断")).toBeInTheDocument();
+    const details = await screen.findByLabelText("路由失败诊断");
+    expect(details).not.toHaveAttribute("open");
+    expect(screen.getByText("运行中的路由意外退出")).toBeInTheDocument();
     expect(screen.getByText(/router exited unexpectedly/)).toBeInTheDocument();
     expect(screen.getByText("safe diagnostic line 2")).toBeInTheDocument();
     expect(
@@ -418,9 +420,154 @@ describe("RouterPage states", () => {
     expect(document.body.textContent).not.toContain(secret);
     expect(document.body.textContent).not.toContain("routerFailureCanary");
     expect(document.body.textContent).toContain("[REDACTED]");
+    fireEvent.click(screen.getByText("技术详情"));
+    expect(details).toHaveAttribute("open");
     fireEvent.click(screen.getByRole("button", { name: "查看运行日志" }));
     expect(navigateToLogs).toHaveBeenCalledOnce();
   });
+
+  it.each([
+    ["upstream_probe_failed", "无法连接到上游服务"],
+    ["tls_material_invalid", "路由凭据无法使用"],
+    ["config_invalid", "路由启动配置无效"],
+    ["log_open_failed", "无法准备运行日志"],
+    ["listen_failed", "无法打开本地端口"],
+    ["shutdown_failed", "路由未能正常关闭"],
+    ["router_failure", "路由启动未完成"],
+  ])("explains router failure reason %s as %s", async (reason, heading) => {
+    const rawLog = `time=2026-08-09T10:20:17+08:00 level=ERROR msg=fatal reason=${reason}`;
+    const api = createMockApi({
+      getRouterStatus: vi.fn().mockResolvedValue({
+        state: "start_failed",
+        last_error: "stage=process_exit code=ROUTER_START_FAILED",
+        recent_logs: [rawLog],
+      }),
+    });
+
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByRole("heading", { name: heading })).toBeVisible();
+    expect(screen.getByText("建议处理")).toBeVisible();
+    const details = screen.getByLabelText("路由失败诊断");
+    expect(details).not.toHaveAttribute("open");
+    expect(details).toHaveTextContent(rawLog);
+  });
+
+  it.each([
+    ["log_directory", "无法准备运行日志"],
+    ["process_launch", "系统未能启动路由组件"],
+    ["process_inspect", "无法安全确认路由进程"],
+    ["readiness", "路由启动超时"],
+    ["identity_validate", "路由组件身份不匹配"],
+    ["state_reconcile", "无法确认现有路由状态"],
+    ["state_persist", "无法保存路由运行状态"],
+    ["process_exit", "路由进程在启动期间退出"],
+  ])("explains manager startup stage %s as %s", async (stage, heading) => {
+    const diagnostic = `stage=${stage} code=ROUTER_START_FAILED`;
+    const api = createMockApi({
+      getRouterStatus: vi.fn().mockResolvedValue({
+        state: "start_failed",
+        last_error: diagnostic,
+        recent_logs: [diagnostic],
+      }),
+    });
+
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByRole("heading", { name: heading })).toBeVisible();
+  });
+
+  it("explains an unexpected exit without exposing it as the primary message", async () => {
+    const raw = "desktop-owned router exited unexpectedly";
+    const api = createMockApi({
+      getRouterStatus: vi.fn().mockResolvedValue({
+        state: "start_failed",
+        last_error: raw,
+      }),
+    });
+
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "运行中的路由意外退出" }),
+    ).toBeVisible();
+    expect(screen.getByLabelText("路由失败诊断")).not.toHaveAttribute("open");
+  });
+
+  it.each([
+    [
+      "status failure",
+      { code: "MANAGER_FAILED" },
+      "无法读取路由状态。请重新启动桌面应用或查看日志。",
+    ],
+    [
+      "sidecar failure",
+      { code: "SIDECAR_INVALID" },
+      "必要的打包组件缺失或无效。请重新安装桌面应用；应用不会自动下载任何组件。",
+    ],
+  ])(
+    "shows a newer %s alongside cached startup guidance",
+    async (_name, statusError, warning) => {
+      let observer: ((snapshot: PollSnapshot) => void) | undefined;
+      const diagnostic = "stage=process_launch code=ROUTER_START_FAILED";
+      const api = createMockApi({
+        getPollSnapshot: vi.fn().mockResolvedValue({
+          revision: 1,
+          status: {
+            state: "start_failed",
+            last_error: diagnostic,
+          },
+        }),
+        subscribePollSnapshots: vi.fn(async (listener) => {
+          observer = listener;
+          return () => undefined;
+        }),
+      });
+
+      renderWithI18n(
+        <RouterPage
+          api={api}
+          onNavigateToAgents={vi.fn()}
+          onNavigateToLogs={vi.fn()}
+        />,
+      );
+      expect(
+        await screen.findByRole("heading", {
+          name: "系统未能启动路由组件",
+        }),
+      ).toBeVisible();
+
+      act(() =>
+        observer?.({
+          revision: 2,
+          status_error: statusError,
+        }),
+      );
+
+      expect(await screen.findByText(warning)).toBeVisible();
+      expect(
+        screen.getByRole("heading", { name: "系统未能启动路由组件" }),
+      ).toBeVisible();
+    },
+  );
 
   it.each(["SIDECAR_MISSING", "SIDECAR_INVALID"])(
     "shows localized reinstall guidance for %s without offering a download",
@@ -624,6 +771,12 @@ describe("RouterPage actions", () => {
     expect(
       await screen.findByRole("heading", { name: "路由启动失败" }),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByText("启动失败。请查看安全过滤后的日志并重试。"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "系统未能启动路由组件" }),
+    ).toBeVisible();
     expect(await screen.findAllByText(diagnostic)).not.toHaveLength(0);
     expect(api.getPollSnapshot).toHaveBeenCalledTimes(2);
   });

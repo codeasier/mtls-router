@@ -275,6 +275,8 @@ MTLS_TLS_MIN=tls1.3 \
 
 At startup, `mtls-router` validates configuration, constructs the mTLS upstream transport, and probes the upstream before binding the local listener. If the probe fails, the process exits non-zero instead of accepting local traffic with broken upstream credentials or routing.
 
+Fatal startup logs expose a closed, non-sensitive reason code such as `config_invalid`, `tls_material_invalid`, `upstream_probe_failed`, or `listen_failed`; raw transport errors, configured URLs, certificate details, and keys remain omitted. When the desktop manager launches the router, it also records a stable startup stage and keeps the safely filtered output from that specific attempt so repeated failures can be distinguished without exposing secrets.
+
 The local listener is plain HTTP on `127.0.0.1:19099` by default. The upstream connection uses the embedded client certificate and upstream CA for mTLS.
 
 ## Streaming and SSE

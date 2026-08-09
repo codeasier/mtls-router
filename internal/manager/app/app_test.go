@@ -1555,10 +1555,11 @@ func TestDesktopRouterStartRetainsOriginalLaunchedFailureAcrossReclaim(t *testin
 func TestDesktopRouterStartLatchesSafePreLaunchDiagnostic(t *testing.T) {
 	lifecycleManager := &fakeLifecycle{start: func(context.Context, protocol.RouterOwner) (state.RouterState, *lifecycle.Error) {
 		return state.RouterState{}, &lifecycle.Error{
-			Code:        protocol.CodeRouterStartFailed,
-			Err:         errors.New(`CreateProcess C:\secret\router.exe: access denied canary`),
-			Stage:       lifecycle.StartupStageProcessLaunch,
-			OSErrorCode: 5,
+			Code:         protocol.CodeRouterStartFailed,
+			Err:          errors.New(`CreateProcess C:\secret\router.exe: access denied canary`),
+			Stage:        lifecycle.StartupStageProcessLaunch,
+			OSErrorCode:  5,
+			RecentOutput: "reason=upstream_probe_failed\nAuthorization: Bearer hidden-canary",
 		}
 	}}
 	manager := newWithDependencies(Config{RouterPath: os.Args[0]}, dependencies{
@@ -1575,7 +1576,7 @@ func TestDesktopRouterStartLatchesSafePreLaunchDiagnostic(t *testing.T) {
 	}
 	status := value.(protocol.RouterStatusResult)
 	want := "stage=process_launch code=ROUTER_START_FAILED os_error=5"
-	if status.State != "start_failed" || status.LastError != want || fmt.Sprint(status.RecentLogs) != fmt.Sprint([]string{want}) {
+	if status.State != "start_failed" || status.LastError != want || fmt.Sprint(status.RecentLogs) != fmt.Sprint([]string{want, "reason=upstream_probe_failed", "Authorization: [REDACTED]"}) {
 		t.Fatalf("status = %+v", status)
 	}
 	value, gotErr = manager.routerLogs(context.Background(), json.RawMessage(`{"limit":10}`))
@@ -1586,11 +1587,50 @@ func TestDesktopRouterStartLatchesSafePreLaunchDiagnostic(t *testing.T) {
 	if fmt.Sprint(logs) != fmt.Sprint(status.RecentLogs) {
 		t.Fatalf("logs = %v, status logs = %v", logs, status.RecentLogs)
 	}
+	value, gotErr = manager.routerLogs(context.Background(), json.RawMessage(`{"limit":1}`))
+	if gotErr != nil {
+		t.Fatal(gotErr)
+	}
+	if logs := value.(protocol.RouterLogsResult).Lines; fmt.Sprint(logs) != fmt.Sprint([]string{want}) {
+		t.Fatalf("single diagnostic log = %v", logs)
+	}
 	serialized := fmt.Sprintf("%+v %v", status, logs)
 	for _, unsafe := range []string{"secret", "router.exe", "access denied", "canary"} {
 		if strings.Contains(serialized, unsafe) {
 			t.Fatalf("diagnostic exposed %q: %s", unsafe, serialized)
 		}
+	}
+}
+
+func TestStateReconcileFailureRemainsObservableWithoutBlockingAbsentAutoStart(t *testing.T) {
+	lifecycleManager := &fakeLifecycle{
+		start: func(context.Context, protocol.RouterOwner) (state.RouterState, *lifecycle.Error) {
+			return state.RouterState{}, &lifecycle.Error{
+				Code: protocol.CodeRouterStateStale, Err: errors.New("safe state conflict"),
+				Stage: lifecycle.StartupStageStateReconcile,
+			}
+		},
+		reclaim: func() (state.RouterState, *lifecycle.Error) {
+			return state.RouterState{}, &lifecycle.Error{Code: protocol.CodeRouterStateStale, Err: errors.New("not reclaimable")}
+		},
+	}
+	manager := newWithDependencies(Config{RouterPath: os.Args[0]}, dependencies{
+		discoverStatus: func(context.Context) discovery.Result { return discovery.Result{Classification: discovery.Absent} },
+		lifecycle:      lifecycleManager,
+	})
+
+	if _, gotErr := manager.routerStart(context.Background(), json.RawMessage(`{"owner":"desktop"}`)); gotErr == nil {
+		t.Fatal("routerStart() unexpectedly succeeded")
+	}
+	status, gotErr := manager.routerStatus(context.Background(), json.RawMessage(`{}`))
+	if gotErr != nil {
+		t.Fatal(gotErr)
+	}
+	if got := status.(protocol.RouterStatusResult); got.State != "start_failed" || !strings.Contains(got.LastError, "stage=state_reconcile") {
+		t.Fatalf("status = %+v", got)
+	}
+	if !manager.absentStartOK() {
+		t.Fatal("non-launched state reconciliation failure blocked safe absent auto-start")
 	}
 }
 

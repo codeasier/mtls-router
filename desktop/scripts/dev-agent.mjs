@@ -40,7 +40,6 @@ export function createAgentEnvironment(env = process.env) {
       MTLS_ROUTER_STATE_DIR: routerState,
       MTLS_ROUTER_LOG_PATH: path.join(routerState, "router.log"),
       DEPLOYMENT_ID: env.DEPLOYMENT_ID || "dev",
-      VERSION: env.VERSION || "dev",
       MANAGEMENT_PROTOCOL_VERSION: env.MANAGEMENT_PROTOCOL_VERSION || "4",
     },
   };

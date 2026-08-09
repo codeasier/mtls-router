@@ -275,6 +275,8 @@ MTLS_TLS_MIN=tls1.3 \
 
 启动时，`mtls-router` 会校验配置，构造 mTLS 上游 transport，并在绑定本地监听前探测上游。如果探测失败，进程会以非零状态退出，避免在上游凭据或路由不可用时继续接受本地流量。
 
+致命启动日志只会暴露封闭的非敏感原因码，例如 `config_invalid`、`tls_material_invalid`、`upstream_probe_failed` 或 `listen_failed`；原始 transport 错误、配置 URL、证书细节和 key 仍不会输出。由桌面 manager 启动 router 时，还会记录稳定的启动阶段，并保留该次尝试经过安全过滤的输出，从而在不泄露密钥的前提下区分反复失败的原因。
+
 默认本地监听为 `127.0.0.1:19099` 上的 plain HTTP。上游连接使用嵌入的客户端证书和上游 CA 进行 mTLS。
 
 ## Streaming 和 SSE

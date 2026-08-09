@@ -60,7 +60,7 @@ export const en: Record<TranslationKey, string> = {
   "router.state.failed.title": "Router failed to start",
   "router.state.failed.signal": "Action required",
   "router.state.failed.detail":
-    "The router did not become available. Review the logs and retry after resolving the problem.",
+    "A startup problem was identified. Follow the guidance below and retry; technical details remain available.",
   "router.state.unavailable.title": "Router status unavailable",
   "router.state.unavailable.signal": "Status unavailable",
   "router.state.unavailable.detail":
@@ -89,7 +89,93 @@ export const en: Record<TranslationKey, string> = {
     "Health check failed. Router process state was not affected.",
   "router.error.sidecarReinstall":
     "A required packaged component is missing or invalid. Reinstall the desktop application; no component will be downloaded automatically.",
+  "router.failureGuide.overline": "PROBLEM IDENTIFIED",
+  "router.failureGuide.nextStep": "Recommended action",
+  "router.failureGuide.upstream.title":
+    "Cannot connect to the upstream service",
+  "router.failureGuide.upstream.detail":
+    "The pre-start mTLS connection check failed, so the router did not open its local address and will not accept Agent requests.",
+  "router.failureGuide.upstream.action":
+    "Confirm that the network, VPN, or proxy is available and retry. If it persists, ask the service administrator to verify the upstream and client credentials.",
+  "router.failureGuide.credentials.title": "Router credentials cannot be used",
+  "router.failureGuide.credentials.detail":
+    "The packaged client certificate, private key, or trust chain cannot establish an mTLS connection.",
+  "router.failureGuide.credentials.action":
+    "Install the latest trusted package from the service administrator and retry. Do not replace individual credential files manually.",
+  "router.failureGuide.configuration.title":
+    "Router startup configuration is invalid",
+  "router.failureGuide.configuration.detail":
+    "The local listener, upstream address, or connection probe configuration does not meet startup requirements.",
+  "router.failureGuide.configuration.action":
+    "Restart the desktop application. If it happens again, reinstall the latest trusted package.",
+  "router.failureGuide.log-storage.title": "Cannot prepare runtime logs",
+  "router.failureGuide.log-storage.detail":
+    "The router cannot create or open its local log location, so startup stopped rather than running without diagnostics.",
+  "router.failureGuide.log-storage.action":
+    "Check disk space and write access to the application data directory, close programs that may lock the log, and retry.",
+  "router.failureGuide.local-port.title": "Cannot open the local port",
+  "router.failureGuide.local-port.detail":
+    "The router could not listen on its local address, so Agent requests cannot reach it.",
+  "router.failureGuide.local-port.action":
+    "Confirm that 127.0.0.1:19099 is not used by another program and retry. Restart the desktop application if needed.",
+  "router.failureGuide.process-launch.title":
+    "The system could not start the router component",
+  "router.failureGuide.process-launch.detail":
+    "The desktop application validated the component, but the operating system did not create the router process.",
+  "router.failureGuide.process-launch.action":
+    "Restart the desktop application and retry. If it persists, check security software or reinstall the trusted package.",
+  "router.failureGuide.process-identity.title":
+    "Cannot safely identify the router process",
+  "router.failureGuide.process-identity.detail":
+    "A router process was created, but the desktop application could not verify its complete identity and did not take ownership.",
+  "router.failureGuide.process-identity.action":
+    "Restart the desktop application and retry. If it repeats, reinstall the latest trusted package.",
+  "router.failureGuide.readiness.title": "Router startup timed out",
+  "router.failureGuide.readiness.detail":
+    "The router process did not provide verifiable local status within the startup deadline.",
+  "router.failureGuide.readiness.action":
+    "Check the technical details for a connection error, verify the network, and retry. Contact the service administrator if timeouts continue.",
+  "router.failureGuide.component-identity.title":
+    "Router component identity does not match",
+  "router.failureGuide.component-identity.detail":
+    "The running process reported a version or deployment identity that differs from this desktop build, so ownership was refused.",
+  "router.failureGuide.component-identity.action":
+    "Exit other CodeasierRouter instances and reinstall the desktop application from one trusted package.",
+  "router.failureGuide.state-reconcile.title":
+    "Cannot confirm the existing router state",
+  "router.failureGuide.state-reconcile.detail":
+    "The desktop application could not safely verify or clear an existing state record, so it did not start another router.",
+  "router.failureGuide.state-reconcile.action":
+    "Exit other desktop instances and stop separately managed routers before retrying. Do not manually delete state files that may still be in use.",
+  "router.failureGuide.state-storage.title": "Cannot save router runtime state",
+  "router.failureGuide.state-storage.detail":
+    "The router process started, but ownership state could not be stored safely, so startup was cancelled.",
+  "router.failureGuide.state-storage.action":
+    "Check disk space and write access to the application data directory, then restart the desktop application and retry.",
+  "router.failureGuide.shutdown.title": "Router did not shut down cleanly",
+  "router.failureGuide.shutdown.detail":
+    "The router encountered an error while stopping service and has been marked unavailable.",
+  "router.failureGuide.shutdown.action":
+    "Restart the desktop application and review runtime logs. If it repeats, provide the technical details to the service administrator.",
+  "router.failureGuide.unexpected-exit.title":
+    "The running router exited unexpectedly",
+  "router.failureGuide.unexpected-exit.detail":
+    "A previously available router process ended, and the local address no longer accepts Agent requests.",
+  "router.failureGuide.unexpected-exit.action":
+    "Review runtime logs and retry startup. If it exits again, provide the technical details to the service administrator.",
+  "router.failureGuide.process-exit.title": "Router exited during startup",
+  "router.failureGuide.process-exit.detail":
+    "The component was executed but ended before local listening and identity verification completed.",
+  "router.failureGuide.process-exit.action":
+    "Resolve the specific cause shown in the technical details and retry. If no cause is available, restart the desktop application.",
+  "router.failureGuide.internal.title": "Router startup did not complete",
+  "router.failureGuide.internal.detail":
+    "The desktop application did not receive enough information to classify the failure safely, so the router remains stopped.",
+  "router.failureGuide.internal.action":
+    "Review runtime logs and retry. If the problem persists, provide the technical details to the service administrator.",
   "router.failureDiagnostics": "Router failure diagnostics",
+  "router.failureTechnicalDetails": "Technical details",
+  "router.failureTechnicalHint": "Raw error codes and safely filtered logs",
   "router.failureLastError": "Last error",
   "router.failureRecentLogs": "Recent safely filtered logs",
   "router.viewFullRuntimeLogs": "View runtime logs",
