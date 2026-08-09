@@ -1073,7 +1073,7 @@ pub struct CredentialSummary {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct DesktopPaths {
     pub data_dir: String,
-    pub log_file: String,
+    pub log_directory: String,
     pub credentials_path: String,
     pub can_prepare_for_uninstall: bool,
 }

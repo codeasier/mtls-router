@@ -13,6 +13,8 @@ import (
 
 const DefaultMaxLogBytes int64 = 4 * 1024 * 1024
 
+const latestSessionMarker = ".latest-session"
+
 func OpenLogFile(logPath string) (*os.File, error) {
 	return os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 }
@@ -52,6 +54,9 @@ func PrepareSessionLogPath(basePath string, startedAt time.Time) (string, error)
 // LatestSessionLogPath returns the most recently named launch log.
 func LatestSessionLogPath(basePath string) (string, error) {
 	directory, extension := sessionLogParts(basePath)
+	if marked, err := readLatestSessionMarker(directory, extension); err != nil || marked != "" {
+		return marked, err
+	}
 	days, err := os.ReadDir(directory)
 	if errors.Is(err, os.ErrNotExist) {
 		return "", nil
@@ -72,7 +77,10 @@ func LatestSessionLogPath(basePath string) (string, error) {
 			return "", err
 		}
 		for _, entry := range entries {
-			startedAt, sequence, ok := parseSessionLogName(day.Name(), entry, extension)
+			if !entry.Type().IsRegular() {
+				continue
+			}
+			startedAt, sequence, ok := parseSessionLogName(day.Name(), entry.Name(), extension)
 			if !ok || startedAt.Before(latestStart) || (startedAt.Equal(latestStart) && sequence <= latestSequence) {
 				continue
 			}
@@ -82,6 +90,20 @@ func LatestSessionLogPath(basePath string) (string, error) {
 		}
 	}
 	return latestPath, nil
+}
+
+// RecordLatestSessionLogPath persists the last successfully launched session.
+func RecordLatestSessionLogPath(basePath, sessionPath string) error {
+	directory, extension := sessionLogParts(basePath)
+	relative, ok := validSessionLogPath(directory, extension, sessionPath)
+	if !ok {
+		return errors.New("invalid session log path")
+	}
+	marker := filepath.Join(directory, latestSessionMarker)
+	if err := os.WriteFile(marker, []byte(filepath.ToSlash(relative)), 0o600); err != nil {
+		return err
+	}
+	return os.Chmod(marker, 0o600)
 }
 
 func sessionLogParts(basePath string) (string, string) {
@@ -96,11 +118,45 @@ func sessionLogParts(basePath string) (string, string) {
 	return filepath.Join(filepath.Dir(basePath), name+"-logs"), extension
 }
 
-func parseSessionLogName(day string, entry os.DirEntry, extension string) (time.Time, int, bool) {
-	if !entry.Type().IsRegular() || filepath.Ext(entry.Name()) != extension {
+func readLatestSessionMarker(directory, extension string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(directory, latestSessionMarker))
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	sessionPath := filepath.Join(directory, filepath.FromSlash(strings.TrimSpace(string(data))))
+	if _, ok := validSessionLogPath(directory, extension, sessionPath); !ok {
+		return "", nil
+	}
+	return sessionPath, nil
+}
+
+func validSessionLogPath(directory, extension, sessionPath string) (string, bool) {
+	relative, err := filepath.Rel(directory, sessionPath)
+	if err != nil || relative == "." || filepath.IsAbs(relative) {
+		return "", false
+	}
+	parts := strings.Split(filepath.ToSlash(relative), "/")
+	if len(parts) != 2 || parts[0] == ".." {
+		return "", false
+	}
+	info, err := os.Lstat(sessionPath)
+	if err != nil || !info.Mode().IsRegular() {
+		return "", false
+	}
+	if _, _, ok := parseSessionLogName(parts[0], parts[1], extension); !ok {
+		return "", false
+	}
+	return relative, true
+}
+
+func parseSessionLogName(day, name, extension string) (time.Time, int, bool) {
+	if filepath.Ext(name) != extension {
 		return time.Time{}, 0, false
 	}
-	parts := strings.Split(strings.TrimSuffix(entry.Name(), extension), "-")
+	parts := strings.Split(strings.TrimSuffix(name, extension), "-")
 	if len(parts) != 3 && len(parts) != 4 {
 		return time.Time{}, 0, false
 	}

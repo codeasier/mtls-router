@@ -37,12 +37,30 @@ func TestPrepareSessionLogPathGroupsByDateAndStartTime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := RecordLatestSessionLogPath(basePath, later); err != nil {
+		t.Fatal(err)
+	}
 	latest, err := LatestSessionLogPath(basePath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if latest != later {
 		t.Fatalf("latest path = %q, want %q", latest, later)
+	}
+
+	clockRollback, err := PrepareSessionLogPath(basePath, startedAt.Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordLatestSessionLogPath(basePath, clockRollback); err != nil {
+		t.Fatal(err)
+	}
+	latest, err = LatestSessionLogPath(basePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest != clockRollback {
+		t.Fatalf("latest path after clock rollback = %q, want %q", latest, clockRollback)
 	}
 }
 

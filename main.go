@@ -195,11 +195,9 @@ func startBackend(logPath string) error {
 	if err != nil {
 		return err
 	}
-	if logPath == "" {
-		logPath, err = background.PrepareSessionLogPath(background.DefaultLogPath(exePath), time.Now())
-		if err != nil {
-			return err
-		}
+	logPath, err = backendLogPath(exePath, logPath, time.Now())
+	if err != nil {
+		return err
 	}
 	childArgs := background.ChildArgs(os.Args[1:], logPath)
 	pid, err := background.Start(exePath, childArgs, logPath)
@@ -208,6 +206,13 @@ func startBackend(logPath string) error {
 	}
 	fmt.Fprintf(os.Stdout, "mtls-router started in background, pid=%d, log=%s\n", pid, logPath)
 	return nil
+}
+
+func backendLogPath(exePath, configuredPath string, startedAt time.Time) (string, error) {
+	if configuredPath != "" {
+		return configuredPath, nil
+	}
+	return background.PrepareSessionLogPath(background.DefaultLogPath(exePath), startedAt)
 }
 
 func logWriter(logPath string) (io.Writer, func(), error) {

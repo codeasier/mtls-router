@@ -370,7 +370,7 @@ export function SettingsPage({
             </div>
             <div>
               <dt>{t("settings.logLocation")}</dt>
-              <dd>{paths?.log_file ?? t("settings.unavailable")}</dd>
+              <dd>{paths?.log_directory ?? t("settings.unavailable")}</dd>
             </div>
           </dl>
         </section>

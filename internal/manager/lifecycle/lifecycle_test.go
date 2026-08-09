@@ -94,6 +94,36 @@ func TestCLIStartUsesDetachedLaunchAndPersistsOnlyAfterVerification(t *testing.T
 	}
 }
 
+func TestCLILaunchFailureKeepsPreviousSessionLog(t *testing.T) {
+	fixture := newFixture(t)
+	fixture.config.SessionID = ""
+	fixture.discovered = discovery.Result{Classification: discovery.Absent}
+	previousLog, err := background.PrepareSessionLogPath(fixture.config.CLILogPath, time.Date(2026, 7, 11, 23, 0, 0, 0, time.Local))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := background.RecordLatestSessionLogPath(fixture.config.CLILogPath, previousLog); err != nil {
+		t.Fatal(err)
+	}
+	var attemptedLog string
+	fixture.deps.LaunchDetached = func(_ string, _ []string, logPath string) (int, error) {
+		attemptedLog = logPath
+		return 0, errors.New("launch failed")
+	}
+
+	manager := fixture.manager()
+	_, startErr := manager.Start(context.Background(), protocol.RouterOwnerCLI)
+	if startErr == nil || startErr.Code != protocol.CodeRouterStartFailed {
+		t.Fatalf("error = %v", startErr)
+	}
+	if got := manager.LogPath(); got != previousLog {
+		t.Fatalf("latest log = %q, want previous %q", got, previousLog)
+	}
+	if _, err := os.Stat(attemptedLog); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("empty attempted log still exists: %v", err)
+	}
+}
+
 func TestNewRestoresLatestDesktopSessionLog(t *testing.T) {
 	dir := t.TempDir()
 	basePath := filepath.Join(dir, "desktop.log")
@@ -102,9 +132,34 @@ func TestNewRestoresLatestDesktopSessionLog(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	manager := New(Config{DesktopLogPath: basePath}, Dependencies{})
+	manager := New(Config{DesktopLogPath: basePath, SessionID: "desktop-session"}, Dependencies{})
 	if got := manager.LogPath(); got != want {
 		t.Fatalf("LogPath() = %q, want %q", got, want)
+	}
+}
+
+func TestNewRestoresOwnerAppropriateSessionLog(t *testing.T) {
+	dir := t.TempDir()
+	desktopBase := filepath.Join(dir, "desktop.log")
+	cliBase := filepath.Join(dir, "cli.log")
+	desktopLog, err := background.PrepareSessionLogPath(desktopBase, time.Date(2026, 8, 9, 15, 0, 0, 0, time.Local))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cliLog, err := background.PrepareSessionLogPath(cliBase, time.Date(2026, 8, 9, 14, 0, 0, 0, time.Local))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := background.RecordLatestSessionLogPath(desktopBase, desktopLog); err != nil {
+		t.Fatal(err)
+	}
+	if err := background.RecordLatestSessionLogPath(cliBase, cliLog); err != nil {
+		t.Fatal(err)
+	}
+
+	manager := New(Config{DesktopLogPath: desktopBase, CLILogPath: cliBase}, Dependencies{})
+	if got := manager.LogPath(); got != cliLog {
+		t.Fatalf("CLI LogPath() = %q, want %q", got, cliLog)
 	}
 }
 
@@ -409,10 +464,20 @@ func TestDesktopStateWriteFailureDrainsOwnedChild(t *testing.T) {
 
 func TestDesktopLaunchFailureRemainsUnmarked(t *testing.T) {
 	fixture := newFixture(t)
-	fixture.deps.LaunchDesktop = func(string, []string, []string, io.Writer) (foregroundProcess, error) {
+	previousLog, err := background.PrepareSessionLogPath(fixture.config.DesktopLogPath, time.Date(2026, 7, 11, 23, 0, 0, 0, time.Local))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := background.RecordLatestSessionLogPath(fixture.config.DesktopLogPath, previousLog); err != nil {
+		t.Fatal(err)
+	}
+	var attemptedLog string
+	fixture.deps.LaunchDesktop = func(_ string, args []string, _ []string, _ io.Writer) (foregroundProcess, error) {
+		attemptedLog = argAfter(args, "-log")
 		return nil, fmt.Errorf("launch failed: %w", syscall.Errno(5))
 	}
-	_, startErr := fixture.manager().Start(context.Background(), protocol.RouterOwnerDesktop)
+	manager := fixture.manager()
+	_, startErr := manager.Start(context.Background(), protocol.RouterOwnerDesktop)
 	if startErr == nil || startErr.Code != protocol.CodeRouterStartFailed {
 		t.Fatalf("error = %v", startErr)
 	}
@@ -427,6 +492,12 @@ func TestDesktopLaunchFailureRemainsUnmarked(t *testing.T) {
 	}
 	if !fixture.lockClosed {
 		t.Fatal("failed launch retained ownership lock")
+	}
+	if got := manager.LogPath(); got != previousLog {
+		t.Fatalf("latest log = %q, want previous %q", got, previousLog)
+	}
+	if _, err := os.Stat(attemptedLog); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("empty attempted log still exists: %v", err)
 	}
 }
 

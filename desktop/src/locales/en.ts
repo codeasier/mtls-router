@@ -296,7 +296,7 @@ export const en: Record<TranslationKey, string> = {
   "settings.components": "Component versions",
   "settings.locations": "Storage locations",
   "settings.dataLocation": "Application data",
-  "settings.logLocation": "Log file",
+  "settings.logLocation": "Log directory",
   "settings.unavailable": "Unavailable",
   "update.checkAction": "Check for updates",
   "update.checking": "Checking...",

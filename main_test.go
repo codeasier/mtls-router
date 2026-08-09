@@ -214,6 +214,29 @@ func TestRunLogsPostSetupFailureBeforeClosingLog(t *testing.T) {
 	}
 }
 
+func TestBackendLogPathGroupsDefaultsAndPreservesExplicitPath(t *testing.T) {
+	dir := t.TempDir()
+	executable := filepath.Join(dir, "mtls-router")
+	startedAt := time.Date(2026, 8, 9, 14, 5, 7, 0, time.Local)
+
+	got, err := backendLogPath(executable, "", startedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(dir, "mtls-router-logs", "2026-08-09", "14-05-07.log")
+	if got != want {
+		t.Fatalf("default backend log = %q, want %q", got, want)
+	}
+	explicit := filepath.Join(dir, "custom.log")
+	got, err = backendLogPath(executable, explicit, startedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != explicit {
+		t.Fatalf("explicit backend log = %q, want %q", got, explicit)
+	}
+}
+
 func TestProxyStreamsFirstChunkThroughAccessLog(t *testing.T) {
 	tests := []struct {
 		name        string

@@ -212,14 +212,14 @@ pub fn setup(
     app: &App,
     manager: ManagerClient,
     scheduler: PollScheduler,
-    log_file: &str,
+    log_directory: &str,
     lifecycle: Arc<LifecycleState>,
 ) -> tauri::Result<()> {
     let controller = manager_controller(
         app.handle().clone(),
         manager,
         scheduler,
-        PathBuf::from(log_file),
+        PathBuf::from(log_directory),
     );
     let language = NativeLanguage::default();
     let strings = native_strings(language);
@@ -731,7 +731,7 @@ fn manager_controller(
     app: AppHandle,
     manager: ManagerClient,
     scheduler: PollScheduler,
-    log_file: PathBuf,
+    log_directory: PathBuf,
 ) -> Controller {
     let status_manager = manager.clone();
     let status_scheduler = scheduler.clone();
@@ -775,13 +775,18 @@ fn manager_controller(
         },
         move || {
             let app = app.clone();
-            let log_file = log_file.clone();
+            let log_directory = log_directory.clone();
             Box::pin(async move {
-                let directory = log_file
-                    .parent()
-                    .ok_or_else(|| "log location is unavailable".to_string())?;
+                let location = if log_directory.is_dir() {
+                    log_directory
+                } else {
+                    log_directory
+                        .parent()
+                        .map(PathBuf::from)
+                        .ok_or_else(|| "log location is unavailable".to_string())?
+                };
                 app.opener()
-                    .open_path(directory.to_string_lossy(), None::<&str>)
+                    .open_path(location.to_string_lossy(), None::<&str>)
                     .map_err(|_| "cannot open the log location".to_string())
             })
         },
