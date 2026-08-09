@@ -2,6 +2,33 @@
 
 [English](../CHANGELOG.md)
 
+## v0.3.5 - 2026-08-09
+
+本次发布改用 GitHub Releases 恢复桌面在线更新，提供可操作的 router 启动诊断，并按启动会话归组 router 输出。
+
+### 新增
+
+- 按启动会话归组 router 输出，并确保最新会话的范围明确，且在 router 和桌面端重启后仍可持久保留。
+
+### 变更
+
+- 将 stable 桌面 updater feed 和已签名 updater 产物迁移到 GitHub Releases，同时保留 `downloads.codeasier.top` 作为 CLI 安装来源和二级发布镜像。
+
+### 修复
+
+- 修复 `v0.3.4` 内置的 updater channel，其原始 endpoint 当前不可访问。由于 `v0.3.4` 无法通过自身 updater 获得此修复，用户必须手动安装一次 `v0.3.5`；后续 stable 版本即可正常在线更新。
+- 保留当前且经过脱敏的 router 启动诊断，提供去重、可操作的失败指引，并避免显示先前尝试留下的陈旧提醒。
+
+### 安全与恢复
+
+- 要求 stable GitHub Release 单调推进，并调整 recovery 发布顺序，确保可下载的 GitHub 产物先就绪，再推进二级镜像。
+
+### 测试
+
+- 扩展 Go、前端、Rust 和工作流覆盖，验证 updater 发布、启动诊断、提醒时效性和会话级日志持久化。
+
+---
+
 ## v0.3.3 - 2026-08-01
 
 本次发布新增按单 Agent 安全清理 CodeasierRouter 托管设置，引入分层桌面开发工作流，统一 CodeasierRouter 品牌，并在应用关闭到托盘时保留 macOS 全屏 Space。

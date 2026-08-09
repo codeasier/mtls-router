@@ -2,6 +2,33 @@
 
 [中文](zh-CN/CHANGELOG.md)
 
+## v0.3.5 - 2026-08-09
+
+This release restores desktop online updates through GitHub Releases, presents actionable router startup diagnostics, and groups router output by launch session.
+
+### Added
+
+- Grouped router output by launch session and kept the latest session scoped and durable across router and desktop restarts.
+
+### Changed
+
+- Moved the stable desktop updater feed and signed updater artifacts to GitHub Releases while retaining `downloads.codeasier.top` as the CLI setup source and a secondary release mirror.
+
+### Fixed
+
+- Repaired the updater channel embedded in `v0.3.4`, whose original endpoint is unreachable. Because `v0.3.4` cannot receive this repair through its own updater, users must manually install `v0.3.5` once; later stable releases can update normally.
+- Preserved current, sanitized router startup diagnostics and presented deduplicated, actionable failure guidance without stale alerts from earlier attempts.
+
+### Security and recovery
+
+- Required stable GitHub releases to advance monotonically and ordered recovery publication so downloadable GitHub assets exist before the secondary mirror advances.
+
+### Tests
+
+- Expanded Go, frontend, Rust, and workflow coverage for updater publication, startup diagnostics, alert freshness, and session-scoped log persistence.
+
+---
+
 ## v0.3.3 - 2026-08-01
 
 This release adds safe per-Agent cleanup of CodeasierRouter-managed settings, introduces layered desktop development workflows, unifies CodeasierRouter branding, and preserves the macOS fullscreen Space when closing the app to the tray.
