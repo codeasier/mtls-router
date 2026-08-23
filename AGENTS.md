@@ -1,14 +1,45 @@
 # AGENTS.md
 
-本仓库的工作流偏好说明。项目理解、架构、构建元数据及各包 INDEX 导航见 [INDEX.md](INDEX.md) 及各子目录下的 `INDEX.md`。
+本仓库的工作流偏好与架构总览。事实类细节（各包文件映射、导出、不变量、依赖）以 [INDEX.md](INDEX.md) 及各子目录 `INDEX.md` 为权威来源，AGENTS.md 只写边界与「做/不做」。
 
-> 本文件及全仓库所有 `INDEX.md` 均以中文撰写；README 等用户可见文档仍需保持中英对齐（见下方「文档偏好」）。
+> 全仓库所有 `AGENTS.md` 与 `INDEX.md` 均以中文撰写；README 等用户可见文档仍需保持中英对齐（见下方「文档偏好」）。
 
 ## 导航
 
-- 项目概览与架构：[INDEX.md](INDEX.md)
-- 各子包详情：见 [INDEX.md#包索引](INDEX.md#包索引) 中的链接
-- 本文件仅承载开发生命周期各类偏好。
+AGENTS.md 按独立边界分层，每个子文件回链本文件：
+
+| 范围 | 文件 | 边界依据 | 覆盖 |
+|---|---|---|---|
+| 仓库根 | 本文件 | — | 架构总览、全局工作流偏好、跨边界不变量 |
+| 桌面应用 | [desktop/AGENTS.md](desktop/AGENTS.md) | 独立 npm 包 + Cargo crate + Tauri 打包目标；独立前端/Rust 测试目标 | 前端与 Rust 开发分层、测试、sidecar 构建与整包发布链路 |
+| Manager 控制面 | [internal/manager/AGENTS.md](internal/manager/AGENTS.md) | 独立 Go 构建目标（`cmd/mtls-router-manager`）；management protocol v4 所有权；大型子系统（14 个子包） | 协议契约、生命周期、Agent 配置/清理边界与测试焦点 |
+
+各 Go 包的 INDEX 导航见 [INDEX.md#包索引](INDEX.md#包索引)。
+
+## 架构总览
+
+三层结构（详细事实见 [INDEX.md](INDEX.md)）：
+
+| 组件 | 入口 | 职责与边界 |
+|---|---|---|
+| `mtls-router`（数据面） | 根目录 `main.go` 的 `run()` | 单二进制本地反向代理：明文 HTTP 监听（默认 `127.0.0.1:19099`），用链接期嵌入的 client cert/key/CA 以 mTLS 转发上游；请求体与 SSE 透传不缓冲；`/version`、`/health` 与代理注册在同一 mux（精确 pattern）。只管路由生命周期，不做 Agent 配置 |
+| `mtls-router-manager`（控制面） | `cmd/mtls-router-manager/main.go`（唯一命令 `serve`） | stdin/stdout 换行分隔 JSON 服务（management protocol v4，17 个方法）：spawn/监控 router、端口占用诊断、Agent 检测/配置/清理。边界见 [internal/manager/AGENTS.md](internal/manager/AGENTS.md) |
+| 桌面应用 | `desktop/src/main.tsx`（React）+ `desktop/src-tauri/src/lib.rs`（Tauri 2） | 以 sidecar 方式拉起 `mtls-router-manager serve` 并经 JSON 协议通信；绝不直接与 router 通信。边界见 [desktop/AGENTS.md](desktop/AGENTS.md) |
+
+数据流：`本地 Agent 客户端 ──HTTP──▶ mtls-router ──mTLS──▶ 上游`；控制流：`桌面 UI / setup 脚本 ──JSON 协议──▶ manager ──spawn/HTTP──▶ router`。
+
+构建、测试与发布边界：
+
+| 边界 | 入口命令 | 说明 |
+|---|---|---|
+| CLI 双二进制构建 | `./scripts/build.sh` | 在 `secrets/` 生成占位证书，`-ldflags -X` 注入链接期变量（证书、upstream URL、版本元数据、preset、simplify 策略） |
+| Go 测试 | `go test ./...` | `*_test.go` 与包同目录；`internal/manager/occupant` 依赖真实 OS 行为，需 `-count=1` 单独跑（CI 在 Linux/macOS/Windows 三平台各自执行） |
+| Shell 集成测试 | `make test-shell` | 临时目录中运行 `tests/setup_*_test.sh`，覆盖 setup 脚本事务性安装与命令分组 |
+| 文档/工作流断言 | `make test-workflows` | 桌面、agent preset、发布打包与 INDEX 覆盖/链接校验（`tests/index_docs_test.sh` 会校验根 AGENTS.md 的相对链接） |
+| 桌面验证/打包 | `make desktop-verify` / `make desktop-package-current` | 透传到 `desktop/` 内 npm 脚本（见 [desktop/AGENTS.md](desktop/AGENTS.md)） |
+| 发布 | `.github/workflows/release.yml` | 6 平台 CLI 归档 + 6 平台桌面包；产物命名见下方「发布产物命名」 |
+
+部署产物：`systemd/mtls-router.service`、`Dockerfile`（`scratch` 静态镜像）与裸机二进制三选一；setup 脚本（`setup.sh` / `setup.ps1`）承担 CLI 侧安装/升级事务。
 
 ## 本地开发偏好
 
@@ -90,7 +121,7 @@ npm run verify                         # 以上全部 + rust 格式 + rust 测�
 make desktop-verify                    # 同上，仓库根目录入口
 ```
 
-- 分层开发命令与边界见 [desktop/INDEX.md](desktop/INDEX.md) 与 [docs/BUILD.md](docs/BUILD.md)。
+- 分层开发命令与边界见 [desktop/AGENTS.md](desktop/AGENTS.md)、[desktop/INDEX.md](desktop/INDEX.md) 与 [docs/BUILD.md](docs/BUILD.md)。
 - 不要为加速本地调试而绕过 sidecar 哈希、manager 握手、preview/revision 或事务写入保护。
 - `dev:mock` 仅允许 `import.meta.env.DEV && VITE_MOCK=true`；生产构建必须仍绑定真实 Tauri API。
 
@@ -149,5 +180,11 @@ CLI 产物（6 目标：`linux/darwin/windows` × `amd64/arm64`）：
   - `internal/` 的顶层包 → 在根 [INDEX.md](INDEX.md) 的 [包索引](INDEX.md#包索引) 追加一行。
   - `internal/manager/` 的子包 → 在 [internal/manager/INDEX.md](internal/manager/INDEX.md) 的子包表追加一行并链到其 `INDEX.md`；根 INDEX 不逐个列出。
 - 覆盖范围**不含** `cmd/`、`scripts/`、`tests/`、`systemd/`：这些目录刻意不设专属 INDEX。
-- `make test-workflows`（CI 的 "Scope and workflow assertions" job）会校验上述覆盖与所有 `INDEX.md` / `AGENTS.md` 中相对链接的可解析性，漏建或漏登记会直接失败。
+- `make test-workflows`（CI 的 "Scope and workflow assertions" job）会校验上述覆盖与所有 `INDEX.md` / 根 `AGENTS.md` 中相对链接的可解析性，漏建或漏登记会直接失败。
 - 事实类内容只写在 `INDEX.md`，`AGENTS.md` 只写「做/不做」并链接过去 —— 同一事实写两遍必然分裂。
+
+### AGENTS.md 层级规则
+
+- `AGENTS.md` 只建于独立边界：当前为根（本文件）、[desktop/AGENTS.md](desktop/AGENTS.md)（独立 npm/Cargo/Tauri 打包与测试目标）、[internal/manager/AGENTS.md](internal/manager/AGENTS.md)（独立 Go 构建目标与协议所有权）。新增前先评估能否并入现有层级，最小的正确层级优先；`internal/` 其余包、`cmd/`、`scripts/`、`tests/`、`systemd/` 不设专属 AGENTS.md。
+- 每个子 `AGENTS.md` 必须在开头回链根 [AGENTS.md](AGENTS.md)，并把事实细节链接到对应 `INDEX.md`，不复制。
+- 根 `AGENTS.md` 的「导航」表是层级索引：新增或移除子 `AGENTS.md` 时必须同步更新该表。
