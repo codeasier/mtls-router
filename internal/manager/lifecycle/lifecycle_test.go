@@ -36,7 +36,7 @@ func TestDesktopStartUsesControlledForegroundLaunchAndWritesVerifiedState(t *tes
 	if protocolErr != nil {
 		t.Fatal(protocolErr)
 	}
-	if value.PID != 101 || value.Owner != "desktop" || value.DesktopSessionID != "session" || value.DeploymentID != "prod-a" {
+	if value.PID != 101 || value.Owner != "desktop" || value.DesktopSessionID != "session" || value.DeploymentID != "prod-a" || value.InstallationID != fixture.config.InstallationID || value.PackageGeneration != 1 {
 		t.Fatalf("state = %+v", value)
 	}
 	if containsArg(args, "-backend") || containsArg(args, "--backend") {
@@ -944,22 +944,32 @@ func TestStopRejectsAnotherDesktopManagerSession(t *testing.T) {
 
 func TestReclaimRequiresLockAbsentManagerSessionAndRouterIdentity(t *testing.T) {
 	for _, tt := range []struct {
-		name     string
-		session  string
-		statuses []process.Status
-		lockErr  error
-		wantOK   bool
+		name           string
+		session        string
+		installationID string
+		clearInstall   bool
+		statuses       []process.Status
+		lockErr        error
+		wantOK         bool
 	}{
 		{name: "success", session: "session", statuses: []process.Status{process.StatusAbsent, process.StatusGenuine}, wantOK: true},
+		{name: "cross session", session: "other", statuses: []process.Status{process.StatusAbsent, process.StatusGenuine}, wantOK: true},
 		{name: "competing manager lock", session: "session", lockErr: state.ErrLocked},
 		{name: "previous manager alive", session: "session", statuses: []process.Status{process.StatusGenuine}},
-		{name: "wrong session", session: "other"},
+		{name: "missing installation", session: "other", clearInstall: true},
+		{name: "installation mismatch", session: "other", installationID: "ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee"},
 		{name: "stale router", session: "session", statuses: []process.Status{process.StatusAbsent, process.StatusStale}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			fixture := newFixture(t)
 			fixture.config.SessionID = tt.session
 			fixture.managerState = fixture.desktopState(101)
+			if tt.clearInstall {
+				fixture.managerState.InstallationID = ""
+			}
+			if tt.installationID != "" {
+				fixture.managerState.InstallationID = tt.installationID
+			}
 			fixture.deps.AcquireLock = func(string) (io.Closer, error) {
 				if tt.lockErr != nil {
 					return nil, tt.lockErr
@@ -981,7 +991,7 @@ func TestReclaimRequiresLockAbsentManagerSessionAndRouterIdentity(t *testing.T) 
 				if protocolErr != nil {
 					t.Fatal(protocolErr)
 				}
-				if value.ManagerPID != fixture.config.ManagerIdentity.PID || value.ManagerProcessStartedAt != fixture.config.ManagerIdentity.StartedAt || value.ManagerProcessExecutable != fixture.config.ManagerIdentity.Executable || fixture.writes != 1 {
+				if value.ManagerPID != fixture.config.ManagerIdentity.PID || value.ManagerProcessStartedAt != fixture.config.ManagerIdentity.StartedAt || value.ManagerProcessExecutable != fixture.config.ManagerIdentity.Executable || value.DesktopSessionID != fixture.config.SessionID || fixture.writes != 1 {
 					t.Fatalf("value=%+v writes=%d", value, fixture.writes)
 				}
 				if fixture.lockClosed {
@@ -995,6 +1005,298 @@ func TestReclaimRequiresLockAbsentManagerSessionAndRouterIdentity(t *testing.T) 
 				}
 			}
 		})
+	}
+}
+
+func TestStartReclaimsCrossSessionCompatibleRouter(t *testing.T) {
+	fixture := newFixture(t)
+	fixture.config.SessionID = "current-session"
+	fixture.managerState = fixture.desktopState(101)
+	fixture.managerState.DesktopSessionID = "previous-session"
+	fixture.discovered = discovery.Result{Classification: discovery.LegacyManaged, Owner: "desktop", State: fixture.managerState}
+	index := 0
+	fixture.validate = func(identity process.Identity, _ string) (process.Status, error) {
+		if identity.PID == fixture.managerState.ManagerPID {
+			return process.StatusAbsent, nil
+		}
+		index++
+		return process.StatusGenuine, nil
+	}
+	value, err := fixture.manager().Start(context.Background(), protocol.RouterOwnerDesktop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.DesktopSessionID != "current-session" || value.ManagerPID != fixture.config.ManagerIdentity.PID || fixture.desktopLaunches != 0 || fixture.signals != 0 {
+		t.Fatalf("value=%+v launches=%d signals=%d", value, fixture.desktopLaunches, fixture.signals)
+	}
+}
+
+func TestReleaseLegacyFixturesRequireExplicitMigrationAndMigrateWithFullIdentity(t *testing.T) {
+	for _, fixtureName := range []string{"desktop-state-v0.1.8.json", "desktop-state-v0.2.0.json"} {
+		t.Run(fixtureName, func(t *testing.T) {
+			legacy := loadReleaseLegacyState(t, fixtureName)
+
+			startFixture := newFixture(t)
+			startFixture.config.DeploymentID = "current-production"
+			startFixture.config.ManagementProtocolVersion = "4"
+			startFixture.managerState = legacy
+			startFixture.validate = func(identity process.Identity, _ string) (process.Status, error) {
+				if identity.PID == legacy.ManagerPID {
+					return process.StatusAbsent, nil
+				}
+				return process.StatusGenuine, nil
+			}
+			_, startErr := startFixture.manager().Start(context.Background(), protocol.RouterOwnerDesktop)
+			if startErr == nil || startErr.Code != protocol.CodeRouterLegacyManaged {
+				t.Fatalf("start error = %v, want ROUTER_LEGACY_MANAGED", startErr)
+			}
+			if startFixture.signals != 0 || startFixture.desktopLaunches != 0 {
+				t.Fatalf("ordinary start signals=%d launches=%d", startFixture.signals, startFixture.desktopLaunches)
+			}
+
+			migrateFixture := newFixture(t)
+			migrateFixture.config.DeploymentID = "current-production"
+			migrateFixture.config.ManagementProtocolVersion = "4"
+			migrateFixture.managerState = legacy
+			legacyGone := false
+			var signaled process.Identity
+			var signaledBinary string
+			migrateFixture.deps.Signal = func(identity process.Identity, binary string, signal os.Signal) error {
+				migrateFixture.signals++
+				if signal == os.Kill {
+					migrateFixture.killSignals++
+				}
+				signaled = identity
+				signaledBinary = binary
+				legacyGone = true
+				return nil
+			}
+			migrateFixture.validate = func(identity process.Identity, _ string) (process.Status, error) {
+				switch identity.PID {
+				case legacy.ManagerPID:
+					return process.StatusAbsent, nil
+				case legacy.PID:
+					if legacyGone {
+						return process.StatusAbsent, nil
+					}
+					return process.StatusGenuine, nil
+				default:
+					return process.StatusGenuine, nil
+				}
+			}
+			value, migrateErr := migrateFixture.manager().MigrateLegacy(context.Background())
+			if migrateErr != nil {
+				t.Fatal(migrateErr)
+			}
+			wantIdentity := process.Identity{PID: legacy.PID, StartedAt: legacy.ProcessStartedAt, Executable: legacy.ProcessExecutable}
+			if signaled != wantIdentity || signaledBinary != legacy.BinaryPath {
+				t.Fatalf("signal target = %+v binary=%q, want %+v binary=%q", signaled, signaledBinary, wantIdentity, legacy.BinaryPath)
+			}
+			if migrateFixture.desktopLaunches != 1 || value.ManagementProtocolVersion != "4" || value.InstallationID != migrateFixture.config.InstallationID || value.PackageGeneration != migrateFixture.config.PackageGeneration {
+				t.Fatalf("launches=%d value=%+v", migrateFixture.desktopLaunches, value)
+			}
+		})
+	}
+}
+
+func TestReleaseLegacyFixtureMigrationRejectsUnprovenIdentity(t *testing.T) {
+	tests := []struct {
+		name          string
+		mutate        func(*state.RouterState)
+		managerStatus process.Status
+		managerErr    error
+	}{
+		{name: "manager genuine", managerStatus: process.StatusGenuine},
+		{name: "manager identity stale", managerStatus: process.StatusStale},
+		{name: "manager validation unavailable", managerStatus: process.StatusStale, managerErr: errors.New("identity unavailable")},
+		{name: "manager identity incomplete", mutate: func(value *state.RouterState) { value.ManagerProcessStartedAt = "" }, managerStatus: process.StatusAbsent},
+		{name: "router identity incomplete", mutate: func(value *state.RouterState) { value.ProcessStartedAt = "" }, managerStatus: process.StatusAbsent},
+		{name: "router pid only", mutate: func(value *state.RouterState) {
+			value.BinaryPath = ""
+			value.ProcessStartedAt = ""
+			value.ProcessExecutable = ""
+		}, managerStatus: process.StatusAbsent},
+	}
+	for _, fixtureName := range []string{"desktop-state-v0.1.8.json", "desktop-state-v0.2.0.json"} {
+		for _, test := range tests {
+			t.Run(fixtureName+"/"+test.name, func(t *testing.T) {
+				fixture := newFixture(t)
+				fixture.config.DeploymentID = "current-production"
+				fixture.config.ManagementProtocolVersion = "4"
+				legacy := loadReleaseLegacyState(t, fixtureName)
+				if test.mutate != nil {
+					test.mutate(&legacy)
+				}
+				fixture.managerState = legacy
+				fixture.validate = func(identity process.Identity, _ string) (process.Status, error) {
+					if identity.PID == legacy.ManagerPID {
+						return test.managerStatus, test.managerErr
+					}
+					return process.StatusGenuine, nil
+				}
+				_, err := fixture.manager().MigrateLegacy(context.Background())
+				if err == nil || err.Code != protocol.CodeRouterAlreadyRunning {
+					t.Fatalf("error=%v, want ROUTER_ALREADY_RUNNING", err)
+				}
+				if fixture.signals != 0 || fixture.desktopLaunches != 0 {
+					t.Fatalf("signals=%d launches=%d", fixture.signals, fixture.desktopLaunches)
+				}
+			})
+		}
+	}
+}
+
+func TestStartRequiresExplicitLegacyMigration(t *testing.T) {
+	fixture := newFixture(t)
+	legacy := fixture.desktopState(101)
+	legacy.DesktopSessionID = "previous-session"
+	legacy.ManagementProtocolVersion = "3"
+	legacy.InstallationID = ""
+	legacy.PackageGeneration = 0
+	fixture.managerState = legacy
+	fixture.validate = func(identity process.Identity, _ string) (process.Status, error) {
+		if identity.PID == legacy.ManagerPID {
+			return process.StatusAbsent, nil
+		}
+		return process.StatusGenuine, nil
+	}
+	_, err := fixture.manager().Start(context.Background(), protocol.RouterOwnerDesktop)
+	if err == nil || err.Code != protocol.CodeRouterLegacyManaged {
+		t.Fatalf("error=%v, want ROUTER_LEGACY_MANAGED", err)
+	}
+	if fixture.signals != 0 || fixture.desktopLaunches != 0 {
+		t.Fatalf("signals=%d launches=%d", fixture.signals, fixture.desktopLaunches)
+	}
+}
+
+func TestExplicitMigrationMigratesIncompatibleLegacyRouterWithFullIdentity(t *testing.T) {
+	fixture := newFixture(t)
+	legacy := fixture.desktopState(101)
+	legacy.DesktopSessionID = "previous-session"
+	legacy.ManagementProtocolVersion = "3"
+	legacy.InstallationID = ""
+	legacy.PackageGeneration = 0
+	fixture.managerState = legacy
+	fixture.discovered = discovery.Result{Classification: discovery.Absent}
+	legacyGone := false
+	launched := false
+	fixture.deps.Signal = func(identity process.Identity, _ string, signal os.Signal) error {
+		fixture.signals++
+		if signal == os.Kill {
+			fixture.killSignals++
+		}
+		if identity.PID == 101 {
+			legacyGone = true
+		}
+		return nil
+	}
+	fixture.deps.LaunchDesktop = func(_ string, _ []string, _ []string, output io.Writer) (foregroundProcess, error) {
+		launched = true
+		fixture.desktopLaunches++
+		_, _ = output.Write([]byte("owned child output"))
+		wait := make(chan error)
+		return &fakeChild{pid: 202, wait: wait}, nil
+	}
+	fixture.deps.Inspect = func(pid int) (process.Identity, error) {
+		return process.Identity{PID: pid, StartedAt: "router-start", Executable: "/router"}, nil
+	}
+	fixture.validate = func(identity process.Identity, _ string) (process.Status, error) {
+		if identity.PID == 6 {
+			return process.StatusAbsent, nil
+		}
+		if identity.PID == 101 && legacyGone && !launched {
+			return process.StatusAbsent, nil
+		}
+		return process.StatusGenuine, nil
+	}
+	value, err := fixture.manager().MigrateLegacy(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fixture.signals == 0 || fixture.desktopLaunches != 1 || value.ManagementProtocolVersion != "1" || value.InstallationID != fixture.config.InstallationID {
+		t.Fatalf("signals=%d launches=%d value=%+v", fixture.signals, fixture.desktopLaunches, value)
+	}
+}
+
+func TestLegacyMigrateRejectsPIDOnlyIdentity(t *testing.T) {
+	fixture := newFixture(t)
+	incomplete := fixture.desktopState(101)
+	incomplete.ProcessStartedAt = ""
+	incomplete.ProcessExecutable = ""
+	incomplete.ManagementProtocolVersion = "3"
+	fixture.managerState = incomplete
+	fixture.discovered = discovery.Result{Classification: discovery.LegacyManaged, Owner: "desktop", State: incomplete}
+	_, err := fixture.manager().MigrateLegacy(context.Background())
+	if err == nil || err.Code != protocol.CodeRouterAlreadyRunning || fixture.signals != 0 {
+		t.Fatalf("error=%v signals=%d", err, fixture.signals)
+	}
+}
+
+func TestLegacyMigrationRequiresPreviousManagerProvenAbsent(t *testing.T) {
+	tests := []struct {
+		name          string
+		managerStatus process.Status
+		managerErr    error
+		incomplete    bool
+	}{
+		{name: "manager genuine", managerStatus: process.StatusGenuine},
+		{name: "manager identity stale", managerStatus: process.StatusStale},
+		{name: "manager validation unavailable", managerStatus: process.StatusStale, managerErr: errors.New("identity unavailable")},
+		{name: "manager identity incomplete", incomplete: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newFixture(t)
+			legacy := fixture.desktopState(101)
+			legacy.DesktopSessionID = "previous-session"
+			legacy.ManagementProtocolVersion = "3"
+			legacy.InstallationID = ""
+			legacy.PackageGeneration = 0
+			if test.incomplete {
+				legacy.ManagerProcessStartedAt = ""
+			}
+			fixture.managerState = legacy
+			fixture.validate = func(identity process.Identity, _ string) (process.Status, error) {
+				if identity.PID == legacy.ManagerPID {
+					return test.managerStatus, test.managerErr
+				}
+				return process.StatusGenuine, nil
+			}
+			_, err := fixture.manager().MigrateLegacy(context.Background())
+			if err == nil || fixture.signals != 0 || fixture.desktopLaunches != 0 {
+				t.Fatalf("error=%v signals=%d launches=%d", err, fixture.signals, fixture.desktopLaunches)
+			}
+		})
+	}
+}
+
+func TestStopLegacyRouterWhenPreviousManagerAbsent(t *testing.T) {
+	fixture := newFixture(t)
+	fixture.managerState = fixture.desktopState(101)
+	fixture.managerState.DesktopSessionID = "previous-session"
+	signaled := false
+	fixture.deps.Signal = func(_ process.Identity, _ string, signal os.Signal) error {
+		fixture.signals++
+		if signal == os.Kill {
+			fixture.killSignals++
+		}
+		signaled = true
+		return nil
+	}
+	fixture.validate = func(identity process.Identity, _ string) (process.Status, error) {
+		if identity.PID == fixture.managerState.ManagerPID {
+			return process.StatusAbsent, nil
+		}
+		if signaled {
+			return process.StatusAbsent, nil
+		}
+		return process.StatusGenuine, nil
+	}
+	if err := fixture.manager().Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.signals != 1 || !fixture.removed {
+		t.Fatalf("signals=%d removed=%t", fixture.signals, fixture.removed)
 	}
 }
 
@@ -1133,7 +1435,8 @@ func newFixture(t *testing.T) *fixture {
 	f.config = Config{
 		RouterPath: "/router", ListenAddr: "127.0.0.1:19099", DesktopStatePath: filepath.Join(dir, "desktop.json"),
 		CLIStatePath: filepath.Join(dir, "cli.json"), DesktopLockPath: filepath.Join(dir, "owner.lock"), DesktopLogPath: filepath.Join(dir, "desktop.log"),
-		CLILogPath: filepath.Join(dir, "cli.log"), SessionID: "session", ManagerIdentity: process.Identity{PID: 7, StartedAt: "manager-new", Executable: "/manager"},
+		CLILogPath: filepath.Join(dir, "cli.log"), SessionID: "session", InstallationID: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+		PackageGeneration: 1, ManagerIdentity: process.Identity{PID: 7, StartedAt: "manager-new", Executable: "/manager"},
 		ParentIdentity: process.Identity{PID: 8, StartedAt: "parent-start", Executable: "/desktop"}, ManagerVersion: "v1", DeploymentID: "prod-a",
 		ManagementProtocolVersion: "1", PollInterval: time.Millisecond,
 	}
@@ -1204,10 +1507,23 @@ func newFixture(t *testing.T) *fixture {
 	return f
 }
 
+func loadReleaseLegacyState(t *testing.T, fixtureName string) state.RouterState {
+	t.Helper()
+	value, err := state.Read(filepath.Join("..", "testdata", fixtureName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.InstallationID != "" || value.PackageGeneration != 0 {
+		t.Fatalf("release fixture unexpectedly contains current installation lineage: %+v", value)
+	}
+	return value
+}
+
 func (f *fixture) manager() *Manager { return New(f.config, f.deps) }
 func (f *fixture) desktopState(pid int) state.RouterState {
 	return state.RouterState{PID: pid, Owner: "desktop", ListenAddr: "http://127.0.0.1:19099", BinaryPath: "/router", LogPath: f.config.DesktopLogPath,
-		ProcessStartedAt: "router-start", ProcessExecutable: "/router", DesktopSessionID: "session", ManagerPID: 6,
+		ProcessStartedAt: "router-start", ProcessExecutable: "/router", DesktopSessionID: "session", InstallationID: f.config.InstallationID,
+		PackageGeneration: f.config.PackageGeneration, ManagerPID: 6,
 		ManagerProcessStartedAt: "manager-old", ManagerProcessExecutable: "/manager", ManagerVersion: "v1", RouterVersion: "v1", DeploymentID: "prod-a", ManagementProtocolVersion: "1"}
 }
 

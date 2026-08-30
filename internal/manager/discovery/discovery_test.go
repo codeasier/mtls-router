@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -372,6 +373,144 @@ func TestGenuineStateWithUnavailableEndpointIsDegraded(t *testing.T) {
 	}
 }
 
+func TestReleaseLegacyFixturesClassifyCorrelatedRouter(t *testing.T) {
+	for _, fixtureName := range []string{"desktop-state-v0.1.8.json", "desktop-state-v0.2.0.json"} {
+		t.Run(fixtureName, func(t *testing.T) {
+			value := loadReleaseLegacyState(t, fixtureName)
+			server := routerServer(t, value.PID, value.DeploymentID, value.ManagementProtocolVersion, "ok")
+			d := New(Config{
+				BaseURL: server.URL, DesktopStatePath: "desktop", DeploymentID: "current-production", ManagementProtocolVersion: "4",
+				SessionID: "current-session", InstallationID: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", PackageGeneration: 1,
+				ReadState: func(string) (state.RouterState, error) { return value, nil },
+				ValidateProcess: func(identity process.Identity, _ string) (process.Status, error) {
+					if identity.PID == value.ManagerPID {
+						return process.StatusAbsent, nil
+					}
+					return process.StatusGenuine, nil
+				},
+			})
+			got := d.Discover(context.Background())
+			if got.Classification != LegacyManaged || got.Owner != "desktop" || got.State != value {
+				t.Fatalf("result = %+v, want correlated release legacy state", got)
+			}
+		})
+	}
+}
+
+func TestReleaseLegacyFixturesFailClosedWhenLineageOrIdentityIsIncomplete(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*state.RouterState)
+	}{
+		{name: "router start identity missing", mutate: func(value *state.RouterState) { value.ProcessStartedAt = "" }},
+		{name: "router executable identity missing", mutate: func(value *state.RouterState) { value.ProcessExecutable = "" }},
+		{name: "manager start identity missing", mutate: func(value *state.RouterState) { value.ManagerProcessStartedAt = "" }},
+		{name: "manager executable identity missing", mutate: func(value *state.RouterState) { value.ManagerProcessExecutable = "" }},
+		{name: "unknown ancestor protocol", mutate: func(value *state.RouterState) { value.ManagementProtocolVersion = "2" }},
+		{name: "different installation", mutate: func(value *state.RouterState) { value.InstallationID = "ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee" }},
+	}
+	for _, fixtureName := range []string{"desktop-state-v0.1.8.json", "desktop-state-v0.2.0.json"} {
+		for _, test := range tests {
+			t.Run(fixtureName+"/"+test.name, func(t *testing.T) {
+				value := loadReleaseLegacyState(t, fixtureName)
+				test.mutate(&value)
+				server := routerServer(t, value.PID, value.DeploymentID, value.ManagementProtocolVersion, "ok")
+				d := New(Config{
+					BaseURL: server.URL, DesktopStatePath: "desktop", DeploymentID: "current-production", ManagementProtocolVersion: "4",
+					SessionID: "current-session", InstallationID: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", PackageGeneration: 1,
+					ReadState:       func(string) (state.RouterState, error) { return value, nil },
+					ValidateProcess: func(process.Identity, string) (process.Status, error) { return process.StatusGenuine, nil },
+				})
+				if got := d.Discover(context.Background()); got.Classification != UnknownOccupant {
+					t.Fatalf("classification = %q, want unknown_occupant; result=%+v", got.Classification, got)
+				}
+			})
+		}
+	}
+}
+
+func TestCorrelatedLegacyDesktopIsLegacyManaged(t *testing.T) {
+	server := routerServer(t, 73, "old-prod", "3", "ok")
+	value := completeState("desktop", 73, "old-prod")
+	value.ListenAddr = server.URL
+	value.ManagementProtocolVersion = "3"
+	value.DesktopSessionID = "previous-session"
+	d := New(Config{
+		BaseURL: server.URL, DesktopStatePath: "desktop", DeploymentID: "prod-a", ManagementProtocolVersion: "4",
+		SessionID: "current-session", InstallationID: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+		ReadState: func(string) (state.RouterState, error) { return value, nil },
+		ValidateProcess: func(identity process.Identity, _ string) (process.Status, error) {
+			if identity.PID == value.ManagerPID {
+				return process.StatusAbsent, nil
+			}
+			return process.StatusGenuine, nil
+		},
+	})
+	got := d.Discover(context.Background())
+	if got.Classification != LegacyManaged || got.Owner != "desktop" || got.State.PID != 73 {
+		t.Fatalf("result = %+v, want legacy_managed", got)
+	}
+}
+
+func TestCrossSessionCompatibleDesktopIsLegacyManaged(t *testing.T) {
+	server := routerServer(t, 73, "prod-a", "1", "ok")
+	value := completeState("desktop", 73, "prod-a")
+	value.ListenAddr = server.URL
+	value.InstallationID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+	value.DesktopSessionID = "previous-session"
+	d := New(Config{
+		BaseURL: server.URL, DesktopStatePath: "desktop", DeploymentID: "prod-a", ManagementProtocolVersion: "1",
+		SessionID: "current-session", InstallationID: value.InstallationID,
+		ReadState: func(string) (state.RouterState, error) { return value, nil },
+		ValidateProcess: func(identity process.Identity, _ string) (process.Status, error) {
+			if identity.PID == value.ManagerPID {
+				return process.StatusAbsent, nil
+			}
+			return process.StatusGenuine, nil
+		},
+	})
+	if got := d.Discover(context.Background()); got.Classification != LegacyManaged {
+		t.Fatalf("classification = %q, want legacy_managed", got.Classification)
+	}
+}
+
+func TestUnknownPreInstallationProtocolIsNotLegacyManaged(t *testing.T) {
+	server := routerServer(t, 73, "old-prod", "2", "ok")
+	value := completeState("desktop", 73, "old-prod")
+	value.ListenAddr = server.URL
+	value.ManagementProtocolVersion = "2"
+	value.InstallationID = ""
+	value.PackageGeneration = 0
+	d := New(Config{
+		BaseURL: server.URL, DesktopStatePath: "desktop", DeploymentID: "prod-a", ManagementProtocolVersion: "4",
+		SessionID: "current-session", InstallationID: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+		ReadState: func(string) (state.RouterState, error) { return value, nil },
+		ValidateProcess: func(process.Identity, string) (process.Status, error) {
+			return process.StatusGenuine, nil
+		},
+	})
+	if got := d.Discover(context.Background()); got.Classification != UnknownOccupant {
+		t.Fatalf("classification = %q, want unknown_occupant", got.Classification)
+	}
+}
+
+func TestDifferentInstallationIsNotLegacyManaged(t *testing.T) {
+	server := routerServer(t, 73, "old-prod", "3", "ok")
+	value := completeState("desktop", 73, "old-prod")
+	value.ListenAddr = server.URL
+	value.ManagementProtocolVersion = "3"
+	value.InstallationID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+	d := New(Config{
+		BaseURL: server.URL, DesktopStatePath: "desktop", DeploymentID: "prod-a", ManagementProtocolVersion: "4",
+		SessionID: "current-session", InstallationID: "ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+		ReadState:       func(string) (state.RouterState, error) { return value, nil },
+		ValidateProcess: func(process.Identity, string) (process.Status, error) { return process.StatusGenuine, nil },
+	})
+	if got := d.Discover(context.Background()); got.Classification != UnknownOccupant {
+		t.Fatalf("classification = %q, want unknown_occupant", got.Classification)
+	}
+}
+
 func TestHealthyDesktopRouterWithAbsentManagerIsStale(t *testing.T) {
 	server := routerServer(t, 73, "prod-a", "1", "ok")
 	value := completeState("desktop", 73, "prod-a")
@@ -389,6 +528,18 @@ func TestHealthyDesktopRouterWithAbsentManagerIsStale(t *testing.T) {
 	if got := d.Discover(context.Background()); got.Classification != Stale {
 		t.Fatalf("classification = %q, want stale", got.Classification)
 	}
+}
+
+func loadReleaseLegacyState(t *testing.T, fixtureName string) state.RouterState {
+	t.Helper()
+	value, err := state.Read(filepath.Join("..", "testdata", fixtureName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.InstallationID != "" || value.PackageGeneration != 0 {
+		t.Fatalf("release fixture unexpectedly contains current installation lineage: %+v", value)
+	}
+	return value
 }
 
 func routerServer(t *testing.T, pid int, deployment, protocol, health string) *httptest.Server {

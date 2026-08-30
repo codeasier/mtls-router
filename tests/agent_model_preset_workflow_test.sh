@@ -84,7 +84,7 @@ preflight_error="$test_work/preflight-error"
 if AGENT_MODEL_PRESET_BASE64="$encoded_canary" "$PREFLIGHT" >/dev/null 2>"$preflight_error"; then
   fail 'invalid configured preset passed preflight'
 fi
-grep -Fq 'invalid embedded Agent model preset' "$preflight_error" || fail 'invalid preset failure is not sanitized'
+grep -Fq '"code":"MANAGER_INIT_FAILED"' "$preflight_error" || fail 'invalid preset failure is not sanitized'
 if grep -Fq "$decoded_canary" "$preflight_error" || grep -Fq "$encoded_canary" "$preflight_error"; then
   fail 'preset preflight leaked configured input'
 fi

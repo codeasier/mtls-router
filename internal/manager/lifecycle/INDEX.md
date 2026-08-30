@@ -12,6 +12,7 @@
 | `launch_windows.go` | Windows 启动：creation flags + kill-on-close job object，保证 manager 退出时子进程不残留 |
 | `output.go` | `boundedOutput` —— 有界地保留子进程最近输出 |
 | `signal_unix.go`、`signal_windows.go` | `gracefulSignal()` 平台实现 |
+| `../testdata/desktop-state-v0.1.8.json`、`desktop-state-v0.2.0.json` | 从对应 release tag 的 `RouterState` schema 与 protocol 1/3 构建元数据派生的脱敏 golden 状态；用于验证显式迁移、完整身份校验和 fail-closed 分支 |
 
 ## 两种启动模式
 
@@ -22,7 +23,7 @@
 
 - `Config` 覆盖路径（router 二进制、桌面/CLI 状态文件、锁文件、日志）、身份（manager 与父进程的 `process.Identity`、版本、deployment ID、协议版本）与各类超时。
 - `Dependencies` 把发现、进程校验、发信号、启动、状态读写、加锁、时钟全部做成可注入函数，因此生命周期逻辑可在无真实进程的情况下测试。
-- `MonitorParent` 监控父进程消失；`Reclaim` 用于重新接管此前记录在状态文件中的 router。
+- `MonitorParent` 监控父进程消失；`Reclaim` 在安装身份匹配、前一 manager 已证明不存在、router 身份 genuine 且世代兼容时跨会话接管；`MigrateLegacy` 是不兼容世代唯一允许 stop-and-restart 的显式入口，普通 `Start` 与 transport recovery 绝不迁移，且绝不 PID-only。
 - 每次启动预留按本地日期和启动时间命名的独立日志文件；进程创建成功后才更新对应 owner（CLI/desktop）的 latest 指针，`LogPath` 与持久状态指向当前或最近一次会话，而不是跨启动聚合文件。
 
 ## 关键不变量
@@ -31,7 +32,17 @@
 - `RecentOutput` 是有界的**原始**输出，只保留在 lifecycle 内部；对外经 `../app` 暴露的诊断是脱敏且会话作用域的。
 - 旧 desktop 状态仅在其记录 PID 已由 OS 明确证明不存在时删除后重试；PID 缺失、存活、不可访问或无法证明时继续 fail closed，且绝不因此发送信号。
 - 停止 router 前必须经 `../process` 重验完整身份，绝不凭状态文件里的 PID 直接发信号。
-- 桌面所有权通过 `../state` 的锁文件表达，同一时刻只有一个桌面会话可持有。
+- 桌面所有权通过 `../state` 的锁文件与 `installation.json` 谱系表达：会话 ID 只是 epoch。跨会话 reclaim 要求 installation ID 匹配；无 installation ID 的旧 schema 只能迁移，不能 reclaim。
+- 威胁模型：不根据单独 `/version` 接管；不把协议不匹配当成外部 router（否则 Windows 文件锁无法解除）；不 PID-only；不自动提权；不调用服务管理器停止命令。
+
+## 迁移状态机
+
+```
+currentOwned → 复用
+reclaimable（installation 匹配 + manager absent + genuine + 世代兼容）→ 更新 session/manager
+migratable（installation 匹配，或 protocol 1/3 受支持祖先 + genuine + 世代不兼容 + 前一 manager 明确 absent）→ 仅 MigrateLegacy 可完整身份 stop → 启动新世代
+其他存活 desktop → ROUTER_ALREADY_RUNNING / ROUTER_NOT_OWNED
+```
 
 ## 依赖
 

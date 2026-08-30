@@ -28,6 +28,7 @@ const (
 	ExternalCompatible Classification = "external_compatible"
 	Degraded           Classification = "degraded"
 	Stale              Classification = "stale"
+	LegacyManaged      Classification = "legacy_managed"
 	Absent             Classification = "absent"
 	UnknownOccupant    Classification = "unknown_occupant"
 )
@@ -59,6 +60,9 @@ type Config struct {
 	CLIStatePath              string
 	DeploymentID              string
 	ManagementProtocolVersion string
+	SessionID                 string
+	InstallationID            string
+	PackageGeneration         int
 	PortTimeout               time.Duration
 	RequestTimeout            time.Duration
 	HealthRequestTimeout      time.Duration
@@ -165,6 +169,12 @@ func (d *Discoverer) discover(ctx context.Context, includeHealth, ignoreStaleCLI
 	cliStatus := d.validate(cli, cliErr)
 	matched, matchedOwner := d.matchState(result.Version, desktop, desktopStatus, desktopManagerStatus, cli, cliStatus)
 	if matched == nil {
+		if legacy, ok := d.legacyManaged(result.Version, desktop, desktopStatus, desktopManagerStatus); ok {
+			result.Classification = LegacyManaged
+			result.Owner = "desktop"
+			result.State = legacy
+			return result
+		}
 		if stateCorrelates(result.Version, desktop, desktopStatus, d.config) || (desktopStatus == process.StatusGenuine && desktopManagerStatus != process.StatusGenuine && endpointCorrelates(result.Version, desktop, d.config)) || stateCorrelates(result.Version, cli, cliStatus, d.config) {
 			result.Classification = Stale
 		}
@@ -247,6 +257,55 @@ func (d *Discoverer) matchState(remote Version, desktop state.RouterState, deskt
 
 func endpointCorrelates(remote Version, value state.RouterState, config Config) bool {
 	return value.PID > 0 && remote.PID == value.PID && remote.DeploymentID == config.DeploymentID && remote.ManagementProtocolVersion == config.ManagementProtocolVersion
+}
+
+func (d *Discoverer) legacyManaged(remote Version, desktop state.RouterState, desktopStatus, desktopManagerStatus process.Status) (state.RouterState, bool) {
+	if desktop.Owner != "desktop" || desktopStatus != process.StatusGenuine || remote.PID <= 0 || remote.PID != desktop.PID {
+		return state.RouterState{}, false
+	}
+	if !d.installationAllows(desktop) {
+		return state.RouterState{}, false
+	}
+	if !completeIdentity(desktop) {
+		return state.RouterState{}, false
+	}
+	sameSession := d.config.SessionID == "" || desktop.DesktopSessionID == d.config.SessionID
+	if sameSession && generationCompatible(desktop, d.config) && completeDesktop(desktop) && desktopManagerStatus != process.StatusGenuine {
+		return state.RouterState{}, false
+	}
+	return desktop, true
+}
+
+func (d *Discoverer) installationAllows(value state.RouterState) bool {
+	if value.InstallationID == "" {
+		return supportedLegacyLineage(value)
+	}
+	return d.config.InstallationID != "" && value.InstallationID == d.config.InstallationID
+}
+
+func supportedLegacyLineage(value state.RouterState) bool {
+	if value.PackageGeneration != 0 || value.InstallationID != "" {
+		return false
+	}
+	if value.ManagementProtocolVersion != "1" && value.ManagementProtocolVersion != "3" {
+		return false
+	}
+	managerIdentityComplete := value.ManagerPID > 0 && value.ManagerProcessStartedAt != "" && value.ManagerProcessExecutable != ""
+	return completeIdentity(value) && managerIdentityComplete
+}
+
+func generationCompatible(value state.RouterState, config Config) bool {
+	if value.DeploymentID != config.DeploymentID || value.ManagementProtocolVersion != config.ManagementProtocolVersion {
+		return false
+	}
+	if value.PackageGeneration > 0 && config.PackageGeneration > 0 && value.PackageGeneration != config.PackageGeneration {
+		return false
+	}
+	return true
+}
+
+func completeIdentity(value state.RouterState) bool {
+	return value.PID > 0 && value.ProcessStartedAt != "" && value.ProcessExecutable != "" && value.BinaryPath != ""
 }
 
 func completeCLI(value state.RouterState) bool {
