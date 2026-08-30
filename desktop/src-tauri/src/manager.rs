@@ -515,13 +515,12 @@ async fn run_actor(
                     failure = Some(error.clone());
                     Err(error)
                 }
-                Err(error) => {
-                    let failed = CommandError::manager_failed().with_stage(
-                        error
-                            .stage
-                            .clone()
-                            .unwrap_or_else(|| STAGE_UNEXPECTED_EXIT.to_owned()),
-                    );
+                Err(error) if error.stage.is_some() => {
+                    failure = Some(error.clone());
+                    Err(error)
+                }
+                Err(_) => {
+                    let failed = CommandError::manager_failed().with_stage(STAGE_UNEXPECTED_EXIT);
                     diagnostics.record_error(STAGE_UNEXPECTED_EXIT, &failed);
                     failure = Some(failed.clone());
                     Err(failed)
@@ -734,7 +733,11 @@ async fn read_response(
             }
             TransportEvent::Error | TransportEvent::Terminated => {
                 if let Some(failure) = bootstrap_failure {
-                    return Err(CommandError::manager_failed().with_stage(failure.stage));
+                    return Err(CommandError::recoverable(
+                        failure.code,
+                        "manager bootstrap failed",
+                    )
+                    .with_stage(failure.stage));
                 }
                 let error = CommandError::manager_failed().with_stage(STAGE_UNEXPECTED_EXIT);
                 diagnostics.record_error(STAGE_UNEXPECTED_EXIT, &error);
@@ -825,6 +828,7 @@ mod tests {
         ValidationError,
         RecoverableRouter,
         ReclaimRejected,
+        BootstrapFailure,
     }
 
     impl TransportChild for FakeChild {
@@ -840,6 +844,17 @@ mod tests {
                 self.reclaimed = true;
             }
             tauri::async_runtime::spawn(async move {
+                if matches!(behavior, Behavior::BootstrapFailure) && method == MANAGER_INFO {
+                    let _ = sender
+                        .send(TransportEvent::Stderr(
+                            br#"{"schema_version":1,"kind":"manager_bootstrap_failure","stage":"handshake","code":"MANAGER_BOOTSTRAP_FAILED"}
+"#
+                            .to_vec(),
+                        ))
+                        .await;
+                    let _ = sender.send(TransportEvent::Terminated).await;
+                    return;
+                }
                 let event = match behavior {
                     Behavior::InvalidHandshake if method == MANAGER_INFO => {
                         let result = json!({
@@ -1415,6 +1430,43 @@ mod tests {
                 diagnostics.last().unwrap().code,
                 "MANAGER_BOOTSTRAP_FAILED"
             );
+        });
+    }
+
+    #[test]
+    fn failed_recovery_preserves_structured_bootstrap_diagnostic() {
+        runtime().block_on(async {
+            let (client, _) = client(vec![Behavior::Terminated, Behavior::BootstrapFailure]);
+            let error = client
+                .call::<Value>(ROUTER_STATUS, json!({}))
+                .await
+                .unwrap_err();
+            assert_eq!(error.code, "MANAGER_BOOTSTRAP_FAILED");
+            assert_eq!(error.stage.as_deref(), Some(STAGE_HANDSHAKE));
+            let scheduler = crate::scheduler::PollScheduler::new(client.clone());
+            scheduler.set_status_error(&error).await;
+            let snapshot = scheduler.snapshot().await;
+            assert_eq!(
+                snapshot.status_error,
+                Some(
+                    crate::types::PollError::new("MANAGER_BOOTSTRAP_FAILED")
+                        .with_stage(STAGE_HANDSHAKE)
+                )
+            );
+            assert_eq!(
+                client.last_diagnostic(),
+                Some(ManagerDiagnostic {
+                    stage: STAGE_HANDSHAKE.to_owned(),
+                    code: "MANAGER_BOOTSTRAP_FAILED".to_owned(),
+                })
+            );
+
+            let repeated = client
+                .call::<Value>(ROUTER_STATUS, json!({}))
+                .await
+                .unwrap_err();
+            assert_eq!(repeated.code, "MANAGER_BOOTSTRAP_FAILED");
+            assert_eq!(repeated.stage.as_deref(), Some(STAGE_HANDSHAKE));
         });
     }
 

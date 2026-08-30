@@ -241,7 +241,7 @@ func (d *Discoverer) matchState(remote Version, desktop state.RouterState, deskt
 	if !metadataMatches {
 		return nil, ""
 	}
-	if desktopStatus == process.StatusGenuine && desktopManagerStatus == process.StatusGenuine && completeDesktop(desktop) && remote.PID == desktop.PID && stateMetadataMatches(desktop, d.config) && stateAddressMatches(desktop, d.config.BaseURL) {
+	if desktopStatus == process.StatusGenuine && desktopManagerStatus == process.StatusGenuine && completeDesktop(desktop) && remote.PID == desktop.PID && d.currentDesktopLineage(desktop) && stateMetadataMatches(desktop, d.config) && stateAddressMatches(desktop, d.config.BaseURL) {
 		return &desktop, "desktop"
 	}
 	// Development identities deliberately cannot authorize reuse of a router
@@ -280,6 +280,14 @@ func (d *Discoverer) installationAllows(value state.RouterState) bool {
 	if value.InstallationID == "" {
 		return supportedLegacyLineage(value)
 	}
+	return value.PackageGeneration > 0 && d.currentInstallation(value)
+}
+
+func (d *Discoverer) currentDesktopLineage(value state.RouterState) bool {
+	return d.currentInstallation(value) && generationCompatible(value, d.config)
+}
+
+func (d *Discoverer) currentInstallation(value state.RouterState) bool {
 	return d.config.InstallationID != "" && value.InstallationID == d.config.InstallationID
 }
 
@@ -295,13 +303,11 @@ func supportedLegacyLineage(value state.RouterState) bool {
 }
 
 func generationCompatible(value state.RouterState, config Config) bool {
-	if value.DeploymentID != config.DeploymentID || value.ManagementProtocolVersion != config.ManagementProtocolVersion {
-		return false
-	}
-	if value.PackageGeneration > 0 && config.PackageGeneration > 0 && value.PackageGeneration != config.PackageGeneration {
-		return false
-	}
-	return true
+	return value.DeploymentID == config.DeploymentID &&
+		value.ManagementProtocolVersion == config.ManagementProtocolVersion &&
+		value.PackageGeneration > 0 &&
+		config.PackageGeneration > 0 &&
+		value.PackageGeneration == config.PackageGeneration
 }
 
 func completeIdentity(value state.RouterState) bool {

@@ -71,17 +71,25 @@ fn parse_expected_version(value: &str) -> Result<Version> {
     Ok(version)
 }
 
-fn is_desktop_owned(status: &RouterStatus) -> bool {
-    matches!(status.state.as_str(), "desktop_owned" | "degraded")
-        && status.owner.as_deref() == Some("desktop")
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UpdateRouterPreflight {
+    Proceed,
+    Stop,
 }
 
-fn is_legacy_managed(status: &RouterStatus) -> bool {
-    status.state == "legacy_managed" && status.owner.as_deref() == Some("desktop")
-}
-
-fn update_blocked_by_unresolved_router(status: &RouterStatus) -> bool {
-    matches!(status.state.as_str(), "stale" | "unknown_occupant")
+fn update_router_preflight(status: &RouterStatus) -> Result<UpdateRouterPreflight> {
+    match (status.state.as_str(), status.owner.as_deref()) {
+        ("absent", None) | ("external_compatible", Some("cli")) | ("degraded", Some("cli")) => {
+            Ok(UpdateRouterPreflight::Proceed)
+        }
+        ("desktop_owned", Some("desktop"))
+        | ("degraded", Some("desktop"))
+        | ("legacy_managed", Some("desktop")) => Ok(UpdateRouterPreflight::Stop),
+        _ => Err(command_error(
+            "UPDATE_BLOCKED_ROUTER_STATE",
+            "correlated router state could not be verified before the update",
+        )),
+    }
 }
 
 async fn stop_owned_router_with<ReadStatus, ReadStatusFuture, Stop, StopFuture>(
@@ -95,27 +103,20 @@ where
     StopFuture: std::future::Future<Output = Result<RouterStatus>>,
 {
     let status = read_status().await?;
-    if update_blocked_by_unresolved_router(&status) {
-        return Err(command_error(
-            "UPDATE_BLOCKED_ROUTER_STATE",
-            "correlated router state could not be verified before the update",
-        ));
-    }
-    if is_desktop_owned(&status) || is_legacy_managed(&status) {
-        stop().await?;
-        let remaining = read_status().await?;
-        if is_legacy_managed(&remaining)
-            || is_desktop_owned(&remaining)
-            || update_blocked_by_unresolved_router(&remaining)
-        {
-            return Err(command_error(
-                "UPDATE_BLOCKED_LEGACY_ROUTER",
-                "a correlated legacy router could not be stopped before the update",
-            ));
+    match update_router_preflight(&status)? {
+        UpdateRouterPreflight::Proceed => Ok(false),
+        UpdateRouterPreflight::Stop => {
+            stop().await?;
+            let remaining = read_status().await?;
+            if update_router_preflight(&remaining) != Ok(UpdateRouterPreflight::Proceed) {
+                return Err(command_error(
+                    "UPDATE_BLOCKED_LEGACY_ROUTER",
+                    "a correlated legacy router could not be stopped before the update",
+                ));
+            }
+            Ok(true)
         }
-        return Ok(true);
     }
-    Ok(false)
 }
 
 async fn install_after_router_preflight_with<
@@ -321,7 +322,7 @@ mod tests {
         use std::sync::{Arc, Mutex};
 
         runtime().block_on(async {
-            for blocked in ["stale", "unknown_occupant"] {
+            for blocked in ["stale", "unknown_occupant", "start_failed", "future_state"] {
                 let events = Arc::new(Mutex::new(Vec::new()));
                 let result = install_after_router_preflight_with(
                     {
@@ -427,6 +428,8 @@ mod tests {
                 "desktop_owned",
                 "stale",
                 "unknown_occupant",
+                "start_failed",
+                "future_state",
             ] {
                 let events = Arc::new(Mutex::new(Vec::new()));
                 let statuses = Arc::new(Mutex::new(VecDeque::from([
@@ -591,34 +594,51 @@ mod tests {
     }
 
     #[test]
-    fn only_verified_desktop_owned_router_is_stopped() {
+    fn updater_preflight_accepts_only_explicit_safe_state_and_owner_pairs() {
         let status = |state: &str, owner: Option<&str>| RouterStatus {
             state: state.to_owned(),
             owner: owner.map(str::to_owned),
             ..RouterStatus::default()
         };
-        assert!(is_desktop_owned(&status("desktop_owned", Some("desktop"))));
-        assert!(is_desktop_owned(&status("degraded", Some("desktop"))));
-        assert!(!is_desktop_owned(&status(
-            "external_compatible",
-            Some("cli")
-        )));
-        assert!(!is_desktop_owned(&status("degraded", Some("external"))));
-        assert!(is_legacy_managed(&status(
-            "legacy_managed",
-            Some("desktop")
-        )));
-        assert!(!is_legacy_managed(&status("legacy_managed", Some("cli"))));
-        assert!(update_blocked_by_unresolved_router(&status(
-            "stale",
-            Some("desktop")
-        )));
-        assert!(update_blocked_by_unresolved_router(&status(
-            "unknown_occupant",
-            None
-        )));
-        assert!(!update_blocked_by_unresolved_router(&status(
-            "absent", None
-        )));
+        for (state, owner) in [
+            ("absent", None),
+            ("external_compatible", Some("cli")),
+            ("degraded", Some("cli")),
+        ] {
+            assert_eq!(
+                update_router_preflight(&status(state, owner)).unwrap(),
+                UpdateRouterPreflight::Proceed,
+                "{state}/{owner:?}"
+            );
+        }
+        for (state, owner) in [
+            ("desktop_owned", Some("desktop")),
+            ("degraded", Some("desktop")),
+            ("legacy_managed", Some("desktop")),
+        ] {
+            assert_eq!(
+                update_router_preflight(&status(state, owner)).unwrap(),
+                UpdateRouterPreflight::Stop,
+                "{state}/{owner:?}"
+            );
+        }
+        for (state, owner) in [
+            ("start_failed", Some("desktop")),
+            ("stale", Some("desktop")),
+            ("unknown_occupant", None),
+            ("future_state", None),
+            ("absent", Some("desktop")),
+            ("external_compatible", Some("desktop")),
+            ("desktop_owned", Some("cli")),
+            ("legacy_managed", None),
+        ] {
+            assert_eq!(
+                update_router_preflight(&status(state, owner))
+                    .unwrap_err()
+                    .code,
+                "UPDATE_BLOCKED_ROUTER_STATE",
+                "{state}/{owner:?}"
+            );
+        }
     }
 }

@@ -1008,6 +1008,36 @@ func TestReclaimRequiresLockAbsentManagerSessionAndRouterIdentity(t *testing.T) 
 	}
 }
 
+func TestInstallationAwareGenerationZeroCannotBeReclaimedOrMigrated(t *testing.T) {
+	for _, operation := range []string{"reclaim", "migrate"} {
+		t.Run(operation, func(t *testing.T) {
+			fixture := newFixture(t)
+			fixture.managerState = fixture.desktopState(101)
+			fixture.managerState.DesktopSessionID = "previous-session"
+			fixture.managerState.PackageGeneration = 0
+			fixture.validate = func(identity process.Identity, _ string) (process.Status, error) {
+				if identity.PID == fixture.managerState.ManagerPID {
+					return process.StatusAbsent, nil
+				}
+				return process.StatusGenuine, nil
+			}
+
+			var err *Error
+			if operation == "reclaim" {
+				_, err = fixture.manager().Reclaim()
+			} else {
+				_, err = fixture.manager().MigrateLegacy(context.Background())
+			}
+			if err == nil {
+				t.Fatal("invalid generation-zero lineage unexpectedly accepted")
+			}
+			if fixture.writes != 0 || fixture.signals != 0 || fixture.desktopLaunches != 0 {
+				t.Fatalf("writes=%d signals=%d launches=%d", fixture.writes, fixture.signals, fixture.desktopLaunches)
+			}
+		})
+	}
+}
+
 func TestStartReclaimsCrossSessionCompatibleRouter(t *testing.T) {
 	fixture := newFixture(t)
 	fixture.config.SessionID = "current-session"

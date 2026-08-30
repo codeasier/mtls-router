@@ -953,7 +953,7 @@ func (m *Manager) correlatedInstallation(value state.RouterState) bool {
 	if value.InstallationID == "" {
 		return supportedLegacySource(value)
 	}
-	return m.installationMatches(value)
+	return value.PackageGeneration > 0 && m.installationMatches(value)
 }
 
 func supportedLegacySource(value state.RouterState) bool {
@@ -968,11 +968,9 @@ func supportedLegacySource(value state.RouterState) bool {
 }
 
 func (m *Manager) generationCompatible(value state.RouterState) bool {
-	if value.DeploymentID != m.config.DeploymentID || value.ManagementProtocolVersion != m.config.ManagementProtocolVersion {
-		return false
-	}
-	if value.PackageGeneration > 0 && value.PackageGeneration != m.config.PackageGeneration {
-		return false
-	}
-	return true
+	return value.DeploymentID == m.config.DeploymentID &&
+		value.ManagementProtocolVersion == m.config.ManagementProtocolVersion &&
+		value.PackageGeneration > 0 &&
+		m.config.PackageGeneration > 0 &&
+		value.PackageGeneration == m.config.PackageGeneration
 }

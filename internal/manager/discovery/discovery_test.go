@@ -19,6 +19,11 @@ import (
 	"github.com/codeasier/mtls-router/internal/manager/state"
 )
 
+const (
+	testInstallationID    = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+	testPackageGeneration = 1
+)
+
 func TestDiscoverClassifiesCorrelatedRouters(t *testing.T) {
 	for _, tt := range []struct {
 		name       string
@@ -41,6 +46,7 @@ func TestDiscoverClassifiesCorrelatedRouters(t *testing.T) {
 			d := New(Config{
 				BaseURL: server.URL, DesktopStatePath: "desktop", CLIStatePath: "cli",
 				DeploymentID: tt.deployment, ManagementProtocolVersion: "1",
+				InstallationID: testInstallationID, PackageGeneration: testPackageGeneration,
 				ReadState: func(path string) (state.RouterState, error) {
 					value := states[path]
 					if value.PID == 0 {
@@ -311,6 +317,7 @@ func TestDesktopStartDoesNotIgnoreCorrelatedStaleCLIStateWithListener(t *testing
 	d := New(Config{
 		BaseURL: server.URL, DesktopStatePath: "desktop", CLIStatePath: "cli",
 		DeploymentID: "prod-a", ManagementProtocolVersion: "1",
+		InstallationID: testInstallationID, PackageGeneration: testPackageGeneration,
 		ReadState: func(path string) (state.RouterState, error) {
 			if path == "desktop" {
 				return state.RouterState{}, os.ErrNotExist
@@ -336,6 +343,7 @@ func TestGenericStatusPrefersRunningDesktopOverStaleCLIState(t *testing.T) {
 	d := New(Config{
 		BaseURL: server.URL, DesktopStatePath: "desktop", CLIStatePath: "cli",
 		DeploymentID: "prod-a", ManagementProtocolVersion: "1",
+		InstallationID: testInstallationID, PackageGeneration: testPackageGeneration,
 		ReadState: func(path string) (state.RouterState, error) {
 			if path == "desktop" {
 				return desktop, nil
@@ -364,6 +372,7 @@ func TestGenuineStateWithUnavailableEndpointIsDegraded(t *testing.T) {
 	_ = listener.Close()
 	d := New(Config{
 		BaseURL: baseURL, DesktopStatePath: "desktop", DeploymentID: "prod-a", ManagementProtocolVersion: "1",
+		InstallationID: testInstallationID, PackageGeneration: testPackageGeneration,
 		ReadState:       func(string) (state.RouterState, error) { return completeState("desktop", 73, "prod-a"), nil },
 		ValidateProcess: func(process.Identity, string) (process.Status, error) { return process.StatusGenuine, nil },
 	})
@@ -437,7 +446,7 @@ func TestCorrelatedLegacyDesktopIsLegacyManaged(t *testing.T) {
 	value.DesktopSessionID = "previous-session"
 	d := New(Config{
 		BaseURL: server.URL, DesktopStatePath: "desktop", DeploymentID: "prod-a", ManagementProtocolVersion: "4",
-		SessionID: "current-session", InstallationID: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+		SessionID: "current-session", InstallationID: testInstallationID, PackageGeneration: testPackageGeneration,
 		ReadState: func(string) (state.RouterState, error) { return value, nil },
 		ValidateProcess: func(identity process.Identity, _ string) (process.Status, error) {
 			if identity.PID == value.ManagerPID {
@@ -460,7 +469,7 @@ func TestCrossSessionCompatibleDesktopIsLegacyManaged(t *testing.T) {
 	value.DesktopSessionID = "previous-session"
 	d := New(Config{
 		BaseURL: server.URL, DesktopStatePath: "desktop", DeploymentID: "prod-a", ManagementProtocolVersion: "1",
-		SessionID: "current-session", InstallationID: value.InstallationID,
+		SessionID: "current-session", InstallationID: value.InstallationID, PackageGeneration: testPackageGeneration,
 		ReadState: func(string) (state.RouterState, error) { return value, nil },
 		ValidateProcess: func(identity process.Identity, _ string) (process.Status, error) {
 			if identity.PID == value.ManagerPID {
@@ -483,7 +492,7 @@ func TestUnknownPreInstallationProtocolIsNotLegacyManaged(t *testing.T) {
 	value.PackageGeneration = 0
 	d := New(Config{
 		BaseURL: server.URL, DesktopStatePath: "desktop", DeploymentID: "prod-a", ManagementProtocolVersion: "4",
-		SessionID: "current-session", InstallationID: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+		SessionID: "current-session", InstallationID: testInstallationID, PackageGeneration: testPackageGeneration,
 		ReadState: func(string) (state.RouterState, error) { return value, nil },
 		ValidateProcess: func(process.Identity, string) (process.Status, error) {
 			return process.StatusGenuine, nil
@@ -511,12 +520,39 @@ func TestDifferentInstallationIsNotLegacyManaged(t *testing.T) {
 	}
 }
 
+func TestCurrentProtocolDesktopFailsClosedForInvalidInstallationLineage(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*state.RouterState)
+	}{
+		{name: "installation-aware generation zero", mutate: func(value *state.RouterState) { value.PackageGeneration = 0 }},
+		{name: "different installation", mutate: func(value *state.RouterState) { value.InstallationID = "ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee" }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := routerServer(t, 73, "prod-a", "1", "ok")
+			value := completeState("desktop", 73, "prod-a")
+			value.ListenAddr = server.URL
+			test.mutate(&value)
+			d := New(Config{
+				BaseURL: server.URL, DesktopStatePath: "desktop", DeploymentID: "prod-a", ManagementProtocolVersion: "1",
+				SessionID: "session", InstallationID: testInstallationID, PackageGeneration: testPackageGeneration,
+				ReadState:       func(string) (state.RouterState, error) { return value, nil },
+				ValidateProcess: func(process.Identity, string) (process.Status, error) { return process.StatusGenuine, nil },
+			})
+			if got := d.Discover(context.Background()); got.Classification != UnknownOccupant {
+				t.Fatalf("result = %+v, want unknown_occupant", got)
+			}
+		})
+	}
+}
+
 func TestHealthyDesktopRouterWithAbsentManagerIsStale(t *testing.T) {
 	server := routerServer(t, 73, "prod-a", "1", "ok")
 	value := completeState("desktop", 73, "prod-a")
 	value.ListenAddr = server.URL
 	d := New(Config{
 		BaseURL: server.URL, DesktopStatePath: "desktop", DeploymentID: "prod-a", ManagementProtocolVersion: "1",
+		InstallationID: testInstallationID, PackageGeneration: testPackageGeneration,
 		ReadState: func(string) (state.RouterState, error) { return value, nil },
 		ValidateProcess: func(identity process.Identity, _ string) (process.Status, error) {
 			if identity.PID == value.ManagerPID {
@@ -561,6 +597,7 @@ func correlatedDesktopDiscoverer(baseURL string, requestTimeout, healthRequestTi
 	value.ListenAddr = baseURL
 	return New(Config{
 		BaseURL: baseURL, DesktopStatePath: "desktop", DeploymentID: "prod-a", ManagementProtocolVersion: "1",
+		InstallationID: testInstallationID, PackageGeneration: testPackageGeneration,
 		RequestTimeout: requestTimeout, HealthRequestTimeout: healthRequestTimeout,
 		ReadState:       func(string) (state.RouterState, error) { return value, nil },
 		ValidateProcess: func(process.Identity, string) (process.Status, error) { return process.StatusGenuine, nil },
@@ -574,6 +611,8 @@ func completeState(owner string, pid int, deployment string) state.RouterState {
 	}
 	if owner == "desktop" {
 		value.DesktopSessionID = "session"
+		value.InstallationID = testInstallationID
+		value.PackageGeneration = testPackageGeneration
 		value.ManagerPID = 74
 		value.ManagerProcessStartedAt = "manager-start"
 		value.ManagerProcessExecutable = "/manager"
