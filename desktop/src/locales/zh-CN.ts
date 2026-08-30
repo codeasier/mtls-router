@@ -67,6 +67,10 @@ export const zhCN = {
   "router.state.stopping.title": "正在停止路由",
   "router.state.stopping.signal": "停止中",
   "router.state.stopping.detail": "正在验证进程身份并执行安全关闭。",
+  "router.state.legacy.title": "发现历史桌面路由",
+  "router.state.legacy.signal": "需要迁移",
+  "router.state.legacy.detail":
+    "当前安装关联到一个仍在运行的旧桌面路由。启动将在完整进程身份校验后接管或停止并重建，不会仅凭 PID 结束进程。",
   "router.health.unavailable": "不可用",
   "router.health.unknown": "等待检查",
   "router.health.checking": "检查中",
@@ -151,6 +155,31 @@ export const zhCN = {
     "组件已被系统执行，但在完成本地监听和身份确认前结束。",
   "router.failureGuide.process-exit.action":
     "按技术详情中的具体原因处理后重试；若没有具体原因，请重新启动桌面应用。",
+  "router.failureGuide.sidecar-resolution.title": "无法定位管理组件",
+  "router.failureGuide.sidecar-resolution.detail":
+    "桌面应用未能解析或校验打包的 manager 组件，因此没有建立控制面连接。",
+  "router.failureGuide.sidecar-resolution.action":
+    "使用可信安装包重新安装桌面应用；不要单独替换 sidecar。",
+  "router.failureGuide.spawn.title": "无法启动管理组件",
+  "router.failureGuide.spawn.detail":
+    "操作系统没有成功创建 manager 进程，因此桌面端无法管理路由。",
+  "router.failureGuide.spawn.action":
+    "重新启动桌面应用；若持续失败，请检查安全软件拦截后使用可信安装包重装。",
+  "router.failureGuide.handshake.title": "管理组件握手失败",
+  "router.failureGuide.handshake.detail":
+    "manager 已启动，但其版本、部署或协议身份与当前桌面构建不一致。",
+  "router.failureGuide.handshake.action":
+    "退出其他实例，并使用同一可信安装包重新安装桌面应用。",
+  "router.failureGuide.protocol-parse.title": "管理协议响应无法解析",
+  "router.failureGuide.protocol-parse.detail":
+    "manager 返回了无法按协议解析的输出，桌面端已拒绝继续使用该响应。",
+  "router.failureGuide.protocol-parse.action":
+    "重新启动桌面应用；若重复出现，请将技术详情提供给服务管理员。",
+  "router.failureGuide.watchdog-timeout.title": "管理组件响应超时",
+  "router.failureGuide.watchdog-timeout.detail":
+    "manager 未在协议时限内返回结果，桌面端没有重放交付状态不明确的请求。",
+  "router.failureGuide.watchdog-timeout.action":
+    "重新启动桌面应用后重试；不要重复提交仍在进行中的写入或终止操作。",
   "router.failureGuide.internal.title": "路由启动未完成",
   "router.failureGuide.internal.detail":
     "桌面应用没有获得足以安全归类的失败原因，路由保持停止状态。",

@@ -76,13 +76,82 @@ fn is_desktop_owned(status: &RouterStatus) -> bool {
         && status.owner.as_deref() == Some("desktop")
 }
 
-async fn stop_owned_router(state: &AppState) -> Result<bool> {
-    let status: RouterStatus = state.manager.call("router.status", json!({})).await?;
-    if is_desktop_owned(&status) {
-        crate::orchestration::stop(&state.manager, &state.scheduler).await?;
+fn is_legacy_managed(status: &RouterStatus) -> bool {
+    status.state == "legacy_managed" && status.owner.as_deref() == Some("desktop")
+}
+
+fn update_blocked_by_unresolved_router(status: &RouterStatus) -> bool {
+    matches!(status.state.as_str(), "stale" | "unknown_occupant")
+}
+
+async fn stop_owned_router_with<ReadStatus, ReadStatusFuture, Stop, StopFuture>(
+    mut read_status: ReadStatus,
+    mut stop: Stop,
+) -> Result<bool>
+where
+    ReadStatus: FnMut() -> ReadStatusFuture,
+    ReadStatusFuture: std::future::Future<Output = Result<RouterStatus>>,
+    Stop: FnMut() -> StopFuture,
+    StopFuture: std::future::Future<Output = Result<RouterStatus>>,
+{
+    let status = read_status().await?;
+    if update_blocked_by_unresolved_router(&status) {
+        return Err(command_error(
+            "UPDATE_BLOCKED_ROUTER_STATE",
+            "correlated router state could not be verified before the update",
+        ));
+    }
+    if is_desktop_owned(&status) || is_legacy_managed(&status) {
+        stop().await?;
+        let remaining = read_status().await?;
+        if is_legacy_managed(&remaining)
+            || is_desktop_owned(&remaining)
+            || update_blocked_by_unresolved_router(&remaining)
+        {
+            return Err(command_error(
+                "UPDATE_BLOCKED_LEGACY_ROUTER",
+                "a correlated legacy router could not be stopped before the update",
+            ));
+        }
         return Ok(true);
     }
     Ok(false)
+}
+
+async fn install_after_router_preflight_with<
+    ReadStatus,
+    ReadStatusFuture,
+    Stop,
+    StopFuture,
+    Install,
+    Restart,
+    RestartFuture,
+>(
+    read_status: ReadStatus,
+    stop: Stop,
+    install: Install,
+    restart: Restart,
+) -> Result<()>
+where
+    ReadStatus: FnMut() -> ReadStatusFuture,
+    ReadStatusFuture: std::future::Future<Output = Result<RouterStatus>>,
+    Stop: FnMut() -> StopFuture,
+    StopFuture: std::future::Future<Output = Result<RouterStatus>>,
+    Install: FnOnce() -> bool,
+    Restart: FnOnce() -> RestartFuture,
+    RestartFuture: std::future::Future<Output = ()>,
+{
+    let stopped_router = stop_owned_router_with(read_status, stop).await?;
+    if !install() {
+        if stopped_router {
+            restart().await;
+        }
+        return Err(command_error(
+            "UPDATE_INSTALL_FAILED",
+            "cannot install the update",
+        ));
+    }
+    Ok(())
 }
 
 async fn download_and_install(app: &AppHandle, state: &AppState, update: Update) -> Result<()> {
@@ -100,17 +169,15 @@ async fn download_and_install(app: &AppHandle, state: &AppState, update: Update)
         .await
         .map_err(|_| command_error("UPDATE_DOWNLOAD_FAILED", "cannot download the update"))?;
 
-    let stopped_router = stop_owned_router(state).await?;
-    if update.install(bytes).is_err() {
-        if stopped_router {
+    install_after_router_preflight_with(
+        || state.manager.call("router.status", json!({})),
+        || crate::orchestration::stop(&state.manager, &state.scheduler),
+        || update.install(bytes).is_ok(),
+        || async {
             let _ = crate::orchestration::start(&state.manager, &state.scheduler).await;
-        }
-        return Err(command_error(
-            "UPDATE_INSTALL_FAILED",
-            "cannot install the update",
-        ));
-    }
-    Ok(())
+        },
+    )
+    .await
 }
 
 #[tauri::command]
@@ -181,15 +248,354 @@ mod tests {
         }
     }
 
+    fn status(state: &str, owner: Option<&str>) -> RouterStatus {
+        RouterStatus {
+            state: state.to_owned(),
+            owner: owner.map(str::to_owned),
+            ..RouterStatus::default()
+        }
+    }
+
+    fn runtime() -> &'static tokio::runtime::Runtime {
+        use std::sync::OnceLock;
+        static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+        RUNTIME.get_or_init(|| tokio::runtime::Runtime::new().unwrap())
+    }
+
+    #[test]
+    fn legacy_router_is_stopped_rechecked_then_installed() {
+        use std::{
+            collections::VecDeque,
+            sync::{Arc, Mutex},
+        };
+
+        runtime().block_on(async {
+            let events = Arc::new(Mutex::new(Vec::new()));
+            let statuses = Arc::new(Mutex::new(VecDeque::from([
+                Ok(status("legacy_managed", Some("desktop"))),
+                Ok(status("absent", None)),
+            ])));
+            let result = install_after_router_preflight_with(
+                {
+                    let events = events.clone();
+                    let statuses = statuses.clone();
+                    move || {
+                        events.lock().unwrap().push("status");
+                        let result = statuses.lock().unwrap().pop_front().unwrap();
+                        async move { result }
+                    }
+                },
+                {
+                    let events = events.clone();
+                    move || {
+                        events.lock().unwrap().push("stop");
+                        async { Ok(status("absent", None)) }
+                    }
+                },
+                {
+                    let events = events.clone();
+                    move || {
+                        events.lock().unwrap().push("install");
+                        true
+                    }
+                },
+                {
+                    let events = events.clone();
+                    move || async move {
+                        events.lock().unwrap().push("restart");
+                    }
+                },
+            )
+            .await;
+
+            assert!(result.is_ok());
+            assert_eq!(
+                &*events.lock().unwrap(),
+                &["status", "stop", "status", "install"]
+            );
+        });
+    }
+
+    #[test]
+    fn stale_and_unknown_router_states_block_before_stop_or_install() {
+        use std::sync::{Arc, Mutex};
+
+        runtime().block_on(async {
+            for blocked in ["stale", "unknown_occupant"] {
+                let events = Arc::new(Mutex::new(Vec::new()));
+                let result = install_after_router_preflight_with(
+                    {
+                        let events = events.clone();
+                        move || {
+                            events.lock().unwrap().push("status");
+                            let value = status(blocked, Some("desktop"));
+                            async move { Ok(value) }
+                        }
+                    },
+                    {
+                        let events = events.clone();
+                        move || {
+                            events.lock().unwrap().push("stop");
+                            async { Ok(status("absent", None)) }
+                        }
+                    },
+                    {
+                        let events = events.clone();
+                        move || {
+                            events.lock().unwrap().push("install");
+                            true
+                        }
+                    },
+                    {
+                        let events = events.clone();
+                        move || async move {
+                            events.lock().unwrap().push("restart");
+                        }
+                    },
+                )
+                .await
+                .unwrap_err();
+
+                assert_eq!(result.code, "UPDATE_BLOCKED_ROUTER_STATE");
+                assert_eq!(&*events.lock().unwrap(), &["status"]);
+            }
+        });
+    }
+
+    #[test]
+    fn ambiguous_stop_failure_is_not_retried_and_never_installs() {
+        use std::sync::{Arc, Mutex};
+
+        runtime().block_on(async {
+            let events = Arc::new(Mutex::new(Vec::new()));
+            let stop_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let result = install_after_router_preflight_with(
+                {
+                    let events = events.clone();
+                    move || {
+                        events.lock().unwrap().push("status");
+                        async { Ok(status("legacy_managed", Some("desktop"))) }
+                    }
+                },
+                {
+                    let events = events.clone();
+                    let stop_calls = stop_calls.clone();
+                    move || {
+                        events.lock().unwrap().push("stop");
+                        stop_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        async {
+                            Err(CommandError::new(
+                                "INVALID_RESPONSE",
+                                "manager response was ambiguous",
+                            ))
+                        }
+                    }
+                },
+                {
+                    let events = events.clone();
+                    move || {
+                        events.lock().unwrap().push("install");
+                        true
+                    }
+                },
+                {
+                    let events = events.clone();
+                    move || async move {
+                        events.lock().unwrap().push("restart");
+                    }
+                },
+            )
+            .await
+            .unwrap_err();
+
+            assert_eq!(result.code, "INVALID_RESPONSE");
+            assert_eq!(stop_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+            assert_eq!(&*events.lock().unwrap(), &["status", "stop"]);
+        });
+    }
+
+    #[test]
+    fn unresolved_post_stop_state_blocks_install() {
+        use std::{
+            collections::VecDeque,
+            sync::{Arc, Mutex},
+        };
+
+        runtime().block_on(async {
+            for remaining in [
+                "legacy_managed",
+                "desktop_owned",
+                "stale",
+                "unknown_occupant",
+            ] {
+                let events = Arc::new(Mutex::new(Vec::new()));
+                let statuses = Arc::new(Mutex::new(VecDeque::from([
+                    Ok(status("legacy_managed", Some("desktop"))),
+                    Ok(status(remaining, Some("desktop"))),
+                ])));
+                let result = install_after_router_preflight_with(
+                    {
+                        let events = events.clone();
+                        let statuses = statuses.clone();
+                        move || {
+                            events.lock().unwrap().push("status");
+                            let result = statuses.lock().unwrap().pop_front().unwrap();
+                            async move { result }
+                        }
+                    },
+                    {
+                        let events = events.clone();
+                        move || {
+                            events.lock().unwrap().push("stop");
+                            async { Ok(status("absent", None)) }
+                        }
+                    },
+                    {
+                        let events = events.clone();
+                        move || {
+                            events.lock().unwrap().push("install");
+                            true
+                        }
+                    },
+                    {
+                        let events = events.clone();
+                        move || async move {
+                            events.lock().unwrap().push("restart");
+                        }
+                    },
+                )
+                .await
+                .unwrap_err();
+
+                assert_eq!(result.code, "UPDATE_BLOCKED_LEGACY_ROUTER");
+                assert_eq!(&*events.lock().unwrap(), &["status", "stop", "status"]);
+            }
+        });
+    }
+
+    #[test]
+    fn post_stop_status_failure_blocks_install() {
+        use std::{
+            collections::VecDeque,
+            sync::{Arc, Mutex},
+        };
+
+        runtime().block_on(async {
+            let events = Arc::new(Mutex::new(Vec::new()));
+            let statuses = Arc::new(Mutex::new(VecDeque::from([
+                Ok(status("legacy_managed", Some("desktop"))),
+                Err(CommandError::manager_failed()),
+            ])));
+            let result = install_after_router_preflight_with(
+                {
+                    let events = events.clone();
+                    let statuses = statuses.clone();
+                    move || {
+                        events.lock().unwrap().push("status");
+                        let result = statuses.lock().unwrap().pop_front().unwrap();
+                        async move { result }
+                    }
+                },
+                {
+                    let events = events.clone();
+                    move || {
+                        events.lock().unwrap().push("stop");
+                        async { Ok(status("absent", None)) }
+                    }
+                },
+                {
+                    let events = events.clone();
+                    move || {
+                        events.lock().unwrap().push("install");
+                        true
+                    }
+                },
+                {
+                    let events = events.clone();
+                    move || async move {
+                        events.lock().unwrap().push("restart");
+                    }
+                },
+            )
+            .await
+            .unwrap_err();
+
+            assert_eq!(result.code, "MANAGER_FAILED");
+            assert_eq!(&*events.lock().unwrap(), &["status", "stop", "status"]);
+        });
+    }
+
+    #[test]
+    fn failed_install_restarts_only_a_router_stopped_by_preflight() {
+        use std::{
+            collections::VecDeque,
+            sync::{Arc, Mutex},
+        };
+
+        runtime().block_on(async {
+            for (initial, statuses, expected) in [
+                (
+                    "legacy_managed",
+                    VecDeque::from([
+                        Ok(status("legacy_managed", Some("desktop"))),
+                        Ok(status("absent", None)),
+                    ]),
+                    vec!["status", "stop", "status", "install", "restart"],
+                ),
+                (
+                    "absent",
+                    VecDeque::from([Ok(status("absent", None))]),
+                    vec!["status", "install"],
+                ),
+            ] {
+                let events = Arc::new(Mutex::new(Vec::new()));
+                let statuses = Arc::new(Mutex::new(statuses));
+                let result = install_after_router_preflight_with(
+                    {
+                        let events = events.clone();
+                        let statuses = statuses.clone();
+                        move || {
+                            events.lock().unwrap().push("status");
+                            let result = statuses.lock().unwrap().pop_front().unwrap();
+                            async move { result }
+                        }
+                    },
+                    {
+                        let events = events.clone();
+                        move || {
+                            events.lock().unwrap().push("stop");
+                            async { Ok(status("absent", None)) }
+                        }
+                    },
+                    {
+                        let events = events.clone();
+                        move || {
+                            events.lock().unwrap().push("install");
+                            false
+                        }
+                    },
+                    {
+                        let events = events.clone();
+                        move || async move {
+                            events.lock().unwrap().push("restart");
+                        }
+                    },
+                )
+                .await
+                .unwrap_err();
+
+                assert_eq!(result.code, "UPDATE_INSTALL_FAILED", "{initial}");
+                assert_eq!(&*events.lock().unwrap(), expected.as_slice(), "{initial}");
+            }
+        });
+    }
+
     #[test]
     fn only_verified_desktop_owned_router_is_stopped() {
         let status = |state: &str, owner: Option<&str>| RouterStatus {
             state: state.to_owned(),
             owner: owner.map(str::to_owned),
-            listen_addr: None,
-            pid: None,
-            last_error: None,
-            recent_logs: None,
+            ..RouterStatus::default()
         };
         assert!(is_desktop_owned(&status("desktop_owned", Some("desktop"))));
         assert!(is_desktop_owned(&status("degraded", Some("desktop"))));
@@ -198,5 +604,21 @@ mod tests {
             Some("cli")
         )));
         assert!(!is_desktop_owned(&status("degraded", Some("external"))));
+        assert!(is_legacy_managed(&status(
+            "legacy_managed",
+            Some("desktop")
+        )));
+        assert!(!is_legacy_managed(&status("legacy_managed", Some("cli"))));
+        assert!(update_blocked_by_unresolved_router(&status(
+            "stale",
+            Some("desktop")
+        )));
+        assert!(update_blocked_by_unresolved_router(&status(
+            "unknown_occupant",
+            None
+        )));
+        assert!(!update_blocked_by_unresolved_router(&status(
+            "absent", None
+        )));
     }
 }

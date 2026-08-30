@@ -127,6 +127,7 @@ enum StatusText {
     Stopping,
     StartFailed,
     PortOccupied,
+    LegacyManaged,
     Unknown,
 }
 
@@ -173,6 +174,7 @@ fn status_text(language: NativeLanguage, status: StatusText) -> &'static str {
         (NativeLanguage::ZhCn, StatusText::Stopping) => "状态：路由正在停止",
         (NativeLanguage::ZhCn, StatusText::StartFailed) => "状态：路由启动失败",
         (NativeLanguage::ZhCn, StatusText::PortOccupied) => "状态：端口已被占用",
+        (NativeLanguage::ZhCn, StatusText::LegacyManaged) => "状态：历史桌面路由待迁移",
         (NativeLanguage::ZhCn, StatusText::Unknown) => "状态：路由状态未知",
         (NativeLanguage::En, StatusText::Checking) => "Status: checking",
         (NativeLanguage::En, StatusText::ManagerUnavailable) => "Status: manager unavailable",
@@ -184,6 +186,9 @@ fn status_text(language: NativeLanguage, status: StatusText) -> &'static str {
         (NativeLanguage::En, StatusText::Stopping) => "Status: router stopping",
         (NativeLanguage::En, StatusText::StartFailed) => "Status: router start failed",
         (NativeLanguage::En, StatusText::PortOccupied) => "Status: port occupied",
+        (NativeLanguage::En, StatusText::LegacyManaged) => {
+            "Status: historical desktop router needs migration"
+        }
         (NativeLanguage::En, StatusText::Unknown) => "Status: router state unknown",
     }
 }
@@ -699,6 +704,12 @@ fn presentation(snapshot: &RouterSnapshot) -> Presentation {
             can_start: true,
             can_stop: false,
         },
+        "legacy_managed" if snapshot.owner.as_deref() == Some("desktop") => Presentation {
+            severity: Severity::Warning,
+            status: StatusText::LegacyManaged,
+            can_start: true,
+            can_stop: true,
+        },
         "unknown_occupant" => Presentation {
             severity: Severity::Error,
             status: StatusText::PortOccupied,
@@ -723,8 +734,10 @@ fn quit_decision(snapshot: Option<&RouterSnapshot>) -> QuitDecision {
 }
 
 fn is_verified_desktop_owned(snapshot: &RouterSnapshot) -> bool {
-    matches!(snapshot.state.as_str(), "desktop_owned" | "degraded")
-        && snapshot.owner.as_deref() == Some("desktop")
+    matches!(
+        snapshot.state.as_str(),
+        "desktop_owned" | "degraded" | "legacy_managed"
+    ) && snapshot.owner.as_deref() == Some("desktop")
 }
 
 fn manager_controller(
@@ -892,6 +905,9 @@ mod tests {
         assert!(presentation(&snapshot("degraded", Some("desktop"))).can_stop);
         assert!(!presentation(&snapshot("desktop_owned", None)).can_stop);
         assert!(!presentation(&snapshot("external_compatible", Some("cli"))).can_stop);
+        let legacy = presentation(&snapshot("legacy_managed", Some("desktop")));
+        assert!(legacy.can_start && legacy.can_stop);
+        assert_eq!(legacy.status, StatusText::LegacyManaged);
     }
 
     #[test]

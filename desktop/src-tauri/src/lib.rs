@@ -2,8 +2,10 @@ mod autostart;
 mod commands;
 mod credential;
 mod error;
+mod installation;
 mod lifecycle;
 mod manager;
+mod manager_diagnostics;
 mod model_config;
 mod orchestration;
 mod paths;
@@ -132,12 +134,23 @@ fn build_app() -> tauri::Result<tauri::App<tauri::Wry>> {
             let credentials = load_credentials(std::path::PathBuf::from(&paths.credentials_path));
             let manager = match (sidecars, parent) {
                 (Ok(sidecars), Ok(parent)) => match sidecars.validate() {
-                    Ok(()) => ManagerClient::new(Arc::new(TauriTransportFactory::new(
-                        app.handle().clone(),
-                        sidecars,
-                        parent,
-                        uuid::Uuid::new_v4().to_string(),
-                    ))),
+                    Ok(()) => {
+                        match installation::load_or_create(
+                            &paths.data_dir,
+                            (env!("MTLS_MANAGER_SHA256"), env!("MTLS_ROUTER_SHA256")),
+                        ) {
+                            Ok(ownership) => {
+                                ManagerClient::new(Arc::new(TauriTransportFactory::new(
+                                    app.handle().clone(),
+                                    sidecars,
+                                    parent,
+                                    uuid::Uuid::new_v4().to_string(),
+                                    ownership,
+                                )))
+                            }
+                            Err(error) => ManagerClient::failed(error),
+                        }
+                    }
                     Err(error) => ManagerClient::failed(error),
                 },
                 (Err(error), _) | (_, Err(error)) => ManagerClient::failed(error),
