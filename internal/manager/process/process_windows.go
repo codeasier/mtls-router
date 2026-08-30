@@ -15,7 +15,7 @@ var generateConsoleCtrlEvent = windows.NewLazySystemDLL("kernel32.dll").NewProc(
 
 func inspect(pid int) (string, string, error) {
 	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
-	if errors.Is(err, windows.ERROR_INVALID_PARAMETER) {
+	if errors.Is(err, windows.ERROR_INVALID_PARAMETER) || errors.Is(err, windows.ERROR_GEN_FAILURE) {
 		return "", "", ErrNotFound
 	}
 	if err != nil {
@@ -25,11 +25,17 @@ func inspect(pid int) (string, string, error) {
 
 	var creation, exit, kernel, user windows.Filetime
 	if err := windows.GetProcessTimes(handle, &creation, &exit, &kernel, &user); err != nil {
+		if errors.Is(err, windows.ERROR_GEN_FAILURE) {
+			return "", "", ErrNotFound
+		}
 		return "", "", err
 	}
 	buf := make([]uint16, 32768)
 	size := uint32(len(buf))
 	if err := windows.QueryFullProcessImageName(handle, 0, &buf[0], &size); err != nil {
+		if errors.Is(err, windows.ERROR_GEN_FAILURE) {
+			return "", "", ErrNotFound
+		}
 		return "", "", err
 	}
 	startedAt := time.Unix(0, creation.Nanoseconds()).UTC().Format(time.RFC3339Nano)
