@@ -278,6 +278,22 @@ for value in \
   'mv -Tf "$base/latest.tmp" "$base/latest"'; do
   grep -Fq -- "$value" "$WORKFLOW" || fail "release updater publication missing: $value"
 done
+for feed_file in "$WORKFLOW" "$RECOVERY"; do
+  for value in \
+    'Verify public updater feed' \
+    'curl -fsSL https://release.codeasier.top/latest.json' \
+    '.version == $version and'; do
+    grep -Fq -- "$value" "$feed_file" || fail "public updater feed verification missing in $feed_file: $value"
+  done
+done
+release_symlink_line="$(grep -nF '      - name: Update latest symlink' "$WORKFLOW" | cut -d: -f1)"
+release_feed_line="$(grep -nF '      - name: Verify public updater feed' "$WORKFLOW" | cut -d: -f1)"
+[[ -n "$release_symlink_line" && -n "$release_feed_line" && "$release_symlink_line" -lt "$release_feed_line" ]] || \
+  fail 'release workflow must verify the public updater feed after advancing the mirror latest symlink'
+recovery_symlink_line="$(grep -nF '      - name: Update latest symlink' "$RECOVERY" | cut -d: -f1)"
+recovery_feed_line="$(grep -nF '      - name: Verify public updater feed' "$RECOVERY" | cut -d: -f1)"
+[[ -n "$recovery_symlink_line" && -n "$recovery_feed_line" && "$recovery_symlink_line" -lt "$recovery_feed_line" ]] || \
+  fail 'recovery workflow must verify the public updater feed after advancing the mirror latest symlink'
 for target in linux-x86_64 linux-aarch64 windows-x86_64 windows-aarch64 darwin-x86_64 darwin-aarch64; do
   grep -Fq -- "\"$target\"" "$PACKAGE_SCRIPT" || fail "latest feed is missing target $target"
 done

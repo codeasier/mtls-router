@@ -527,3 +527,23 @@ jobs:
             fi
             ln -sfn "$tag" "$base/latest.tmp"
             mv -Tf "$base/latest.tmp" "$base/latest"
+      - name: Verify public updater feed
+        if: needs.prepare.outputs.online-update == 'true'
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          expected="${RELEASE_TAG#v}"
+          base="https://release.codeasier.top/mtls-router/${RELEASE_TAG}/"
+          for attempt in 1 2 3 4 5; do
+            if curl -fsSL https://release.codeasier.top/latest.json | jq -e \
+              --arg version "$expected" --arg base "$base" '
+              .version == $version and
+              ([.platforms[] | select((.url | startswith($base)) | not)] | length) == 0
+            ' >/dev/null; then
+              exit 0
+            fi
+            sleep 10
+          done
+          printf 'public updater feed did not report version %s with URLs under %s\n' "$expected" "$base" >&2
+          exit 1
