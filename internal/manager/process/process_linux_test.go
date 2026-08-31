@@ -48,6 +48,49 @@ func TestReplacedLinuxExecutableRemainsGenuine(t *testing.T) {
 	}
 }
 
+func TestLinuxSameStartIdentityExactTickComparison(t *testing.T) {
+	tests := []struct {
+		name     string
+		expected string
+		live     string
+		want     bool
+	}{
+		{
+			name:     "identical jiffies / tick string",
+			expected: "12345678",
+			live:     "12345678",
+			want:     true,
+		},
+		{
+			name:     "different tick string",
+			expected: "12345678",
+			live:     "12345679",
+			want:     false,
+		},
+		{
+			name:     "leading zero difference",
+			expected: "012345",
+			live:     "12345",
+			want:     false,
+		},
+		{
+			name:     "empty strings",
+			expected: "",
+			live:     "",
+			want:     true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := sameStartIdentity(tc.expected, tc.live)
+			if got != tc.want {
+				t.Errorf("sameStartIdentity(%q, %q) = %t, want %t", tc.expected, tc.live, got, tc.want)
+			}
+		})
+	}
+}
+
 func helperCommand(binary string) *exec.Cmd {
 	cmd := exec.Command(binary, "-test.run=TestProcessHelper")
 	cmd.Env = append(os.Environ(), "MTLS_ROUTER_PROCESS_HELPER=1")
