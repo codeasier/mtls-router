@@ -1,12 +1,12 @@
 # internal/manager/app
 
-把各 manager 服务装配到私有 JSON 协议上：18 个方法的 handler、错误码映射、API key 清零，以及无 key Agent cleanup 的直接分发。
+把各 manager 服务装配到私有 JSON 协议上：19 个方法的 handler、错误码映射、API key 清零，以及无 key Agent cleanup 的直接分发。
 
 ## 文件
 
 | 文件 | 职责 |
 |------|------|
-| `app.go` | `App`、`New(Config, simplify)`、`Serve(ctx, input, output)`；18 个方法 handler；cleanup detection/preview/write 显式映射；结果与错误码映射；启动失败锁存与诊断 |
+| `app.go` | `App`、`New(Config, simplify)`、`Serve(ctx, input, output)`；19 个方法 handler；cleanup detection/preview/write 与 `apikey.usage` 显式映射；结果与错误码映射；启动失败锁存与诊断 |
 
 ## 结构
 

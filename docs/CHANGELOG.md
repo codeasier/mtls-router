@@ -2,6 +2,19 @@
 
 [中文](zh-CN/CHANGELOG.md)
 
+## Unreleased
+
+### Added
+
+- Added an API key usage window on the desktop API Keys page. It queries `GET /v1/usage` through the trusted local router for the saved key only and shows requests, tokens, cost, optional quota, and per-model rows without reading the key back into the webview.
+
+### Fixed
+
+- Split `apikey.usage` into independent start, `/version`, and usage budgets (20s + 15s + 25s) so a slow aggregate still has 25s after router startup and identity checks.
+- Rejected `/v1/usage` bodies that omit `by_model` instead of treating the missing field as an empty model list.
+
+---
+
 ## v0.3.6 - 2026-08-31
 
 This release safely migrates legacy desktop routers with verified installation lineage, replaces free-form startup failure summaries with bounded structured manager diagnostics, and refuses updater installation until router state is proven safe.

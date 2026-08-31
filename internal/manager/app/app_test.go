@@ -16,6 +16,7 @@ import (
 
 	"github.com/codeasier/mtls-router/internal/manager/agent"
 	"github.com/codeasier/mtls-router/internal/manager/agent/modelconfig"
+	"github.com/codeasier/mtls-router/internal/manager/apikeyusage"
 	"github.com/codeasier/mtls-router/internal/manager/discovery"
 	"github.com/codeasier/mtls-router/internal/manager/lifecycle"
 	"github.com/codeasier/mtls-router/internal/manager/occupant"
@@ -92,11 +93,19 @@ func (f fakeModelsService) DiscoverModels(ctx context.Context, selected []agent.
 
 type fakeTrustedRouter struct {
 	fetch      func(context.Context, protocol.RouterOwner, string) (trustedrouter.Result, *protocol.Error)
+	fetchUsage func(context.Context, protocol.RouterOwner, apikeyusage.Period, string) (trustedrouter.UsageResult, *protocol.Error)
 	revalidate func(context.Context, protocol.RouterOwner, string, trustedrouter.Binding) ([]string, *protocol.Error)
 }
 
 func (f fakeTrustedRouter) Fetch(ctx context.Context, owner protocol.RouterOwner, key string) (trustedrouter.Result, *protocol.Error) {
 	return f.fetch(ctx, owner, key)
+}
+
+func (f fakeTrustedRouter) FetchUsage(ctx context.Context, owner protocol.RouterOwner, period apikeyusage.Period, key string) (trustedrouter.UsageResult, *protocol.Error) {
+	if f.fetchUsage == nil {
+		return trustedrouter.UsageResult{}, &protocol.Error{Code: protocol.CodeUsageUnavailable, Message: "usage is unavailable"}
+	}
+	return f.fetchUsage(ctx, owner, period, key)
 }
 
 func (f fakeTrustedRouter) Revalidate(ctx context.Context, owner protocol.RouterOwner, key string, binding trustedrouter.Binding) ([]string, *protocol.Error) {
@@ -868,6 +877,72 @@ func TestAgentModelsNoPresetUsesStableEmptyObjects(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), `"preset":{"model_config":{},"unavailable_agents":{}}`) || strings.Contains(output.String(), "secret") {
 		t.Fatalf("response = %s", output.String())
+	}
+}
+
+func TestAPIKeyUsageReturnsKeyFreeSnapshot(t *testing.T) {
+	const key = "apikey-usage-protocol-secret-canary"
+	limit := 100.0
+	manager := newWithDependencies(Config{}, dependencies{
+		trusted: fakeTrustedRouter{fetchUsage: func(_ context.Context, owner protocol.RouterOwner, period apikeyusage.Period, gotKey string) (trustedrouter.UsageResult, *protocol.Error) {
+			if owner != protocol.RouterOwnerDesktop || period != apikeyusage.Period7d || gotKey != key {
+				t.Fatalf("owner=%q period=%q key=%q", owner, period, gotKey)
+			}
+			return trustedrouter.UsageResult{Snapshot: apikeyusage.Snapshot{
+				Period: apikeyusage.Period7d, AsOf: "2026-08-28T00:00:00Z",
+				Summary: apikeyusage.Summary{Requests: 4, PromptTokens: 10, CompletionTokens: 2, Cost: 0.75},
+				Quota:   &apikeyusage.Quota{Used: 0.75, Limit: &limit, Unit: apikeyusage.QuotaUSD, ResetsAt: "2026-09-01T00:00:00Z"},
+				ByModel: []apikeyusage.Model{{Model: "claude-sonnet", Requests: 4, PromptTokens: 10, CompletionTokens: 2, Cost: 0.75}},
+			}}, nil
+		}},
+	})
+	var output bytes.Buffer
+	request := `{"id":"usage","method":"apikey.usage","params":{"owner":"desktop","period":"7d","api_key":"` + key + `"}}` + "\n"
+	if err := manager.Serve(context.Background(), strings.NewReader(request), &output); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.String(), key) {
+		t.Fatalf("protocol result leaked key: %s", output.String())
+	}
+	var response protocol.Response
+	if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Error != nil {
+		t.Fatalf("response error = %+v", response.Error)
+	}
+	var result protocol.APIKeyUsageResult
+	if err := json.Unmarshal(response.Result, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Period != "7d" || result.Summary.Requests != 4 || result.Quota == nil || result.Quota.Used != 0.75 ||
+		len(result.ByModel) != 1 || result.ByModel[0].Model != "claude-sonnet" {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestAPIKeyUsageRejectsInvalidPeriodAndClearsKey(t *testing.T) {
+	const key = "apikey-usage-invalid-period-canary"
+	manager := newWithDependencies(Config{}, dependencies{
+		trusted: fakeTrustedRouter{fetchUsage: func(context.Context, protocol.RouterOwner, apikeyusage.Period, string) (trustedrouter.UsageResult, *protocol.Error) {
+			t.Fatal("trusted fetch should not run")
+			return trustedrouter.UsageResult{}, nil
+		}},
+	})
+	var output bytes.Buffer
+	request := `{"id":"usage","method":"apikey.usage","params":{"owner":"desktop","period":"week","api_key":"` + key + `"}}` + "\n"
+	if err := manager.Serve(context.Background(), strings.NewReader(request), &output); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.String(), key) {
+		t.Fatalf("protocol error leaked key: %s", output.String())
+	}
+	var response protocol.Response
+	if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Error == nil || response.Error.Code != protocol.CodeInvalidParams {
+		t.Fatalf("response = %+v", response)
 	}
 }
 

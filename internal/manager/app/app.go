@@ -20,6 +20,7 @@ import (
 
 	"github.com/codeasier/mtls-router/internal/manager/agent"
 	"github.com/codeasier/mtls-router/internal/manager/agent/modelconfig"
+	"github.com/codeasier/mtls-router/internal/manager/apikeyusage"
 	"github.com/codeasier/mtls-router/internal/manager/discovery"
 	"github.com/codeasier/mtls-router/internal/manager/lifecycle"
 	"github.com/codeasier/mtls-router/internal/manager/metadata"
@@ -97,6 +98,7 @@ type agentModelsService interface {
 
 type trustedRouterService interface {
 	Fetch(context.Context, protocol.RouterOwner, string) (trustedrouter.Result, *protocol.Error)
+	FetchUsage(context.Context, protocol.RouterOwner, apikeyusage.Period, string) (trustedrouter.UsageResult, *protocol.Error)
 	Revalidate(context.Context, protocol.RouterOwner, string, trustedrouter.Binding) ([]string, *protocol.Error)
 }
 
@@ -279,6 +281,7 @@ func newWithDependencies(config Config, deps dependencies) *App {
 		protocol.MethodAgentWrite:                   app.agentWrite,
 		protocol.MethodAgentCleanupPreview:          app.agentCleanupPreview,
 		protocol.MethodAgentCleanupWrite:            app.agentCleanupWrite,
+		protocol.MethodAPIKeyUsage:                  app.apiKeyUsage,
 	})
 	return app
 }
@@ -773,6 +776,61 @@ func (a *App) agentWrite(ctx context.Context, params json.RawMessage) (any, *pro
 		return nil, mapAgentError(writeErr)
 	}
 	return mapWrite(result), nil
+}
+
+func (a *App) apiKeyUsage(ctx context.Context, params json.RawMessage) (any, *protocol.Error) {
+	var request protocol.APIKeyUsageParams
+	if err := protocol.DecodeParams(params, &request); err != nil {
+		return nil, err
+	}
+	if request.Owner != protocol.RouterOwnerCLI && request.Owner != protocol.RouterOwnerDesktop {
+		request.APIKey = ""
+		return nil, invalidParams("owner must be cli or desktop")
+	}
+	period, periodErr := apikeyusage.NormalizePeriod(request.Period)
+	if periodErr != nil {
+		request.APIKey = ""
+		return nil, invalidParams("usage period is invalid")
+	}
+	if request.APIKey == "" || len(request.APIKey) > maxAPIKeySize {
+		request.APIKey = ""
+		return nil, invalidParams("bounded api_key is required")
+	}
+	if a.deps.trusted == nil {
+		request.APIKey = ""
+		return nil, &protocol.Error{Code: protocol.CodeUsageUnavailable, Message: "usage is unavailable"}
+	}
+	result, trustedErr := a.deps.trusted.FetchUsage(ctx, request.Owner, period, request.APIKey)
+	request.APIKey = ""
+	if trustedErr != nil {
+		return nil, trustedErr
+	}
+	return mapUsage(result.Snapshot), nil
+}
+
+func mapUsage(snapshot apikeyusage.Snapshot) protocol.APIKeyUsageResult {
+	result := protocol.APIKeyUsageResult{
+		Period: string(snapshot.Period),
+		AsOf:   snapshot.AsOf,
+		Summary: protocol.APIKeyUsageSummary{
+			Requests: snapshot.Summary.Requests, PromptTokens: snapshot.Summary.PromptTokens,
+			CompletionTokens: snapshot.Summary.CompletionTokens, Cost: snapshot.Summary.Cost,
+		},
+		ByModel: make([]protocol.APIKeyUsageModel, 0, len(snapshot.ByModel)),
+	}
+	if snapshot.Quota != nil {
+		result.Quota = &protocol.APIKeyUsageQuota{
+			Used: snapshot.Quota.Used, Limit: snapshot.Quota.Limit,
+			Unit: string(snapshot.Quota.Unit), ResetsAt: snapshot.Quota.ResetsAt,
+		}
+	}
+	for _, model := range snapshot.ByModel {
+		result.ByModel = append(result.ByModel, protocol.APIKeyUsageModel{
+			Model: model.Model, Requests: model.Requests, PromptTokens: model.PromptTokens,
+			CompletionTokens: model.CompletionTokens, Cost: model.Cost,
+		})
+	}
+	return result
 }
 
 func (a *App) agentModels(ctx context.Context, params json.RawMessage) (any, *protocol.Error) {

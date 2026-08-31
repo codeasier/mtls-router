@@ -591,6 +591,26 @@ describe("typed desktop API", () => {
     );
   });
 
+  it("fetches API key usage through a period-only request", async () => {
+    const invoke = vi.fn().mockResolvedValue({
+      period: "7d",
+      summary: {
+        requests: 4,
+        prompt_tokens: 10,
+        completion_tokens: 2,
+        cost: 0.75,
+      },
+      by_model: [],
+    });
+    const api = createDesktopApi(invoke as InvokeFn);
+
+    await api.getAPIKeyUsage("7d");
+
+    expect(invoke).toHaveBeenCalledWith(COMMANDS.apikeyUsage, {
+      request: { period: "7d" },
+    });
+  });
+
   it("preserves recovery detection and rebuild preview fields", () => {
     expect(detectionFixture.agents[0].recovery.files[0]).toMatchObject({
       role: "config",

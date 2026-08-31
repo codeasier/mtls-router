@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/codeasier/mtls-router/internal/manager/apikeyusage"
 	"github.com/codeasier/mtls-router/internal/manager/discovery"
 	"github.com/codeasier/mtls-router/internal/manager/process"
 	"github.com/codeasier/mtls-router/internal/manager/protocol"
@@ -63,6 +64,59 @@ func TestChannelValidatesAndFetchesOnExactlyOneConnection(t *testing.T) {
 	}).Fetch(context.Background(), listener, trustedFixture(listener), channelKeyCanary)
 	if err != nil || len(models) != 1 || models[0] != "model-a" {
 		t.Fatalf("Fetch() = %q, %+v", models, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if dials.Load() != 1 || len(requestConnections) != 2 || requestConnections[0] != requestConnections[1] {
+		t.Fatalf("dials=%d request connections=%v", dials.Load(), requestConnections)
+	}
+}
+
+func TestChannelFetchesUsageOnExactlyOneConnection(t *testing.T) {
+	type connectionKey struct{}
+	var nextID atomic.Int64
+	var mu sync.Mutex
+	requestConnections := []int64{}
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := r.Context().Value(connectionKey{}).(int64)
+		mu.Lock()
+		requestConnections = append(requestConnections, id)
+		mu.Unlock()
+		switch r.URL.Path {
+		case "/version":
+			if r.Header.Get("Authorization") != "" {
+				t.Error("version request contained Authorization")
+			}
+			_ = json.NewEncoder(w).Encode(discovery.Version{PID: 91, DeploymentID: "prod-a", ManagementProtocolVersion: "4"})
+		case "/v1/usage":
+			if r.URL.RawQuery != "period=7d" {
+				t.Errorf("usage query = %q", r.URL.RawQuery)
+			}
+			if r.Header.Get("Authorization") != "Bearer "+channelKeyCanary {
+				t.Errorf("Authorization = %q", r.Header.Get("Authorization"))
+			}
+			_, _ = io.WriteString(w, `{"period":"7d","summary":{"requests":4,"prompt_tokens":8,"completion_tokens":2,"cost":0.5},"by_model":[]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	server.Config.ConnContext = func(ctx context.Context, _ net.Conn) context.Context {
+		return context.WithValue(ctx, connectionKey{}, nextID.Add(1))
+	}
+	server.Start()
+	defer server.Close()
+
+	listener := listenerForServer(t, server.URL)
+	dials := atomic.Int64{}
+	snapshot, err := (Channel{
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			dials.Add(1)
+			return (&net.Dialer{}).DialContext(ctx, network, address)
+		},
+		ValidateProcess: genuineProcess,
+	}).FetchUsage(context.Background(), listener, trustedFixture(listener), apikeyusage.Period7d, channelKeyCanary)
+	if err != nil || snapshot.Summary.Requests != 4 || snapshot.Summary.Cost != 0.5 {
+		t.Fatalf("FetchUsage() = %+v, %+v", snapshot, err)
 	}
 	mu.Lock()
 	defer mu.Unlock()

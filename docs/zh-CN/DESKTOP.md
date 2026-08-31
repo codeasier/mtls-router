@@ -110,7 +110,7 @@ Rebuild 输出有意只包含托管内容：Claude `settings.json` 只包含托�
 
 ## API key 边界和限制
 
-API 密钥页面会在桌面凭据存储中保存、替换或删除一个全局 API key；webview 只能读取摘要，绝不能回读明文。Agent 总览既不读取也不验证该 key。只有点击卡片操作后，Rust 才会按需为 `agent.models` 加载它，并在 `agent.write` 前再次加载当前保存值。桌面 `ModelFlow` 只包含 Agent、目录和预览模式状态，不包含 API key。Timeout、malformed response、manager restart 或 uncertain delivery 后，secret-bearing 调用绝不会自动 replay。除凭据存储以及 Agent 文件或已批准备份外，应用不会有意把 key 放入桌面或 manager 持久状态、进程参数、环境变量、日志、诊断、model config、catalog/revision token、预览响应或写入响应。
+API 密钥页面会在桌面凭据存储中保存、替换或删除一个全局 API key；webview 只能读取摘要，绝不能回读明文。同一页展示当前密钥的用量窗口：Rust 一次性加载 key，manager 经可信本地路由查询 `GET /v1/usage`，webview 只收到有界的 per-key 快照（请求数、token、费用、可选配额与按模型明细）。若服务尚未提供该接口，窗口只报告用量不可用，不泄露 key 或上游细节。Agent 总览既不读取也不验证该 key。只有点击卡片操作后，Rust 才会按需为 `agent.models` 加载它，并在 `agent.write` 前再次加载当前保存值。桌面 `ModelFlow` 只包含 Agent、目录和预览模式状态，不包含 API key。Timeout、malformed response、manager restart 或 uncertain delivery 后，secret-bearing 调用绝不会自动 replay。除凭据存储以及 Agent 文件或已批准备份外，应用不会有意把 key 放入桌面或 manager 持久状态、进程参数、环境变量、日志、诊断、model config、catalog/revision token、预览响应或写入响应。
 
 在清理该 Agent 前，目标 Agent 的配置文件仍需按该 Agent 的要求持久化 key。单 Agent 清理会删除 Agent 文件中的托管凭据，但有意保留桌面全局 key。用户批准的恢复与清理备份也可能持久化旧 key。Rust 每次按需使用 key 时都会把它保存在 zeroizing 内存中，但清除应用引用只是 best effort，不保证能从进程或操作系统内存中进行取证级擦除。
 

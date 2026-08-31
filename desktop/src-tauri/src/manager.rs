@@ -541,15 +541,21 @@ async fn run_actor(
 }
 
 fn request_must_not_replay(method: &str) -> bool {
-    matches!(
-        method,
-        "agent.models"
-            | "agent.write"
-            | AGENT_CLEANUP_WRITE
-            | FORCE_TERMINATE_OCCUPANT
-            | ROUTER_MIGRATE_LEGACY
-            | "router.stop"
-    )
+    no_replay_methods()
+        .iter()
+        .any(|candidate| *candidate == method)
+}
+
+fn no_replay_methods() -> &'static [&'static str] {
+    &[
+        "agent.models",
+        "agent.write",
+        "apikey.usage",
+        AGENT_CLEANUP_WRITE,
+        FORCE_TERMINATE_OCCUPANT,
+        ROUTER_MIGRATE_LEGACY,
+        "router.stop",
+    ]
 }
 
 async fn start_and_handshake(
@@ -776,6 +782,7 @@ fn watchdog(method: &str) -> Result<Duration> {
         "router.stop" => 7,
         "router.start" => 20,
         ROUTER_MIGRATE_LEGACY => 27,
+        "apikey.usage" => 60,
         "agent.models" | "agent.write" | AGENT_CLEANUP_WRITE => 30,
         _ => return Err(CommandError::invalid_params("unknown manager method")),
     };
@@ -1114,6 +1121,7 @@ mod tests {
             watchdog("agent.cleanup.write").unwrap(),
             Duration::from_secs(31)
         );
+        assert_eq!(watchdog("apikey.usage").unwrap(), Duration::from_secs(61));
     }
 
     #[test]
@@ -1160,87 +1168,28 @@ mod tests {
     }
 
     #[test]
-    fn agent_write_is_never_replayed_after_ambiguous_failure() {
-        runtime().block_on(async {
-            let (client, writes) = client(vec![Behavior::Malformed, Behavior::Valid]);
-            let error = client
-                .call::<Value>(
-                    "agent.write",
-                    json!({ "agents": ["claude"], "revision_token": "revision", "api_key": "secret" }),
-                )
-                .await
-                .unwrap_err();
-            assert_eq!(error.code, "INVALID_RESPONSE");
-            let writes = writes.lock().unwrap();
-            assert_eq!(
-                writes
-                    .iter()
-                    .filter(|request| request["method"] == "agent.write")
-                    .count(),
-                1
-            );
-        });
+    fn apikey_usage_must_not_replay() {
+        assert!(request_must_not_replay("apikey.usage"));
     }
 
     #[test]
-    fn agent_cleanup_write_is_never_replayed_after_ambiguous_delivery() {
+    fn secret_bearing_methods_are_never_replayed_after_ambiguous_delivery() {
         runtime().block_on(async {
-            let (client, writes) = client(vec![Behavior::Malformed, Behavior::Valid]);
-            let error = client
-                .call::<Value>(
-                    "agent.cleanup.write",
-                    json!({
-                        "agent": "opencode",
-                        "revision_token": "cleanup-revision",
-                        "approve_managed_overwrite": false
-                    }),
-                )
-                .await
-                .unwrap_err();
-            assert_eq!(error.code, "INVALID_RESPONSE");
-            assert_eq!(
-                writes
-                    .lock()
-                    .unwrap()
-                    .iter()
-                    .filter(|request| request["method"] == "agent.cleanup.write")
-                    .count(),
-                1
-            );
-        });
-    }
-
-    #[test]
-    fn agent_models_is_never_replayed_after_ambiguous_failure() {
-        runtime().block_on(async {
-            let (client, writes) = client(vec![Behavior::Malformed, Behavior::Valid]);
-            let error = client
-                .call::<Value>(
-                    "agent.models",
-                    json!({ "owner": "desktop", "agents": ["claude"], "api_key": "secret" }),
-                )
-                .await
-                .unwrap_err();
-            assert_eq!(error.code, "INVALID_RESPONSE");
-            assert_eq!(
-                writes
-                    .lock()
-                    .unwrap()
-                    .iter()
-                    .filter(|request| request["method"] == "agent.models")
-                    .count(),
-                1
-            );
-        });
-    }
-
-    #[test]
-    fn legacy_migration_and_stop_are_never_replayed_after_ambiguous_delivery() {
-        runtime().block_on(async {
-            for method in [ROUTER_MIGRATE_LEGACY, "router.stop"] {
+            for method in [
+                "agent.models",
+                "agent.write",
+                "apikey.usage",
+                AGENT_CLEANUP_WRITE,
+                FORCE_TERMINATE_OCCUPANT,
+                ROUTER_MIGRATE_LEGACY,
+                "router.stop",
+            ] {
                 let (client, writes) = client(vec![Behavior::Malformed, Behavior::Valid]);
-                let error = client.call::<Value>(method, json!({})).await.unwrap_err();
-                assert_eq!(error.code, "INVALID_RESPONSE");
+                let error = client
+                    .call::<Value>(method, no_replay_params(method))
+                    .await
+                    .unwrap_err();
+                assert_eq!(error.code, "INVALID_RESPONSE", "{method}");
                 assert_eq!(
                     writes
                         .lock()
@@ -1248,34 +1197,31 @@ mod tests {
                         .iter()
                         .filter(|request| request["method"] == method)
                         .count(),
-                    1
+                    1,
+                    "{method}"
                 );
             }
         });
     }
 
-    #[test]
-    fn force_termination_is_never_replayed_after_ambiguous_failure() {
-        runtime().block_on(async {
-            let (client, writes) = client(vec![Behavior::Malformed, Behavior::Valid]);
-            let error = client
-                .call::<Value>(
-                    FORCE_TERMINATE_OCCUPANT,
-                    json!({ "confirmation_token": "single-use" }),
-                )
-                .await
-                .unwrap_err();
-            assert_eq!(error.code, "INVALID_RESPONSE");
-            assert_eq!(
-                writes
-                    .lock()
-                    .unwrap()
-                    .iter()
-                    .filter(|request| request["method"] == FORCE_TERMINATE_OCCUPANT)
-                    .count(),
-                1
-            );
-        });
+    fn no_replay_params(method: &str) -> Value {
+        match method {
+            "agent.models" => {
+                json!({ "owner": "desktop", "agents": ["claude"], "api_key": "secret" })
+            }
+            "agent.write" => {
+                json!({ "agents": ["claude"], "revision_token": "revision", "api_key": "secret" })
+            }
+            "apikey.usage" => json!({ "owner": "desktop", "period": "7d", "api_key": "secret" }),
+            AGENT_CLEANUP_WRITE => json!({
+                "agent": "opencode",
+                "revision_token": "cleanup-revision",
+                "approve_managed_overwrite": false
+            }),
+            FORCE_TERMINATE_OCCUPANT => json!({ "confirmation_token": "single-use" }),
+            ROUTER_MIGRATE_LEGACY | "router.stop" => json!({}),
+            other => panic!("missing no-replay params for {other}"),
+        }
     }
 
     #[test]

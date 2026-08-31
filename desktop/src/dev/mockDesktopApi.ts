@@ -16,6 +16,7 @@ import {
   fixtureCredentialPresent,
   fixtureDetection,
   fixtureDesktopPaths,
+  fixtureUsageFor,
   fixtureHealthOk,
   fixtureOccupant,
   fixtureOwnedStatus,
@@ -280,6 +281,15 @@ export function createMockDesktopApi(
     deleteCredential: async () => {
       credential = structuredClone(fixtureCredentialAbsent);
       return structuredClone(credential);
+    },
+    getAPIKeyUsage: async (period) => {
+      if (currentScenario() === "protocol-error") {
+        throw mockCommandError("USAGE_UNAVAILABLE");
+      }
+      if (!credential.present) {
+        throw mockCommandError("CREDENTIAL_NOT_FOUND");
+      }
+      return fixtureUsageFor(period);
     },
     getAutostart: async () => autostart,
     setAutostart: async (enabled) => {

@@ -6,10 +6,10 @@
 
 | 文件 | 职责 |
 |------|------|
-| `types.go` | `Method` 常量（18 个）、`ErrorCode` 常量、`Request`/`Response`/`Error`、cleanup detection/preview/write 与其他方法的 params/result 类型、`Deadlines()` |
+| `types.go` | `Method` 常量（19 个）、`ErrorCode` 常量、`Request`/`Response`/`Error`、cleanup detection/preview/write、`apikey.usage` 与其他方法的 params/result 类型、`Deadlines()` |
 | `server.go` | `Server`、`NewServer(map[Method]Handler)`、`Serve(ctx, input, output)`、`DecodeParams`；请求体积上限、逐行解析、所有 object depth 的重复/未知字段拒绝 |
 
-## 协议方法（18 个）
+## 协议方法（19 个）
 
 ```
 manager.info              diagnostics.collect
@@ -20,9 +20,10 @@ router.inspect_occupant   router.force_terminate_occupant
 agent.detect              agent.models            agent.render
 agent.preview             agent.write
 agent.cleanup.preview     agent.cleanup.write
+apikey.usage
 ```
 
-`Deadlines()` 为**每个**方法返回必需的内部超时；新增方法必须同时在此登记。
+`Deadlines()` 为**每个**方法返回必需的内部超时；新增方法必须同时在此登记。`apikey.usage` 为 60 秒：启动 20 秒 + 可信 `/version` 15 秒 + 用量聚合 25 秒，三段独立，避免启动或校验吃掉慢聚合预算。
 
 ## 错误码
 
@@ -33,6 +34,7 @@ agent.cleanup.preview     agent.cleanup.write
 - router 生命周期：`ROUTER_NOT_FOUND`、`ROUTER_ALREADY_RUNNING`、`ROUTER_START_FAILED`、`ROUTER_NOT_READY`、`ROUTER_DEGRADED`、`ROUTER_NOT_OWNED`、`ROUTER_STATE_STALE`、`ROUTER_LEGACY_MANAGED`、`PORT_OCCUPIED`
 - 端口占用恢复：`OCCUPANT_NOT_FOUND`、`OCCUPANT_NOT_OWNED`、`OCCUPANT_IDENTITY_UNAVAILABLE`、`OCCUPANT_CHANGED`、`OCCUPANT_PROTECTED`、`OCCUPANT_PERMISSION_DENIED`、`OCCUPANT_TERMINATION_FAILED`、`PORT_RELEASE_TIMEOUT`、`CONFIRMATION_EXPIRED`
 - Agent 配置/清理：`AGENT_NOT_FOUND`、`AGENT_NOT_MANAGED`、`CONFIG_INVALID`、`CONFIG_NOT_WRITABLE`、`PREVIEW_STALE`、`BACKUP_FAILED`、`WRITE_FAILED`、`ROLLBACK_FAILED`，以及 model catalog/state/drift/busy/Codex auth 系列错误
+- API key 用量：`USAGE_AUTH_FAILED`、`USAGE_UNAVAILABLE`、`USAGE_REQUEST_FAILED`、`USAGE_RESPONSE_INVALID`
 
 ## 关键不变量
 

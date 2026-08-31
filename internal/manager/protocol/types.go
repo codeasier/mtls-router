@@ -29,6 +29,7 @@ const (
 	MethodAgentWrite                   Method = "agent.write"
 	MethodAgentCleanupPreview          Method = "agent.cleanup.preview"
 	MethodAgentCleanupWrite            Method = "agent.cleanup.write"
+	MethodAPIKeyUsage                  Method = "apikey.usage"
 )
 
 // ErrorCode is stable and intended for branching. Messages are diagnostic
@@ -79,6 +80,10 @@ const (
 	CodeAgentOperationBusy          ErrorCode = "AGENT_OPERATION_BUSY"
 	CodeCodexAuthUnsupported        ErrorCode = "CODEX_AUTH_UNSUPPORTED"
 	CodeAgentNotManaged             ErrorCode = "AGENT_NOT_MANAGED"
+	CodeUsageAuthFailed             ErrorCode = "USAGE_AUTH_FAILED"
+	CodeUsageUnavailable            ErrorCode = "USAGE_UNAVAILABLE"
+	CodeUsageRequestFailed          ErrorCode = "USAGE_REQUEST_FAILED"
+	CodeUsageResponseInvalid        ErrorCode = "USAGE_RESPONSE_INVALID"
 )
 
 // Request is one newline-delimited manager request. Params is method-specific.
@@ -111,6 +116,8 @@ type ErrorDetails struct {
 }
 
 // Deadlines returns the required internal deadline for every protocol method.
+// apikey.usage is 60s so absent-router start (20s), trusted /version (15s),
+// and the usage-gateway aggregate (25s) each have an independent budget.
 func Deadlines() map[Method]time.Duration {
 	return map[Method]time.Duration{
 		MethodManagerInfo:                  time.Second,
@@ -131,6 +138,7 @@ func Deadlines() map[Method]time.Duration {
 		MethodAgentWrite:                   30 * time.Second,
 		MethodAgentCleanupPreview:          5 * time.Second,
 		MethodAgentCleanupWrite:            30 * time.Second,
+		MethodAPIKeyUsage:                  60 * time.Second,
 	}
 }
 
@@ -158,6 +166,42 @@ type AgentModelsParams struct {
 	Owner  RouterOwner `json:"owner"`
 	Agents []string    `json:"agents"`
 	APIKey string      `json:"api_key"`
+}
+
+type APIKeyUsageParams struct {
+	Owner  RouterOwner `json:"owner"`
+	Period string      `json:"period,omitempty"`
+	APIKey string      `json:"api_key"`
+}
+
+type APIKeyUsageSummary struct {
+	Requests         int64   `json:"requests"`
+	PromptTokens     int64   `json:"prompt_tokens"`
+	CompletionTokens int64   `json:"completion_tokens"`
+	Cost             float64 `json:"cost"`
+}
+
+type APIKeyUsageQuota struct {
+	Used     float64  `json:"used"`
+	Limit    *float64 `json:"limit"`
+	Unit     string   `json:"unit"`
+	ResetsAt string   `json:"resets_at,omitempty"`
+}
+
+type APIKeyUsageModel struct {
+	Model            string  `json:"model"`
+	Requests         int64   `json:"requests"`
+	PromptTokens     int64   `json:"prompt_tokens"`
+	CompletionTokens int64   `json:"completion_tokens"`
+	Cost             float64 `json:"cost"`
+}
+
+type APIKeyUsageResult struct {
+	Period  string             `json:"period"`
+	AsOf    string             `json:"as_of,omitempty"`
+	Summary APIKeyUsageSummary `json:"summary"`
+	Quota   *APIKeyUsageQuota  `json:"quota,omitempty"`
+	ByModel []APIKeyUsageModel `json:"by_model"`
 }
 
 type AgentConfigParams struct {
