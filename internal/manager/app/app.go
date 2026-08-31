@@ -47,18 +47,21 @@ const (
 // Config contains the non-sensitive process and sidecar values supplied to
 // manager serve. Zero path and manager identity values are resolved locally.
 type Config struct {
-	RouterPath      string
-	ListenAddr      string
-	DesktopSession  string
-	ParentIdentity  process.Identity
-	ManagerIdentity process.Identity
-	Paths           managerpaths.Paths
-	AgentDetector   agent.Detector
-	Stderr          io.Writer
+	RouterPath        string
+	ListenAddr        string
+	DesktopSession    string
+	InstallationID    string
+	PackageGeneration int
+	ParentIdentity    process.Identity
+	ManagerIdentity   process.Identity
+	Paths             managerpaths.Paths
+	AgentDetector     agent.Detector
+	Stderr            io.Writer
 }
 
 type lifecycleService interface {
 	Start(context.Context, protocol.RouterOwner) (state.RouterState, *lifecycle.Error)
+	MigrateLegacy(context.Context) (state.RouterState, *lifecycle.Error)
 	Reclaim() (state.RouterState, *lifecycle.Error)
 	Stop(context.Context) *lifecycle.Error
 	MonitorParent(context.Context) *lifecycle.Error
@@ -194,9 +197,12 @@ func New(config Config, simplify bool) (*App, error) {
 
 	baseURL := listener.RouterBaseURL
 	discoverer := discovery.New(discovery.Config{
-		BaseURL:          baseURL,
-		DesktopStatePath: config.Paths.DesktopStateFile,
-		CLIStatePath:     config.Paths.CLIStateFile,
+		BaseURL:           baseURL,
+		DesktopStatePath:  config.Paths.DesktopStateFile,
+		CLIStatePath:      config.Paths.CLIStateFile,
+		SessionID:         config.DesktopSession,
+		InstallationID:    config.InstallationID,
+		PackageGeneration: config.PackageGeneration,
 	})
 	lifecycleManager := lifecycle.New(lifecycle.Config{
 		RouterPath:        config.RouterPath,
@@ -207,6 +213,8 @@ func New(config Config, simplify bool) (*App, error) {
 		DesktopLogPath:    config.Paths.DesktopLogFile,
 		CLILogPath:        config.Paths.CLILogFile,
 		SessionID:         config.DesktopSession,
+		InstallationID:    config.InstallationID,
+		PackageGeneration: config.PackageGeneration,
 		ManagerIdentity:   config.ManagerIdentity,
 		ParentIdentity:    config.ParentIdentity,
 		RecentOutputBytes: maxLogReadBytes,
@@ -257,6 +265,7 @@ func newWithDependencies(config Config, deps dependencies) *App {
 		protocol.MethodDiagnosticsCollect:           app.diagnosticsCollect,
 		protocol.MethodRouterStatus:                 app.routerStatus,
 		protocol.MethodRouterStart:                  app.routerStart,
+		protocol.MethodRouterMigrateLegacy:          app.routerMigrateLegacy,
 		protocol.MethodRouterStop:                   app.routerStop,
 		protocol.MethodRouterHealth:                 app.routerHealth,
 		protocol.MethodRouterVersion:                app.routerVersion,
@@ -349,7 +358,10 @@ func (a *App) diagnosticsCollect(ctx context.Context, params json.RawMessage) (a
 				item.Agent, item.Detected, item.Exists, item.Writable, item.Configured, item.Invalid)
 		}
 	}
-	return protocol.DiagnosticsResult{Summary: boundText(sanitizeText(summary.String()), maxDiagnosticsSize)}, nil
+	return protocol.DiagnosticsResult{
+		Summary:     boundText(sanitizeText(summary.String()), maxDiagnosticsSize),
+		RouterState: string(found.Classification),
+	}, nil
 }
 
 func (a *App) routerStatus(ctx context.Context, params json.RawMessage) (any, *protocol.Error) {
@@ -396,6 +408,25 @@ func (a *App) routerStart(ctx context.Context, params json.RawMessage) (any, *pr
 	if request.Owner == protocol.RouterOwnerDesktop {
 		a.clearFailureAfterStart(value)
 	}
+	return statusFromState(value), nil
+}
+
+func (a *App) routerMigrateLegacy(ctx context.Context, params json.RawMessage) (any, *protocol.Error) {
+	if err := decodeEmpty(params); err != nil {
+		return nil, err
+	}
+	if sidecarErr := validateSidecar(a.config.RouterPath); sidecarErr != nil {
+		return nil, sidecarErr
+	}
+	a.captureUnexpectedExits()
+	value, operationErr := a.deps.lifecycle.MigrateLegacy(ctx)
+	if operationErr != nil {
+		if operationErr.Launched || operationErr.Stage != "" {
+			a.latchStartupFailure(operationErr)
+		}
+		return nil, mapLifecycleError(operationErr)
+	}
+	a.clearFailureAfterStart(value)
 	return statusFromState(value), nil
 }
 
@@ -1173,6 +1204,8 @@ func discoveryError(found discovery.Result, requireHealth bool) *protocol.Error 
 		return &protocol.Error{Code: protocol.CodeRouterNotFound, Message: "router was not found"}
 	case discovery.Stale:
 		return &protocol.Error{Code: protocol.CodeRouterStateStale, Message: "router state is stale"}
+	case discovery.LegacyManaged:
+		return &protocol.Error{Code: protocol.CodeRouterLegacyManaged, Message: "a legacy desktop router is still running"}
 	default:
 		return &protocol.Error{Code: protocol.CodePortOccupied, Message: "router port is occupied by an unknown process"}
 	}
@@ -1191,6 +1224,7 @@ func mapLifecycleError(err *lifecycle.Error) *protocol.Error {
 		protocol.CodeRouterDegraded:       "router upstream is unavailable",
 		protocol.CodeRouterNotOwned:       "router is not owned by this desktop session",
 		protocol.CodeRouterStateStale:     "router state is stale",
+		protocol.CodeRouterLegacyManaged:  "a legacy desktop router requires verified migration",
 		protocol.CodePortOccupied:         "router port is occupied",
 		protocol.CodeOperationTimeout:     "router operation timed out",
 	}

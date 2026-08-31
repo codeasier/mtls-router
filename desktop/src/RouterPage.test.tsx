@@ -78,6 +78,14 @@ describe("RouterPage states", () => {
       light: "red",
     },
     {
+      name: "legacy managed router",
+      status: { state: "legacy_managed", owner: "desktop" },
+      heading: "发现历史桌面路由",
+      process: "需要迁移",
+      upstream: "不可用",
+      light: "yellow",
+    },
+    {
       name: "start failed",
       status: { state: "start_failed" },
       heading: "路由启动失败",

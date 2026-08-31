@@ -9,10 +9,14 @@ use serde_json::json;
 pub async fn start(manager: &ManagerClient, scheduler: &PollScheduler) -> Result<RouterStatus> {
     scheduler.cancel_release_observation().await;
     scheduler.request_refresh();
-    match manager
-        .call::<RouterStatus>("router.start", json!({ "owner": "desktop" }))
-        .await
-    {
+    let current: RouterStatus = manager.call("router.status", json!({})).await?;
+    let (method, params) =
+        if current.state == "legacy_managed" && current.owner.as_deref() == Some("desktop") {
+            ("router.migrate_legacy", json!({}))
+        } else {
+            ("router.start", json!({ "owner": "desktop" }))
+        };
+    match manager.call::<RouterStatus>(method, params).await {
         Ok(status) => {
             scheduler.set_status(status.clone()).await;
             Ok(status)
@@ -149,8 +153,8 @@ mod tests {
                     "target": env!("MTLS_MANAGER_TARGET"), "deployment_id": env!("MTLS_DEPLOYMENT_ID"),
                     "management_protocol_version": env!("MTLS_MANAGEMENT_PROTOCOL_VERSION")
                 }),
-                "router.status" | "router.start" => {
-                    json!({ "state": state, "owner": if matches!(state, "desktop_owned" | "degraded") { "desktop" } else { "external" } })
+                "router.status" | "router.start" | "router.migrate_legacy" => {
+                    json!({ "state": state, "owner": if matches!(state, "desktop_owned" | "degraded" | "legacy_managed") { "desktop" } else { "external" } })
                 }
                 "router.force_terminate_occupant" => {
                     json!({ "termination": "process_terminated", "port_state": "released" })
@@ -271,6 +275,7 @@ mod tests {
                 &calls.lock().unwrap()[1..],
                 [
                     "router.status",
+                    "router.status",
                     "router.start",
                     "router.version",
                     "router.health"
@@ -303,6 +308,27 @@ mod tests {
     }
 
     #[test]
+    fn legacy_router_uses_explicit_non_replayable_migration_method() {
+        runtime().block_on(async {
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            let manager = ManagerClient::new(Arc::new(Factory {
+                calls: calls.clone(),
+                initial: "legacy_managed",
+                start_error: None,
+            }));
+            let scheduler = PollScheduler::new(manager.clone());
+
+            let status = start(&manager, &scheduler).await.unwrap();
+
+            assert_eq!(status.state, "legacy_managed");
+            assert_eq!(
+                &calls.lock().unwrap()[1..],
+                ["router.status", "router.migrate_legacy"]
+            );
+        });
+    }
+
+    #[test]
     fn degraded_start_is_reconciled_as_running_instead_of_failed() {
         runtime().block_on(async {
             let calls = Arc::new(Mutex::new(Vec::new()));
@@ -319,7 +345,7 @@ mod tests {
             assert_eq!(status.owner.as_deref(), Some("desktop"));
             assert_eq!(
                 &calls.lock().unwrap()[1..],
-                ["router.start", "router.status"]
+                ["router.status", "router.start", "router.status"]
             );
             assert_eq!(scheduler.snapshot().await.status, Some(status));
         });
@@ -341,7 +367,7 @@ mod tests {
             assert_eq!(error.code, "ROUTER_START_FAILED");
             assert_eq!(
                 &calls.lock().unwrap()[1..],
-                ["router.start", "router.status"]
+                ["router.status", "router.start", "router.status"]
             );
             assert_eq!(
                 scheduler

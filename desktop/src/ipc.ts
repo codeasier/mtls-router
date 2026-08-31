@@ -53,6 +53,7 @@ export type RouterState =
   | "external_compatible"
   | "degraded"
   | "stale"
+  | "legacy_managed"
   | "unknown_occupant"
   | "start_failed"
   | "stopping";
@@ -64,6 +65,8 @@ export interface RouterStatus {
   pid?: number;
   last_error?: string;
   recent_logs?: string[];
+  manager_stage?: string;
+  manager_code?: string;
 }
 
 export interface RouterHealth {
@@ -389,6 +392,7 @@ export function validOccupantInspection(
 
 export interface PollError {
   code: string;
+  stage?: string;
 }
 
 export interface PollSnapshot {
@@ -435,6 +439,11 @@ export interface RouterLogs {
 
 export interface Diagnostics {
   summary: string;
+  router_state?: string;
+  manager_failure?: {
+    stage: string;
+    code: string;
+  };
 }
 
 export interface DesktopPaths {

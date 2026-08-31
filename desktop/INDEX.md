@@ -14,11 +14,12 @@ React UI ──Tauri invoke──▶ Rust commands.rs ──stdin/stdout JSON─
                               updater.rs ──HTTPS + Tauri signature──▶ github.com releases
 ```
 
-桌面应用绝不直接与 router 通信。它以长驻子进程方式拉起 `mtls-router-manager serve`，带 `--desktop-session`、`--parent-pid/start/executable` flag。
+桌面应用绝不直接与 router 通信。它以长驻子进程方式拉起 `mtls-router-manager serve`，带 `--desktop-session`、`--desktop-installation`、`--package-generation`、`--parent-pid/start/executable` flag。
 
 - **协议与启动失败诊断**：桌面端严格校验 management protocol v4 结构；预启动失败按稳定阶段和可选数值 OS 错误码生成安全诊断，启动后失败会终止并等待自有子进程。lifecycle 保留有界原始输出，而 app 协议仅暴露脱敏的会话作用域诊断。
 - **端口恢复**：RouterPage 只按结构化 action/reason 渲染按钮或 SCM/systemd 人工引导，不执行命令、不提权、不猜测 launchd label；Windows copy command 只生成适用于管理员 PowerShell 的安全引用文本，不适用于 `cmd.exe`。Rust `port_recovery.rs` 在 manager 报告分模式成功证据与首次释放后，由 scheduler 在约 10 秒内定期采样；只有持续的 `absent` 状态可产生 `released`，`unknown_occupant` 产生 `reoccupied`，其他状态、主动启动和 manager session 变化会取消观察。
-- **桌面整包更新**：仅精确 stable `vX.Y.Z` release 配置 `https://github.com/codeasier/mtls-router/releases/latest/download/latest.json` 与 updater 公钥；非 stable 构建保留可反序列化但无 endpoint 的禁用配置。启动时静默检查一次，Settings 可手动复查。用户确认后 `updater.rs` 重新检查精确 stable SemVer、下载并强制校验 Tauri 签名，只停止经验证的 desktop-owned router，安装包含 manager/router sidecar 的完整包并重启；不停止 external router，也不改变 CLI 更新路径。
+- **桌面整包更新**：仅精确 stable `vX.Y.Z` release 配置 `https://github.com/codeasier/mtls-router/releases/latest/download/latest.json` 与 updater 公钥；非 stable 构建保留可反序列化但无 endpoint 的禁用配置。启动时静默检查一次，Settings 可手动复查。用户确认后 `updater.rs` 重新检查精确 stable SemVer、下载并强制校验 Tauri 签名，停止经验证的 desktop-owned 或关联 `legacy_managed` router，安装包含 manager/router sidecar 的完整包并重启；无法停止关联 legacy router，或关联状态为 `start_failed`、stale、unknown、未知枚举或 owner/state 组合不可验证时拒绝安装。不停止 external router，也不改变 CLI 更新路径。
+- **安装所有权与 manager 启动诊断**：`installation.json` 由 Rust 桌面端单独维护，保存稳定 installation ID 与当前已校验打包 sidecar 的哈希；哈希不是历史迁移 allowlist，也不授权 protocol 1/3 迁移。会话 ID 只作 epoch。manager 启动失败按 `sidecar_resolution` / `spawn` / `handshake` / `protocol_parse` / `watchdog_timeout` / `unexpected_exit` 记入有界环；Rust 只接受 manager stderr 上有界、闭合集合的结构化 bootstrap JSON，其他原始 stderr 全部丢弃。失败的 manager 无法返回协议状态，因此安全阶段/错误码由 Rust 边界合成到 Router 状态，并同时进入 `diagnostics.collect`；恢复 manager 再次失败时保留具体 bootstrap/protocol 阶段与稳定错误码，不以通用 `unexpected_exit/MANAGER_FAILED` 覆盖。
 
 ## 前端（src/）
 
@@ -50,24 +51,26 @@ React UI ──Tauri invoke──▶ Rust commands.rs ──stdin/stdout JSON─
 
 ## 后端（src-tauri/src/）
 
-| 文件                  | 职责                                                                                                                                                |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `lib.rs`              | 应用入口：插件注册、setup（sidecar 校验、manager spawn、调度器启动、托盘）、invoke handler 注册                                                     |
-| `commands.rs`         | 所有 `#[tauri::command]` handler；`AppState`；cleanup preview/write 使用严格 request 且不接收凭据或 model flow，write 纳入 lifecycle busy/quit 保护 |
-| `credential.rs`       | `CredentialStore`：严格 schema、原子写入、Unix 0600、摘要/使用/删除及进程内并发控制；明文使用值以 `Zeroizing<String>` 返回                          |
-| `manager.rs`          | `ManagerClient` + `TauriTransportFactory` —— spawn/通信；cleanup watchdog 对齐 Go 5/30 秒 deadline 再加 1 秒，cleanup write 不在不确定投递后 replay |
-| `scheduler.rs`        | `PollScheduler` —— 周期性 router 状态/健康轮询；推进端口释放观察；emit `router-poll-snapshot` 事件；可见性感知间隔                                  |
-| `port_recovery.rs`    | `PortRecovery` —— manager session epoch 绑定的约 10 秒定期采样状态；区分 `observing`、`released`、`reoccupied`                                      |
-| `updater.rs`          | Tauri updater command：stable-only 比较、有限网络超时与二次版本绑定、下载进度、desktop-owned router 停止/失败恢复、整包安装和重启                   |
-| `sidecar.rs`          | `SidecarPaths::resolve()` —— 在 app 二进制旁定位 `mtls-router[.exe]` 与 `mtls-router-manager[.exe]`（运行时纯名字）；校验 SHA-256 + 原生架构/格式   |
-| `tray.rs`             | 系统托盘图标/菜单；状态感知标签；关闭主窗口隐藏到托盘（macOS 先 `AppHandle::hide` 让出原生全屏 Space，再隐藏窗口）；托盘/二次实例共用激活路径       |
-| `orchestration.rs`    | `first_launch()` —— sidecar 有效且无 router 运行时自动启动 router                                                                                   |
-| `model_config.rs`     | model config 导入/导出 JSON 校验                                                                                                                    |
-| `paths.rs`            | 桌面数据目录解析（委托给 `MTLS_ROUTER_DESKTOP_DATA_DIR` 或 OS 默认），并派生 `mtls-router-logs/` 与 `credentials.json` 路径                         |
-| `process_identity.rs` | `current()` —— 捕获 PID + 启动时间 + 可执行文件用于父身份 flag                                                                                      |
-| `autostart.rs`        | 登录启动插件包装；首次启动默认启用                                                                                                                  |
-| `types.rs`            | 镜像 manager 协议结果及桌面更新状态的严格 serde 类型，含 cleanup preview、update info/check/progress、日志目录与文件影响                            |
-| `error.rs`            | `CommandError` —— 将 manager 协议错误映射为用户可见字符串                                                                                           |
+| 文件                     | 职责                                                                                                                                                                                                                                                       |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lib.rs`                 | 应用入口：插件注册、setup（sidecar 校验、manager spawn、调度器启动、托盘）、invoke handler 注册                                                                                                                                                            |
+| `commands.rs`            | 所有 `#[tauri::command]` handler；`AppState`；cleanup preview/write 使用严格 request 且不接收凭据或 model flow，write 纳入 lifecycle busy/quit 保护                                                                                                        |
+| `credential.rs`          | `CredentialStore`：严格 schema、原子写入、Unix 0600、摘要/使用/删除及进程内并发控制；明文使用值以 `Zeroizing<String>` 返回                                                                                                                                 |
+| `manager.rs`             | `ManagerClient` + `TauriTransportFactory` —— spawn/通信；cleanup watchdog 对齐 Go 5/30 秒 deadline 再加 1 秒，cleanup write 不在不确定投递后 replay                                                                                                        |
+| `installation.rs`        | 桌面唯一的 `installation.json` schema/load-or-create 实现：稳定 installation ID、package generation、deployment/protocol、当前 sidecar 哈希                                                                                                                |
+| `manager_diagnostics.rs` | 有界、脱敏的 manager 启动/传输诊断环（阶段 + 稳定错误码）；只解析闭合结构化 bootstrap stderr，丢弃其他原文/路径/密钥                                                                                                                                       |
+| `scheduler.rs`           | `PollScheduler` —— 周期性 router 状态/健康轮询；推进端口释放观察；emit `router-poll-snapshot` 事件；可见性感知间隔                                                                                                                                         |
+| `port_recovery.rs`       | `PortRecovery` —— manager session epoch 绑定的约 10 秒定期采样状态；区分 `observing`、`released`、`reoccupied`                                                                                                                                             |
+| `updater.rs`             | Tauri updater command：stable-only 比较、有限网络超时与二次版本绑定、下载进度、desktop-owned/`legacy_managed` router 停止后复查、仅显式安全状态允许安装、`start_failed`/stale/unknown/未知状态 fail-closed、歧义 stop 不重试、安装失败恢复、整包安装和重启 |
+| `sidecar.rs`             | `SidecarPaths::resolve()` —— 在 app 二进制旁定位 `mtls-router[.exe]` 与 `mtls-router-manager[.exe]`（运行时纯名字）；校验 SHA-256 + 原生架构/格式                                                                                                          |
+| `tray.rs`                | 系统托盘图标/菜单；状态感知标签；关闭主窗口隐藏到托盘（macOS 先 `AppHandle::hide` 让出原生全屏 Space，再隐藏窗口）；托盘/二次实例共用激活路径                                                                                                              |
+| `orchestration.rs`       | `first_launch()` —— sidecar 有效且无 router 运行时自动启动 router                                                                                                                                                                                          |
+| `model_config.rs`        | model config 导入/导出 JSON 校验                                                                                                                                                                                                                           |
+| `paths.rs`               | 桌面数据目录解析（委托给 `MTLS_ROUTER_DESKTOP_DATA_DIR` 或 OS 默认），并派生 `mtls-router-logs/` 与 `credentials.json` 路径                                                                                                                                |
+| `process_identity.rs`    | `current()` —— 捕获 PID + 启动时间 + 可执行文件用于父身份 flag                                                                                                                                                                                             |
+| `autostart.rs`           | 登录启动插件包装；首次启动默认启用                                                                                                                                                                                                                         |
+| `types.rs`               | 镜像 manager 协议结果及桌面更新状态的严格 serde 类型，含 cleanup preview、update info/check/progress、日志目录与文件影响                                                                                                                                   |
+| `error.rs`               | `CommandError` —— 将 manager 协议错误映射为用户可见字符串                                                                                                                                                                                                  |
 
 ## 安全约束
 

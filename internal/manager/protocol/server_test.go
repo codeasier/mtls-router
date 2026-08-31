@@ -13,7 +13,7 @@ func TestDeadlinesCoverEveryMethod(t *testing.T) {
 	want := map[Method]time.Duration{
 		MethodManagerInfo: time.Second, MethodDiagnosticsCollect: 5 * time.Second,
 		MethodRouterStatus: time.Second, MethodRouterStart: 20 * time.Second,
-		MethodRouterStop: 7 * time.Second, MethodRouterHealth: 12 * time.Second,
+		MethodRouterMigrateLegacy: 27 * time.Second, MethodRouterStop: 7 * time.Second, MethodRouterHealth: 12 * time.Second,
 		MethodRouterVersion: time.Second, MethodRouterLogs: 2 * time.Second,
 		MethodRouterInspectOccupant: 2 * time.Second, MethodRouterForceTerminateOccupant: 3 * time.Second,
 		MethodAgentDetect: 5 * time.Second, MethodAgentModels: 30 * time.Second,

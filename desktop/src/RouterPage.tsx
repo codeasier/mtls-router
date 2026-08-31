@@ -43,7 +43,8 @@ type ViewState =
   | "failed"
   | "unavailable"
   | "reinstall"
-  | "stopping";
+  | "stopping"
+  | "legacy";
 
 interface StateCopy {
   title: string;
@@ -73,6 +74,11 @@ type FailureKind =
   | "shutdown"
   | "unexpected-exit"
   | "process-exit"
+  | "sidecar-resolution"
+  | "spawn"
+  | "handshake"
+  | "protocol-parse"
+  | "watchdog-timeout"
   | "internal";
 
 interface FailureGuide {
@@ -104,6 +110,12 @@ const failureStageKinds: Record<string, FailureKind> = {
   state_reconcile: "state-reconcile",
   state_persist: "state-storage",
   process_exit: "process-exit",
+  sidecar_resolution: "sidecar-resolution",
+  spawn: "spawn",
+  handshake: "handshake",
+  protocol_parse: "protocol-parse",
+  watchdog_timeout: "watchdog-timeout",
+  unexpected_exit: "unexpected-exit",
 };
 
 function knownDiagnosticKind(
@@ -227,6 +239,13 @@ function getStateCopy(t: Translator): Record<ViewState, StateCopy> {
       tone: "warning",
       light: "yellow",
     },
+    legacy: {
+      title: t("router.state.legacy.title"),
+      signal: t("router.state.legacy.signal"),
+      detail: t("router.state.legacy.detail"),
+      tone: "warning",
+      light: "yellow",
+    },
   };
 }
 
@@ -241,7 +260,14 @@ function isAvailable(status: RouterStatus | null): boolean {
 function sanitizedFailureDiagnostics(
   status: RouterStatus | null,
 ): FailureDiagnostics {
-  if (status?.state !== "start_failed") {
+  if (!status) {
+    return { lastError: "", recentLogs: [] };
+  }
+  const managerDiagnostic =
+    status.manager_stage && status.manager_code
+      ? `stage=${status.manager_stage} code=${status.manager_code}`
+      : "";
+  if (status.state !== "start_failed" && !managerDiagnostic) {
     return { lastError: "", recentLogs: [] };
   }
   const recentLogs = sanitizeSensitiveText(
@@ -252,7 +278,7 @@ function sanitizedFailureDiagnostics(
   return {
     lastError: status.last_error
       ? sanitizeSensitiveText(status.last_error)
-      : "",
+      : managerDiagnostic,
     recentLogs:
       recentLogs.length === 1 && recentLogs[0] === "" ? [] : recentLogs,
   };
@@ -297,6 +323,8 @@ function viewState(
       return "degraded";
     case "unknown_occupant":
       return "occupied";
+    case "legacy_managed":
+      return "legacy";
     default:
       return "not-started";
   }
@@ -520,6 +548,14 @@ export function RouterPage({
     } else if (statusCode) {
       setStatusReadFailed(true);
       setMessage(actionErrorKey("load"));
+      if (snapshot.status_error?.stage) {
+        setStatus((current) => ({
+          ...(current ?? { state: "start_failed" }),
+          state: current?.state ?? "start_failed",
+          manager_stage: snapshot.status_error?.stage,
+          manager_code: statusCode,
+        }));
+      }
     }
     if (snapshot.health_error && !statusCode) {
       setMessage(actionErrorKey("health"));
@@ -702,12 +738,19 @@ export function RouterPage({
   const canStart =
     !operation &&
     !reinstallRequired &&
-    (currentState === "not-started" || currentState === "failed");
+    (currentState === "not-started" ||
+      currentState === "failed" ||
+      currentState === "legacy");
   const canStop =
     (!operation &&
       status?.state === "desktop_owned" &&
       status.owner === "desktop") ||
-    (!operation && status?.state === "degraded" && status.owner === "desktop");
+    (!operation &&
+      status?.state === "degraded" &&
+      status.owner === "desktop") ||
+    (!operation &&
+      status?.state === "legacy_managed" &&
+      status.owner === "desktop");
   const canRetryHealth = available && !operation && !checkingHealth;
   const pidOnlyOccupant = occupant?.verification_mode === "windows_pid_only";
 

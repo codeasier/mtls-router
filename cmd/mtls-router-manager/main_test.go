@@ -215,6 +215,7 @@ func TestServeOnlyCommandAndExplicitFlagValidation(t *testing.T) {
 		{"manager.info"},
 		{"serve", "--unknown"},
 		{"serve", "--desktop-session", "session-only"},
+		{"serve", "--desktop-session", "session", "--parent-pid", "1", "--parent-start", "start", "--parent-executable", "/bin/true"},
 		{"serve", "--listen", "0.0.0.0:19099"},
 	} {
 		command := exec.Command(binary, args...)
@@ -387,7 +388,7 @@ func TestManagerSubprocessRejectsMalformedPresetBeforeServing(t *testing.T) {
 	if err == nil || stdout != "" {
 		t.Fatalf("err=%v stdout=%q stderr=%q", err, stdout, stderr)
 	}
-	if !strings.Contains(stderr, "invalid embedded Agent model preset") || strings.Contains(stderr, "malformed-encoded-preset-canary") {
+	if stderr != "{\"schema_version\":1,\"kind\":\"manager_bootstrap_failure\",\"stage\":\"handshake\",\"code\":\"MANAGER_INIT_FAILED\"}\n" || strings.Contains(stderr, "malformed-encoded-preset-canary") {
 		t.Fatalf("unsanitized startup failure: %s", stderr)
 	}
 }
@@ -408,7 +409,7 @@ func TestManagerSubprocessRejectsInvalidLinkedSimplifyBeforeRecoveryOrServing(t 
 	if err == nil || stdout != "" {
 		t.Fatalf("err=%v stdout=%q stderr=%q", err, stdout, stderr)
 	}
-	if stderr != "mtls-router-manager: invalid embedded simplify value\n" || strings.Contains(stderr, simplifyCanary) || strings.Contains(stderr, "Agent transaction recovery") {
+	if stderr != "{\"schema_version\":1,\"kind\":\"manager_bootstrap_failure\",\"stage\":\"handshake\",\"code\":\"MANAGER_CONFIG_INVALID\"}\n" || strings.Contains(stderr, simplifyCanary) || strings.Contains(stderr, "Agent transaction recovery") {
 		t.Fatalf("unsanitized or late startup failure: %s", stderr)
 	}
 }

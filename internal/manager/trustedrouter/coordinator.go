@@ -63,6 +63,8 @@ func (c *Coordinator) Fetch(ctx context.Context, owner protocol.RouterOwner, api
 		switch found.Classification {
 		case discovery.Stale:
 			return Result{}, &protocol.Error{Code: protocol.CodeRouterStateStale, Message: "router state is stale"}
+		case discovery.LegacyManaged:
+			return Result{}, &protocol.Error{Code: protocol.CodeRouterLegacyManaged, Message: "legacy desktop router requires explicit migration"}
 		case discovery.UnknownOccupant:
 			return Result{}, &protocol.Error{Code: protocol.CodePortOccupied, Message: "router port is occupied"}
 		case discovery.Absent:

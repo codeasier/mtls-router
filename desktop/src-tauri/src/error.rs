@@ -13,6 +13,8 @@ pub struct CommandError {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<ErrorDetails>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stage: Option<String>,
     #[serde(skip)]
     pub(crate) recoverable: bool,
 }
@@ -23,8 +25,14 @@ impl CommandError {
             code: code.into(),
             message: message.into(),
             details: None,
+            stage: None,
             recoverable: false,
         }
+    }
+
+    pub fn with_stage(mut self, stage: impl Into<String>) -> Self {
+        self.stage = Some(stage.into());
+        self
     }
 
     pub fn invalid_params(message: impl Into<String>) -> Self {

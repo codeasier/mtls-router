@@ -1,5 +1,10 @@
 use crate::{
     error::{CommandError, Result},
+    installation::InstallationOwnership,
+    manager_diagnostics::{
+        stage_for_code, ManagerDiagnostic, ManagerDiagnosticRing, STAGE_HANDSHAKE,
+        STAGE_PROTOCOL_PARSE, STAGE_SPAWN, STAGE_UNEXPECTED_EXIT, STAGE_WATCHDOG_TIMEOUT,
+    },
     process_identity::ProcessIdentity,
     sidecar::SidecarPaths,
     types::ManagerInfo,
@@ -25,6 +30,7 @@ use zeroize::{Zeroize, Zeroizing};
 const MANAGER_INFO: &str = "manager.info";
 const ROUTER_STATUS: &str = "router.status";
 const ROUTER_START: &str = "router.start";
+const ROUTER_MIGRATE_LEGACY: &str = "router.migrate_legacy";
 const FORCE_TERMINATE_OCCUPANT: &str = "router.force_terminate_occupant";
 const AGENT_CLEANUP_WRITE: &str = "agent.cleanup.write";
 
@@ -69,6 +75,7 @@ pub struct TauriTransportFactory {
     sidecars: SidecarPaths,
     parent: ProcessIdentity,
     session_id: String,
+    installation: InstallationOwnership,
 }
 
 impl TauriTransportFactory {
@@ -77,12 +84,14 @@ impl TauriTransportFactory {
         sidecars: SidecarPaths,
         parent: ProcessIdentity,
         session_id: String,
+        installation: InstallationOwnership,
     ) -> Self {
         Self {
             app,
             sidecars,
             parent,
             session_id,
+            installation,
         }
     }
 }
@@ -95,6 +104,10 @@ impl TransportFactory for TauriTransportFactory {
             self.sidecars.router.to_string_lossy().into_owned(),
             "--desktop-session".to_owned(),
             self.session_id.clone(),
+            "--desktop-installation".to_owned(),
+            self.installation.installation_id.clone(),
+            "--package-generation".to_owned(),
+            self.installation.package_generation.to_string(),
             "--parent-pid".to_owned(),
             self.parent.pid.to_string(),
             "--parent-start".to_owned(),
@@ -106,10 +119,16 @@ impl TransportFactory for TauriTransportFactory {
             .app
             .shell()
             .sidecar("mtls-router-manager")
-            .map_err(|_| CommandError::new("SIDECAR_MISSING", "packaged manager is missing"))?
+            .map_err(|_| {
+                CommandError::new("SIDECAR_MISSING", "packaged manager is missing")
+                    .with_stage(crate::manager_diagnostics::STAGE_SIDECAR_RESOLUTION)
+            })?
             .args(args)
             .spawn()
-            .map_err(|_| CommandError::new("SIDECAR_INVALID", "packaged manager cannot execute"))?;
+            .map_err(|_| {
+                CommandError::new("SIDECAR_INVALID", "packaged manager cannot execute")
+                    .with_stage(STAGE_SPAWN)
+            })?;
         let (sender, receiver) = mpsc::channel(16);
         tauri::async_runtime::spawn(async move {
             while let Some(event) = events.recv().await {
@@ -155,6 +174,7 @@ pub struct ManagerClient {
     activity: Arc<ActivityState>,
     session_epoch: Arc<AtomicU64>,
     startup_error: Option<CommandError>,
+    diagnostics: ManagerDiagnosticRing,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -192,12 +212,19 @@ impl ManagerClient {
             updates,
         });
         let session_epoch = Arc::new(AtomicU64::new(0));
-        tauri::async_runtime::spawn(run_actor(factory, receiver, session_epoch.clone()));
+        let diagnostics = ManagerDiagnosticRing::default();
+        tauri::async_runtime::spawn(run_actor(
+            factory,
+            receiver,
+            session_epoch.clone(),
+            diagnostics.clone(),
+        ));
         Self {
             sender,
             activity,
             session_epoch,
             startup_error: None,
+            diagnostics,
         }
     }
 
@@ -208,12 +235,20 @@ impl ManagerClient {
             current: StdMutex::new(ManagerActivity::default()),
             updates,
         });
+        let diagnostics = ManagerDiagnosticRing::default();
+        let stage = stage_for_code(&error.code);
+        diagnostics.record(stage, error.code.clone());
         Self {
             sender,
             activity,
             session_epoch: Arc::new(AtomicU64::new(0)),
-            startup_error: Some(error),
+            startup_error: Some(error.with_stage(stage)),
+            diagnostics,
         }
+    }
+
+    pub fn last_diagnostic(&self) -> Option<ManagerDiagnostic> {
+        self.diagnostics.last()
     }
 
     pub fn is_busy(&self) -> bool {
@@ -413,8 +448,10 @@ async fn run_actor(
     factory: Arc<dyn TransportFactory>,
     mut calls: mpsc::Receiver<Call>,
     session_epoch: Arc<AtomicU64>,
+    diagnostics: ManagerDiagnosticRing,
 ) {
-    let (mut session, mut failure) = match start_and_handshake(factory.as_ref()).await {
+    let (mut session, mut failure) = match start_and_handshake(factory.as_ref(), &diagnostics).await
+    {
         Ok(session) => (Some(session), None),
         Err(error) => (None, Some(error)),
     };
@@ -440,7 +477,7 @@ async fn run_actor(
             call.params.clone()
         };
         let result = if let Some(active) = session.as_mut() {
-            transact(active, request_id, call.method, params).await
+            transact(active, request_id, call.method, params, &diagnostics).await
         } else {
             Err(failure.clone().unwrap_or_else(CommandError::manager_failed))
         };
@@ -452,13 +489,19 @@ async fn run_actor(
                 session_epoch.fetch_add(1, Ordering::AcqRel);
                 active.child.kill();
             }
-            match recover(factory.as_ref(), &mut request_id).await {
+            match recover(factory.as_ref(), &mut request_id, &diagnostics).await {
                 Ok(mut replacement) => {
                     let retried = if must_not_replay {
                         result
                     } else {
-                        let retried =
-                            transact(&mut replacement, request_id, call.method, call.params).await;
+                        let retried = transact(
+                            &mut replacement,
+                            request_id,
+                            call.method,
+                            call.params,
+                            &diagnostics,
+                        )
+                        .await;
                         request_id += 1;
                         retried
                     };
@@ -472,9 +515,15 @@ async fn run_actor(
                     failure = Some(error.clone());
                     Err(error)
                 }
+                Err(error) if error.stage.is_some() => {
+                    failure = Some(error.clone());
+                    Err(error)
+                }
                 Err(_) => {
-                    failure = Some(CommandError::manager_failed());
-                    Err(CommandError::manager_failed())
+                    let failed = CommandError::manager_failed().with_stage(STAGE_UNEXPECTED_EXIT);
+                    diagnostics.record_error(STAGE_UNEXPECTED_EXIT, &failed);
+                    failure = Some(failed.clone());
+                    Err(failed)
                 }
             }
         } else {
@@ -494,37 +543,78 @@ async fn run_actor(
 fn request_must_not_replay(method: &str) -> bool {
     matches!(
         method,
-        "agent.models" | "agent.write" | AGENT_CLEANUP_WRITE | FORCE_TERMINATE_OCCUPANT
+        "agent.models"
+            | "agent.write"
+            | AGENT_CLEANUP_WRITE
+            | FORCE_TERMINATE_OCCUPANT
+            | ROUTER_MIGRATE_LEGACY
+            | "router.stop"
     )
 }
 
-async fn start_and_handshake(factory: &dyn TransportFactory) -> Result<TransportSession> {
-    let mut session = factory.spawn()?;
-    let value = transact(&mut session, 0, MANAGER_INFO, json!({})).await?;
-    let info: ManagerInfo = serde_json::from_value(value)
-        .map_err(|_| CommandError::new("SIDECAR_INVALID", "manager handshake is malformed"))?;
-    validate_handshake(&info)?;
+async fn start_and_handshake(
+    factory: &dyn TransportFactory,
+    diagnostics: &ManagerDiagnosticRing,
+) -> Result<TransportSession> {
+    let mut session = match factory.spawn() {
+        Ok(session) => session,
+        Err(error) => {
+            let stage = match error.stage.as_deref() {
+                Some(crate::manager_diagnostics::STAGE_SIDECAR_RESOLUTION) => {
+                    crate::manager_diagnostics::STAGE_SIDECAR_RESOLUTION
+                }
+                _ => STAGE_SPAWN,
+            };
+            diagnostics.record(stage, error.code.clone());
+            return Err(error);
+        }
+    };
+    let value = transact(&mut session, 0, MANAGER_INFO, json!({}), diagnostics).await?;
+    let info: ManagerInfo = serde_json::from_value(value).map_err(|_| {
+        let error = CommandError::new("SIDECAR_INVALID", "manager handshake is malformed")
+            .with_stage(STAGE_HANDSHAKE);
+        diagnostics.record_error(STAGE_HANDSHAKE, &error);
+        error
+    })?;
+    if let Err(error) = validate_handshake(&info) {
+        let error = error.with_stage(STAGE_HANDSHAKE);
+        diagnostics.record_error(STAGE_HANDSHAKE, &error);
+        return Err(error);
+    }
     Ok(session)
 }
 
-async fn recover(factory: &dyn TransportFactory, request_id: &mut u64) -> Result<TransportSession> {
-    let mut replacement = start_and_handshake(factory).await?;
-    let status = transact(&mut replacement, *request_id, ROUTER_STATUS, json!({})).await?;
+async fn recover(
+    factory: &dyn TransportFactory,
+    request_id: &mut u64,
+    diagnostics: &ManagerDiagnosticRing,
+) -> Result<TransportSession> {
+    let mut replacement = start_and_handshake(factory, diagnostics).await?;
+    let status = transact(
+        &mut replacement,
+        *request_id,
+        ROUTER_STATUS,
+        json!({}),
+        diagnostics,
+    )
+    .await?;
     *request_id += 1;
     match status.get("state").and_then(Value::as_str) {
         Some("absent" | "desktop_owned" | "external_compatible") => Ok(replacement),
+        Some("legacy_managed") => Ok(replacement),
         Some("stale" | "degraded") => {
             transact(
                 &mut replacement,
                 *request_id,
                 ROUTER_START,
                 json!({ "owner": "desktop" }),
+                diagnostics,
             )
             .await?;
             *request_id += 1;
             Ok(replacement)
         }
-        _ => Err(CommandError::manager_failed()),
+        _ => Err(CommandError::manager_failed().with_stage(STAGE_UNEXPECTED_EXIT)),
     }
 }
 
@@ -533,6 +623,7 @@ async fn transact(
     request_id: u64,
     method: &'static str,
     params: Value,
+    diagnostics: &ManagerDiagnosticRing,
 ) -> Result<Value> {
     let id = format!("desktop-{request_id}");
     let mut request = json!({ "id": id, "method": method, "params": params });
@@ -544,11 +635,17 @@ async fn transact(
     line.zeroize();
     write_result?;
     let deadline = watchdog(method)?;
-    let response = tokio::time::timeout(deadline, read_response(&mut session.events, &id))
-        .await
-        .map_err(|_| {
-            CommandError::recoverable("OPERATION_TIMEOUT", "manager operation timed out")
-        })??;
+    let response = tokio::time::timeout(
+        deadline,
+        read_response(&mut session.events, &id, diagnostics),
+    )
+    .await
+    .map_err(|_| {
+        let error = CommandError::recoverable("OPERATION_TIMEOUT", "manager operation timed out")
+            .with_stage(STAGE_WATCHDOG_TIMEOUT);
+        diagnostics.record_error(STAGE_WATCHDOG_TIMEOUT, &error);
+        error
+    })??;
     if let Some(error) = response.get("error") {
         let code = error
             .get("code")
@@ -590,41 +687,61 @@ fn clear_json(value: &mut Value) {
     }
 }
 
-async fn read_response(events: &mut mpsc::Receiver<TransportEvent>, id: &str) -> Result<Value> {
+async fn read_response(
+    events: &mut mpsc::Receiver<TransportEvent>,
+    id: &str,
+    diagnostics: &ManagerDiagnosticRing,
+) -> Result<Value> {
     let mut buffered = VecDeque::new();
+    let mut bootstrap_failure: Option<ManagerDiagnostic> = None;
     loop {
         let event = if let Some(event) = buffered.pop_front() {
             event
         } else {
-            events
-                .recv()
-                .await
-                .ok_or_else(CommandError::manager_failed)?
+            events.recv().await.ok_or_else(|| {
+                let error = CommandError::manager_failed().with_stage(STAGE_UNEXPECTED_EXIT);
+                diagnostics.record_error(STAGE_UNEXPECTED_EXIT, &error);
+                error
+            })?
         };
         match event {
             TransportEvent::Stdout(bytes) => {
                 let response: Value = serde_json::from_slice(&bytes).map_err(|_| {
-                    CommandError::recoverable(
+                    let error = CommandError::recoverable(
                         "INVALID_RESPONSE",
                         "manager protocol output is malformed",
                     )
+                    .with_stage(STAGE_PROTOCOL_PARSE);
+                    diagnostics.record_error(STAGE_PROTOCOL_PARSE, &error);
+                    error
                 })?;
                 if response.get("id").and_then(Value::as_str) != Some(id) {
-                    return Err(CommandError::recoverable(
+                    let error = CommandError::recoverable(
                         "INVALID_RESPONSE",
                         "manager response ID does not match the request",
-                    ));
+                    )
+                    .with_stage(STAGE_PROTOCOL_PARSE);
+                    diagnostics.record_error(STAGE_PROTOCOL_PARSE, &error);
+                    return Err(error);
                 }
                 return Ok(response);
             }
             TransportEvent::Stderr(bytes) => {
-                eprintln!(
-                    "CodeasierRouter manager: {}",
-                    String::from_utf8_lossy(&bytes)
-                );
+                if diagnostics.ingest_stderr(&bytes) {
+                    bootstrap_failure = diagnostics.last();
+                }
             }
             TransportEvent::Error | TransportEvent::Terminated => {
-                return Err(CommandError::manager_failed());
+                if let Some(failure) = bootstrap_failure {
+                    return Err(CommandError::recoverable(
+                        failure.code,
+                        "manager bootstrap failed",
+                    )
+                    .with_stage(failure.stage));
+                }
+                let error = CommandError::manager_failed().with_stage(STAGE_UNEXPECTED_EXIT);
+                diagnostics.record_error(STAGE_UNEXPECTED_EXIT, &error);
+                return Err(error);
             }
         }
     }
@@ -658,6 +775,7 @@ fn watchdog(method: &str) -> Result<Duration> {
         FORCE_TERMINATE_OCCUPANT => 3,
         "router.stop" => 7,
         "router.start" => 20,
+        ROUTER_MIGRATE_LEGACY => 27,
         "agent.models" | "agent.write" | AGENT_CLEANUP_WRITE => 30,
         _ => return Err(CommandError::invalid_params("unknown manager method")),
     };
@@ -710,6 +828,7 @@ mod tests {
         ValidationError,
         RecoverableRouter,
         ReclaimRejected,
+        BootstrapFailure,
     }
 
     impl TransportChild for FakeChild {
@@ -725,6 +844,17 @@ mod tests {
                 self.reclaimed = true;
             }
             tauri::async_runtime::spawn(async move {
+                if matches!(behavior, Behavior::BootstrapFailure) && method == MANAGER_INFO {
+                    let _ = sender
+                        .send(TransportEvent::Stderr(
+                            br#"{"schema_version":1,"kind":"manager_bootstrap_failure","stage":"handshake","code":"MANAGER_BOOTSTRAP_FAILED"}
+"#
+                            .to_vec(),
+                        ))
+                        .await;
+                    let _ = sender.send(TransportEvent::Terminated).await;
+                    return;
+                }
                 let event = match behavior {
                     Behavior::InvalidHandshake if method == MANAGER_INFO => {
                         let result = json!({
@@ -969,6 +1099,10 @@ mod tests {
             Duration::from_secs(4)
         );
         assert_eq!(watchdog("router.start").unwrap(), Duration::from_secs(21));
+        assert_eq!(
+            watchdog(ROUTER_MIGRATE_LEGACY).unwrap(),
+            Duration::from_secs(28)
+        );
         assert_eq!(watchdog("agent.write").unwrap(), Duration::from_secs(31));
         assert_eq!(watchdog("agent.models").unwrap(), Duration::from_secs(31));
         assert_eq!(watchdog("agent.render").unwrap(), Duration::from_secs(6));
@@ -1097,6 +1231,26 @@ mod tests {
                     .count(),
                 1
             );
+        });
+    }
+
+    #[test]
+    fn legacy_migration_and_stop_are_never_replayed_after_ambiguous_delivery() {
+        runtime().block_on(async {
+            for method in [ROUTER_MIGRATE_LEGACY, "router.stop"] {
+                let (client, writes) = client(vec![Behavior::Malformed, Behavior::Valid]);
+                let error = client.call::<Value>(method, json!({})).await.unwrap_err();
+                assert_eq!(error.code, "INVALID_RESPONSE");
+                assert_eq!(
+                    writes
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .filter(|request| request["method"] == method)
+                        .count(),
+                    1
+                );
+            }
         });
     }
 
@@ -1250,6 +1404,83 @@ mod tests {
                     ]
                 );
             }
+        });
+    }
+
+    #[test]
+    fn structured_bootstrap_stderr_survives_manager_exit_without_raw_payload() {
+        runtime().block_on(async {
+            let (sender, mut events) = mpsc::channel(4);
+            sender
+                .send(TransportEvent::Stderr(
+                    br#"{"schema_version":1,"kind":"manager_bootstrap_failure","stage":"handshake","code":"MANAGER_BOOTSTRAP_FAILED"}
+"#
+                        .to_vec(),
+                ))
+                .await
+                .unwrap();
+            sender.send(TransportEvent::Terminated).await.unwrap();
+            drop(sender);
+            let diagnostics = ManagerDiagnosticRing::default();
+            let error = read_response(&mut events, "desktop-1", &diagnostics)
+                .await
+                .unwrap_err();
+            assert_eq!(error.stage.as_deref(), Some(STAGE_HANDSHAKE));
+            assert_eq!(
+                diagnostics.last().unwrap().code,
+                "MANAGER_BOOTSTRAP_FAILED"
+            );
+        });
+    }
+
+    #[test]
+    fn failed_recovery_preserves_structured_bootstrap_diagnostic() {
+        runtime().block_on(async {
+            let (client, _) = client(vec![Behavior::Terminated, Behavior::BootstrapFailure]);
+            let error = client
+                .call::<Value>(ROUTER_STATUS, json!({}))
+                .await
+                .unwrap_err();
+            assert_eq!(error.code, "MANAGER_BOOTSTRAP_FAILED");
+            assert_eq!(error.stage.as_deref(), Some(STAGE_HANDSHAKE));
+            let scheduler = crate::scheduler::PollScheduler::new(client.clone());
+            scheduler.set_status_error(&error).await;
+            let snapshot = scheduler.snapshot().await;
+            assert_eq!(
+                snapshot.status_error,
+                Some(
+                    crate::types::PollError::new("MANAGER_BOOTSTRAP_FAILED")
+                        .with_stage(STAGE_HANDSHAKE)
+                )
+            );
+            assert_eq!(
+                client.last_diagnostic(),
+                Some(ManagerDiagnostic {
+                    stage: STAGE_HANDSHAKE.to_owned(),
+                    code: "MANAGER_BOOTSTRAP_FAILED".to_owned(),
+                })
+            );
+
+            let repeated = client
+                .call::<Value>(ROUTER_STATUS, json!({}))
+                .await
+                .unwrap_err();
+            assert_eq!(repeated.code, "MANAGER_BOOTSTRAP_FAILED");
+            assert_eq!(repeated.stage.as_deref(), Some(STAGE_HANDSHAKE));
+        });
+    }
+
+    #[test]
+    fn bootstrap_failures_record_sanitized_stages() {
+        runtime().block_on(async {
+            let (client, _) = client(vec![Behavior::Malformed, Behavior::Valid]);
+            let _ = client
+                .call::<Value>("router.logs", json!({ "limit": 1 }))
+                .await;
+            let last = client.last_diagnostic().expect("diagnostic");
+            assert_eq!(last.stage, STAGE_PROTOCOL_PARSE);
+            assert_eq!(last.code, "INVALID_RESPONSE");
+            assert!(!last.code.contains('/'));
         });
     }
 

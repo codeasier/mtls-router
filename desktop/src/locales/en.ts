@@ -73,6 +73,10 @@ export const en: Record<TranslationKey, string> = {
   "router.state.stopping.signal": "Stopping",
   "router.state.stopping.detail":
     "Verifying process identity and performing a safe shutdown.",
+  "router.state.legacy.title": "A historical desktop router is running",
+  "router.state.legacy.signal": "Migration required",
+  "router.state.legacy.detail":
+    "This installation is correlated with a still-running older desktop router. Start will reclaim or stop and recreate it using complete process identity, never PID-only termination.",
   "router.health.unavailable": "Unavailable",
   "router.health.unknown": "Awaiting check",
   "router.health.checking": "Checking",
@@ -168,6 +172,33 @@ export const en: Record<TranslationKey, string> = {
     "The component was executed but ended before local listening and identity verification completed.",
   "router.failureGuide.process-exit.action":
     "Resolve the specific cause shown in the technical details and retry. If no cause is available, restart the desktop application.",
+  "router.failureGuide.sidecar-resolution.title":
+    "The management component cannot be located",
+  "router.failureGuide.sidecar-resolution.detail":
+    "The desktop could not resolve or validate the packaged manager, so the control plane did not start.",
+  "router.failureGuide.sidecar-resolution.action":
+    "Reinstall the desktop application from a trusted package; do not replace sidecars separately.",
+  "router.failureGuide.spawn.title": "The management component could not start",
+  "router.failureGuide.spawn.detail":
+    "The operating system did not create the manager process, so the desktop cannot manage the router.",
+  "router.failureGuide.spawn.action":
+    "Restart the desktop application. If this persists, check security software and reinstall from a trusted package.",
+  "router.failureGuide.handshake.title": "Manager handshake failed",
+  "router.failureGuide.handshake.detail":
+    "The manager started, but its version, deployment, or protocol identity does not match this desktop build.",
+  "router.failureGuide.handshake.action":
+    "Quit other instances and reinstall the desktop application from the same trusted package.",
+  "router.failureGuide.protocol-parse.title":
+    "The manager protocol response could not be parsed",
+  "router.failureGuide.protocol-parse.detail":
+    "The manager returned output that does not match the protocol, so the desktop discarded it.",
+  "router.failureGuide.protocol-parse.action":
+    "Restart the desktop application. If it repeats, provide the technical details to the service administrator.",
+  "router.failureGuide.watchdog-timeout.title": "The manager timed out",
+  "router.failureGuide.watchdog-timeout.detail":
+    "The manager did not return within the protocol deadline. Requests with uncertain delivery were not replayed.",
+  "router.failureGuide.watchdog-timeout.action":
+    "Restart the desktop application and retry. Do not resubmit an in-flight write or terminate operation.",
   "router.failureGuide.internal.title": "Router startup did not complete",
   "router.failureGuide.internal.detail":
     "The desktop application did not receive enough information to classify the failure safely, so the router remains stopped.",

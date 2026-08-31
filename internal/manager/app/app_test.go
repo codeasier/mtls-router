@@ -35,6 +35,7 @@ const (
 
 type fakeLifecycle struct {
 	start   func(context.Context, protocol.RouterOwner) (state.RouterState, *lifecycle.Error)
+	migrate func(context.Context) (state.RouterState, *lifecycle.Error)
 	reclaim func() (state.RouterState, *lifecycle.Error)
 	stop    func(context.Context) *lifecycle.Error
 	recent  string
@@ -44,6 +45,13 @@ type fakeLifecycle struct {
 
 func (f *fakeLifecycle) Start(ctx context.Context, owner protocol.RouterOwner) (state.RouterState, *lifecycle.Error) {
 	return f.start(ctx, owner)
+}
+
+func (f *fakeLifecycle) MigrateLegacy(ctx context.Context) (state.RouterState, *lifecycle.Error) {
+	if f.migrate == nil {
+		return state.RouterState{}, &lifecycle.Error{Code: protocol.CodeRouterLegacyManaged, Err: errors.New("migration unavailable")}
+	}
+	return f.migrate(ctx)
 }
 
 func (f *fakeLifecycle) Reclaim() (state.RouterState, *lifecycle.Error) {
@@ -443,6 +451,9 @@ func TestServeWiresEveryMethodSequentiallyAndSanitizesOutput(t *testing.T) {
 		start: func(_ context.Context, owner protocol.RouterOwner) (state.RouterState, *lifecycle.Error) {
 			return state.RouterState{PID: 91, Owner: string(owner), ListenAddr: found.ListenAddr}, nil
 		},
+		migrate: func(context.Context) (state.RouterState, *lifecycle.Error) {
+			return state.RouterState{PID: 92, Owner: "desktop", ListenAddr: found.ListenAddr}, nil
+		},
 		stop: func(context.Context) *lifecycle.Error { return nil },
 	}
 	agentManager := &fakeAgent{
@@ -475,11 +486,12 @@ func TestServeWiresEveryMethodSequentiallyAndSanitizesOutput(t *testing.T) {
 		`{"id":"2","method":"diagnostics.collect"}`,
 		`{"id":"3","method":"router.status"}`,
 		`{"id":"4","method":"router.start","params":{"owner":"desktop"}}`,
-		`{"id":"5","method":"router.stop"}`,
-		`{"id":"6","method":"router.health"}`,
-		`{"id":"7","method":"router.version"}`,
-		`{"id":"8","method":"router.logs","params":{"limit":20}}`,
-		`{"id":"9","method":"agent.detect"}`,
+		`{"id":"5","method":"router.migrate_legacy"}`,
+		`{"id":"6","method":"router.stop"}`,
+		`{"id":"7","method":"router.health"}`,
+		`{"id":"8","method":"router.version"}`,
+		`{"id":"9","method":"router.logs","params":{"limit":20}}`,
+		`{"id":"10","method":"agent.detect"}`,
 	}
 	var output bytes.Buffer
 	if err := manager.Serve(context.Background(), strings.NewReader(strings.Join(requests, "\n")+"\n"), &output); err != nil {
@@ -492,7 +504,7 @@ func TestServeWiresEveryMethodSequentiallyAndSanitizesOutput(t *testing.T) {
 	if len(lines) != len(requests) {
 		t.Fatalf("response lines = %d, want %d: %s", len(lines), len(requests), output.String())
 	}
-	wantIDs := []string{"1", "2", "3", "4", "5", "6", "7", "8", "9"}
+	wantIDs := []string{"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"}
 	responses := make(map[string]protocol.Response, len(lines))
 	for index, line := range lines {
 		var response protocol.Response
@@ -508,7 +520,7 @@ func TestServeWiresEveryMethodSequentiallyAndSanitizesOutput(t *testing.T) {
 	var detectResponse struct {
 		Agents []map[string]json.RawMessage `json:"agents"`
 	}
-	if err := json.Unmarshal(responses["9"].Result, &detectResponse); err != nil {
+	if err := json.Unmarshal(responses["10"].Result, &detectResponse); err != nil {
 		t.Fatal(err)
 	}
 	command, ok := detectResponse.Agents[0]["command"]
@@ -581,6 +593,9 @@ func TestDiagnosticsCollectUsesStatusDiscoveryAndSanitizesOutput(t *testing.T) {
 	}
 	if !strings.Contains(summary, "listen=http://127.0.0.1:19099?[REDACTED]") || !strings.Contains(summary, " health=\n") {
 		t.Fatalf("diagnostics lack sanitized status or empty process-only health: %s", summary)
+	}
+	if result.(protocol.DiagnosticsResult).RouterState != string(discovery.DesktopOwned) {
+		t.Fatalf("router_state = %q", result.(protocol.DiagnosticsResult).RouterState)
 	}
 }
 
@@ -1355,7 +1370,8 @@ func TestRouterStartReclaimsThroughProtocolAndLifecycleThenStatusSucceeds(t *tes
 	managerIdentity := process.Identity{PID: 72, StartedAt: "manager-new", Executable: "/manager"}
 	value := state.RouterState{
 		PID: 91, Owner: "desktop", ListenAddr: "http://127.0.0.1:19099", BinaryPath: "/router", LogPath: filepath.Join(dir, "router.log"),
-		ProcessStartedAt: "router-start", ProcessExecutable: "/router", DesktopSessionID: "session", ManagerPID: 71,
+		ProcessStartedAt: "router-start", ProcessExecutable: "/router", DesktopSessionID: "session",
+		InstallationID: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", PackageGeneration: 1, ManagerPID: 71,
 		ManagerProcessStartedAt: "manager-old", ManagerProcessExecutable: "/manager", ManagerVersion: "v1", RouterVersion: "v1",
 		DeploymentID: "prod-a", ManagementProtocolVersion: "1",
 	}
@@ -1365,6 +1381,7 @@ func TestRouterStartReclaimsThroughProtocolAndLifecycleThenStatusSucceeds(t *tes
 	lifecycleManager := lifecycle.New(lifecycle.Config{
 		RouterPath: os.Args[0], ListenAddr: "127.0.0.1:19099", DesktopStatePath: filepath.Join(dir, "desktop.json"),
 		DesktopLockPath: filepath.Join(dir, "desktop.lock"), DesktopLogPath: value.LogPath, SessionID: "session",
+		InstallationID: value.InstallationID, PackageGeneration: 1,
 		ManagerIdentity: managerIdentity, ParentIdentity: process.Identity{PID: 73, StartedAt: "desktop-start", Executable: "/desktop"},
 		ManagerVersion: "v1", DeploymentID: "prod-a", ManagementProtocolVersion: "1",
 	}, lifecycle.Dependencies{
@@ -1404,7 +1421,7 @@ func TestRouterStartReclaimsThroughProtocolAndLifecycleThenStatusSucceeds(t *tes
 	if err := manager.Serve(context.Background(), input, &output); err != nil {
 		t.Fatal(err)
 	}
-	if lockAcquires != 2 || writes != 1 || signals != 0 {
+	if lockAcquires != 1 || writes != 1 || signals != 0 {
 		t.Fatalf("lock acquires=%d writes=%d signals=%d", lockAcquires, writes, signals)
 	}
 	if value.ManagerPID != managerIdentity.PID || value.ManagerProcessStartedAt != managerIdentity.StartedAt || value.ManagerProcessExecutable != managerIdentity.Executable {

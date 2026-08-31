@@ -7,8 +7,8 @@ use crate::{
     scheduler::PollScheduler,
     types::{
         AgentCleanupPreview, AgentDetect, AgentFragment, AgentPreview, AgentWriteResult,
-        ComponentVersions, CredentialSummary, DesktopPaths, Diagnostics, ManagerInfo,
-        NativeLanguage, OccupantInspection, OccupantTerminationResult, PollSnapshot,
+        ComponentVersions, CredentialSummary, DesktopPaths, Diagnostics, ManagerFailure,
+        ManagerInfo, NativeLanguage, OccupantInspection, OccupantTerminationResult, PollSnapshot,
         RecoveryAction, RouterHealth, RouterLogs, RouterStatus, RouterVersion,
     },
 };
@@ -427,9 +427,83 @@ pub async fn component_versions(state: tauri::State<'_, AppState>) -> Result<Com
     })
 }
 
+const MAX_DIAGNOSTICS_SUMMARY_BYTES: usize = 16 * 1024;
+
+fn append_manager_failure(summary: &mut String, failure: &ManagerFailure) {
+    let line = format!(
+        "manager recent_failure stage={} code={}\n",
+        failure.stage, failure.code
+    );
+    if summary.contains(line.trim_end()) {
+        return;
+    }
+    let separator = if summary.is_empty() || summary.ends_with('\n') {
+        ""
+    } else {
+        "\n"
+    };
+    let reserved = separator.len() + line.len();
+    let maximum_prefix = MAX_DIAGNOSTICS_SUMMARY_BYTES.saturating_sub(reserved);
+    if summary.len() > maximum_prefix {
+        let mut boundary = maximum_prefix;
+        while boundary > 0 && !summary.is_char_boundary(boundary) {
+            boundary -= 1;
+        }
+        summary.truncate(boundary);
+    }
+    summary.push_str(separator);
+    summary.push_str(&line);
+}
+
 #[tauri::command]
 pub async fn diagnostics_collect(state: tauri::State<'_, AppState>) -> Result<Diagnostics> {
-    state.manager.call("diagnostics.collect", json!({})).await
+    match state
+        .manager
+        .call::<Diagnostics>("diagnostics.collect", json!({}))
+        .await
+    {
+        Ok(mut diagnostics) => {
+            if let Some(failure) = state.manager.last_diagnostic() {
+                if diagnostics.manager_failure.is_none() {
+                    diagnostics.manager_failure = Some(ManagerFailure {
+                        stage: failure.stage,
+                        code: failure.code,
+                    });
+                }
+            }
+            if let Some(failure) = &diagnostics.manager_failure {
+                append_manager_failure(&mut diagnostics.summary, failure);
+            }
+            Ok(diagnostics)
+        }
+        Err(error) => {
+            let failure = state.manager.last_diagnostic().or_else(|| {
+                error
+                    .stage
+                    .as_ref()
+                    .map(|stage| crate::manager_diagnostics::ManagerDiagnostic {
+                        stage: stage.clone(),
+                        code: error.code.clone(),
+                    })
+            });
+            Ok(Diagnostics {
+                summary: failure.as_ref().map_or_else(
+                    || "manager unavailable".to_owned(),
+                    |value| {
+                        format!(
+                            "manager bootstrap stage={} code={}",
+                            value.stage, value.code
+                        )
+                    },
+                ),
+                router_state: None,
+                manager_failure: failure.map(|value| ManagerFailure {
+                    stage: value.stage,
+                    code: value.code,
+                }),
+            })
+        }
+    }
 }
 
 #[tauri::command]
@@ -2297,5 +2371,20 @@ mod tests {
                     .all(|request| request["method"] != "router.force_terminate_occupant"));
             }
         });
+    }
+
+    #[test]
+    fn manager_failure_summary_is_bounded_and_included_once() {
+        let failure = ManagerFailure {
+            stage: "handshake".to_owned(),
+            code: "MANAGER_INIT_FAILED".to_owned(),
+        };
+        let mut summary = "界".repeat(MAX_DIAGNOSTICS_SUMMARY_BYTES);
+        append_manager_failure(&mut summary, &failure);
+        assert!(summary.len() <= MAX_DIAGNOSTICS_SUMMARY_BYTES);
+        assert!(summary.contains("manager recent_failure stage=handshake code=MANAGER_INIT_FAILED"));
+        let once = summary.clone();
+        append_manager_failure(&mut summary, &failure);
+        assert_eq!(summary, once);
     }
 }

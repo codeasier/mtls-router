@@ -25,6 +25,8 @@ type RouterState struct {
 	ProcessExecutable         string `json:"process_executable,omitempty"`
 	Owner                     string `json:"owner,omitempty"`
 	DesktopSessionID          string `json:"desktop_session_id,omitempty"`
+	InstallationID            string `json:"installation_id,omitempty"`
+	PackageGeneration         int    `json:"package_generation,omitempty"`
 	ManagerPID                int    `json:"manager_pid,omitempty"`
 	ManagerProcessStartedAt   string `json:"manager_process_started_at,omitempty"`
 	ManagerProcessExecutable  string `json:"manager_process_executable,omitempty"`

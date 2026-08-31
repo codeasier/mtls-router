@@ -1,0 +1,18 @@
+{
+  "pid": 42018,
+  "listen_addr": "http://127.0.0.1:19099",
+  "binary_path": "C:\\Program Files\\CodeasierRouter\\mtls-router.exe",
+  "log_path": "C:\\Users\\fixture\\AppData\\Roaming\\com.codeasier.mtls-router\\router.log",
+  "started_at": "2026-04-18T08:15:30Z",
+  "process_started_at": "2026-04-18T08:15:30.4567891Z",
+  "process_executable": "C:\\Program Files\\CodeasierRouter\\mtls-router.exe",
+  "owner": "desktop",
+  "desktop_session_id": "release-v0-2-0-session",
+  "manager_pid": 42017,
+  "manager_process_started_at": "2026-04-18T08:15:29.8765432Z",
+  "manager_process_executable": "C:\\Program Files\\CodeasierRouter\\mtls-router-manager.exe",
+  "manager_version": "v0.2.0",
+  "router_version": "v0.2.0",
+  "deployment_id": "production-fixture",
+  "management_protocol_version": "3"
+}

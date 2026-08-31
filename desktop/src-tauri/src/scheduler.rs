@@ -135,7 +135,19 @@ impl PollScheduler {
         recovery.cancel();
         let mut snapshot = self.snapshot.write().await;
         snapshot.release_observation = None;
-        snapshot.status_error = Some(PollError::new(&error.code));
+        let mut status_error = PollError::new(&error.code);
+        let diagnostic_stage = error.stage.clone().or_else(|| {
+            matches!(
+                error.code.as_str(),
+                "MANAGER_FAILED" | "INVALID_RESPONSE" | "OPERATION_TIMEOUT"
+            )
+            .then(|| self.manager.last_diagnostic().map(|value| value.stage))
+            .flatten()
+        });
+        if let Some(stage) = diagnostic_stage {
+            status_error = status_error.with_stage(stage);
+        }
+        snapshot.status_error = Some(status_error);
         self.publish(&mut snapshot);
     }
 

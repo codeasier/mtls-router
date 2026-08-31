@@ -1,12 +1,12 @@
 # internal/manager/app
 
-把各 manager 服务装配到私有 JSON 协议上：17 个方法的 handler、错误码映射、API key 清零，以及无 key Agent cleanup 的直接分发。
+把各 manager 服务装配到私有 JSON 协议上：18 个方法的 handler、错误码映射、API key 清零，以及无 key Agent cleanup 的直接分发。
 
 ## 文件
 
 | 文件 | 职责 |
 |------|------|
-| `app.go` | `App`、`New(Config, simplify)`、`Serve(ctx, input, output)`；17 个方法 handler；cleanup detection/preview/write 显式映射；结果与错误码映射；启动失败锁存与诊断 |
+| `app.go` | `App`、`New(Config, simplify)`、`Serve(ctx, input, output)`；18 个方法 handler；cleanup detection/preview/write 显式映射；结果与错误码映射；启动失败锁存与诊断 |
 
 ## 结构
 
@@ -18,7 +18,7 @@
 
 - **API key 清零**：请求成功 decode 后立刻把 `request.APIKey` 置空（尽力而为 —— 底层 JSON/Scanner 缓冲区由 GC 管理，不保证清零）。key 绝不进入日志、状态文件或 journal。
 - **cleanup 直接分发**：`agent.cleanup.preview/write` 严格解码单 Agent 参数后直接调用 `agent.Service`，不调用 catalog binder、trusted router、普通 preview/write handler，也不接收或清理 API key；`AGENT_NOT_MANAGED` 映射为稳定协议错误。
-- **诊断脱敏**：`lifecycle` 保留有界的**原始**子进程输出，`app` 只向客户端暴露脱敏的、会话作用域的稳定启动阶段、数值 OS 错误码和同次启动输出（`startupDiagnostic`）。
+- **诊断脱敏**：`lifecycle` 保留有界的**原始**子进程输出，`app` 只向客户端暴露脱敏的、会话作用域的稳定启动阶段、数值 OS 错误码和同次启动输出（`startupDiagnostic`）。`diagnostics.collect` 另给出结构化 `router_state`；manager 启动前失败阶段由桌面 Rust 侧环缓冲合并，不回传原始 stderr。
 - **启动失败锁存**：`latchStartupFailure` / `failedStatus` / `clearFailureAfterStart` 让一次失败的启动在后续 `router.status` 中仍可见，而不是被下一次轮询抹掉。
 - **受保护 PID**：`protectedStatePID` 阻止强制终止落到状态文件记录的自有进程上。
 - 服务层的错误（`agent.OperationError`、`lifecycle.Error`、`modelcatalog.Error`）在此统一映射为稳定的 `protocol.ErrorCode`；错误消息只作诊断用途。

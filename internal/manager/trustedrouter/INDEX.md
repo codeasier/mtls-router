@@ -12,7 +12,7 @@
 
 ## 行为
 
-- `Coordinator.Fetch` 先通过注入的 `Discover` 判断 router 状态；必要且被允许时经 `Lifecycle` 启动 router，再由 `Channel` 取目录。
+- `Coordinator.Fetch` 先通过注入的 `Discover` 判断 router 状态；必要且被允许时经 `Lifecycle` 启动 router，再由 `Channel` 取目录。`legacy_managed` 与 stale/unknown 一样不会自动启动，避免把 API key 送给旧协议世代。
 - `Binding` 记录本次取目录时的 `RouterBaseURL`、`APIBaseURL`、`DeploymentID`、`ProtocolVersion`。
 - `Revalidate` 在**写入 Agent 配置前**用同一个 binding 重新确认 router 身份未变，避免「取目录时是 A、写配置时已换成 B」。
 

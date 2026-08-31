@@ -15,6 +15,7 @@ const (
 	MethodDiagnosticsCollect           Method = "diagnostics.collect"
 	MethodRouterStatus                 Method = "router.status"
 	MethodRouterStart                  Method = "router.start"
+	MethodRouterMigrateLegacy          Method = "router.migrate_legacy"
 	MethodRouterStop                   Method = "router.stop"
 	MethodRouterHealth                 Method = "router.health"
 	MethodRouterVersion                Method = "router.version"
@@ -47,6 +48,7 @@ const (
 	CodeRouterDegraded              ErrorCode = "ROUTER_DEGRADED"
 	CodeRouterNotOwned              ErrorCode = "ROUTER_NOT_OWNED"
 	CodeRouterStateStale            ErrorCode = "ROUTER_STATE_STALE"
+	CodeRouterLegacyManaged         ErrorCode = "ROUTER_LEGACY_MANAGED"
 	CodePortOccupied                ErrorCode = "PORT_OCCUPIED"
 	CodeAgentNotFound               ErrorCode = "AGENT_NOT_FOUND"
 	CodeConfigInvalid               ErrorCode = "CONFIG_INVALID"
@@ -115,6 +117,7 @@ func Deadlines() map[Method]time.Duration {
 		MethodDiagnosticsCollect:           5 * time.Second,
 		MethodRouterStatus:                 time.Second,
 		MethodRouterStart:                  20 * time.Second,
+		MethodRouterMigrateLegacy:          27 * time.Second,
 		MethodRouterStop:                   7 * time.Second,
 		MethodRouterHealth:                 12 * time.Second,
 		MethodRouterVersion:                time.Second,
@@ -195,8 +198,15 @@ type ManagerInfoResult struct {
 	ManagementProtocolVersion string `json:"management_protocol_version"`
 }
 
+type ManagerFailure struct {
+	Stage string `json:"stage"`
+	Code  string `json:"code"`
+}
+
 type DiagnosticsResult struct {
-	Summary string `json:"summary"`
+	Summary        string          `json:"summary"`
+	RouterState    string          `json:"router_state,omitempty"`
+	ManagerFailure *ManagerFailure `json:"manager_failure,omitempty"`
 }
 
 type RouterStatusResult struct {

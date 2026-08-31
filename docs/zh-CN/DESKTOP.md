@@ -38,13 +38,14 @@ Stable 桌面 release 在 Windows x86_64/arm64、macOS Intel/Apple Silicon 和 L
 
 应用每次启动会静默检查一次 `https://github.com/codeasier/mtls-router/releases/latest/download/latest.json`；检查失败不会阻断启动。设置页面会显示当前和最新桌面版本、release 提供的更新说明，以及手动**检查更新**操作。应用只接受更高版本的 stable SemVer release；不会提供 prerelease 或含 build metadata 的版本，validation/非 stable 构建也不会发布到桌面更新 channel。
 
-应用绝不会在未经确认时下载或安装更新。你确认界面显示的 stable 版本后，应用才会下载平台包、报告进度、校验强制的 Tauri updater 签名、只停止经过验证且由桌面端所有的 router、安装完整包并重启应用。兼容的外部 router 不会被停止。如果停止桌面端所属 router 后安装失败，应用会尝试重新启动该 router。
+应用绝不会在未经确认时下载或安装更新。你确认界面显示的 stable 版本后，应用才会下载平台包、报告进度、校验强制的 Tauri updater 签名、停止经过验证的桌面所属 router 或关联的历史桌面 router、安装完整包并重启应用。若关联的历史 router 无法通过完整进程身份停止，或关联状态仍为 stale、unknown 或无法验证，更新会被拒绝。兼容的外部 router 不会被停止。如果停止桌面端所属 router 后安装失败，应用会尝试重新启动该 router。
 
 在每个平台上，只有当前包运行在对应平台 Tauri updater 支持的安装位置和文件系统布局中时，才能执行在线安装。如果 updater 报告当前位置不受支持或无法替换已安装包，请退出应用，再从可信 release 渠道手工安装完整新包；不要单独替换打包的 manager 或 router。
 
 ## Router 所有权和状态
 
-Router 页面会区分本地进程和上游健康。运行中的进程可能处于健康、降级，或健康结果已超过 30 秒的 stale 状态。
+Router 页面会区分本地进程和上游健康。运行中的进程可能处于健康、降级，或健康结果已超过 30 秒的 stale 状态。先前桌面会话或旧协议世代留下的仍在运行的 router 会显示为关联的历史进程。当前桌面可以在不停止进程的情况下接管兼容世代；不兼容世代只有在用户明确执行“启动”、且 router 与前一 manager 的完整身份均通过校验后，才会停止并重建。普通 manager 传输恢复绝不会触发该迁移。
+Rust 桌面运行时是 `installation.json` 的唯一所有者。稳定 installation ID 用于建立当前安装谱系；其中的 sidecar 哈希仅记录已通过内嵌哈希校验的当前打包二进制。它们不是历史哈希 allowlist，也不授权 protocol 1 或 protocol 3 迁移；旧版迁移授权仍仅依赖受支持的协议谱系以及完整的 router 与前一 manager 进程身份。
 
 - **桌面托管 router：**应用监督一个前台子进程。只有 PID、启动标识、可执行文件标识和所有权都通过检查时，停止和退出操作才可终止它。
 - **外部 router：**只有 CLI 安装脚本管理，且记录的进程标识、`deployment_id` 和 `management_protocol_version` 都与桌面构建一致的 router 才能复用。不能只根据手工启动进程的 `/version` 响应结构信任它。

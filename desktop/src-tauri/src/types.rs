@@ -7,11 +7,21 @@ use std::fmt;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct PollError {
     pub code: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stage: Option<String>,
 }
 
 impl PollError {
     pub fn new(code: impl Into<String>) -> Self {
-        Self { code: code.into() }
+        Self {
+            code: code.into(),
+            stage: None,
+        }
+    }
+
+    pub fn with_stage(mut self, stage: impl Into<String>) -> Self {
+        self.stage = Some(stage.into());
+        self
     }
 }
 
@@ -56,6 +66,10 @@ pub struct RouterStatus {
     pub last_error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recent_logs: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manager_stage: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manager_code: Option<String>,
 }
 
 impl RouterStatus {
@@ -65,6 +79,12 @@ impl RouterStatus {
             "desktop_owned" | "external_compatible" | "degraded"
         )
     }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct ManagerFailure {
+    pub stage: String,
+    pub code: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -873,6 +893,10 @@ mod occupant_inspection_tests {
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct Diagnostics {
     pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub router_state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manager_failure: Option<ManagerFailure>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]

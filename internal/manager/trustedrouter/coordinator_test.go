@@ -63,6 +63,7 @@ func TestCoordinatorRejectsUnsafeStatesWithoutStart(t *testing.T) {
 	}{
 		{name: "unknown", classification: discovery.UnknownOccupant, startOK: true, code: protocol.CodePortOccupied},
 		{name: "stale", classification: discovery.Stale, startOK: true, code: protocol.CodeRouterStateStale},
+		{name: "legacy", classification: discovery.LegacyManaged, startOK: true, code: protocol.CodeRouterLegacyManaged},
 		{name: "unexpected exit latch", classification: discovery.Absent, startOK: false, code: protocol.CodeRouterStateStale},
 	} {
 		t.Run(test.name, func(t *testing.T) {

@@ -20,7 +20,7 @@
 
 ## 关键不变量
 
-- `RouterState` **保留 setup 脚本使用的字段名**，桌面所有权字段（`owner`、`desktop_session_id`、`manager_*`）以增量方式追加，因此不需要迁移旧状态文件。
+- `RouterState` **保留 setup 脚本使用的字段名**，桌面所有权字段（`owner`、`desktop_session_id`、`installation_id`、`package_generation`、`manager_*`）以增量方式追加，因此不需要迁移旧状态文件。
 - 状态文件同时记录进程身份三元组（`pid`、`process_started_at`、`process_executable`）与协议身份（`deployment_id`、`management_protocol_version`），供 `../discovery` 做分类。
 - 损坏的状态文件必须可区分于「不存在」—— 桌面端据此区分「首次启动」与「需要清理」。
 

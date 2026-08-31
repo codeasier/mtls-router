@@ -31,7 +31,7 @@ Tauri UI (React) ──invoke──▶ Rust commands ──stdin/stdout JSON─�
 
 ## Manager（`cmd/mtls-router-manager/` + `internal/manager/`）
 
-Manager 是一个基本无状态、按请求处理的 management protocol v4 JSON 服务（`internal/manager/protocol/`）；一个例外是 `occupant.Service`，它只为允许强制终止的目标在 `Inspect` 与 `ForceTerminate` 之间持有一个内存中一次性确认 token（30 秒后过期；其他长生命周期状态位于 `lifecycle.Manager` 与 `agent.Service`）。它暴露 17 个方法，分组如下：
+Manager 是一个基本无状态、按请求处理的 management protocol v4 JSON 服务（`internal/manager/protocol/`）；一个例外是 `occupant.Service`，它只为允许强制终止的目标在 `Inspect` 与 `ForceTerminate` 之间持有一个内存中一次性确认 token（30 秒后过期；其他长生命周期状态位于 `lifecycle.Manager` 与 `agent.Service`）。它暴露 18 个方法，分组如下：
 
 - `manager.info`、`diagnostics.collect` — 元数据
 - `router.status/start/stop/health/version/logs` — 路由生命周期（spawn/监控 router 二进制）
@@ -41,8 +41,8 @@ Manager 是一个基本无状态、按请求处理的 management protocol v4 JSO
 子包职责：
 
 - `app` — 装配所有服务，映射协议错误，强制 API key 清零，并把无 key cleanup 请求直接分发到 Agent service
-- `lifecycle` — 进程 spawn、状态文件、父进程监控、异常退出检测；稳定启动阶段与已证明 PID 不存在时的旧 desktop 状态协调
-- `discovery` — 分类 router 状态（desktop_owned / external_compatible / degraded / stale / absent）
+- `lifecycle` — 进程 spawn、状态文件、父进程监控、异常退出检测；稳定启动阶段、跨会话 reclaim 与经完整身份校验的 legacy 迁移
+- `discovery` — 分类 router 状态（desktop_owned / external_compatible / degraded / stale / legacy_managed / absent）
 - `agent` — 检测、配置渲染（按 agent 格式：JSON/TOML）、基于 sidecar 所有权的清理、支持 replace/delete 与备份/回滚的事务性写入
 - `agent/modelconfig` — 无 key 的规范化 model config schema v1：`Decode`/`DecodeStructural`/`Canonical`/`DeepMerge`、目录/写入/cleanup token 签名
 - `trustedrouter` — 经 router `/v1/models` 的鉴权模型目录发现
@@ -135,7 +135,7 @@ Rust 侧绝不向 webview 暴露 shell/fs/http 权限（由 `lib.rs` 中的测�
 | `internal/version`    | [INDEX.md](internal/version/INDEX.md)    | 链接期构建元数据变量                                                                                                                 |
 | `internal/log`        | [INDEX.md](internal/log/INDEX.md)        | 访问日志响应记录器                                                                                                                   |
 | `internal/tlspolicy`  | [INDEX.md](internal/tlspolicy/INDEX.md)  | TLS 最低版本解析                                                                                                                     |
-| `internal/manager`    | [INDEX.md](internal/manager/INDEX.md)    | 控制面：17 个协议方法、生命周期、发现、Agent 配置与清理。其 14 个子包各有专属 INDEX，导航见 [子包表](internal/manager/INDEX.md#子包) |
+| `internal/manager`    | [INDEX.md](internal/manager/INDEX.md)    | 控制面：18 个协议方法、生命周期、发现、Agent 配置与清理。其 14 个子包各有专属 INDEX，导航见 [子包表](internal/manager/INDEX.md#子包) |
 | `desktop`             | [INDEX.md](desktop/INDEX.md)             | Tauri 2 应用：React 前端 + Rust 后端、sidecar 管理                                                                                   |
 
 ## 辅助参考

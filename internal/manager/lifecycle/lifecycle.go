@@ -26,6 +26,8 @@ import (
 type StartupStage string
 
 const (
+	defaultPackageGeneration = 1
+
 	StartupStageLogDirectory   StartupStage = "log_directory"
 	StartupStageLogOpen        StartupStage = "log_open"
 	StartupStageProcessLaunch  StartupStage = "process_launch"
@@ -72,6 +74,8 @@ type Config struct {
 	ManagerVersion            string
 	DeploymentID              string
 	ManagementProtocolVersion string
+	InstallationID            string
+	PackageGeneration         int
 	StartupTimeout            time.Duration
 	StopTimeout               time.Duration
 	ForceTimeout              time.Duration
@@ -133,6 +137,9 @@ func New(config Config, deps Dependencies) *Manager {
 	}
 	if config.ManagementProtocolVersion == "" {
 		config.ManagementProtocolVersion = version.ManagementProtocolVersion
+	}
+	if config.PackageGeneration <= 0 {
+		config.PackageGeneration = defaultPackageGeneration
 	}
 	if config.StartupTimeout <= 0 {
 		config.StartupTimeout = 10 * time.Second
@@ -204,7 +211,7 @@ func (m *Manager) Start(ctx context.Context, owner protocol.RouterOwner) (state.
 	defer m.operationMu.Unlock()
 	switch owner {
 	case protocol.RouterOwnerDesktop:
-		return m.startDesktop(ctx)
+		return m.startDesktop(ctx, false)
 	case protocol.RouterOwnerCLI:
 		return m.startCLI(ctx)
 	default:
@@ -212,7 +219,17 @@ func (m *Manager) Start(ctx context.Context, owner protocol.RouterOwner) (state.
 	}
 }
 
-func (m *Manager) startDesktop(ctx context.Context) (state.RouterState, *Error) {
+// MigrateLegacy explicitly stops a verified incompatible legacy desktop router
+// before starting the current package generation. It is intentionally separate
+// from Start so transport recovery and ordinary start retries cannot trigger a
+// destructive migration.
+func (m *Manager) MigrateLegacy(ctx context.Context) (state.RouterState, *Error) {
+	m.operationMu.Lock()
+	defer m.operationMu.Unlock()
+	return m.startDesktop(ctx, true)
+}
+
+func (m *Manager) startDesktop(ctx context.Context, allowLegacyMigration bool) (state.RouterState, *Error) {
 	if !completeIdentity(m.config.ManagerIdentity) || !completeIdentity(m.config.ParentIdentity) || m.config.SessionID == "" {
 		return state.RouterState{}, lifecycleError(protocol.CodeInvalidParams, "complete session, manager, and parent identity are required")
 	}
@@ -228,15 +245,27 @@ func (m *Manager) startDesktop(ctx context.Context) (state.RouterState, *Error) 
 	if existing, err := m.deps.ReadState(m.config.DesktopStatePath); err == nil && existing.Owner == "desktop" {
 		status, _ := m.deps.Validate(routerIdentity(existing), existing.BinaryPath)
 		if status == process.StatusGenuine {
-			if completeDesktopState(existing) && existing.DesktopSessionID == m.config.SessionID && managerMatches(existing, m.config.ManagerIdentity) && existing.DeploymentID == m.config.DeploymentID && existing.ManagementProtocolVersion == m.config.ManagementProtocolVersion {
+			if m.currentOwned(existing) {
 				m.setLatestLog(existing.LogPath, nil)
 				_ = background.RecordLatestSessionLogPath(m.config.DesktopLogPath, existing.LogPath)
 				keepLock = true
 				return existing, nil
 			}
-			return state.RouterState{}, stagedError(StartupStageStateReconcile, protocol.CodeRouterAlreadyRunning, "a desktop router is already owned")
-		}
-		if m.recordedProcessAbsent(existing, status) {
+			if reclaimed, reclaimErr := m.reclaimLocked(existing); reclaimErr == nil {
+				keepLock = true
+				return reclaimed, nil
+			}
+			if m.migratable(existing) {
+				if !allowLegacyMigration {
+					return state.RouterState{}, stagedError(StartupStageStateReconcile, protocol.CodeRouterLegacyManaged, "legacy desktop router requires explicit migration")
+				}
+				if stopErr := m.stopVerified(ctx, existing, m.config.DesktopStatePath); stopErr != nil {
+					return state.RouterState{}, stopErr
+				}
+			} else {
+				return state.RouterState{}, stagedError(StartupStageStateReconcile, protocol.CodeRouterAlreadyRunning, "a desktop router is already owned")
+			}
+		} else if m.recordedProcessAbsent(existing, status) {
 			if err := m.deps.RemoveState(m.config.DesktopStatePath); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return state.RouterState{}, startupError(StartupStageStateReconcile, protocol.CodeRouterStateStale, "obsolete desktop state could not be removed", err)
 			}
@@ -260,6 +289,21 @@ func (m *Manager) startDesktop(ctx context.Context) (state.RouterState, *Error) 
 			return state.RouterState{}, stagedError(StartupStageStateReconcile, protocol.CodeRouterStateStale, "router state is stale")
 		case discovery.DesktopOwned:
 			return state.RouterState{}, stagedError(StartupStageStateReconcile, protocol.CodeRouterAlreadyRunning, "a desktop router is already running")
+		case discovery.LegacyManaged:
+			if reclaimed, reclaimErr := m.reclaimLocked(found.State); reclaimErr == nil {
+				keepLock = true
+				return reclaimed, nil
+			}
+			if m.migratable(found.State) {
+				if !allowLegacyMigration {
+					return state.RouterState{}, stagedError(StartupStageStateReconcile, protocol.CodeRouterLegacyManaged, "legacy desktop router requires explicit migration")
+				}
+				if stopErr := m.stopVerified(ctx, found.State, m.config.DesktopStatePath); stopErr != nil {
+					return state.RouterState{}, stopErr
+				}
+				break
+			}
+			return state.RouterState{}, stagedError(StartupStageStateReconcile, protocol.CodeRouterAlreadyRunning, "a legacy desktop router is still owned")
 		}
 	}
 
@@ -442,11 +486,22 @@ func (m *Manager) stop(ctx context.Context) *Error {
 		if value.Owner != "desktop" {
 			return lifecycleError(protocol.CodeRouterNotOwned, "router is not desktop-owned")
 		}
-		if value.DesktopSessionID != m.config.SessionID || !managerMatches(value, m.config.ManagerIdentity) {
+		if !m.currentOwned(value) && !m.legacyStopAllowed(value) {
 			return lifecycleError(protocol.CodeRouterNotOwned, "desktop router belongs to another manager session")
 		}
 	} else if value.Owner != "cli" {
 		return lifecycleError(protocol.CodeRouterNotOwned, "router is not CLI-owned")
+	}
+	if err := m.stopVerified(ctx, value, statePath); err != nil {
+		return err
+	}
+	m.releaseLock()
+	return nil
+}
+
+func (m *Manager) stopVerified(ctx context.Context, value state.RouterState, statePath string) *Error {
+	if !completeIdentity(routerIdentity(value)) || value.BinaryPath == "" {
+		return lifecycleError(protocol.CodeRouterStateStale, "router identity is incomplete")
 	}
 	status, validateErr := m.deps.Validate(routerIdentity(value), value.BinaryPath)
 	if validateErr != nil || status != process.StatusGenuine {
@@ -466,7 +521,6 @@ func (m *Manager) stop(ctx context.Context) *Error {
 			if err := m.deps.RemoveState(statePath); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return lifecycleError(protocol.CodeRouterStateStale, "stopped router state could not be removed")
 			}
-			m.releaseLock()
 			return nil
 		}
 		if status == process.StatusStale {
@@ -476,7 +530,7 @@ func (m *Manager) stop(ctx context.Context) *Error {
 			break
 		}
 	}
-	status, err = m.deps.Validate(identity, value.BinaryPath)
+	status, err := m.deps.Validate(identity, value.BinaryPath)
 	if err != nil || status != process.StatusGenuine {
 		return lifecycleError(protocol.CodeRouterStateStale, "router identity changed before force stop")
 	}
@@ -491,7 +545,6 @@ func (m *Manager) stop(ctx context.Context) *Error {
 			if err := m.deps.RemoveState(statePath); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return lifecycleError(protocol.CodeRouterStateStale, "stopped router state could not be removed")
 			}
-			m.releaseLock()
 			return nil
 		}
 		if status == process.StatusStale {
@@ -519,28 +572,41 @@ func (m *Manager) Reclaim() (state.RouterState, *Error) {
 		}
 	}()
 	value, err := m.deps.ReadState(m.config.DesktopStatePath)
-	if err != nil || value.Owner != "desktop" || value.DesktopSessionID != m.config.SessionID || !completeDesktopState(value) {
+	if err != nil {
 		return state.RouterState{}, lifecycleError(protocol.CodeRouterStateStale, "desktop state cannot be reclaimed")
 	}
-	previousManager := process.Identity{PID: value.ManagerPID, StartedAt: value.ManagerProcessStartedAt, Executable: value.ManagerProcessExecutable}
-	managerStatus, managerErr := m.deps.Validate(previousManager, value.ManagerProcessExecutable)
-	if managerErr != nil || managerStatus != process.StatusAbsent {
-		return state.RouterState{}, lifecycleError(protocol.CodeRouterAlreadyRunning, "previous manager identity is not absent")
+	reclaimed, reclaimErr := m.reclaimLocked(value)
+	if reclaimErr != nil {
+		return state.RouterState{}, reclaimErr
 	}
-	routerStatus, err := m.deps.Validate(routerIdentity(value), value.BinaryPath)
-	if err != nil || routerStatus != process.StatusGenuine || value.DeploymentID != m.config.DeploymentID || value.ManagementProtocolVersion != m.config.ManagementProtocolVersion {
+	success = true
+	return reclaimed, nil
+}
+
+func (m *Manager) reclaimLocked(value state.RouterState) (state.RouterState, *Error) {
+	if !m.reclaimable(value) {
+		if value.Owner != "desktop" || !completeDesktopState(value) || !m.installationMatches(value) {
+			return state.RouterState{}, lifecycleError(protocol.CodeRouterStateStale, "desktop state cannot be reclaimed")
+		}
+		previousManager := process.Identity{PID: value.ManagerPID, StartedAt: value.ManagerProcessStartedAt, Executable: value.ManagerProcessExecutable}
+		managerStatus, managerErr := m.deps.Validate(previousManager, value.ManagerProcessExecutable)
+		if managerErr != nil || managerStatus != process.StatusAbsent {
+			return state.RouterState{}, lifecycleError(protocol.CodeRouterAlreadyRunning, "previous manager identity is not absent")
+		}
 		return state.RouterState{}, lifecycleError(protocol.CodeRouterStateStale, "router identity cannot be reclaimed")
 	}
+	value.DesktopSessionID = m.config.SessionID
 	value.ManagerPID = m.config.ManagerIdentity.PID
 	value.ManagerProcessStartedAt = m.config.ManagerIdentity.StartedAt
 	value.ManagerProcessExecutable = m.config.ManagerIdentity.Executable
 	value.ManagerVersion = m.config.ManagerVersion
+	value.InstallationID = m.config.InstallationID
+	value.PackageGeneration = m.config.PackageGeneration
 	if err := m.deps.WriteState(m.config.DesktopStatePath, value); err != nil {
 		return state.RouterState{}, lifecycleError(protocol.CodeRouterStartFailed, "cannot persist reclaimed ownership")
 	}
 	m.setLatestLog(value.LogPath, newBoundedOutput(m.config.RecentOutputBytes))
 	_ = background.RecordLatestSessionLogPath(m.config.DesktopLogPath, value.LogPath)
-	success = true
 	return value, nil
 }
 
@@ -633,6 +699,8 @@ func (m *Manager) routerState(owner string, identity process.Identity, info disc
 	}
 	if owner == "desktop" {
 		value.DesktopSessionID = m.config.SessionID
+		value.InstallationID = m.config.InstallationID
+		value.PackageGeneration = m.config.PackageGeneration
 		value.ManagerPID = m.config.ManagerIdentity.PID
 		value.ManagerProcessStartedAt = m.config.ManagerIdentity.StartedAt
 		value.ManagerProcessExecutable = m.config.ManagerIdentity.Executable
@@ -826,5 +894,83 @@ func managerMatches(value state.RouterState, identity process.Identity) bool {
 	return value.ManagerPID == identity.PID && value.ManagerProcessStartedAt == identity.StartedAt && value.ManagerProcessExecutable == identity.Executable
 }
 func completeDesktopState(value state.RouterState) bool {
-	return value.PID > 0 && value.ListenAddr != "" && value.BinaryPath != "" && value.LogPath != "" && value.ProcessStartedAt != "" && value.ProcessExecutable != "" && value.DesktopSessionID != "" && value.ManagerPID > 0 && value.ManagerProcessStartedAt != "" && value.ManagerProcessExecutable != "" && value.ManagerVersion != "" && value.RouterVersion != "" && value.DeploymentID != "" && value.ManagementProtocolVersion != ""
+	return value.PID > 0 && value.ListenAddr != "" && value.BinaryPath != "" && value.LogPath != "" && value.ProcessStartedAt != "" && value.ProcessExecutable != "" && value.DesktopSessionID != "" && value.InstallationID != "" && value.ManagerPID > 0 && value.ManagerProcessStartedAt != "" && value.ManagerProcessExecutable != "" && value.ManagerVersion != "" && value.RouterVersion != "" && value.DeploymentID != "" && value.ManagementProtocolVersion != ""
+}
+
+func (m *Manager) currentOwned(value state.RouterState) bool {
+	return value.Owner == "desktop" && completeIdentity(routerIdentity(value)) && value.DesktopSessionID == m.config.SessionID && managerMatches(value, m.config.ManagerIdentity) && m.installationMatches(value) && m.generationCompatible(value)
+}
+
+func (m *Manager) reclaimable(value state.RouterState) bool {
+	if value.Owner != "desktop" || !completeDesktopState(value) || !m.installationMatches(value) || !m.generationCompatible(value) {
+		return false
+	}
+	previousManager := process.Identity{PID: value.ManagerPID, StartedAt: value.ManagerProcessStartedAt, Executable: value.ManagerProcessExecutable}
+	managerStatus, managerErr := m.deps.Validate(previousManager, value.ManagerProcessExecutable)
+	if managerErr != nil || managerStatus != process.StatusAbsent {
+		return false
+	}
+	routerStatus, err := m.deps.Validate(routerIdentity(value), value.BinaryPath)
+	return err == nil && routerStatus == process.StatusGenuine
+}
+
+func (m *Manager) migratable(value state.RouterState) bool {
+	if value.Owner != "desktop" || !completeIdentity(routerIdentity(value)) || value.BinaryPath == "" || !m.correlatedInstallation(value) {
+		return false
+	}
+	if m.generationCompatible(value) && value.InstallationID != "" {
+		return false
+	}
+	if !m.previousManagerAbsent(value) {
+		return false
+	}
+	routerStatus, err := m.deps.Validate(routerIdentity(value), value.BinaryPath)
+	return err == nil && routerStatus == process.StatusGenuine
+}
+
+func (m *Manager) legacyStopAllowed(value state.RouterState) bool {
+	if !m.correlatedInstallation(value) || !completeIdentity(routerIdentity(value)) || !m.previousManagerAbsent(value) {
+		return false
+	}
+	routerStatus, err := m.deps.Validate(routerIdentity(value), value.BinaryPath)
+	return err == nil && routerStatus == process.StatusGenuine
+}
+
+func (m *Manager) previousManagerAbsent(value state.RouterState) bool {
+	identity := process.Identity{PID: value.ManagerPID, StartedAt: value.ManagerProcessStartedAt, Executable: value.ManagerProcessExecutable}
+	if !completeIdentity(identity) {
+		return false
+	}
+	status, err := m.deps.Validate(identity, value.ManagerProcessExecutable)
+	return err == nil && status == process.StatusAbsent
+}
+
+func (m *Manager) installationMatches(value state.RouterState) bool {
+	return m.config.InstallationID != "" && value.InstallationID == m.config.InstallationID
+}
+
+func (m *Manager) correlatedInstallation(value state.RouterState) bool {
+	if value.InstallationID == "" {
+		return supportedLegacySource(value)
+	}
+	return value.PackageGeneration > 0 && m.installationMatches(value)
+}
+
+func supportedLegacySource(value state.RouterState) bool {
+	if value.PackageGeneration != 0 || value.InstallationID != "" {
+		return false
+	}
+	if value.ManagementProtocolVersion != "1" && value.ManagementProtocolVersion != "3" {
+		return false
+	}
+	managerIdentity := process.Identity{PID: value.ManagerPID, StartedAt: value.ManagerProcessStartedAt, Executable: value.ManagerProcessExecutable}
+	return completeIdentity(routerIdentity(value)) && completeIdentity(managerIdentity)
+}
+
+func (m *Manager) generationCompatible(value state.RouterState) bool {
+	return value.DeploymentID == m.config.DeploymentID &&
+		value.ManagementProtocolVersion == m.config.ManagementProtocolVersion &&
+		value.PackageGeneration > 0 &&
+		m.config.PackageGeneration > 0 &&
+		value.PackageGeneration == m.config.PackageGeneration
 }

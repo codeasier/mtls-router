@@ -8,10 +8,10 @@ mtls-router 的控制面：路由生命周期管理、Agent 配置、端口冲�
 
 | 包 | 职责 | 关键导出 |
 |---------|------|-------------|
-| [`app`](app/INDEX.md) | 协议会话装配；将全部 17 个方法映射到服务；强制 API key 清零；直接分发无 key cleanup | `App`、`New(Config, simplify)`、`Serve(ctx, input, output)` |
+| [`app`](app/INDEX.md) | 协议会话装配；将全部 18 个方法映射到服务；强制 API key 清零；直接分发无 key cleanup | `App`、`New(Config, simplify)`、`Serve(ctx, input, output)` |
 | [`protocol`](protocol/INDEX.md) | JSON 请求/响应类型、方法常量、错误码、按方法超时 | `Request`、`Response`、`Error`、`Method*`、`Code*`、`Deadlines()` |
-| [`lifecycle`](lifecycle/INDEX.md) | router 进程 spawn/stop/reclaim；桌面前台 + CLI 分离模式；父进程监控；异常退出检测 | `Manager`、`Start(ctx, owner)`、`Stop(ctx)`、`Reclaim()`、`MonitorParent(ctx)` |
-| [`discovery`](discovery/INDEX.md) | 通过关联 HTTP `/version` + `/health` 与持久状态文件及 OS 进程身份来分类 router 状态 | `Discoverer`、`Discover(ctx)`、`DiscoverStatus(ctx)`、`DiscoverStartupStatus(ctx, owner)`、`Classification` 常量 |
+| [`lifecycle`](lifecycle/INDEX.md) | router 进程 spawn/stop/reclaim/legacy 迁移；桌面前台 + CLI 分离模式；父进程监控；异常退出检测 | `Manager`、`Start(ctx, owner)`、`MigrateLegacy(ctx)`、`Stop(ctx)`、`Reclaim()`、`MonitorParent(ctx)` |
+| [`discovery`](discovery/INDEX.md) | 通过关联 HTTP `/version` + `/health` 与持久状态文件及 OS 进程身份来分类 router 状态（含 `legacy_managed`） | `Discoverer`、`Discover(ctx)`、`DiscoverStatus(ctx)`、`DiscoverStartupStatus(ctx, owner)`、`Classification` 常量 |
 | [`agent`](agent/INDEX.md) | Agent 检测、配置渲染、基于 sidecar 所有权的单 Agent 清理、支持 replace/delete 的事务写入与恢复、模型发现 | `Service`、`Detect()`、`Render()`、`PreviewRequest()`、`Write()`、`CleanupPreview()`、`CleanupWrite()`、`DiscoverModels()` |
 | [`agent/modelconfig`](agent/modelconfig/INDEX.md) | 无 key 的规范化 model config schema v1：decode、merge、canonical 序列化、目录/写入/cleanup token 签名 | `Config`、`Version`、`Decode()`、`DecodeStructural()`、`Canonical()`、`DeepMerge()`、`TokenSigner` |
 | [`trustedrouter`](trustedrouter/INDEX.md) | 经 router `/v1/models` 的鉴权模型目录发现；写入前重新校验绑定 | `Coordinator`、`Fetch(ctx, owner, apiKey)`、`Revalidate(ctx, owner, apiKey, binding)` |
@@ -23,11 +23,12 @@ mtls-router 的控制面：路由生命周期管理、Agent 配置、端口冲�
 | [`paths`](paths/INDEX.md) | 跨平台按用户路径解析（CLI 状态目录 + 桌面数据目录） | `Paths`、`Resolve()` |
 | [`modelcatalog`](modelcatalog/INDEX.md) | 模型目录 HTTP 客户端与 simplify 策略（链接期 `Simplify` 变量过滤含 `/` 的模型 ID） | `ParseSimplify()`、`Client` |
 
-## 协议方法（17 个）
+## 协议方法（18 个）
 
 ```
 manager.info              diagnostics.collect
-router.status             router.start            router.stop
+router.status             router.start            router.migrate_legacy
+router.stop
 router.health             router.version          router.logs
 router.inspect_occupant   router.force_terminate_occupant
 agent.detect              agent.models            agent.render
@@ -44,7 +45,7 @@ agent.cleanup.preview     agent.cleanup.write
 - **API key 清零**：`app` 中成功参数 decode 后，在显式退出路径上将 `request.APIKey = ""`。注意：若 `DecodeParams` 本身失败（如未知字段），已填充的字段可能未被清零。
 - **事务恢复**：`agent` 写入与 cleanup 共用带回滚能力的状态目录；journal v3 显式记录 `replace/delete` 与可不存在的删除 post-state，旧 v1/v2 journal 按 replace 恢复；`NewService()` 在启动时执行恢复。
 - **cleanup 边界**：cleanup 只接受一个 Agent 与签名 revision，直接调用 Agent service，不经过 trusted router、模型目录、model flow 或 API key；sidecar 缺失/无该 Agent 条目时返回 `AGENT_NOT_MANAGED`。
-- **discovery 分类**：按端口可达性、状态文件有效性、进程身份、健康结果分支判断决定 —— 非固定线性优先级。端口不可达时，先检查 stale 状态再判定 degraded。
+- **discovery 分类**：按端口可达性、状态文件有效性、进程身份、健康结果分支判断决定 —— 非固定线性优先级。端口不可达时，先检查 stale 状态再判定 degraded。关联到本安装的旧会话/旧协议世代归为 `legacy_managed`，而不是 `unknown_occupant`。
 
 ## 路径约定
 
