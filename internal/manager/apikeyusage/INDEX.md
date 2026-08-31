@@ -6,7 +6,7 @@
 
 | 文件 | 职责 |
 |------|------|
-| `client.go` | `Client`、`New(transport)`、`Fetch(ctx, Request)`；`Request{URL, Period, APIKey}`；`Error` 与 `CodeOf(err)` → `protocol.ErrorCode` |
+| `client.go` | `Client`、`New(transport)`、`Fetch(ctx, Request)`；`Request{URL, Period, APIKey}`；`RequestTimeout`（25s 聚合预算）；`Error` 与 `CodeOf(err)` → `protocol.ErrorCode` |
 | `parse.go` | `Period`、`Snapshot`、`NormalizePeriod()`、`Parse(body, period)` —— 流式解码并校验有界 per-key 用量 |
 
 ## 上游契约
@@ -35,7 +35,7 @@
 ## 关键不变量
 
 - API key 只以 HTTP 头发出，**绝不进入日志、错误消息或返回值**。
-- 解析拒绝 `api_key` / `token` / `secret` 等字段名，未知安全字段跳过；`by_model` 最多 64 行。
+- 解析要求 `period`、`summary`、`by_model` 均出现；拒绝 `api_key` / `token` / `secret` 等字段名，未知安全字段跳过；`by_model` 最多 64 行。缺失 `by_model` 不得当成空列表。
 - 计数必须是非负整数；费用与配额必须是有限非负数。
 - 失败一律 fail closed，不把上游原文或空快照冒充成功。
 

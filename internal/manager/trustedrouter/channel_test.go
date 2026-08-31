@@ -95,7 +95,7 @@ func TestChannelFetchesUsageOnExactlyOneConnection(t *testing.T) {
 			if r.Header.Get("Authorization") != "Bearer "+channelKeyCanary {
 				t.Errorf("Authorization = %q", r.Header.Get("Authorization"))
 			}
-			_, _ = io.WriteString(w, `{"period":"7d","summary":{"requests":4,"prompt_tokens":8,"completion_tokens":2,"cost":0.5}}`)
+			_, _ = io.WriteString(w, `{"period":"7d","summary":{"requests":4,"prompt_tokens":8,"completion_tokens":2,"cost":0.5},"by_model":[]}`)
 		default:
 			http.NotFound(w, r)
 		}

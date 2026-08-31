@@ -21,7 +21,7 @@ func TestClientFetchesExactUsageEndpoint(t *testing.T) {
 		if r.Header.Get("Authorization") != "Bearer "+usageKeyCanary {
 			t.Errorf("Authorization = %q", r.Header.Get("Authorization"))
 		}
-		_, _ = io.WriteString(w, `{"period":"7d","summary":{"requests":3,"prompt_tokens":9,"completion_tokens":1,"cost":0.25}}`)
+		_, _ = io.WriteString(w, `{"period":"7d","summary":{"requests":3,"prompt_tokens":9,"completion_tokens":1,"cost":0.25},"by_model":[]}`)
 	}))
 	defer server.Close()
 

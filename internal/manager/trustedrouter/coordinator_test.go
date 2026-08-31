@@ -5,7 +5,9 @@ import (
 	"errors"
 	"net"
 	"testing"
+	"time"
 
+	"github.com/codeasier/mtls-router/internal/manager/apikeyusage"
 	"github.com/codeasier/mtls-router/internal/manager/discovery"
 	"github.com/codeasier/mtls-router/internal/manager/lifecycle"
 	"github.com/codeasier/mtls-router/internal/manager/protocol"
@@ -13,15 +15,19 @@ import (
 )
 
 type lifecycleStub struct {
-	calls int
-	owner protocol.RouterOwner
-	state state.RouterState
-	err   *lifecycle.Error
+	calls          int
+	owner          protocol.RouterOwner
+	state          state.RouterState
+	err            *lifecycle.Error
+	startRemaining time.Duration
 }
 
-func (s *lifecycleStub) Start(_ context.Context, owner protocol.RouterOwner) (state.RouterState, *lifecycle.Error) {
+func (s *lifecycleStub) Start(ctx context.Context, owner protocol.RouterOwner) (state.RouterState, *lifecycle.Error) {
 	s.calls++
 	s.owner = owner
+	if deadline, ok := ctx.Deadline(); ok {
+		s.startRemaining = time.Until(deadline)
+	}
 	return s.state, s.err
 }
 
@@ -50,6 +56,39 @@ func TestCoordinatorAbsentStartsOnceUnderRequestedOwner(t *testing.T) {
 	_, err := coordinator.Fetch(context.Background(), protocol.RouterOwnerDesktop, "secret")
 	if err == nil || err.Code != protocol.CodeModelDiscoveryFailed || starter.calls != 1 || starter.owner != protocol.RouterOwnerDesktop || discoveries != 2 {
 		t.Fatalf("error=%+v starts=%d owner=%q discoveries=%d", err, starter.calls, starter.owner, discoveries)
+	}
+}
+
+func TestCoordinatorFetchUsageGivesStartItsOwnBudget(t *testing.T) {
+	listener, _ := NormalizeListener("127.0.0.1:19099")
+	trusted := trustedFixture(listener)
+	discoveries := 0
+	starter := &lifecycleStub{state: trusted.State}
+	coordinator := Coordinator{
+		Listener: listener, DeploymentID: "prod-a", ProtocolVersion: "4", Lifecycle: starter,
+		DesktopEligible: func() bool { return true }, AbsentStartOK: func() bool { return true },
+		Discover: func(context.Context) discovery.Result {
+			discoveries++
+			if discoveries == 1 {
+				return discovery.Result{Classification: discovery.Absent}
+			}
+			return trusted
+		},
+		Channel: Channel{
+			DialContext: func(context.Context, string, string) (net.Conn, error) {
+				return nil, errors.New("stop after trust test")
+			},
+			ValidateProcess: genuineProcess,
+		},
+	}
+	parent, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	_, err := coordinator.FetchUsage(parent, protocol.RouterOwnerDesktop, apikeyusage.Period7d, "secret")
+	if err == nil || starter.calls != 1 {
+		t.Fatalf("error=%+v starts=%d", err, starter.calls)
+	}
+	if starter.startRemaining < 19*time.Second || starter.startRemaining > 21*time.Second {
+		t.Fatalf("start remaining = %s, want ~20s independent of the 60s parent", starter.startRemaining)
 	}
 }
 
@@ -230,5 +269,13 @@ func TestCoordinatorAbsentStartAndRestartMatrix(t *testing.T) {
 				t.Fatalf("error=%+v starts=%d, want code=%q starts=%d", err, starter.calls, test.wantCode, test.wantStarts)
 			}
 		})
+	}
+}
+
+func TestAPIKeyUsageDeadlineCoversIndependentBudgets(t *testing.T) {
+	got := protocol.Deadlines()[protocol.MethodAPIKeyUsage]
+	want := usageEstablishBudget + trustedVersionBudget + apikeyusage.RequestTimeout
+	if got != want {
+		t.Fatalf("apikey.usage deadline = %s, want start %s + version %s + usage %s", got, usageEstablishBudget, trustedVersionBudget, apikeyusage.RequestTimeout)
 	}
 }

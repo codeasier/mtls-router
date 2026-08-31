@@ -47,12 +47,16 @@ func (c Channel) Fetch(ctx context.Context, listener Listener, trusted discovery
 
 // FetchUsage performs the channel-bound /version and /v1/usage exchange.
 func (c Channel) FetchUsage(ctx context.Context, listener Listener, trusted discovery.Result, period apikeyusage.Period, apiKey string) (apikeyusage.Snapshot, *protocol.Error) {
-	transport, bindErr := c.bind(ctx, listener, trusted)
+	bindCtx, cancel := context.WithTimeout(ctx, trustedVersionBudget)
+	transport, bindErr := c.bind(bindCtx, listener, trusted)
+	cancel()
 	if bindErr != nil {
 		return apikeyusage.Snapshot{}, bindErr
 	}
 	defer transport.CloseIdleConnections()
-	snapshot, fetchErr := apikeyusage.New(transport).Fetch(ctx, apikeyusage.Request{
+	usageCtx, cancel := context.WithTimeout(ctx, apikeyusage.RequestTimeout)
+	defer cancel()
+	snapshot, fetchErr := apikeyusage.New(transport).Fetch(usageCtx, apikeyusage.Request{
 		URL: listener.APIBaseURL + "/usage", Period: period, APIKey: apiKey,
 	})
 	if fetchErr != nil {
@@ -93,7 +97,7 @@ func (c Channel) bind(ctx context.Context, listener Listener, trusted discovery.
 	}
 	httpClient := &http.Client{
 		Transport: transport,
-		Timeout:   15 * time.Second,
+		Timeout:   trustedVersionBudget,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},

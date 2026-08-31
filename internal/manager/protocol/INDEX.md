@@ -23,7 +23,7 @@ agent.cleanup.preview     agent.cleanup.write
 apikey.usage
 ```
 
-`Deadlines()` 为**每个**方法返回必需的内部超时；新增方法必须同时在此登记。
+`Deadlines()` 为**每个**方法返回必需的内部超时；新增方法必须同时在此登记。`apikey.usage` 为 60 秒：启动 20 秒 + 可信 `/version` 15 秒 + 用量聚合 25 秒，三段独立，避免启动或校验吃掉慢聚合预算。
 
 ## 错误码
 

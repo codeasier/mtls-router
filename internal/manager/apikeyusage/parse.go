@@ -140,7 +140,7 @@ func Parse(body []byte, period Period) (Snapshot, error) {
 			}
 		}
 	}
-	if _, err := decoder.Token(); err != nil || !seen["period"] || !seen["summary"] {
+	if _, err := decoder.Token(); err != nil || !seen["period"] || !seen["summary"] || !seen["by_model"] {
 		return Snapshot{}, responseInvalid()
 	}
 	if token, err := decoder.Token(); err != io.EOF || token != nil {

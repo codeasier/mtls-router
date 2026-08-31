@@ -2,12 +2,18 @@ package trustedrouter
 
 import (
 	"context"
+	"time"
 
 	"github.com/codeasier/mtls-router/internal/manager/apikeyusage"
 	"github.com/codeasier/mtls-router/internal/manager/discovery"
 	"github.com/codeasier/mtls-router/internal/manager/lifecycle"
 	"github.com/codeasier/mtls-router/internal/manager/protocol"
 	"github.com/codeasier/mtls-router/internal/manager/state"
+)
+
+const (
+	usageEstablishBudget = 20 * time.Second
+	trustedVersionBudget = 15 * time.Second
 )
 
 // Lifecycle is the absent-only startup capability used by secret discovery.
@@ -60,8 +66,10 @@ func (c *Coordinator) Fetch(ctx context.Context, owner protocol.RouterOwner, api
 }
 
 // FetchUsage reuses the same trust path as Fetch, then requests /v1/usage.
+// Start, /version, and the usage fetch use independent budgets so a slow
+// aggregate still receives its 25s timeout after startup and identity checks.
 func (c *Coordinator) FetchUsage(ctx context.Context, owner protocol.RouterOwner, period apikeyusage.Period, apiKey string) (UsageResult, *protocol.Error) {
-	found, err := c.establish(ctx, owner)
+	found, err := c.establishWithin(ctx, owner, usageEstablishBudget)
 	if err != nil {
 		return UsageResult{}, err
 	}
@@ -77,6 +85,12 @@ func (c *Coordinator) binding() Binding {
 		RouterBaseURL: c.Listener.RouterBaseURL, APIBaseURL: c.Listener.APIBaseURL,
 		DeploymentID: c.DeploymentID, ProtocolVersion: c.ProtocolVersion,
 	}
+}
+
+func (c *Coordinator) establishWithin(ctx context.Context, owner protocol.RouterOwner, budget time.Duration) (discovery.Result, *protocol.Error) {
+	establishCtx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	return c.establish(establishCtx, owner)
 }
 
 func (c *Coordinator) establish(ctx context.Context, owner protocol.RouterOwner) (discovery.Result, *protocol.Error) {

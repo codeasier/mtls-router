@@ -116,6 +116,8 @@ type ErrorDetails struct {
 }
 
 // Deadlines returns the required internal deadline for every protocol method.
+// apikey.usage is 60s so absent-router start (20s), trusted /version (15s),
+// and the usage-gateway aggregate (25s) each have an independent budget.
 func Deadlines() map[Method]time.Duration {
 	return map[Method]time.Duration{
 		MethodManagerInfo:                  time.Second,
@@ -136,7 +138,7 @@ func Deadlines() map[Method]time.Duration {
 		MethodAgentWrite:                   30 * time.Second,
 		MethodAgentCleanupPreview:          5 * time.Second,
 		MethodAgentCleanupWrite:            30 * time.Second,
-		MethodAPIKeyUsage:                  25 * time.Second,
+		MethodAPIKeyUsage:                  60 * time.Second,
 	}
 }
 

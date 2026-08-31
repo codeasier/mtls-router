@@ -13,7 +13,8 @@ import (
 )
 
 const (
-	requestTimeout = 25 * time.Second
+	// RequestTimeout is the independent budget for one /v1/usage aggregate fetch.
+	RequestTimeout = 25 * time.Second
 	maxBodyBytes   = 1 << 20
 )
 
@@ -43,11 +44,11 @@ func New(transport http.RoundTripper) *Client {
 	}
 	return &Client{httpClient: &http.Client{
 		Transport: transport,
-		Timeout:   requestTimeout,
+		Timeout:   RequestTimeout,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
-	}, timeout: requestTimeout}
+	}, timeout: RequestTimeout}
 }
 
 // Fetch requests and returns one fail-closed per-key usage snapshot.

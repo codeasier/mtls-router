@@ -58,16 +58,17 @@ func TestParseRejectsUnsafeOrUnboundedBodies(t *testing.T) {
 		body   string
 		period Period
 	}{
-		{name: "period mismatch", body: `{"period":"today","summary":{"requests":0,"prompt_tokens":0,"completion_tokens":0,"cost":0}}`, period: Period7d},
-		{name: "missing summary", body: `{"period":"7d"}`, period: Period7d},
-		{name: "negative requests", body: `{"period":"7d","summary":{"requests":-1,"prompt_tokens":0,"completion_tokens":0,"cost":0}}`, period: Period7d},
-		{name: "fractional tokens", body: `{"period":"7d","summary":{"requests":1,"prompt_tokens":1.5,"completion_tokens":0,"cost":0}}`, period: Period7d},
-		{name: "api_key field", body: `{"period":"7d","api_key":"secret","summary":{"requests":0,"prompt_tokens":0,"completion_tokens":0,"cost":0}}`, period: Period7d},
-		{name: "token field", body: `{"period":"7d","token":"secret","summary":{"requests":0,"prompt_tokens":0,"completion_tokens":0,"cost":0}}`, period: Period7d},
+		{name: "period mismatch", body: `{"period":"today","summary":{"requests":0,"prompt_tokens":0,"completion_tokens":0,"cost":0},"by_model":[]}`, period: Period7d},
+		{name: "missing summary", body: `{"period":"7d","by_model":[]}`, period: Period7d},
+		{name: "missing by_model", body: `{"period":"7d","summary":{"requests":0,"prompt_tokens":0,"completion_tokens":0,"cost":0}}`, period: Period7d},
+		{name: "negative requests", body: `{"period":"7d","summary":{"requests":-1,"prompt_tokens":0,"completion_tokens":0,"cost":0},"by_model":[]}`, period: Period7d},
+		{name: "fractional tokens", body: `{"period":"7d","summary":{"requests":1,"prompt_tokens":1.5,"completion_tokens":0,"cost":0},"by_model":[]}`, period: Period7d},
+		{name: "api_key field", body: `{"period":"7d","api_key":"secret","summary":{"requests":0,"prompt_tokens":0,"completion_tokens":0,"cost":0},"by_model":[]}`, period: Period7d},
+		{name: "token field", body: `{"period":"7d","token":"secret","summary":{"requests":0,"prompt_tokens":0,"completion_tokens":0,"cost":0},"by_model":[]}`, period: Period7d},
 		{name: "too many models", body: `{"period":"7d","summary":{"requests":0,"prompt_tokens":0,"completion_tokens":0,"cost":0},"by_model":[` + strings.Repeat(`{"model":"m","requests":0,"prompt_tokens":0,"completion_tokens":0,"cost":0},`, 65) + `{"model":"z","requests":0,"prompt_tokens":0,"completion_tokens":0,"cost":0}]}`, period: Period7d},
 		{name: "invalid model id", body: `{"period":"7d","summary":{"requests":0,"prompt_tokens":0,"completion_tokens":0,"cost":0},"by_model":[{"model":" m","requests":0,"prompt_tokens":0,"completion_tokens":0,"cost":0}]}`, period: Period7d},
 		{name: "not object", body: `[]`, period: Period7d},
-		{name: "quota bad unit", body: `{"period":"7d","summary":{"requests":0,"prompt_tokens":0,"completion_tokens":0,"cost":0},"quota":{"used":0,"unit":"hours"}}`, period: Period7d},
+		{name: "quota bad unit", body: `{"period":"7d","summary":{"requests":0,"prompt_tokens":0,"completion_tokens":0,"cost":0},"quota":{"used":0,"unit":"hours"},"by_model":[]}`, period: Period7d},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			_, err := Parse([]byte(test.body), test.period)
