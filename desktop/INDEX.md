@@ -11,14 +11,14 @@ React UI ──Tauri invoke──▶ Rust commands.rs ──stdin/stdout JSON─
                                     │
                               port_recovery.rs ──约 10 秒采样──▶ released / reoccupied
                                     │
-                              updater.rs ──HTTPS + Tauri signature──▶ github.com releases
+                              updater.rs ──HTTPS + Tauri signature──▶ release.codeasier.top
 ```
 
 桌面应用绝不直接与 router 通信。它以长驻子进程方式拉起 `mtls-router-manager serve`，带 `--desktop-session`、`--desktop-installation`、`--package-generation`、`--parent-pid/start/executable` flag。
 
 - **协议与启动失败诊断**：桌面端严格校验 management protocol v4 结构；预启动失败按稳定阶段和可选数值 OS 错误码生成安全诊断，启动后失败会终止并等待自有子进程。lifecycle 保留有界原始输出，而 app 协议仅暴露脱敏的会话作用域诊断。
 - **端口恢复**：RouterPage 只按结构化 action/reason 渲染按钮或 SCM/systemd 人工引导，不执行命令、不提权、不猜测 launchd label；Windows copy command 只生成适用于管理员 PowerShell 的安全引用文本，不适用于 `cmd.exe`。Rust `port_recovery.rs` 在 manager 报告分模式成功证据与首次释放后，由 scheduler 在约 10 秒内定期采样；只有持续的 `absent` 状态可产生 `released`，`unknown_occupant` 产生 `reoccupied`，其他状态、主动启动和 manager session 变化会取消观察。
-- **桌面整包更新**：仅精确 stable `vX.Y.Z` release 配置 `https://github.com/codeasier/mtls-router/releases/latest/download/latest.json` 与 updater 公钥；非 stable 构建保留可反序列化但无 endpoint 的禁用配置。启动时静默检查一次，Settings 可手动复查。用户确认后 `updater.rs` 重新检查精确 stable SemVer、下载并强制校验 Tauri 签名，停止经验证的 desktop-owned 或关联 `legacy_managed` router，安装包含 manager/router sidecar 的完整包并重启；无法停止关联 legacy router，或关联状态为 `start_failed`、stale、unknown、未知枚举或 owner/state 组合不可验证时拒绝安装。不停止 external router，也不改变 CLI 更新路径。
+- **桌面整包更新**：仅精确 stable `vX.Y.Z` release 配置 `https://release.codeasier.top/latest.json` 与 updater 公钥；非 stable 构建保留可反序列化但无 endpoint 的禁用配置。启动时静默检查一次，Settings 可手动复查。用户确认后 `updater.rs` 重新检查精确 stable SemVer、下载并强制校验 Tauri 签名，停止经验证的 desktop-owned 或关联 `legacy_managed` router，安装包含 manager/router sidecar 的完整包并重启；无法停止关联 legacy router，或关联状态为 `start_failed`、stale、unknown、未知枚举或 owner/state 组合不可验证时拒绝安装。不停止 external router，也不改变 CLI 更新路径。
 - **安装所有权与 manager 启动诊断**：`installation.json` 由 Rust 桌面端单独维护，保存稳定 installation ID 与当前已校验打包 sidecar 的哈希；哈希不是历史迁移 allowlist，也不授权 protocol 1/3 迁移。会话 ID 只作 epoch。manager 启动失败按 `sidecar_resolution` / `spawn` / `handshake` / `protocol_parse` / `watchdog_timeout` / `unexpected_exit` 记入有界环；Rust 只接受 manager stderr 上有界、闭合集合的结构化 bootstrap JSON，其他原始 stderr 全部丢弃。失败的 manager 无法返回协议状态，因此安全阶段/错误码由 Rust 边界合成到 Router 状态，并同时进入 `diagnostics.collect`；恢复 manager 再次失败时保留具体 bootstrap/protocol 阶段与稳定错误码，不以通用 `unexpected_exit/MANAGER_FAILED` 覆盖。
 
 ## 前端（src/）
