@@ -145,7 +145,7 @@ jobs:
       - name: Preflight and package
         env:
           DOWNLOAD_BASE_URL: https://downloads.codeasier.top/${{ github.event.repository.name }}/${{ inputs.release_tag }}
-          DESKTOP_DOWNLOAD_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ inputs.release_tag }}
+          DESKTOP_DOWNLOAD_BASE_URL: https://release.codeasier.top/${{ github.event.repository.name }}/${{ inputs.release_tag }}
           RELEASE_TAG: ${{ inputs.release_tag }}
           SOURCE_DATE_EPOCH: '0'
         run: ./scripts/package-release.sh
@@ -171,7 +171,7 @@ jobs:
       - name: Validate recovered updater assets
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
-          DESKTOP_DOWNLOAD_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ inputs.release_tag }}
+          DESKTOP_DOWNLOAD_BASE_URL: https://release.codeasier.top/${{ github.event.repository.name }}/${{ inputs.release_tag }}
         run: |
           set -euo pipefail
           (cd release && sha256sum -c SHA256SUMS)
