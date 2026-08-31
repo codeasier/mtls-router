@@ -244,6 +244,7 @@ fn build_app() -> tauri::Result<tauri::App<tauri::Wry>> {
             commands::get_credential,
             commands::save_credential,
             commands::delete_credential,
+            commands::apikey_usage,
             autostart::autostart_get,
             autostart::autostart_set_immediate,
             autostart::prepare_for_uninstall,

@@ -32,6 +32,7 @@ export const COMMANDS = {
   credentialGet: "get_credential",
   credentialSave: "save_credential",
   credentialDelete: "delete_credential",
+  apikeyUsage: "apikey_usage",
   autostartGet: "autostart_get",
   autostartSet: "autostart_set",
   nativeLanguageSet: "set_native_language",
@@ -459,6 +460,38 @@ export interface CredentialSummary {
   saved_at: string | null;
 }
 
+export type APIKeyUsagePeriod = "today" | "7d" | "30d";
+
+export interface APIKeyUsageSummary {
+  requests: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cost: number;
+}
+
+export interface APIKeyUsageQuota {
+  used: number;
+  limit: number | null;
+  unit: "usd" | "tokens" | "requests";
+  resets_at?: string;
+}
+
+export interface APIKeyUsageModel {
+  model: string;
+  requests: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cost: number;
+}
+
+export interface APIKeyUsage {
+  period: APIKeyUsagePeriod;
+  as_of?: string;
+  summary: APIKeyUsageSummary;
+  quota?: APIKeyUsageQuota | null;
+  by_model: APIKeyUsageModel[];
+}
+
 export type AgentId = "claude" | "opencode" | "codex";
 export type AgentMode = "merge" | "rebuild";
 export type AgentModes = Partial<Record<AgentId, AgentMode>>;
@@ -780,6 +813,7 @@ export interface DesktopApi {
   getCredential(): Promise<CredentialSummary>;
   saveCredential(apiKey: string): Promise<CredentialSummary>;
   deleteCredential(): Promise<CredentialSummary>;
+  getAPIKeyUsage(period: APIKeyUsagePeriod): Promise<APIKeyUsage>;
   getAutostart(): Promise<boolean>;
   setAutostart(enabled: boolean): Promise<boolean>;
   setNativeLanguage(language: NativeLanguage): Promise<void>;
@@ -930,6 +964,8 @@ export function createDesktopApi(
     getCredential: () => invoke(COMMANDS.credentialGet),
     saveCredential: (apiKey) => invoke(COMMANDS.credentialSave, { apiKey }),
     deleteCredential: () => invoke(COMMANDS.credentialDelete),
+    getAPIKeyUsage: (period) =>
+      invoke(COMMANDS.apikeyUsage, { request: { period } }),
     getAutostart: () => invoke(COMMANDS.autostartGet),
     setAutostart: (enabled) => invoke(COMMANDS.autostartSet, { enabled }),
     setNativeLanguage: (language) =>

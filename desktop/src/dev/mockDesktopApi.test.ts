@@ -40,6 +40,7 @@ describe("createMockDesktopApi", () => {
 
     await api.saveCredential("mock-only-key");
     expect((await api.getCredential()).fingerprint).toBe("MOCK");
+    expect((await api.getAPIKeyUsage("7d")).summary.requests).toBe(12);
 
     const detection = await api.detectAgents();
     expect(detection.agents).toHaveLength(3);

@@ -6,10 +6,10 @@ use crate::{
     model_config::{self, ModelConfig},
     scheduler::PollScheduler,
     types::{
-        AgentCleanupPreview, AgentDetect, AgentFragment, AgentPreview, AgentWriteResult,
-        ComponentVersions, CredentialSummary, DesktopPaths, Diagnostics, ManagerFailure,
-        ManagerInfo, NativeLanguage, OccupantInspection, OccupantTerminationResult, PollSnapshot,
-        RecoveryAction, RouterHealth, RouterLogs, RouterStatus, RouterVersion,
+        APIKeyUsage, AgentCleanupPreview, AgentDetect, AgentFragment, AgentPreview,
+        AgentWriteResult, ComponentVersions, CredentialSummary, DesktopPaths, Diagnostics,
+        ManagerFailure, ManagerInfo, NativeLanguage, OccupantInspection, OccupantTerminationResult,
+        PollSnapshot, RecoveryAction, RouterHealth, RouterLogs, RouterStatus, RouterVersion,
     },
 };
 use chrono::{DateTime, Utc};
@@ -895,6 +895,74 @@ pub async fn delete_credential(state: tauri::State<'_, AppState>) -> Result<Cred
     delete_credential_command(&state.credentials).await
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct APIKeyUsageRequest {
+    pub period: String,
+}
+
+fn normalize_usage_period(period: &str) -> Result<String> {
+    match period {
+        "today" | "7d" | "30d" => Ok(period.to_string()),
+        _ => Err(CommandError::invalid_params("usage period is invalid")),
+    }
+}
+
+async fn apikey_usage_command(
+    request: APIKeyUsageRequest,
+    manager: &ManagerClient,
+    credentials: &CredentialStore,
+) -> Result<APIKeyUsage> {
+    let period = normalize_usage_period(&request.period)?;
+    let key = credentials.use_().await.map_err(CommandError::from)?;
+    let result: APIKeyUsage = manager
+        .call_with_key(
+            "apikey.usage",
+            json!({ "owner": "desktop", "period": period }),
+            key,
+        )
+        .await?;
+    if result.period != period || !valid_usage_snapshot(&result) {
+        return Err(CommandError::new(
+            "USAGE_RESPONSE_INVALID",
+            "usage response is invalid",
+        ));
+    }
+    Ok(result)
+}
+
+fn valid_usage_snapshot(result: &APIKeyUsage) -> bool {
+    result.summary.requests >= 0
+        && result.summary.prompt_tokens >= 0
+        && result.summary.completion_tokens >= 0
+        && result.summary.cost.is_finite()
+        && result.summary.cost >= 0.0
+        && result.by_model.iter().all(|row| {
+            !row.model.is_empty()
+                && row.requests >= 0
+                && row.prompt_tokens >= 0
+                && row.completion_tokens >= 0
+                && row.cost.is_finite()
+                && row.cost >= 0.0
+        })
+        && result.quota.as_ref().map_or(true, |quota| {
+            matches!(quota.unit.as_str(), "usd" | "tokens" | "requests")
+                && quota.used.is_finite()
+                && quota.used >= 0.0
+                && quota
+                    .limit
+                    .map_or(true, |limit| limit.is_finite() && limit >= 0.0)
+        })
+}
+
+#[tauri::command]
+pub async fn apikey_usage(
+    request: APIKeyUsageRequest,
+    state: tauri::State<'_, AppState>,
+) -> Result<APIKeyUsage> {
+    apikey_usage_command(request, &state.manager, &state.credentials).await
+}
+
 #[tauri::command]
 pub async fn window_visibility(visible: bool, state: tauri::State<'_, AppState>) -> Result<()> {
     state.set_window_visibility(visible);
@@ -1525,6 +1593,85 @@ mod tests {
                 .collect::<Vec<_>>();
             assert_eq!(model_requests.len(), 1);
             assert_eq!(model_requests[0]["params"]["api_key"], "fixture-secret");
+        });
+    }
+
+    #[test]
+    fn apikey_usage_uses_saved_key_without_exposing_it() {
+        tauri::async_runtime::block_on(async {
+            let usage_response = serde_json::to_vec(&json!({"id": "desktop-1", "result": {
+                "period": "7d",
+                "as_of": "2026-08-28T00:00:00Z",
+                "summary": {
+                    "requests": 4,
+                    "prompt_tokens": 10,
+                    "completion_tokens": 2,
+                    "cost": 0.75
+                },
+                "quota": {
+                    "used": 0.75,
+                    "limit": 100.0,
+                    "unit": "usd",
+                    "resets_at": "2026-09-01T00:00:00Z"
+                },
+                "by_model": [{
+                    "model": "claude-sonnet",
+                    "requests": 4,
+                    "prompt_tokens": 10,
+                    "completion_tokens": 2,
+                    "cost": 0.75
+                }]
+            }}))
+            .unwrap();
+            let (manager, requests) = fake_client(vec![usage_response]);
+            let (_directory, credentials) = test_credentials("usage-round-trip");
+
+            let missing = apikey_usage_command(
+                APIKeyUsageRequest {
+                    period: "7d".into(),
+                },
+                &manager,
+                &credentials,
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(missing.code, "CREDENTIAL_NOT_FOUND");
+
+            save_credential_command("fixture-secret".into(), &credentials)
+                .await
+                .unwrap();
+            let snapshot = apikey_usage_command(
+                APIKeyUsageRequest {
+                    period: "7d".into(),
+                },
+                &manager,
+                &credentials,
+            )
+            .await
+            .unwrap();
+            assert_eq!(snapshot.period, "7d");
+            assert_eq!(snapshot.summary.requests, 4);
+
+            let invalid = apikey_usage_command(
+                APIKeyUsageRequest {
+                    period: "week".into(),
+                },
+                &manager,
+                &credentials,
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(invalid.code, "INVALID_PARAMS");
+
+            let requests = requests.lock().unwrap();
+            let usage_requests = requests
+                .iter()
+                .filter(|request| request["method"] == "apikey.usage")
+                .collect::<Vec<_>>();
+            assert_eq!(usage_requests.len(), 1);
+            assert_eq!(usage_requests[0]["params"]["owner"], "desktop");
+            assert_eq!(usage_requests[0]["params"]["period"], "7d");
+            assert_eq!(usage_requests[0]["params"]["api_key"], "fixture-secret");
         });
     }
 

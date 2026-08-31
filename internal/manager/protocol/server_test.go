@@ -19,7 +19,7 @@ func TestDeadlinesCoverEveryMethod(t *testing.T) {
 		MethodAgentDetect: 5 * time.Second, MethodAgentModels: 30 * time.Second,
 		MethodAgentRender: 5 * time.Second, MethodAgentPreview: 5 * time.Second,
 		MethodAgentWrite: 30 * time.Second, MethodAgentCleanupPreview: 5 * time.Second,
-		MethodAgentCleanupWrite: 30 * time.Second,
+		MethodAgentCleanupWrite: 30 * time.Second, MethodAPIKeyUsage: 25 * time.Second,
 	}
 	got := Deadlines()
 	if len(got) != len(want) {

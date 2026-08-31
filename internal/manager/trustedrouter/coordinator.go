@@ -3,6 +3,7 @@ package trustedrouter
 import (
 	"context"
 
+	"github.com/codeasier/mtls-router/internal/manager/apikeyusage"
 	"github.com/codeasier/mtls-router/internal/manager/discovery"
 	"github.com/codeasier/mtls-router/internal/manager/lifecycle"
 	"github.com/codeasier/mtls-router/internal/manager/protocol"
@@ -28,6 +29,11 @@ type Result struct {
 	Binding Binding
 }
 
+type UsageResult struct {
+	Snapshot apikeyusage.Snapshot
+	Binding  Binding
+}
+
 type Coordinator struct {
 	Listener        Listener
 	DeploymentID    string
@@ -42,45 +48,70 @@ type Coordinator struct {
 // Fetch reuses a trusted router or starts exactly one absent router under the
 // requested owner. Stale and unknown states never enter lifecycle startup.
 func (c *Coordinator) Fetch(ctx context.Context, owner protocol.RouterOwner, apiKey string) (Result, *protocol.Error) {
+	found, err := c.establish(ctx, owner)
+	if err != nil {
+		return Result{}, err
+	}
+	models, fetchErr := c.Channel.Fetch(ctx, c.Listener, found, apiKey)
+	if fetchErr != nil {
+		return Result{}, fetchErr
+	}
+	return Result{Models: models, Binding: c.binding()}, nil
+}
+
+// FetchUsage reuses the same trust path as Fetch, then requests /v1/usage.
+func (c *Coordinator) FetchUsage(ctx context.Context, owner protocol.RouterOwner, period apikeyusage.Period, apiKey string) (UsageResult, *protocol.Error) {
+	found, err := c.establish(ctx, owner)
+	if err != nil {
+		return UsageResult{}, err
+	}
+	snapshot, fetchErr := c.Channel.FetchUsage(ctx, c.Listener, found, period, apiKey)
+	if fetchErr != nil {
+		return UsageResult{}, fetchErr
+	}
+	return UsageResult{Snapshot: snapshot, Binding: c.binding()}, nil
+}
+
+func (c *Coordinator) binding() Binding {
+	return Binding{
+		RouterBaseURL: c.Listener.RouterBaseURL, APIBaseURL: c.Listener.APIBaseURL,
+		DeploymentID: c.DeploymentID, ProtocolVersion: c.ProtocolVersion,
+	}
+}
+
+func (c *Coordinator) establish(ctx context.Context, owner protocol.RouterOwner) (discovery.Result, *protocol.Error) {
 	if owner == protocol.RouterOwnerDesktop && (c.DesktopEligible == nil || !c.DesktopEligible()) {
-		return Result{}, &protocol.Error{Code: protocol.CodeInvalidParams, Message: "desktop owner requires a verified desktop session"}
+		return discovery.Result{}, &protocol.Error{Code: protocol.CodeInvalidParams, Message: "desktop owner requires a verified desktop session"}
 	}
 	found := c.Discover(ctx)
 	if found.Classification == discovery.Absent {
 		if c.AbsentStartOK != nil && !c.AbsentStartOK() {
-			return Result{}, &protocol.Error{Code: protocol.CodeRouterStateStale, Message: "router restart requires explicit lifecycle recovery"}
+			return discovery.Result{}, &protocol.Error{Code: protocol.CodeRouterStateStale, Message: "router restart requires explicit lifecycle recovery"}
 		}
 		started, startErr := c.Lifecycle.Start(ctx, owner)
 		if startErr != nil && startErr.Code != protocol.CodeRouterDegraded {
-			return Result{}, lifecycleProtocolError(startErr)
+			return discovery.Result{}, lifecycleProtocolError(startErr)
 		}
 		if !stateFromStart(started, c.Listener, c.DeploymentID, c.ProtocolVersion) {
-			return Result{}, staleCatalog()
+			return discovery.Result{}, staleCatalog()
 		}
 		found = c.Discover(ctx)
 	}
 	if !trustedStateMatches(found, c.Listener, c.DeploymentID, c.ProtocolVersion) {
 		switch found.Classification {
 		case discovery.Stale:
-			return Result{}, &protocol.Error{Code: protocol.CodeRouterStateStale, Message: "router state is stale"}
+			return discovery.Result{}, &protocol.Error{Code: protocol.CodeRouterStateStale, Message: "router state is stale"}
 		case discovery.LegacyManaged:
-			return Result{}, &protocol.Error{Code: protocol.CodeRouterLegacyManaged, Message: "legacy desktop router requires explicit migration"}
+			return discovery.Result{}, &protocol.Error{Code: protocol.CodeRouterLegacyManaged, Message: "legacy desktop router requires explicit migration"}
 		case discovery.UnknownOccupant:
-			return Result{}, &protocol.Error{Code: protocol.CodePortOccupied, Message: "router port is occupied"}
+			return discovery.Result{}, &protocol.Error{Code: protocol.CodePortOccupied, Message: "router port is occupied"}
 		case discovery.Absent:
-			return Result{}, &protocol.Error{Code: protocol.CodeRouterNotFound, Message: "router was not found"}
+			return discovery.Result{}, &protocol.Error{Code: protocol.CodeRouterNotFound, Message: "router was not found"}
 		default:
-			return Result{}, staleCatalog()
+			return discovery.Result{}, staleCatalog()
 		}
 	}
-	models, fetchErr := c.Channel.Fetch(ctx, c.Listener, found, apiKey)
-	if fetchErr != nil {
-		return Result{}, fetchErr
-	}
-	return Result{Models: models, Binding: Binding{
-		RouterBaseURL: c.Listener.RouterBaseURL, APIBaseURL: c.Listener.APIBaseURL,
-		DeploymentID: c.DeploymentID, ProtocolVersion: c.ProtocolVersion,
-	}}, nil
+	return found, nil
 }
 
 // Revalidate fetches through the same trust path and rejects any deployment or

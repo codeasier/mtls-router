@@ -545,6 +545,7 @@ fn request_must_not_replay(method: &str) -> bool {
         method,
         "agent.models"
             | "agent.write"
+            | "apikey.usage"
             | AGENT_CLEANUP_WRITE
             | FORCE_TERMINATE_OCCUPANT
             | ROUTER_MIGRATE_LEGACY
@@ -776,6 +777,7 @@ fn watchdog(method: &str) -> Result<Duration> {
         "router.stop" => 7,
         "router.start" => 20,
         ROUTER_MIGRATE_LEGACY => 27,
+        "apikey.usage" => 25,
         "agent.models" | "agent.write" | AGENT_CLEANUP_WRITE => 30,
         _ => return Err(CommandError::invalid_params("unknown manager method")),
     };
@@ -1114,6 +1116,7 @@ mod tests {
             watchdog("agent.cleanup.write").unwrap(),
             Duration::from_secs(31)
         );
+        assert_eq!(watchdog("apikey.usage").unwrap(), Duration::from_secs(26));
     }
 
     #[test]

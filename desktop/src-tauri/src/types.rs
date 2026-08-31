@@ -1094,6 +1094,47 @@ pub struct CredentialSummary {
     pub saved_at: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct APIKeyUsageSummary {
+    pub requests: i64,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub cost: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct APIKeyUsageQuota {
+    pub used: f64,
+    pub limit: Option<f64>,
+    pub unit: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub resets_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct APIKeyUsageModel {
+    pub model: String,
+    pub requests: i64,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub cost: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct APIKeyUsage {
+    pub period: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub as_of: String,
+    pub summary: APIKeyUsageSummary,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota: Option<APIKeyUsageQuota>,
+    pub by_model: Vec<APIKeyUsageModel>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct DesktopPaths {
     pub data_dir: String,

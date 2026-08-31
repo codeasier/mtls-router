@@ -5,6 +5,8 @@ import type {
   AgentModelsResult,
   AgentPreview,
   AgentWriteResult,
+  APIKeyUsage,
+  APIKeyUsagePeriod,
   CredentialSummary,
   DesktopPaths,
   ModelConfig,
@@ -76,6 +78,34 @@ export const fixtureCredentialAbsent: CredentialSummary = {
   fingerprint: "",
   saved_at: null,
 };
+
+export function fixtureUsageFor(period: APIKeyUsagePeriod): APIKeyUsage {
+  return {
+    period,
+    as_of: "2026-08-28T00:00:00Z",
+    summary: {
+      requests: 12,
+      prompt_tokens: 1000,
+      completion_tokens: 200,
+      cost: 1.25,
+    },
+    quota: {
+      used: 1.25,
+      limit: 100,
+      unit: "usd",
+      resets_at: "2026-09-01T00:00:00Z",
+    },
+    by_model: [
+      {
+        model: "claude-sonnet",
+        requests: 12,
+        prompt_tokens: 1000,
+        completion_tokens: 200,
+        cost: 1.25,
+      },
+    ],
+  };
+}
 
 export const fixtureDesktopPaths: DesktopPaths = {
   data_dir: "/mock/app-data",

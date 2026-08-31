@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/codeasier/mtls-router/internal/manager/apikeyusage"
 	"github.com/codeasier/mtls-router/internal/manager/discovery"
 	"github.com/codeasier/mtls-router/internal/manager/modelcatalog"
 	"github.com/codeasier/mtls-router/internal/manager/process"
@@ -30,6 +31,37 @@ type Channel struct {
 
 // Fetch performs the channel-bound /version and /v1/models exchange.
 func (c Channel) Fetch(ctx context.Context, listener Listener, trusted discovery.Result, apiKey string) ([]string, *protocol.Error) {
+	transport, bindErr := c.bind(ctx, listener, trusted)
+	if bindErr != nil {
+		return nil, bindErr
+	}
+	defer transport.CloseIdleConnections()
+	models, fetchErr := modelcatalog.New(transport, c.Simplify).Fetch(ctx, modelcatalog.Request{
+		URL: listener.APIBaseURL + "/models", APIKey: apiKey,
+	})
+	if fetchErr != nil {
+		return nil, &protocol.Error{Code: modelcatalog.CodeOf(fetchErr), Message: fetchErr.Error()}
+	}
+	return models, nil
+}
+
+// FetchUsage performs the channel-bound /version and /v1/usage exchange.
+func (c Channel) FetchUsage(ctx context.Context, listener Listener, trusted discovery.Result, period apikeyusage.Period, apiKey string) (apikeyusage.Snapshot, *protocol.Error) {
+	transport, bindErr := c.bind(ctx, listener, trusted)
+	if bindErr != nil {
+		return apikeyusage.Snapshot{}, bindErr
+	}
+	defer transport.CloseIdleConnections()
+	snapshot, fetchErr := apikeyusage.New(transport).Fetch(ctx, apikeyusage.Request{
+		URL: listener.APIBaseURL + "/usage", Period: period, APIKey: apiKey,
+	})
+	if fetchErr != nil {
+		return apikeyusage.Snapshot{}, &protocol.Error{Code: apikeyusage.CodeOf(fetchErr), Message: fetchErr.Error()}
+	}
+	return snapshot, nil
+}
+
+func (c Channel) bind(ctx context.Context, listener Listener, trusted discovery.Result) (*http.Transport, *protocol.Error) {
 	dial := c.DialContext
 	if dial == nil {
 		dial = (&net.Dialer{Timeout: 5 * time.Second}).DialContext
@@ -59,7 +91,6 @@ func (c Channel) Fetch(ctx context.Context, listener Listener, trusted discovery
 		IdleConnTimeout:     5 * time.Second,
 		DisableCompression:  true,
 	}
-	defer transport.CloseIdleConnections()
 	httpClient := &http.Client{
 		Transport: transport,
 		Timeout:   15 * time.Second,
@@ -70,39 +101,38 @@ func (c Channel) Fetch(ctx context.Context, listener Listener, trusted discovery
 
 	versionRequest, err := http.NewRequestWithContext(ctx, http.MethodGet, listener.RouterBaseURL+"/version", nil)
 	if err != nil {
+		transport.CloseIdleConnections()
 		return nil, discoveryFailed()
 	}
 	response, err := httpClient.Do(versionRequest)
 	if err != nil {
+		transport.CloseIdleConnections()
 		return nil, discoveryFailed()
 	}
 	if response.StatusCode != http.StatusOK {
 		response.Body.Close()
+		transport.CloseIdleConnections()
 		return nil, discoveryFailed()
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, versionBodyLimit+1))
 	closeErr := response.Body.Close()
 	if err != nil || closeErr != nil || len(body) > versionBodyLimit {
+		transport.CloseIdleConnections()
 		return nil, discoveryFailed()
 	}
 	var versionInfo discovery.Version
 	decoderErr := json.Unmarshal(body, &versionInfo)
 	if decoderErr != nil || !versionMatches(versionInfo, trusted) {
+		transport.CloseIdleConnections()
 		return nil, staleCatalog()
 	}
 	identity := process.Identity{PID: trusted.State.PID, StartedAt: trusted.State.ProcessStartedAt, Executable: trusted.State.ProcessExecutable}
 	status, validateErr := validate(identity, trusted.State.BinaryPath)
 	if validateErr != nil || status != process.StatusGenuine {
+		transport.CloseIdleConnections()
 		return nil, staleCatalog()
 	}
-
-	models, fetchErr := modelcatalog.New(transport, c.Simplify).Fetch(ctx, modelcatalog.Request{
-		URL: listener.APIBaseURL + "/models", APIKey: apiKey,
-	})
-	if fetchErr != nil {
-		return nil, &protocol.Error{Code: modelcatalog.CodeOf(fetchErr), Message: fetchErr.Error()}
-	}
-	return models, nil
+	return transport, nil
 }
 
 func versionMatches(remote discovery.Version, trusted discovery.Result) bool {
