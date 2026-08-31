@@ -1168,9 +1168,22 @@ mod tests {
     }
 
     #[test]
+    fn apikey_usage_must_not_replay() {
+        assert!(request_must_not_replay("apikey.usage"));
+    }
+
+    #[test]
     fn secret_bearing_methods_are_never_replayed_after_ambiguous_delivery() {
         runtime().block_on(async {
-            for method in no_replay_methods() {
+            for method in [
+                "agent.models",
+                "agent.write",
+                "apikey.usage",
+                AGENT_CLEANUP_WRITE,
+                FORCE_TERMINATE_OCCUPANT,
+                ROUTER_MIGRATE_LEGACY,
+                "router.stop",
+            ] {
                 let (client, writes) = client(vec![Behavior::Malformed, Behavior::Valid]);
                 let error = client
                     .call::<Value>(method, no_replay_params(method))
@@ -1182,7 +1195,7 @@ mod tests {
                         .lock()
                         .unwrap()
                         .iter()
-                        .filter(|request| request["method"] == *method)
+                        .filter(|request| request["method"] == method)
                         .count(),
                     1,
                     "{method}"
