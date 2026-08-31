@@ -2,6 +2,29 @@
 
 [中文](zh-CN/CHANGELOG.md)
 
+## v0.3.6 - 2026-08-31
+
+This release safely migrates legacy desktop routers with verified installation lineage, replaces free-form startup failure summaries with bounded structured manager diagnostics, and refuses updater installation until router state is proven safe.
+
+### Added
+
+- Explicitly migrated legacy desktop routers only after verifying installation lineage and complete process identities, preserving non-destructive reclaim for compatible generations and keeping ordinary start fail-closed.
+- Persisted stable installation lineage, coordinated non-replayable router replacement, and restored a stopped router when package installation fails.
+
+### Changed
+
+- Replaced free-form manager startup failure summaries with bounded structured bootstrap diagnostics that surface actionable legacy router state in the desktop UI.
+
+### Security and recovery
+
+- Required verified installation lineage before any legacy migration, blocked updater installation until router state is proven safe, and closed fail-closed gaps in ordinary starts.
+
+### Tests
+
+- Expanded Go, Rust, frontend, and workflow coverage with release-derived protocol 1/3 golden fixtures for verified migration and rejection paths.
+
+---
+
 ## v0.3.5 - 2026-08-09
 
 This release restores desktop online updates through GitHub Releases, presents actionable router startup diagnostics, and groups router output by launch session.
