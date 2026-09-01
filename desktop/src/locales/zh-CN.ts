@@ -319,6 +319,8 @@ export const zhCN = {
   "update.installing": "正在下载...",
   "update.installConfirm":
     "将下载并安装 CodeasierRouter {version}，安装完成后应用会重启。是否继续？",
+  "update.installConfirmTitle": "安装更新",
+  "update.installConfirmAction": "继续安装",
   "update.downloadProgress": "更新下载进度",
   "update.progressKnown": "已下载 {downloaded} / {total} 字节",
   "update.progressUnknown": "已下载 {downloaded} 字节",
@@ -331,6 +333,9 @@ export const zhCN = {
   "settings.prepareAction": "准备卸载并退出",
   "settings.prepareConfirm":
     "将移除当前用户的开机启动项并退出 CodeasierRouter。是否继续？",
+  "settings.prepareConfirmTitle": "准备卸载",
+  "settings.prepareConfirmAction": "继续卸载",
+  "dialog.cancel": "取消",
   "apikey.overline": "单人 / 单机 / 单密钥",
   "apikey.heading": "接入凭据",
   "apikey.status.saved": "已配置",

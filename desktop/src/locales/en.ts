@@ -345,6 +345,8 @@ export const en: Record<TranslationKey, string> = {
   "update.installing": "Downloading...",
   "update.installConfirm":
     "CodeasierRouter {version} will be downloaded and installed, then the application will restart. Continue?",
+  "update.installConfirmTitle": "Install update",
+  "update.installConfirmAction": "Continue install",
   "update.downloadProgress": "Update download progress",
   "update.progressKnown": "Downloaded {downloaded} / {total} bytes",
   "update.progressUnknown": "Downloaded {downloaded} bytes",
@@ -358,6 +360,9 @@ export const en: Record<TranslationKey, string> = {
   "settings.prepareAction": "Prepare and exit",
   "settings.prepareConfirm":
     "This will remove current-user autostart and exit CodeasierRouter. Continue?",
+  "settings.prepareConfirmTitle": "Prepare for uninstall",
+  "settings.prepareConfirmAction": "Continue uninstall",
+  "dialog.cancel": "Cancel",
   "apikey.overline": "ONE PERSON / ONE DEVICE / ONE KEY",
   "apikey.heading": "Access credential",
   "apikey.status.saved": "Configured",

@@ -111,12 +111,23 @@ describe("SettingsPage", () => {
     );
     await screen.findByText("Security and reliability fixes.");
 
-    vi.spyOn(window, "confirm").mockReturnValueOnce(false);
     fireEvent.click(screen.getByRole("button", { name: "安装并重启" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "安装更新",
+    });
     expect(api.installUpdate).not.toHaveBeenCalled();
 
-    vi.spyOn(window, "confirm").mockReturnValueOnce(true);
+    fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(api.installUpdate).not.toHaveBeenCalled();
+
     fireEvent.click(screen.getByRole("button", { name: "安装并重启" }));
+    fireEvent.click(
+      within(await screen.findByRole("dialog", { name: "安装更新" })).getByRole(
+        "button",
+        { name: "继续安装" },
+      ),
+    );
     await waitFor(() =>
       expect(api.installUpdate).toHaveBeenCalledWith("1.1.0"),
     );
@@ -191,8 +202,22 @@ describe("SettingsPage", () => {
 
   it("prepares uninstall only after confirmation on supported platforms", async () => {
     const api = await openSettings();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     fireEvent.click(screen.getByRole("button", { name: "准备卸载并退出" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "准备卸载",
+    });
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(api.prepareForUninstall).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "准备卸载并退出" }));
+    fireEvent.click(
+      within(await screen.findByRole("dialog", { name: "准备卸载" })).getByRole(
+        "button",
+        { name: "继续卸载" },
+      ),
+    );
     await waitFor(() => expect(api.prepareForUninstall).toHaveBeenCalledOnce());
   });
 
