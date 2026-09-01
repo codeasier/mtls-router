@@ -2,6 +2,25 @@
 
 [中文](zh-CN/CHANGELOG.md)
 
+## v0.3.8 - 2026-09-01
+
+This release moves the per-key usage window from the API Keys page into its own main-navigation Usage page, with a filterable, sortable per-model table so usage stays reviewable as the model list grows.
+
+### Added
+
+- Added a dedicated Usage page in the main navigation that loads the usage window for the saved API key, so the API Keys page returns to pure credential management.
+- Added multi-model filtering (including select-all) and sorting by request, token, and cost columns to the per-model usage table.
+
+### Changed
+
+- Moved the usage window out of the API Keys page into the new Usage page; the API Keys page now offers an entry point to it.
+
+### Security and recovery
+
+- The usage window still queries `GET /v1/usage` through the trusted local router for the saved key only; the webview continues to receive only bounded summaries, never the key plaintext.
+
+---
+
 ## v0.3.7 - 2026-09-01
 
 This release shows request, token, and cost usage for the saved API key on the desktop API Keys page without ever exposing the key, and moves the desktop updater feed to a domestically reachable endpoint with post-publication verification.
