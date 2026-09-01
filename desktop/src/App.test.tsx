@@ -170,6 +170,15 @@ describe("App navigation", () => {
     expect(await screen.findByText("尚未配置")).toBeInTheDocument();
   });
 
+  it("opens per-key usage from the main navigation", async () => {
+    render(<App api={createMockApi()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "用量" }));
+
+    expect(screen.getByRole("heading", { name: "用量" })).toBeVisible();
+    expect(await screen.findAllByText("claude-sonnet")).toHaveLength(2);
+  });
+
   it("opens API key management from an Agent credential error", async () => {
     const api = createMockApi({
       detectAgents: vi.fn().mockResolvedValue(detection),
