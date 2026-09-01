@@ -2,16 +2,26 @@
 
 [中文](zh-CN/CHANGELOG.md)
 
-## Unreleased
+## v0.3.7 - 2026-09-01
+
+This release shows request, token, and cost usage for the saved API key on the desktop API Keys page without ever exposing the key, and moves the desktop updater feed to a domestically reachable endpoint with post-publication verification.
 
 ### Added
 
 - Added an API key usage window on the desktop API Keys page. It queries `GET /v1/usage` through the trusted local router for the saved key only and shows requests, tokens, cost, optional quota, and per-model rows without reading the key back into the webview.
 
+### Changed
+
+- Moved the embedded desktop updater endpoint to `release.codeasier.top` with per-platform URLs under the tag directory, because the GitHub releases endpoint times out for users whose direct connection to github.com is blocked; existing clients must manually install this release once.
+
 ### Fixed
 
 - Split `apikey.usage` into independent start, `/version`, and usage budgets (20s + 15s + 25s) so a slow aggregate still has 25s after router startup and identity checks.
 - Rejected `/v1/usage` bodies that omit `by_model` instead of treating the missing field as an empty model list.
+
+### Security and recovery
+
+- Kept the saved API key inside the router pipeline — the webview only sees usage summaries — and made the release workflow fail unless the public updater feed reports the new version with every platform URL under the tag directory.
 
 ---
 
