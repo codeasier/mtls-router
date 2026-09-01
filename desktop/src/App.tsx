@@ -15,11 +15,13 @@ import type { TranslationKey } from "./locales/zh-CN";
 import { navigationItems, type SectionId } from "./model";
 import { RouterPage } from "./RouterPage";
 import { SettingsPage } from "./SettingsPage";
+import { UsagePage } from "./UsagePage";
 
 const sectionKeys: Record<SectionId, string> = {
   router: "section.router",
   agents: "section.agents",
   "api-keys": "section.apiKeys",
+  usage: "section.usage",
   logs: "section.logs",
   settings: "section.settings",
 };
@@ -28,6 +30,7 @@ const navigationKeys: Record<SectionId, TranslationKey> = {
   router: "nav.router",
   agents: "nav.agents",
   "api-keys": "nav.apiKeys",
+  usage: "nav.usage",
   logs: "nav.logs",
   settings: "nav.settings",
 };
@@ -36,6 +39,7 @@ const shortNavigationKeys: Record<SectionId, TranslationKey> = {
   router: "nav.routerShort",
   agents: "nav.agentsShort",
   "api-keys": "nav.apiKeysShort",
+  usage: "nav.usageShort",
   logs: "nav.logsShort",
   settings: "nav.settingsShort",
 };
@@ -404,6 +408,12 @@ function AppContent({ api }: { api: DesktopApi }) {
             />
           )}
           {activeSection === "api-keys" && <ApiKeysPage api={api} />}
+          {activeSection === "usage" && (
+            <UsagePage
+              api={api}
+              onNavigateToApiKeys={() => navigate("api-keys")}
+            />
+          )}
           {activeSection === "settings" && (
             <SettingsPage
               api={api}

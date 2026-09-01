@@ -42,8 +42,9 @@ React UI ──Tauri invoke──▶ Rust commands.rs ──stdin/stdout JSON─
 | `useAgentCleanupController.ts`                            | 单 Agent cleanup preview/write/repreview/retry 编排；generation guard 丢弃迟到结果，不调用凭据/目录/model flow                                |
 | `AgentCleanupPanel.test.tsx`、`agentCleanupState.test.ts` | Cleanup UI、漂移门控、stale/retry、重复提交、保留数据警告与 reducer transition 测试                                                           |
 | `agentPresentation.tsx`                                   | Agent 名称/logo、完整 detection 校验、安装/配置状态与 recovery 文案的共享展示模型                                                             |
-| `ApiKeysPage.tsx`                                         | 全局 API key 保存、替换、删除及摘要展示；提交后清空输入，不提供明文回读；有密钥时加载用量窗口                                                 |
-| `ApiKeyUsageCard.tsx`                                     | 当前密钥用量窗口：周期选择、汇总、配额与按模型明细；无 key 时不查询                                                                           |
+| `ApiKeysPage.tsx`                                         | 全局 API key 保存、替换、删除及摘要展示；提交后清空输入，不提供明文回读                                                                       |
+| `UsagePage.tsx`                                           | 独立「用量」导航页：读取凭据状态并加载当前密钥用量窗口；无 key 时不查询，提供前往 API 密钥页的入口                                            |
+| `ApiKeyUsageCard.tsx`                                     | 当前密钥用量窗口：周期选择、汇总、配额与按模型明细；模型列支持多选筛选（含全部），请求/Token/费用列支持排序；无 key 时不查询                  |
 | `LogsPage.tsx`                                            | 有界的、安全过滤的 router 日志，手动刷新                                                                                                      |
 | `SettingsPage.tsx`                                        | 自启动、组件版本、手动更新检查、确认后安装/进度、数据/日志目录、诊断、卸载准备与语言                                                          |
 | `model.ts`                                                | 共享类型（`SectionId`、`navigationItems`）                                                                                                    |

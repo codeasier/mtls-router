@@ -16,6 +16,8 @@ export const en: Record<TranslationKey, string> = {
   "nav.agentsShort": "Agents",
   "nav.apiKeys": "API key",
   "nav.apiKeysShort": "Key",
+  "nav.usage": "Usage",
+  "nav.usageShort": "Usage",
   "nav.logs": "Runtime logs",
   "nav.logsShort": "Logs",
   "nav.settings": "Settings",
@@ -23,6 +25,7 @@ export const en: Record<TranslationKey, string> = {
   "section.router.title": "Router control",
   "section.agents.title": "Agent configuration",
   "section.apiKeys.title": "API key",
+  "section.usage.title": "Usage",
   "section.logs.title": "Runtime logs",
   "section.settings.title": "Settings",
   "placeholder.overline": "STABLE MODULE BOUNDARY",
@@ -390,7 +393,6 @@ export const en: Record<TranslationKey, string> = {
     "Another credential operation is active. Try again shortly.",
   "apikey.error.load": "The credential status could not be loaded. Try again.",
   "apikey.usage.overline": "THIS KEY",
-  "apikey.usage.heading": "Usage",
   "apikey.usage.note":
     "Counts only the saved key, queried through the local router. The interface never reads the key back.",
   "apikey.usage.period.today": "Today",
@@ -414,6 +416,10 @@ export const en: Record<TranslationKey, string> = {
   "apikey.usage.quota.resets": "Resets",
   "apikey.usage.models.heading": "By model",
   "apikey.usage.models.model": "Model",
+  "apikey.usage.filter.label": "Filter models",
+  "apikey.usage.filter.all": "All models",
+  "apikey.usage.filter.summary": "{count} / {total} selected",
+  "apikey.usage.filter.empty": "No usage matches the selected models.",
   "apikey.usage.error.unavailable":
     "The service does not provide usage data yet.",
   "apikey.usage.error.auth":

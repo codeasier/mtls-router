@@ -1,14 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { ApiKeyUsageCard, usageErrorTranslation } from "./ApiKeyUsageCard";
 import { useI18n } from "./i18n";
-import type {
-  APIKeyUsage,
-  APIKeyUsagePeriod,
-  CredentialSummary,
-  DesktopApi,
-  DesktopPaths,
-} from "./ipc";
+import type { CredentialSummary, DesktopApi, DesktopPaths } from "./ipc";
 import type { TranslationKey } from "./locales/zh-CN";
 
 // Keep in sync with the authoritative Rust validation in credential.rs.
@@ -33,48 +26,11 @@ export function ApiKeysPage({ api }: { api: DesktopApi }) {
   const [show, setShow] = useState(false);
   const [operation, setOperation] = useState<"" | "save" | "delete">("");
   const [error, setError] = useState<TranslationKey | "">("");
-  const [period, setPeriod] = useState<APIKeyUsagePeriod>("7d");
-  const [usage, setUsage] = useState<APIKeyUsage | null>(null);
-  const [usageLoading, setUsageLoading] = useState(false);
-  const [usageError, setUsageError] = useState<TranslationKey | "">("");
-  const usageGeneration = useRef(0);
 
   function clearInput() {
     if (inputRef.current) inputRef.current.value = "";
     setShow(false);
   }
-
-  const loadUsage = useCallback(
-    (nextPeriod: APIKeyUsagePeriod, retainSnapshot = false) => {
-      const generation = ++usageGeneration.current;
-      setUsageLoading(true);
-      setUsageError("");
-      if (!retainSnapshot) {
-        setUsage(null);
-      }
-      void api
-        .getAPIKeyUsage(nextPeriod)
-        .then((snapshot) => {
-          if (generation !== usageGeneration.current) return;
-          setUsage(snapshot);
-          setUsageLoading(false);
-        })
-        .catch((loadError: unknown) => {
-          if (generation !== usageGeneration.current) return;
-          setUsage(null);
-          setUsageError(usageErrorTranslation(loadError));
-          setUsageLoading(false);
-        });
-    },
-    [api],
-  );
-
-  const clearUsage = useCallback(() => {
-    usageGeneration.current += 1;
-    setUsage(null);
-    setUsageError("");
-    setUsageLoading(false);
-  }, []);
 
   useEffect(() => {
     let current = true;
@@ -83,15 +39,9 @@ export function ApiKeysPage({ api }: { api: DesktopApi }) {
         if (!current) return;
         if (summaryResult.status === "fulfilled") {
           setSummary(summaryResult.value);
-          if (summaryResult.value.present) {
-            loadUsage("7d");
-          } else {
-            clearUsage();
-          }
         } else {
           setSummary({ present: false, fingerprint: "", saved_at: null });
           setError(errorTranslation(summaryResult.reason));
-          clearUsage();
         }
         if (pathsResult.status === "fulfilled") {
           setPaths(pathsResult.value);
@@ -103,7 +53,7 @@ export function ApiKeysPage({ api }: { api: DesktopApi }) {
     return () => {
       current = false;
     };
-  }, [api, clearUsage, loadUsage]);
+  }, [api]);
 
   async function save(event: React.FormEvent) {
     event.preventDefault();
@@ -117,13 +67,7 @@ export function ApiKeysPage({ api }: { api: DesktopApi }) {
     setOperation("save");
     setError("");
     try {
-      const next = await api.saveCredential(key);
-      setSummary(next);
-      if (next.present) {
-        loadUsage(period);
-      } else {
-        clearUsage();
-      }
+      setSummary(await api.saveCredential(key));
     } catch (saveError) {
       setError(errorTranslation(saveError));
     } finally {
@@ -138,7 +82,6 @@ export function ApiKeysPage({ api }: { api: DesktopApi }) {
     setError("");
     try {
       setSummary(await api.deleteCredential());
-      clearUsage();
       clearInput();
     } catch (deleteError) {
       setError(errorTranslation(deleteError));
@@ -264,25 +207,6 @@ export function ApiKeysPage({ api }: { api: DesktopApi }) {
           </p>
         </aside>
       </section>
-
-      <ApiKeyUsageCard
-        present={Boolean(summary?.present)}
-        period={period}
-        usage={usage}
-        loading={usageLoading}
-        error={usageError}
-        onPeriodChange={(next) => {
-          setPeriod(next);
-          if (summary?.present) {
-            loadUsage(next);
-          }
-        }}
-        onRefresh={() => {
-          if (summary?.present) {
-            loadUsage(period, true);
-          }
-        }}
-      />
     </section>
   );
 }

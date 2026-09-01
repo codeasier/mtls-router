@@ -2114,12 +2114,6 @@ main {
   justify-content: space-between;
 }
 
-.apikey-usage__header h3 {
-  margin: 4px 0 0;
-  font-size: 20px;
-  font-weight: 800;
-}
-
 .apikey-usage__toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -2243,10 +2237,103 @@ main {
   font-size: 12px;
 }
 
-.apikey-usage__models caption {
-  margin-bottom: 8px;
-  text-align: left;
+.apikey-usage__tablebar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.apikey-usage__tablebar > strong {
+  font-size: 13px;
   font-weight: 800;
+}
+
+.apikey-usage__filter {
+  position: relative;
+}
+
+.apikey-usage__filter summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-raised);
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 750;
+  cursor: pointer;
+  list-style: none;
+}
+
+.apikey-usage__filter summary::-webkit-details-marker {
+  display: none;
+}
+
+.apikey-usage__filter-state {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.apikey-usage__filter-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  display: grid;
+  gap: 2px;
+  min-width: 240px;
+  max-height: 264px;
+  padding: 8px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+.apikey-usage__filter-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.apikey-usage__filter-option:hover {
+  background: var(--paper);
+}
+
+.apikey-usage__filter-option input {
+  accent-color: var(--signal);
+}
+
+.apikey-usage__sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  font-weight: inherit;
+  cursor: pointer;
+}
+
+.apikey-usage__sort:hover,
+.apikey-usage__models th[aria-sort="ascending"] .apikey-usage__sort,
+.apikey-usage__models th[aria-sort="descending"] .apikey-usage__sort {
+  color: var(--ink);
 }
 
 .apikey-usage__models th,

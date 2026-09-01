@@ -1,8 +1,29 @@
-import type { APIKeyUsage, APIKeyUsagePeriod, APIKeyUsageQuota } from "./ipc";
+import { useState } from "react";
+
+import type {
+  APIKeyUsage,
+  APIKeyUsageModel,
+  APIKeyUsagePeriod,
+  APIKeyUsageQuota,
+} from "./ipc";
 import { useI18n } from "./i18n";
 import type { TranslationKey } from "./locales/zh-CN";
 
 const PERIODS: APIKeyUsagePeriod[] = ["today", "7d", "30d"];
+
+type UsageSortColumn = "requests" | "tokens" | "cost";
+type UsageSortDirection = "asc" | "desc";
+
+const SORT_COLUMNS: { id: UsageSortColumn; label: TranslationKey }[] = [
+  { id: "requests", label: "apikey.usage.metric.requests" },
+  { id: "tokens", label: "apikey.usage.metric.tokens" },
+  { id: "cost", label: "apikey.usage.metric.cost" },
+];
+
+const SORT_ARIA: Record<UsageSortDirection, "ascending" | "descending"> = {
+  asc: "ascending",
+  desc: "descending",
+};
 
 // eslint-disable-next-line react-refresh/only-export-components
 export function usageErrorTranslation(error: unknown): TranslationKey {
@@ -68,6 +89,16 @@ function quotaPercent(quota: APIKeyUsageQuota) {
   return Math.min(100, Math.max(0, (quota.used / quota.limit) * 100));
 }
 
+function modelTokens(row: APIKeyUsageModel) {
+  return row.prompt_tokens + row.completion_tokens;
+}
+
+function sortValue(row: APIKeyUsageModel, column: UsageSortColumn) {
+  if (column === "requests") return row.requests;
+  if (column === "tokens") return modelTokens(row);
+  return row.cost;
+}
+
 export function ApiKeyUsageCard({
   present,
   period,
@@ -76,6 +107,7 @@ export function ApiKeyUsageCard({
   error,
   onPeriodChange,
   onRefresh,
+  onNavigateToApiKeys,
 }: {
   present: boolean;
   period: APIKeyUsagePeriod;
@@ -84,8 +116,12 @@ export function ApiKeyUsageCard({
   error: TranslationKey | "";
   onPeriodChange(period: APIKeyUsagePeriod): void;
   onRefresh(): void;
+  onNavigateToApiKeys(): void;
 }) {
   const { language, t } = useI18n();
+  const [sortColumn, setSortColumn] = useState<UsageSortColumn>("requests");
+  const [sortDirection, setSortDirection] =
+    useState<UsageSortDirection>("desc");
   const state = !present
     ? "need-key"
     : loading
@@ -95,6 +131,32 @@ export function ApiKeyUsageCard({
         : usage
           ? "ready"
           : "idle";
+  const modelRows = usage?.by_model ?? [];
+  const modelNames = modelRows.map((row) => row.model);
+  const modelSignature = modelNames.join("\n");
+  const [filter, setFilter] = useState<{
+    signature: string;
+    selected: Set<string> | null;
+  }>({ signature: "", selected: null });
+  // A fresh snapshot may carry a different model set; a stale filter resets
+  // to "all models" so it never hides rows the caller did not choose.
+  const selectedModels =
+    filter.signature === modelSignature ? filter.selected : null;
+  const selectedSet = selectedModels ?? new Set(modelNames);
+  const visibleRows = modelRows
+    .filter((row) => selectedSet.has(row.model))
+    .sort((a, b) => {
+      const delta = sortValue(a, sortColumn) - sortValue(b, sortColumn);
+      return sortDirection === "asc" ? delta : -delta;
+    });
+  const allSelected = selectedSet.size === modelNames.length;
+  const filterSummary = allSelected
+    ? t("apikey.usage.filter.all")
+    : t("apikey.usage.filter.summary", {
+        count: selectedSet.size,
+        total: modelNames.length,
+      });
+
   const empty =
     usage != null &&
     usage.summary.requests === 0 &&
@@ -114,16 +176,27 @@ export function ApiKeyUsageCard({
       }).format(new Date(usage.quota.resets_at))
     : "";
 
+  function toggleSort(column: UsageSortColumn) {
+    if (column === sortColumn) {
+      setSortDirection((current) => (current === "desc" ? "asc" : "desc"));
+      return;
+    }
+    setSortColumn(column);
+    setSortDirection("desc");
+  }
+
+  function toggleModel(model: string, checked: boolean) {
+    const next = new Set(selectedModels ?? modelNames);
+    if (checked) next.add(model);
+    else next.delete(model);
+    setFilter({ signature: modelSignature, selected: next });
+  }
+
   return (
-    <section
-      className="apikey-usage"
-      data-state={state}
-      aria-labelledby="apikey-usage-heading"
-    >
+    <section className="apikey-usage" data-state={state}>
       <header className="apikey-usage__header">
         <div>
           <p className="overline">{t("apikey.usage.overline")}</p>
-          <h3 id="apikey-usage-heading">{t("apikey.usage.heading")}</h3>
         </div>
         <div className="apikey-usage__toolbar">
           <div className="apikey-usage__periods" role="tablist">
@@ -154,7 +227,16 @@ export function ApiKeyUsageCard({
       <p className="apikey-usage__note">{t("apikey.usage.note")}</p>
 
       {!present && (
-        <p className="apikey-usage__placeholder">{t("apikey.usage.needKey")}</p>
+        <div className="apikey-usage__placeholder">
+          <p>{t("apikey.usage.needKey")}</p>
+          <button
+            type="button"
+            className="text-button"
+            onClick={onNavigateToApiKeys}
+          >
+            {t("agents.issue.toApiKeys")}
+          </button>
+        </div>
       )}
       {present && loading && !usage && (
         <p className="apikey-usage__placeholder">{t("apikey.usage.loading")}</p>
@@ -221,33 +303,99 @@ export function ApiKeyUsageCard({
             <p className="apikey-usage__placeholder">
               {t("apikey.usage.empty")}
             </p>
-          ) : usage.by_model.length === 0 ? null : (
-            <table className="apikey-usage__models">
-              <caption>{t("apikey.usage.models.heading")}</caption>
-              <thead>
-                <tr>
-                  <th scope="col">{t("apikey.usage.models.model")}</th>
-                  <th scope="col">{t("apikey.usage.metric.requests")}</th>
-                  <th scope="col">{t("apikey.usage.metric.tokens")}</th>
-                  <th scope="col">{t("apikey.usage.metric.cost")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {usage.by_model.map((row) => (
-                  <tr key={row.model}>
-                    <th scope="row">{row.model}</th>
-                    <td>{formatCount(language, row.requests)}</td>
-                    <td>
-                      {formatCount(
-                        language,
-                        row.prompt_tokens + row.completion_tokens,
-                      )}
-                    </td>
-                    <td>{formatCost(language, row.cost)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          ) : modelRows.length === 0 ? null : (
+            <>
+              <div className="apikey-usage__tablebar">
+                <strong>{t("apikey.usage.models.heading")}</strong>
+                <details className="apikey-usage__filter">
+                  <summary>
+                    <span>{t("apikey.usage.filter.label")}</span>
+                    <span className="apikey-usage__filter-state">
+                      {filterSummary}
+                    </span>
+                  </summary>
+                  <div className="apikey-usage__filter-menu">
+                    <label className="apikey-usage__filter-option">
+                      <input
+                        type="checkbox"
+                        checked={allSelected}
+                        onChange={(event) =>
+                          setFilter({
+                            signature: modelSignature,
+                            selected: event.target.checked ? null : new Set(),
+                          })
+                        }
+                      />
+                      <span>{t("apikey.usage.filter.all")}</span>
+                    </label>
+                    {modelNames.map((model) => (
+                      <label
+                        key={model}
+                        className="apikey-usage__filter-option"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedSet.has(model)}
+                          onChange={(event) =>
+                            toggleModel(model, event.target.checked)
+                          }
+                        />
+                        <span>{model}</span>
+                      </label>
+                    ))}
+                  </div>
+                </details>
+              </div>
+              {visibleRows.length === 0 ? (
+                <p className="apikey-usage__placeholder">
+                  {t("apikey.usage.filter.empty")}
+                </p>
+              ) : (
+                <table className="apikey-usage__models">
+                  <thead>
+                    <tr>
+                      <th scope="col">{t("apikey.usage.models.model")}</th>
+                      {SORT_COLUMNS.map((column) => (
+                        <th
+                          key={column.id}
+                          scope="col"
+                          aria-sort={
+                            sortColumn === column.id
+                              ? SORT_ARIA[sortDirection]
+                              : "none"
+                          }
+                        >
+                          <button
+                            type="button"
+                            className="apikey-usage__sort"
+                            onClick={() => toggleSort(column.id)}
+                          >
+                            {t(column.label)}
+                            <span aria-hidden="true">
+                              {sortColumn === column.id
+                                ? sortDirection === "desc"
+                                  ? "↓"
+                                  : "↑"
+                                : "↕"}
+                            </span>
+                          </button>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleRows.map((row) => (
+                      <tr key={row.model}>
+                        <th scope="row">{row.model}</th>
+                        <td>{formatCount(language, row.requests)}</td>
+                        <td>{formatCount(language, modelTokens(row))}</td>
+                        <td>{formatCost(language, row.cost)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </>
           )}
           {asOf && (
             <p className="apikey-usage__asof">
