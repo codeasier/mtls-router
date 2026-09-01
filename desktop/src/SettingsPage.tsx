@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
+import { ConfirmDialog } from "./ConfirmDialog";
 import { useI18n } from "./i18n";
 import type {
   ComponentVersions,
@@ -37,6 +38,10 @@ export function SettingsPage({
     null,
   );
   const stopUpdateProgressRef = useRef<(() => void) | null>(null);
+  const confirmTriggerRef = useRef<HTMLElement | null>(null);
+  const [confirmAction, setConfirmAction] = useState<
+    null | "install-update" | "uninstall"
+  >(null);
   const [message, setMessage] = useState<
     | ""
     | "settings.error.load"
@@ -96,8 +101,25 @@ export function SettingsPage({
     }
   }
 
+  function openConfirm(action: "install-update" | "uninstall") {
+    confirmTriggerRef.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    setConfirmAction(action);
+  }
+
+  function cancelConfirm() {
+    confirmTriggerRef.current?.focus();
+    closeConfirm();
+  }
+
+  function closeConfirm() {
+    confirmTriggerRef.current = null;
+    setConfirmAction(null);
+  }
+
   async function prepareForUninstall() {
-    if (!window.confirm(t("settings.prepareConfirm"))) return;
     setPreparing(true);
     setMessage("");
     try {
@@ -115,15 +137,6 @@ export function SettingsPage({
       !update ||
       installState === "downloading" ||
       installState === "restarting"
-    ) {
-      return;
-    }
-    if (
-      !window.confirm(
-        t("update.installConfirm", {
-          version: update.version,
-        }),
-      )
     ) {
       return;
     }
@@ -324,7 +337,7 @@ export function SettingsPage({
                 <button
                   type="button"
                   className="control-button settings-block__update-action"
-                  onClick={() => void installUpdate()}
+                  onClick={() => openConfirm("install-update")}
                   disabled={installState === "downloading"}
                 >
                   {installState === "downloading"
@@ -385,7 +398,7 @@ export function SettingsPage({
           <button
             type="button"
             className="control-button control-button--stop"
-            onClick={prepareForUninstall}
+            onClick={() => openConfirm("uninstall")}
             disabled={preparing}
           >
             {t("settings.prepareAction")}
@@ -396,6 +409,36 @@ export function SettingsPage({
       <p className="settings-status" role="status">
         {message ? t(message) : ""}
       </p>
+
+      {confirmAction === "install-update" && (
+        <ConfirmDialog
+          title={t("update.installConfirmTitle")}
+          description={t("update.installConfirm", {
+            version: updateResult?.update?.version ?? "",
+          })}
+          confirmLabel={t("update.installConfirmAction")}
+          cancelLabel={t("dialog.cancel")}
+          onConfirm={() => {
+            closeConfirm();
+            void installUpdate();
+          }}
+          onCancel={cancelConfirm}
+        />
+      )}
+      {confirmAction === "uninstall" && (
+        <ConfirmDialog
+          danger
+          title={t("settings.prepareConfirmTitle")}
+          description={t("settings.prepareConfirm")}
+          confirmLabel={t("settings.prepareConfirmAction")}
+          cancelLabel={t("dialog.cancel")}
+          onConfirm={() => {
+            closeConfirm();
+            void prepareForUninstall();
+          }}
+          onCancel={cancelConfirm}
+        />
+      )}
     </section>
   );
 }
