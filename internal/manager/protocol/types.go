@@ -32,6 +32,14 @@ const (
 	MethodAPIKeyUsage                  Method = "apikey.usage"
 )
 
+// IsLegacyLineageVersion reports whether a management protocol version is a
+// legacy ancestor generation that explicit migration may still replace.
+// Discovery classification and lifecycle migration gating must agree on this
+// set, so it lives here as the single source of truth.
+func IsLegacyLineageVersion(version string) bool {
+	return version == "1" || version == "3"
+}
+
 // ErrorCode is stable and intended for branching. Messages are diagnostic
 // only and may change or be localized by a client.
 type ErrorCode string

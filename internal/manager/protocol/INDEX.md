@@ -6,7 +6,7 @@
 
 | 文件 | 职责 |
 |------|------|
-| `types.go` | `Method` 常量（19 个）、`ErrorCode` 常量、`Request`/`Response`/`Error`、cleanup detection/preview/write、`apikey.usage` 与其他方法的 params/result 类型、`Deadlines()` |
+| `types.go` | `Method` 常量（19 个）、`ErrorCode` 常量、`Request`/`Response`/`Error`、cleanup detection/preview/write、`apikey.usage` 与其他方法的 params/result 类型、`Deadlines()`、`IsLegacyLineageVersion`（protocol 1/3 遗留祖先集合的唯一事实来源） |
 | `server.go` | `Server`、`NewServer(map[Method]Handler)`、`Serve(ctx, input, output)`、`DecodeParams`；请求体积上限、逐行解析、所有 object depth 的重复/未知字段拒绝 |
 
 ## 协议方法（19 个）
@@ -43,6 +43,7 @@ apikey.usage
 - 请求/响应为换行分隔的 JSON，解析时容忍 `\r\n`（Windows 客户端）。
 - `boundErrorDetails` 对错误 detail 做上限约束，避免把无界内容回传给客户端。
 - 协议版本 `4` 由 `internal/version.ManagementProtocolVersion` 常量提供，不经 `-ldflags` 注入。
+- 可显式迁移的 protocol 1/3 遗留祖先集合只由 `IsLegacyLineageVersion` 判定；`../discovery` 分类与 `../lifecycle` 迁移门禁都必须经它判断，禁止在调用方重新硬编码版本字面量。
 - `router.migrate_legacy` 是私有协议中的向后兼容增量方法：不改变既有方法的请求/响应 schema，且桌面包通过内嵌 sidecar 哈希与 `manager.info` 握手拒绝混合组件，因此继续使用 v4；若修改既有方法的必需字段或语义，则必须升级协议版本。
 - `router.migrate_legacy` deadline 为 27 秒，只供显式 legacy stop-and-restart；Rust 客户端将其与 `router.stop` 一并视为不确定投递后不可重放。
 - Cleanup preview/write deadline 分别为 5 秒和 30 秒；请求严格只接受单个 `agent`，write 另接受 revision token 与显式漂移批准，不接受 API key、catalog/model config、flow 或批量 Agents。

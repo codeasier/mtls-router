@@ -295,7 +295,7 @@ func supportedLegacyLineage(value state.RouterState) bool {
 	if value.PackageGeneration != 0 || value.InstallationID != "" {
 		return false
 	}
-	if value.ManagementProtocolVersion != "1" && value.ManagementProtocolVersion != "3" {
+	if !protocol.IsLegacyLineageVersion(value.ManagementProtocolVersion) {
 		return false
 	}
 	managerIdentityComplete := value.ManagerPID > 0 && value.ManagerProcessStartedAt != "" && value.ManagerProcessExecutable != ""
