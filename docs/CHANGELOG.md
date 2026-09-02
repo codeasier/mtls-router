@@ -2,6 +2,21 @@
 
 [中文](zh-CN/CHANGELOG.md)
 
+## v0.3.9 - 2026-09-02
+
+This release fixes two fail-closed defects: desktop buttons that relied on `window.confirm` became unresponsive on macOS, and the legacy router lineage allowlist could silently drift between discovery classification and lifecycle migration gating.
+
+### Fixed
+
+- Replaced `window.confirm` with an in-app `ConfirmDialog` following the existing danger-dialog pattern (focus trap, Escape and overlay cancel), so "Install and restart" and "Prepare uninstall and exit" respond again on macOS, where WKWebView lacks the confirm delegate and returned `false` immediately; Windows and Linux were unaffected.
+- Defined the protocol 1/3 legacy ancestor set once in `protocol.IsLegacyLineageVersion` and referenced it from both discovery classification and lifecycle migration gating, so the two can no longer drift apart and break `legacy_managed` routing or migration gating.
+
+### Security and recovery
+
+- The confirmation dialog stays inside the desktop webview sandbox and grants no new webview capabilities; legacy lineage acceptance now has a single source of truth, so migration gating cannot silently diverge from discovery classification.
+
+---
+
 ## v0.3.8 - 2026-09-01
 
 This release moves the per-key usage window from the API Keys page into its own main-navigation Usage page, with a filterable, sortable per-model table so usage stays reviewable as the model list grows.

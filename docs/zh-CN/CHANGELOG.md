@@ -2,6 +2,21 @@
 
 [English](../CHANGELOG.md)
 
+## v0.3.9 - 2026-09-02
+
+本次发布修复两处 fail-closed 缺陷：macOS 上依赖 `window.confirm` 的桌面按钮点击无反应，以及旧版 router 来源链允许集合在发现分类与生命周期迁移门控之间可能静默漂移。
+
+### 修复
+
+- 将 `window.confirm` 替换为遵循现有 danger-dialog 模式的应用内 `ConfirmDialog`（焦点圈定、Escape 与遮罩取消），使 macOS 上「安装并重启」「准备卸载并退出」按钮恢复响应；macOS WKWebView 缺少 confirm 对应代理而立即返回 false，Windows 与 Linux 不受影响。
+- 将协议 1/3 旧版祖先集合统一收敛到 `protocol.IsLegacyLineageVersion` 单一定义，并由发现分类与生命周期迁移门控共同引用，避免两处漂移破坏 `legacy_managed` 路由或迁移门控。
+
+### 安全与恢复
+
+- 确认弹窗留在桌面 webview 沙箱内，不新增任何 webview 能力；旧版来源链接受集合现在只有单一事实来源，迁移门控不会与发现分类静默分叉。
+
+---
+
 ## v0.3.8 - 2026-09-01
 
 本次发布将按密钥的用量窗口从 API 密钥页移入主导航中独立的「用量」页，并为按模型明细表增加模型多选筛选与按请求/Token/费用列排序，使模型增多时用量依旧可查。
