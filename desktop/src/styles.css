@@ -150,6 +150,13 @@ summary:focus-visible {
 .sidebar-foot strong,
 .sidebar-foot small {
   display: block;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.brand-copy {
+  min-width: 0;
+  overflow: hidden;
 }
 
 .sidebar-foot__status {
@@ -282,6 +289,11 @@ nav {
 
 .nav-label--short {
   display: none;
+}
+
+.nav-label--full {
+  white-space: nowrap;
+  overflow: hidden;
 }
 
 .sidebar-foot {
