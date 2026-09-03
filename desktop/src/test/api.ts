@@ -53,6 +53,18 @@ export function createMockApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
     subscribeUpdateProgress: vi.fn().mockResolvedValue(() => undefined),
     getRouterLogs: vi.fn().mockResolvedValue({ lines: [] }),
     collectDiagnostics: vi.fn().mockResolvedValue({ summary: "safe summary" }),
+    getDiagnosticSnapshot: vi.fn().mockResolvedValue({
+      schema_version: 1,
+      captured_at: "2026-09-03T10:00:00Z",
+      classification: "not_started",
+      desktop: "0.1.0",
+      manager: "0.1.0",
+      management_protocol: "4",
+      deployment_id: "dev",
+      target: "aarch64-apple-darwin",
+      health_stale: true,
+      summary: "classification=not_started",
+    }),
     openLogLocation: vi.fn().mockResolvedValue(undefined),
     detectAgents: vi.fn().mockResolvedValue({ agents: [] }),
     discoverModels: vi.fn().mockResolvedValue({

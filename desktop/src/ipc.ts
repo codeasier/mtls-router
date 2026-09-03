@@ -18,6 +18,7 @@ export const COMMANDS = {
   routerLogs: "router_logs",
   componentVersions: "component_versions",
   diagnosticsCollect: "diagnostics_collect",
+  diagnosticsSnapshot: "diagnostics_snapshot",
   openLogLocation: "open_log_location",
   agentDetect: "agent_detect",
   agentModels: "agent_models",
@@ -447,6 +448,31 @@ export interface Diagnostics {
   };
 }
 
+export interface DiagnosticSnapshot {
+  schema_version: number;
+  captured_at: string;
+  classification: string;
+  desktop: string;
+  manager: string;
+  management_protocol: string;
+  deployment_id: string;
+  target: string;
+  router?: string;
+  router_state?: string;
+  owner?: string;
+  listen_addr?: string;
+  pid?: number;
+  health_status?: string;
+  health_checked_at?: string;
+  health_stale: boolean;
+  status_error_code?: string;
+  status_error_stage?: string;
+  health_error_code?: string;
+  manager_stage?: string;
+  manager_code?: string;
+  summary: string;
+}
+
 export interface DesktopPaths {
   data_dir: string;
   log_directory: string;
@@ -767,6 +793,7 @@ export interface DesktopApi {
   ): Promise<UnlistenFn>;
   getRouterLogs(limit?: number): Promise<RouterLogs>;
   collectDiagnostics(): Promise<Diagnostics>;
+  getDiagnosticSnapshot(): Promise<DiagnosticSnapshot>;
   openLogLocation(): Promise<void>;
   detectAgents(): Promise<AgentDetection>;
   discoverModels(agents: AgentId[]): Promise<AgentModelsResult>;
@@ -899,6 +926,12 @@ export function createDesktopApi(
     collectDiagnostics: async () => {
       const result = await invoke<Diagnostics>(COMMANDS.diagnosticsCollect);
       return { summary: sanitizeSensitiveText(result.summary) };
+    },
+    getDiagnosticSnapshot: async () => {
+      const result = await invoke<DiagnosticSnapshot>(
+        COMMANDS.diagnosticsSnapshot,
+      );
+      return { ...result, summary: sanitizeSensitiveText(result.summary) };
     },
     openLogLocation: () => invoke(COMMANDS.openLogLocation),
     detectAgents: () => invoke(COMMANDS.agentDetect),

@@ -509,6 +509,21 @@ pub async fn diagnostics_collect(state: tauri::State<'_, AppState>) -> Result<Di
 }
 
 #[tauri::command]
+pub fn diagnostics_snapshot(state: tauri::State<'_, AppState>) -> Result<serde_json::Value> {
+    let snapshot = state.diagnostics.current();
+    let mut value = serde_json::to_value(&snapshot)
+        .map_err(|_| CommandError::new("SNAPSHOT_FAILED", "cannot encode diagnostic snapshot"))?;
+    let obj = value
+        .as_object_mut()
+        .ok_or_else(|| CommandError::new("SNAPSHOT_FAILED", "cannot encode diagnostic snapshot"))?;
+    obj.insert(
+        "summary".into(),
+        serde_json::Value::String(snapshot.summary()),
+    );
+    Ok(value)
+}
+
+#[tauri::command]
 pub fn open_log_location(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<()> {
     let directory = PathBuf::from(&state.paths.log_directory);
     let location = if directory.is_dir() {

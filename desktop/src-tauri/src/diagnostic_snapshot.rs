@@ -661,4 +661,13 @@ mod tests {
         assert!(truncated.ends_with("[truncated]"));
         assert!(truncated.len() <= MAX_SUMMARY_BYTES + "[truncated]".len());
     }
+
+    #[test]
+    fn current_summary_includes_classification() {
+        let store = DiagnosticStore::new(std::env::temp_dir().join(format!(
+            "mtls-router-diagnostic-current-summary-{}",
+            Uuid::new_v4()
+        )));
+        assert!(store.current().summary().contains("classification="));
+    }
 }
