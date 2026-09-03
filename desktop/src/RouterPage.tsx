@@ -576,12 +576,17 @@ export function RouterPage({
       setStatusReadFailed(true);
       setMessage(actionErrorKey("load"));
       if (snapshot.status_error?.stage) {
-        setStatus((current) => ({
-          ...(current ?? { state: "start_failed" }),
-          state: current?.state ?? "start_failed",
-          manager_stage: snapshot.status_error?.stage,
-          manager_code: statusCode,
-        }));
+        // Stamp stage/code onto cached status only; never invent start_failed
+        // when the first poll has no status (OPERATION_TIMEOUT always carries
+        // stage=watchdog_timeout and must show status-unavailable).
+        setStatus((current) => {
+          if (!current) return current;
+          return {
+            ...current,
+            manager_stage: snapshot.status_error?.stage,
+            manager_code: statusCode,
+          };
+        });
       }
     }
     if (snapshot.health_error && !statusCode) {

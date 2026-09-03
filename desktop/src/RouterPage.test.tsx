@@ -341,6 +341,36 @@ describe("RouterPage states", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows status unavailable on first poll OPERATION_TIMEOUT with watchdog stage", async () => {
+    const api = createMockApi({
+      getPollSnapshot: vi.fn().mockResolvedValue({
+        revision: 1,
+        status_error: {
+          code: "OPERATION_TIMEOUT",
+          stage: "watchdog_timeout",
+        },
+      }),
+    });
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "路由状态暂时不可用" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("路由启动失败")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "无法读取路由状态（OPERATION_TIMEOUT / watchdog_timeout）。请先复制诊断快照或导出日志包发给维护者，然后再考虑重新启动。",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "停止路由" })).toBeDisabled();
+  });
+
   it("keeps start_failed heading when status_error arrives", async () => {
     const api = createMockApi({
       getPollSnapshot: vi.fn().mockResolvedValue({

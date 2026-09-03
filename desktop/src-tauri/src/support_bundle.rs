@@ -77,10 +77,15 @@ pub fn write_support_bundle(
     })();
 
     if result.is_err() {
-        let _ = fs::remove_file(&tmp);
-        let _ = fs::remove_file(dest);
+        cleanup_failed_export(&tmp);
     }
     result
+}
+
+/// On a failed export, only delete the temporary zip. Never unlink `dest`:
+/// a pre-existing user-chosen path must survive an incomplete write.
+fn cleanup_failed_export(tmp: &Path) {
+    let _ = fs::remove_file(tmp);
 }
 
 fn add_log_files(
@@ -306,5 +311,25 @@ mod tests {
             default_bundle_name(now),
             "codeasier-router-diagnostics-20260903-140506.zip"
         );
+    }
+
+    #[test]
+    fn cleanup_failed_export_only_removes_tmp_not_dest() {
+        let root = std::env::temp_dir().join(format!(
+            "mtls-router-support-bundle-cleanup-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let dest = root.join("existing.zip");
+        let tmp = root.join(".bundle-test.tmp");
+        fs::write(&dest, b"KEEP-SENTINEL").unwrap();
+        fs::write(&tmp, b"partial").unwrap();
+
+        cleanup_failed_export(&tmp);
+
+        assert!(!tmp.exists());
+        assert_eq!(fs::read(&dest).unwrap(), b"KEEP-SENTINEL");
+
+        let _ = fs::remove_dir_all(root);
     }
 }
