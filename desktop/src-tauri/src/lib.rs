@@ -14,6 +14,7 @@ mod port_recovery;
 mod process_identity;
 mod scheduler;
 mod sidecar;
+mod support_bundle;
 mod tray;
 mod types;
 mod updater;
@@ -245,6 +246,7 @@ fn build_app() -> tauri::Result<tauri::App<tauri::Wry>> {
             updater::update_install,
             commands::diagnostics_collect,
             commands::diagnostics_snapshot,
+            commands::export_support_bundle,
             commands::open_log_location,
             commands::agent_detect,
             commands::agent_models,

@@ -524,6 +524,24 @@ pub fn diagnostics_snapshot(state: tauri::State<'_, AppState>) -> Result<serde_j
 }
 
 #[tauri::command]
+pub async fn export_support_bundle(state: tauri::State<'_, AppState>) -> Result<()> {
+    let snapshot = state.diagnostics.current();
+    let _ = snapshot.write_atomic(state.diagnostics.path());
+    let log_directory = PathBuf::from(&state.paths.log_directory);
+    let snapshot_for_thread = snapshot.clone();
+    tokio::task::spawn_blocking(move || {
+        crate::support_bundle::export_support_bundle(
+            &snapshot_for_thread,
+            &log_directory,
+            &crate::support_bundle::NativeSaveDialog,
+        )
+        .map(|_| ())
+    })
+    .await
+    .map_err(|_| CommandError::new("EXPORT_FAILED", "export task failed"))?
+}
+
+#[tauri::command]
 pub fn open_log_location(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<()> {
     let directory = PathBuf::from(&state.paths.log_directory);
     let location = if directory.is_dir() {
