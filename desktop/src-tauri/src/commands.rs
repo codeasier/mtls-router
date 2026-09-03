@@ -1,5 +1,6 @@
 use crate::{
     credential::{CredentialError, CredentialStore, MAX_KEY_BYTES},
+    diagnostic_snapshot::DiagnosticStore,
     error::{CommandError, Result},
     lifecycle::{LifecycleState, OperationOutput, QuitAction},
     manager::ManagerClient,
@@ -30,6 +31,7 @@ pub struct AppState {
     pub pending_occupant: Arc<Mutex<Option<PendingOccupant>>>,
     pub credentials: Arc<CredentialStore>,
     pub lifecycle: Arc<LifecycleState>,
+    pub diagnostics: DiagnosticStore,
 }
 
 #[derive(Deserialize)]
@@ -1753,6 +1755,9 @@ mod tests {
                 pending_occupant: Default::default(),
                 credentials,
                 lifecycle: Default::default(),
+                diagnostics: DiagnosticStore::new(
+                    std::env::temp_dir().join(format!("last-diagnostics-{}.json", Uuid::new_v4())),
+                ),
             };
 
             state.set_window_visibility(false);

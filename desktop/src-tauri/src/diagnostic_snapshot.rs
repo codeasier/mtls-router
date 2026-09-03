@@ -579,6 +579,39 @@ mod tests {
     }
 
     #[test]
+    fn capture_and_persist_overwrites_current_classification() {
+        let directory = std::env::temp_dir().join(format!(
+            "mtls-router-diagnostic-overwrite-{}",
+            Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let store = DiagnosticStore::new(directory.join("last-diagnostics.json"));
+
+        store.capture_and_persist(
+            &PollSnapshot {
+                status_error: Some(PollError::new("MANAGER_FAILED")),
+                ..PollSnapshot::default()
+            },
+            None,
+        );
+        assert_eq!(store.current().classification, "control_plane_unread");
+
+        store.capture_and_persist(
+            &PollSnapshot {
+                status: Some(RouterStatus {
+                    state: "desktop_owned".into(),
+                    ..RouterStatus::default()
+                }),
+                health: Some(fresh_ok()),
+                ..PollSnapshot::default()
+            },
+            None,
+        );
+        assert_eq!(store.current().classification, "healthy");
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
     fn from_poll_does_not_need_manager_process() {
         let snap = from_poll(&PollSnapshot::default(), None, now());
         assert!(!snap.desktop.is_empty());
