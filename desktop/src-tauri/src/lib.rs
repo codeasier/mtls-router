@@ -1,6 +1,7 @@
 mod autostart;
 mod commands;
 mod credential;
+mod diagnostic_snapshot;
 mod error;
 mod installation;
 mod lifecycle;

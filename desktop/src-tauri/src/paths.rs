@@ -62,3 +62,7 @@ fn home() -> Result<PathBuf> {
         .map(PathBuf::from)
         .ok_or_else(|| CommandError::new("INVALID_PATH", "user data directory is unavailable"))
 }
+
+pub fn last_diagnostics_path(data_dir: &str) -> PathBuf {
+    PathBuf::from(data_dir).join("last-diagnostics.json")
+}
