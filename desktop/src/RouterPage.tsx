@@ -5,6 +5,7 @@ import type {
   DesktopApi,
   OccupantInspection,
   OccupantSupervisor,
+  PollError,
   PollSnapshot,
   ReleaseObservation,
   RouterHealth,
@@ -309,7 +310,10 @@ function viewState(
   ) {
     return "failed";
   }
-  if (!status && statusReadFailed) return "unavailable";
+  if (statusReadFailed && status?.state === "unknown_occupant")
+    return "occupied";
+  if (statusReadFailed && status?.state === "legacy_managed") return "legacy";
+  if (statusReadFailed) return "unavailable";
   switch (status?.state) {
     case "starting":
       return "starting";
@@ -373,6 +377,12 @@ function errorCode(error: unknown): string {
     return "";
   }
   return typeof error.code === "string" ? error.code : "";
+}
+
+function loadErrorCode(error: PollError | null): string {
+  const code = sanitizeSensitiveText(error?.code ?? "UNKNOWN");
+  const stage = sanitizeSensitiveText(error?.stage ?? "");
+  return stage ? `${code} / ${stage}` : code;
 }
 
 function sidecarError(code: string): boolean {
@@ -461,6 +471,9 @@ export function RouterPage({
   const [operation, setOperation] = useState<Operation>(null);
   const [actionFailed, setActionFailed] = useState(false);
   const [statusReadFailed, setStatusReadFailed] = useState(false);
+  const [statusPollError, setStatusPollError] = useState<PollError | null>(
+    null,
+  );
   const [message, setMessage] = useState<RouterMessage>("");
   const [checkingHealth, setCheckingHealth] = useState(false);
   const [snapshotRevision, setSnapshotRevision] = useState(-1);
@@ -525,6 +538,7 @@ export function RouterPage({
       if (!snapshot.status_error) {
         setActionFailed(false);
         setStatusReadFailed(false);
+        setStatusPollError(null);
         setMessage((current) =>
           clearRecoveredStatusMessage(current, snapshot.status!),
         );
@@ -542,6 +556,11 @@ export function RouterPage({
       setHealth(null);
     }
     const statusCode = snapshot.status_error?.code ?? "";
+    if (snapshot.status_error) {
+      setStatusPollError(snapshot.status_error);
+    } else if (!snapshot.status) {
+      setStatusPollError(null);
+    }
     if (sidecarError(statusCode)) {
       setReinstallRequired(true);
       setMessage("router.error.sidecarReinstall");
@@ -644,6 +663,7 @@ export function RouterPage({
           setMessage("router.error.sidecarReinstall");
         } else {
           setStatusReadFailed(true);
+          setStatusPollError({ code: code || "UNKNOWN" });
           setMessage(actionErrorKey("load"));
         }
       }
@@ -921,11 +941,23 @@ export function RouterPage({
 
         <dl className="readout-grid">
           <div>
-            <dt>{t("router.processStatus")}</dt>
+            <dt>
+              {t(
+                statusReadFailed
+                  ? "router.processStatusLastKnown"
+                  : "router.processStatus",
+              )}
+            </dt>
             <dd>{copy.signal}</dd>
           </div>
           <div>
-            <dt>{t("router.upstreamHealth")}</dt>
+            <dt>
+              {t(
+                statusReadFailed
+                  ? "router.upstreamHealthLastKnown"
+                  : "router.upstreamHealth",
+              )}
+            </dt>
             <dd className={`health-value health-value--${observedHealth}`}>
               {healthLabel(observedHealth, available, t)}
             </dd>
@@ -940,7 +972,9 @@ export function RouterPage({
 
         {message && (message !== "router.error.start" || !failureGuidance) && (
           <p className="inline-alert" role="alert">
-            {t(message)}
+            {message === "router.error.load"
+              ? t("router.error.load", { code: loadErrorCode(statusPollError) })
+              : t(message)}
           </p>
         )}
 

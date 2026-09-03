@@ -87,7 +87,7 @@ export const en: Record<TranslationKey, string> = {
   "router.health.degraded": "Upstream unavailable",
   "router.health.stale": "Result expired",
   "router.error.load":
-    "Unable to read router status. Restart the desktop app or view logs.",
+    "Unable to read router status ({code}). Copy the diagnostic snapshot or export the log bundle for the maintainer before considering a restart.",
   "router.error.start":
     "Startup failed. Review the safely filtered logs and retry.",
   "router.error.stop":
@@ -217,7 +217,9 @@ export const en: Record<TranslationKey, string> = {
   "router.instrumentNote":
     "Process availability and upstream health are monitored independently",
   "router.processStatus": "Process status",
+  "router.processStatusLastKnown": "Process status (last known)",
   "router.upstreamHealth": "Upstream health",
+  "router.upstreamHealthLastKnown": "Upstream health (last known)",
   "router.localAddress": "Local address",
   "router.actionsAria": "Router actions",
   "router.start": "Start router",
