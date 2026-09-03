@@ -703,6 +703,105 @@ describe("RouterPage states", () => {
     expect(screen.queryByText("router-v1")).not.toBeInTheDocument();
     expect(api.getComponentVersions).not.toHaveBeenCalled();
   });
+
+  it("always shows copy and export diagnostics actions while healthy", async () => {
+    const api = createMockApi({
+      getRouterStatus: vi.fn().mockResolvedValue({
+        state: "desktop_owned",
+        owner: "desktop",
+      }),
+    });
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "路由运行正常" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "复制诊断快照" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "导出日志包" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "日志包含本地运行日志原文，仅发给维护者，不要发到公开群。",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("copies the diagnostic snapshot summary to the clipboard", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, {
+      clipboard: { writeText },
+    });
+    const api = createMockApi({
+      getRouterStatus: vi.fn().mockResolvedValue({
+        state: "desktop_owned",
+        owner: "desktop",
+      }),
+      getDiagnosticSnapshot: vi.fn().mockResolvedValue({
+        schema_version: 1,
+        captured_at: "2026-09-03T10:00:00Z",
+        classification: "healthy",
+        desktop: "0.1.0",
+        manager: "0.1.0",
+        management_protocol: "4",
+        deployment_id: "dev",
+        target: "aarch64-apple-darwin",
+        health_stale: false,
+        summary: "classification=healthy",
+      }),
+    });
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
+    await screen.findByRole("heading", { name: "路由运行正常" });
+
+    fireEvent.click(screen.getByRole("button", { name: "复制诊断快照" }));
+
+    await waitFor(() => expect(api.getDiagnosticSnapshot).toHaveBeenCalledOnce());
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith("classification=healthy"),
+    );
+    expect(await screen.findByText("已复制诊断快照。")).toBeInTheDocument();
+  });
+
+  it("exports a support bundle and reports cancelled exports without alert role", async () => {
+    const api = createMockApi({
+      getRouterStatus: vi.fn().mockResolvedValue({
+        state: "desktop_owned",
+        owner: "desktop",
+      }),
+      exportSupportBundle: vi
+        .fn()
+        .mockRejectedValue({ code: "DIALOG_CANCELLED" }),
+    });
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
+    await screen.findByRole("heading", { name: "路由运行正常" });
+
+    fireEvent.click(screen.getByRole("button", { name: "导出日志包" }));
+
+    await waitFor(() => expect(api.exportSupportBundle).toHaveBeenCalledOnce());
+    const cancelled = await screen.findByText("已取消导出。");
+    expect(cancelled).toBeInTheDocument();
+    expect(cancelled).not.toHaveAttribute("role", "alert");
+  });
 });
 
 describe("RouterPage actions", () => {

@@ -19,6 +19,7 @@ export const COMMANDS = {
   componentVersions: "component_versions",
   diagnosticsCollect: "diagnostics_collect",
   diagnosticsSnapshot: "diagnostics_snapshot",
+  exportSupportBundle: "export_support_bundle",
   openLogLocation: "open_log_location",
   agentDetect: "agent_detect",
   agentModels: "agent_models",
@@ -794,6 +795,7 @@ export interface DesktopApi {
   getRouterLogs(limit?: number): Promise<RouterLogs>;
   collectDiagnostics(): Promise<Diagnostics>;
   getDiagnosticSnapshot(): Promise<DiagnosticSnapshot>;
+  exportSupportBundle(): Promise<void>;
   openLogLocation(): Promise<void>;
   detectAgents(): Promise<AgentDetection>;
   discoverModels(agents: AgentId[]): Promise<AgentModelsResult>;
@@ -933,6 +935,7 @@ export function createDesktopApi(
       );
       return { ...result, summary: sanitizeSensitiveText(result.summary) };
     },
+    exportSupportBundle: () => invoke(COMMANDS.exportSupportBundle),
     openLogLocation: () => invoke(COMMANDS.openLogLocation),
     detectAgents: () => invoke(COMMANDS.agentDetect),
     discoverModels: (agents) =>

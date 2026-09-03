@@ -65,7 +65,31 @@ export function LogsPage({ api }: { api: DesktopApi }) {
       await navigator.clipboard.writeText(diagnostics.summary);
       setMessage(t("logs.copied"));
     } catch {
-      setMessage(safeLogError("copy", t));
+      try {
+        const snapshot = await api.getDiagnosticSnapshot();
+        await navigator.clipboard.writeText(snapshot.summary);
+        setMessage(t("logs.copiedSnapshot"));
+      } catch {
+        setMessage(safeLogError("copy", t));
+      }
+    }
+  }
+
+  async function exportBundle() {
+    setMessage("");
+    try {
+      await api.exportSupportBundle();
+    } catch (error) {
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "DIALOG_CANCELLED"
+      ) {
+        setMessage(t("router.exportCancelled"));
+      } else {
+        setMessage(t("router.exportFailed"));
+      }
     }
   }
 
@@ -96,6 +120,13 @@ export function LogsPage({ api }: { api: DesktopApi }) {
             onClick={copyDiagnostics}
           >
             {t("logs.copyDiagnostics")}
+          </button>
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => void exportBundle()}
+          >
+            {t("logs.exportBundle")}
           </button>
         </div>
       </div>

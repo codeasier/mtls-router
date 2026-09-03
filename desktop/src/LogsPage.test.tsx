@@ -66,11 +66,55 @@ describe("LogsPage", () => {
     expect(screen.getByText(/已复制安全过滤后的诊断摘要/)).toBeInTheDocument();
   });
 
+  it("shows an export log bundle button next to copy", async () => {
+    const api = createMockApi();
+    renderWithI18n(<LogsPage api={api} />);
+    await screen.findByText("暂无路由日志");
+
+    expect(
+      screen.getByRole("button", { name: "导出日志包" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "复制诊断摘要" }),
+    ).toBeInTheDocument();
+  });
+
+  it("falls back to the local diagnostic snapshot when collect fails", async () => {
+    const api = createMockApi({
+      collectDiagnostics: vi.fn().mockRejectedValue(new Error("collect failed")),
+      getDiagnosticSnapshot: vi.fn().mockResolvedValue({
+        schema_version: 1,
+        captured_at: "2026-09-03T10:00:00Z",
+        classification: "not_started",
+        desktop: "0.1.0",
+        manager: "0.1.0",
+        management_protocol: "4",
+        deployment_id: "dev",
+        target: "aarch64-apple-darwin",
+        health_stale: true,
+        summary: "classification=not_started",
+      }),
+    });
+    renderWithI18n(<LogsPage api={api} />);
+    await screen.findByText("暂无路由日志");
+
+    fireEvent.click(screen.getByRole("button", { name: "复制诊断摘要" }));
+
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith("classification=not_started"),
+    );
+    expect(api.getDiagnosticSnapshot).toHaveBeenCalledOnce();
+    expect(screen.getByText("已复制本地诊断快照。")).toBeInTheDocument();
+  });
+
   it("does not render or copy a rejected secret canary", async () => {
     const rejectedCanary = "ui-test-canary-value";
     const api = createMockApi({
       getRouterLogs: vi.fn().mockRejectedValue(new Error(rejectedCanary)),
       collectDiagnostics: vi.fn().mockRejectedValue(new Error(rejectedCanary)),
+      getDiagnosticSnapshot: vi
+        .fn()
+        .mockRejectedValue(new Error(rejectedCanary)),
     });
     renderWithI18n(<LogsPage api={api} />);
     expect(await screen.findByText("无法读取最近日志。")).toBeInTheDocument();

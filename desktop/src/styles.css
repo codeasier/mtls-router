@@ -906,6 +906,20 @@ main {
   margin-top: 26px;
 }
 
+.router-diagnostics {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 26px;
+}
+
+.router-diagnostics__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
 .control-button,
 .text-button {
   min-height: 42px;

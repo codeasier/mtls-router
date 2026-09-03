@@ -181,6 +181,7 @@ export function createMockDesktopApi(
       health_stale: true,
       summary: "classification=not_started",
     }),
+    exportSupportBundle: async () => undefined,
     openLogLocation: async () => undefined,
     detectAgents: async () => {
       if (currentScenario() === "protocol-error") {

@@ -715,6 +715,15 @@ describe("typed desktop API", () => {
     expect(snapshot.summary).toContain("[REDACTED");
     expect(snapshot.classification).toBe("not_started");
   });
+
+  it("invokes export_support_bundle without arguments", async () => {
+    const invoke = vi.fn().mockResolvedValue(undefined);
+    const api = createDesktopApi(invoke as InvokeFn);
+
+    await api.exportSupportBundle();
+
+    expect(invoke).toHaveBeenCalledWith(COMMANDS.exportSupportBundle);
+  });
 });
 
 describe("sanitizeSensitiveText", () => {

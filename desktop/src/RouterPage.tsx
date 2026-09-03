@@ -495,6 +495,14 @@ export function RouterPage({
   const [copyResult, setCopyResult] = useState<"copied" | "failed" | null>(
     null,
   );
+  const [diagnosticsStatus, setDiagnosticsStatus] = useState<{
+    key:
+      | "router.snapshotCopied"
+      | "router.snapshotCopyFailed"
+      | "router.exportCancelled"
+      | "router.exportFailed";
+    role: "status" | "alert";
+  } | null>(null);
   const [postForceFocus, setPostForceFocus] = useState<{
     target: "start" | "retry";
     generation: number;
@@ -912,6 +920,36 @@ export function RouterPage({
     }
   }
 
+  async function copySnapshot() {
+    setDiagnosticsStatus(null);
+    try {
+      const snapshot = await api.getDiagnosticSnapshot();
+      await navigator.clipboard.writeText(snapshot.summary);
+      setDiagnosticsStatus({ key: "router.snapshotCopied", role: "status" });
+    } catch {
+      setDiagnosticsStatus({
+        key: "router.snapshotCopyFailed",
+        role: "alert",
+      });
+    }
+  }
+
+  async function exportBundle() {
+    setDiagnosticsStatus(null);
+    try {
+      await api.exportSupportBundle();
+    } catch (error) {
+      if (errorCode(error) === "DIALOG_CANCELLED") {
+        setDiagnosticsStatus({
+          key: "router.exportCancelled",
+          role: "status",
+        });
+      } else {
+        setDiagnosticsStatus({ key: "router.exportFailed", role: "alert" });
+      }
+    }
+  }
+
   return (
     <div className={`panel-grid panel-grid--${copy.tone}`}>
       <section className="primary-panel" aria-labelledby="router-state-heading">
@@ -1186,6 +1224,29 @@ export function RouterPage({
             )}
           </section>
         )}
+
+        <div className="router-diagnostics">
+          <div className="router-diagnostics__actions">
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => void copySnapshot()}
+            >
+              {t("router.copySnapshot")}
+            </button>
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => void exportBundle()}
+            >
+              {t("router.exportBundle")}
+            </button>
+          </div>
+          <p>{t("router.exportHint")}</p>
+          {diagnosticsStatus && (
+            <p role={diagnosticsStatus.role}>{t(diagnosticsStatus.key)}</p>
+          )}
+        </div>
 
         <div className="action-row" aria-label={t("router.actionsAria")}>
           <button

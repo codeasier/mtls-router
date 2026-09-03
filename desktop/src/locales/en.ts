@@ -96,6 +96,14 @@ export const en: Record<TranslationKey, string> = {
     "Health check failed. Router process state was not affected.",
   "router.error.sidecarReinstall":
     "A required packaged component is missing or invalid. Reinstall the desktop application; no component will be downloaded automatically.",
+  "router.copySnapshot": "Copy diagnostic snapshot",
+  "router.exportBundle": "Export log bundle",
+  "router.exportHint":
+    "The bundle includes raw local runtime logs. Send it only to the maintainer, not to a public group.",
+  "router.snapshotCopied": "Diagnostic snapshot copied.",
+  "router.snapshotCopyFailed": "Unable to copy the diagnostic snapshot.",
+  "router.exportCancelled": "Export cancelled.",
+  "router.exportFailed": "Unable to export the log bundle.",
   "router.failureGuide.overline": "PROBLEM IDENTIFIED",
   "router.failureGuide.nextStep": "Recommended action",
   "router.failureGuide.upstream.title":
@@ -302,11 +310,13 @@ export const en: Record<TranslationKey, string> = {
   "logs.error.copy": "Unable to copy the diagnostic summary.",
   "logs.opened": "Log location opened.",
   "logs.copied": "Safely filtered diagnostic summary copied.",
+  "logs.copiedSnapshot": "Local diagnostic snapshot copied.",
   "logs.overline": "BOUNDED EVENT STREAM",
   "logs.heading": "Most recent {count} lines",
   "logs.refresh": "Refresh",
   "logs.openLocation": "Open log location",
   "logs.copyDiagnostics": "Copy diagnostic summary",
+  "logs.exportBundle": "Export log bundle",
   "logs.loading": "Reading bounded range...",
   "logs.empty": "No router logs",
   "logs.boundary":
