@@ -57,10 +57,11 @@ Stale 表示记录的 PID、进程启动标识或可执行文件标识不再匹�
 
 该状态表示本地 router 进程可用，但最新上游 mTLS 检查失败。超过 30 秒的健康结果会显示为 stale，而不是健康。
 
-1. 选择重试健康检查。
-2. 检查本地网络、DNS、proxy/VPN 策略、时钟和上游可用性。
-3. 打开日志并复制安全过滤后的诊断摘要。
-4. 不要手工替换内嵌证书。凭据或 deployment 轮换需要完整替代 release。
+1. 在 Router 页，若标题为状态不可用，应视为控制面未读到，而不是当前上游结论。
+2. 选择重试健康检查。
+3. 检查本地网络、DNS、proxy/VPN 策略、时钟和上游可用性。
+4. 在 Router（或日志）页复制诊断快照或导出日志包，并发送给维护者。该 zip 包含 `mtls-router-logs/` 下的全部会话日志以及快照，不含凭据、Agent 配置或备份。
+5. 仍需要时再重启。不要手工替换内嵌证书。凭据或 deployment 轮换需要完整替代 release。
 
 Router 进程状态和上游健康彼此独立。仅因短暂上游检查降级，不需要停止健康的本地进程。
 
@@ -68,7 +69,9 @@ Router 进程状态和上游健康彼此独立。仅因短暂上游检查降级�
 
 Router 意外退出后不会进入无限重启循环。manager 退出时，桌面应用最多尝试一次有界恢复；恢复失败会禁用生命周期命令，直到应用重启。
 
-打开日志、保留诊断摘要，然后只重启一次桌面应用。如果错误指向 sidecar 校验问题，请重新安装。不要通过在其他端口启动另一个 router 来绕过。
+1. 在 Router 页，若标题为状态不可用，应视为控制面未读到，而不是当前上游结论。
+2. 在 Router（或日志）页复制诊断快照或导出日志包，并发送给维护者。该 zip 包含 `mtls-router-logs/` 下的全部会话日志以及快照，不含凭据、Agent 配置或备份。
+3. 仍需要时再只重启一次桌面应用。如果错误指向 sidecar 校验问题，请重新安装。不要通过在其他端口启动另一个 router 来绕过。
 
 如果新构建或新安装的 manager 在接受 protocol request 前以 `invalid embedded Agent model preset` 退出，则其非空构建期 `AGENT_MODEL_PRESET_BASE64` 无效。Manager 会有意隐藏原始编码和解码 preset 内容，并在 Agent transaction recovery 前失败。用户应重新安装修正后的完整 release；维护者应修正或清空 repository variable，再重新构建 standalone 和 desktop manager 产物。不要 patch 打包 sidecar，也不要把 preset 注入 router。
 

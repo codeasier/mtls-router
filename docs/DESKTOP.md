@@ -59,6 +59,8 @@ The Rust desktop runtime is the sole owner of `installation.json`. Its stable in
 
 Each desktop-managed launch writes a separate log under the application data directory at `mtls-router-logs/YYYY-MM-DD/HH-MM-SS.log`. The Logs page follows the current or most recent launch, while **Open log location** exposes the grouped history for manual inspection.
 
+On each poll the desktop overwrites `{data_dir}/last-diagnostics.json` with the current in-memory diagnostic snapshot. Router and Logs can copy that snapshot without talking to the manager. **Export support bundle** writes a user-chosen zip that contains `last-diagnostics.json` plus all files under `mtls-router-logs/`; it excludes credentials, Agent configs, and backups. Raw session logs are maintainer-only. The Tauri commands are `diagnostics_snapshot` and `export_support_bundle`.
+
 See [Troubleshooting](TROUBLESHOOTING.md) for recovery steps.
 
 ## Tray, close, and quit

@@ -57,10 +57,11 @@ Stale means recorded PID, process start identity, or executable identity no long
 
 This state means the local router process is available but the latest upstream mTLS check failed. A health result older than 30 seconds is shown as stale rather than healthy.
 
-1. Select Retry health check.
-2. Check local network, DNS, proxy/VPN policy, clock, and upstream availability.
-3. Open Logs and copy the sanitized diagnostic summary.
-4. Do not replace embedded certificates manually. Credential or deployment rotation requires a complete replacement release.
+1. On Router, if the heading is status unavailable, treat it as control-plane unread, not as a current upstream verdict.
+2. Select Retry health check.
+3. Check local network, DNS, proxy/VPN policy, clock, and upstream availability.
+4. From Router (or Logs), copy the diagnostic snapshot or export the log bundle and send it to the maintainer. The zip contains all session logs under `mtls-router-logs/` plus the snapshot; it does not include credentials, Agent configs, or backups.
+5. Restart only if still needed. Do not replace embedded certificates manually. Credential or deployment rotation requires a complete replacement release.
 
 The router process state and upstream health are independent. Stopping a healthy local process is not required merely because a transient upstream check is degraded.
 
@@ -68,7 +69,9 @@ The router process state and upstream health are independent. Stopping a healthy
 
 An unexpected router exit is not restarted in an unlimited loop. If the manager exits, the desktop attempts at most one bounded recovery; failed recovery disables lifecycle commands until the application restarts.
 
-Open Logs, preserve the diagnostic summary, then restart the desktop once. Reinstall if the error identifies a sidecar validation problem. Do not start another router on a different port as a workaround.
+1. On Router, if the heading is status unavailable, treat it as control-plane unread, not as a current upstream verdict.
+2. From Router (or Logs), copy the diagnostic snapshot or export the log bundle and send it to the maintainer. The zip contains all session logs under `mtls-router-logs/` plus the snapshot; it does not include credentials, Agent configs, or backups.
+3. Then restart the desktop once if still needed. Reinstall if the error identifies a sidecar validation problem. Do not start another router on a different port as a workaround.
 
 If a freshly built or installed manager exits before accepting protocol requests
 with `invalid embedded Agent model preset`, its nonempty build-time
