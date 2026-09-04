@@ -81,7 +81,9 @@ describe("LogsPage", () => {
 
   it("falls back to the local diagnostic snapshot when collect fails", async () => {
     const api = createMockApi({
-      collectDiagnostics: vi.fn().mockRejectedValue(new Error("collect failed")),
+      collectDiagnostics: vi
+        .fn()
+        .mockRejectedValue(new Error("collect failed")),
       getDiagnosticSnapshot: vi.fn().mockResolvedValue({
         schema_version: 1,
         captured_at: "2026-09-03T10:00:00Z",

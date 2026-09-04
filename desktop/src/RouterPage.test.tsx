@@ -799,7 +799,9 @@ describe("RouterPage states", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "复制诊断快照" }));
 
-    await waitFor(() => expect(api.getDiagnosticSnapshot).toHaveBeenCalledOnce());
+    await waitFor(() =>
+      expect(api.getDiagnosticSnapshot).toHaveBeenCalledOnce(),
+    );
     await waitFor(() =>
       expect(writeText).toHaveBeenCalledWith("classification=healthy"),
     );
