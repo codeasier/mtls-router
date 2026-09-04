@@ -2,6 +2,28 @@
 
 [中文](zh-CN/CHANGELOG.md)
 
+## v0.4.0 - 2026-09-04
+
+This release makes desktop router failures diagnosable even when the manager is unreachable, with one-click diagnostic snapshot copy and log-bundle export on the failure surface, plus a sidebar animation fix.
+
+### Added
+
+- Added a manager-independent diagnostic snapshot on the desktop Router page: control-plane read failures now render as status unavailable instead of reusing cached upstream health, and the last router poll snapshot is persisted so copy still works after the UI suggests a restart.
+- Added support-bundle export from Rust, available on the Router failure surface and the Logs page: a single zip containing all session logs under `mtls-router-logs/` plus the snapshot, so users can send evidence without opening the data directory.
+- Documented the snapshot copy and log-bundle export in the troubleshooting guide so remote support instructions match the new Router page.
+
+### Fixed
+
+- Fixed the sidebar expand animation clipping labels: labels participating in the width transition now use `white-space: nowrap` + `overflow: hidden`, so text is clipped out with the animation instead of wrapping vertically for a few frames; short labels under the 800px media query are unaffected.
+- Fixed a failed support-bundle export deleting a pre-existing destination path (only the tmp zip is removed) and a first-poll watchdog timeout inventing a `start_failed` status (now unavailable until real status exists).
+- Fixed recovered snapshots carrying stale manager diagnostics and `degraded` state collapsing into `health_stale`/`unknown` instead of matching the Router page.
+
+### Security and recovery
+
+- The support bundle contains only session logs and the diagnostic snapshot — no credentials, Agent configs, or backups; snapshot persistence moved off the poll write lock so readers are never blocked by disk sync.
+
+---
+
 ## v0.3.9 - 2026-09-02
 
 This release fixes two fail-closed defects: desktop buttons that relied on `window.confirm` became unresponsive on macOS, and the legacy router lineage allowlist could silently drift between discovery classification and lifecycle migration gating.
