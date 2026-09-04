@@ -458,7 +458,6 @@ export interface DiagnosticSnapshot {
   management_protocol: string;
   deployment_id: string;
   target: string;
-  router?: string;
   router_state?: string;
   owner?: string;
   listen_addr?: string;

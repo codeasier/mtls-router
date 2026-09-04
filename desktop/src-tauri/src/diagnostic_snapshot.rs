@@ -7,7 +7,11 @@ use std::{
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        mpsc::{self, Receiver, Sender},
+        Arc, Mutex,
+    },
+    thread,
 };
 use uuid::Uuid;
 
@@ -24,8 +28,6 @@ pub struct DiagnosticSnapshot {
     pub management_protocol: String,
     pub deployment_id: String,
     pub target: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub router: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub router_state: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -133,7 +135,6 @@ pub fn from_poll(
         management_protocol: env!("MTLS_MANAGEMENT_PROTOCOL_VERSION").to_owned(),
         deployment_id: env!("MTLS_DEPLOYMENT_ID").to_owned(),
         target: env!("MTLS_TARGET_TRIPLE").to_owned(),
-        router: String::new(),
         router_state: snapshot.status.as_ref().map(|status| status.state.clone()),
         owner: snapshot
             .status
@@ -186,9 +187,6 @@ impl DiagnosticSnapshot {
         );
         push_line(&mut lines, "deployment_id", self.deployment_id.clone());
         push_line(&mut lines, "target", self.target.clone());
-        if !self.router.is_empty() {
-            push_line(&mut lines, "router", self.router.clone());
-        }
         push_optional_line(&mut lines, "router_state", self.router_state.as_deref());
         push_optional_line(&mut lines, "owner", self.owner.as_deref());
         push_optional_line(&mut lines, "listen_addr", self.listen_addr.as_deref());
@@ -283,13 +281,20 @@ fn push_optional_line(lines: &mut Vec<String>, key: &str, value: Option<&str>) {
 pub struct DiagnosticStore {
     inner: Arc<Mutex<Option<DiagnosticSnapshot>>>,
     path: PathBuf,
+    persist: Sender<DiagnosticSnapshot>,
 }
 
 impl DiagnosticStore {
     pub fn new(path: PathBuf) -> Self {
+        let (persist, persist_rx) = mpsc::channel();
+        let writer_path = path.clone();
+        let _ = thread::Builder::new()
+            .name("mtls-diagnostics-persist".into())
+            .spawn(move || persist_snapshots(persist_rx, writer_path));
         Self {
             inner: Arc::new(Mutex::new(None)),
             path,
+            persist,
         }
     }
 
@@ -302,7 +307,7 @@ impl DiagnosticStore {
         if let Ok(mut current) = self.inner.lock() {
             *current = Some(diagnostic.clone());
         }
-        let _ = diagnostic.write_atomic(&self.path);
+        let _ = self.persist.send(diagnostic);
     }
 
     pub fn current(&self) -> DiagnosticSnapshot {
@@ -313,6 +318,16 @@ impl DiagnosticStore {
         }
         DiagnosticSnapshot::load(&self.path)
             .unwrap_or_else(|| from_poll(&PollSnapshot::default(), None, Utc::now()))
+    }
+}
+
+fn persist_snapshots(rx: Receiver<DiagnosticSnapshot>, path: PathBuf) {
+    while let Ok(first) = rx.recv() {
+        let mut latest = first;
+        while let Ok(next) = rx.try_recv() {
+            latest = next;
+        }
+        let _ = latest.write_atomic(&path);
     }
 }
 
@@ -649,7 +664,23 @@ mod tests {
         assert!(!snap.manager.is_empty());
         assert!(!snap.management_protocol.is_empty());
         assert!(!snap.target.is_empty());
-        assert_eq!(snap.router, "");
+        let encoded = serde_json::to_value(&snap).unwrap();
+        assert!(encoded.get("router").is_none());
+        assert!(!snap.summary().contains("router="));
+    }
+
+    #[test]
+    fn load_drops_legacy_router_version_field() {
+        let snap = from_poll(&PollSnapshot::default(), None, now());
+        let mut encoded = serde_json::to_value(&snap).unwrap();
+        encoded
+            .as_object_mut()
+            .unwrap()
+            .insert("router".into(), serde_json::json!("v1"));
+        let loaded: DiagnosticSnapshot = serde_json::from_value(encoded).unwrap();
+        let rewritten = serde_json::to_value(&loaded).unwrap();
+        assert!(rewritten.get("router").is_none());
+        assert!(!loaded.summary().contains("router="));
     }
 
     #[test]
@@ -752,15 +783,46 @@ mod tests {
     #[test]
     fn summary_omits_empty_fields_and_truncates() {
         let mut snapshot = from_poll(&PollSnapshot::default(), None, now());
-        snapshot.router = String::new();
         let summary = snapshot.summary();
         assert!(!summary.contains("router="));
         assert!(summary.starts_with("schema_version="));
 
-        snapshot.router = "x".repeat(MAX_SUMMARY_BYTES);
+        snapshot.classification = "x".repeat(MAX_SUMMARY_BYTES);
         let truncated = snapshot.summary();
         assert!(truncated.ends_with("[truncated]"));
         assert!(truncated.len() <= MAX_SUMMARY_BYTES + "[truncated]".len());
+    }
+
+    #[test]
+    fn capture_and_persist_updates_memory_then_flushes_disk() {
+        let directory =
+            std::env::temp_dir().join(format!("mtls-router-diagnostic-async-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("last-diagnostics.json");
+        let store = DiagnosticStore::new(path.clone());
+        store.capture_and_persist(
+            &PollSnapshot {
+                status_error: Some(PollError::new("MANAGER_FAILED")),
+                ..PollSnapshot::default()
+            },
+            None,
+        );
+        assert_eq!(store.current().classification, "control_plane_unread");
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            if DiagnosticSnapshot::load(&path)
+                .is_some_and(|loaded| loaded.classification == "control_plane_unread")
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "background persist did not flush last-diagnostics.json"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let _ = std::fs::remove_dir_all(directory);
     }
 
     #[test]

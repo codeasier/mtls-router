@@ -229,7 +229,6 @@ mod tests {
             management_protocol: "1".into(),
             deployment_id: "test".into(),
             target: "test-triple".into(),
-            router: String::new(),
             router_state: None,
             owner: None,
             listen_addr: None,
