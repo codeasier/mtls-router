@@ -4,12 +4,15 @@ use crate::{
 };
 use chrono::{DateTime, Local};
 use std::{
-    fs::{self, File},
+    fs::{self, File, OpenOptions},
     io::{self, Write},
     path::{Component, Path, PathBuf},
 };
 use uuid::Uuid;
 use zip::{write::FileOptions, CompressionMethod, ZipWriter};
+
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 pub trait SaveDialog: Send + Sync {
     fn choose_zip_path(&self, default_name: &str) -> Option<PathBuf>;
@@ -58,21 +61,30 @@ pub fn write_support_bundle(
 
     let tmp = parent.join(format!(".bundle-{}.tmp", Uuid::new_v4()));
     let result = (|| -> std::io::Result<()> {
-        let file = File::create(&tmp)?;
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let file = options.open(&tmp)?;
         let mut zip = ZipWriter::new(file);
-        let options = FileOptions::default().compression_method(CompressionMethod::Deflated);
+        let zip_options = FileOptions::default().compression_method(CompressionMethod::Deflated);
 
-        zip.start_file("last-diagnostics.json", options)?;
+        zip.start_file("last-diagnostics.json", zip_options)?;
         zip.write_all(&serde_json::to_vec_pretty(snapshot).map_err(io::Error::other)?)?;
 
         if log_directory.is_dir() {
-            let canonical_root = fs::canonicalize(log_directory)?;
-            add_log_files(&mut zip, options, &canonical_root, log_directory)?;
+            if let Ok(canonical_root) = fs::canonicalize(log_directory) {
+                add_log_files(&mut zip, zip_options, &canonical_root, log_directory)?;
+            }
         }
 
         let finished = zip.finish()?;
         finished.sync_all()?;
+        #[cfg(unix)]
+        fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600))?;
         fs::rename(&tmp, dest)?;
+        #[cfg(unix)]
+        fs::set_permissions(dest, fs::Permissions::from_mode(0o600))?;
         Ok(())
     })();
 
@@ -142,7 +154,7 @@ fn add_log_files(
             })
             .collect::<Vec<_>>()
             .join("/");
-        if relative_unix.is_empty() {
+        if relative_unix.is_empty() || skip_packaged_log_name(&relative_unix) {
             continue;
         }
 
@@ -155,6 +167,15 @@ fn add_log_files(
         zip.write_all(&body)?;
     }
     Ok(())
+}
+
+fn skip_packaged_log_name(relative_unix: &str) -> bool {
+    let name = relative_unix
+        .rsplit('/')
+        .next()
+        .unwrap_or(relative_unix)
+        .to_ascii_lowercase();
+    name.ends_with(".zip") || name.ends_with(".tmp")
 }
 
 pub fn export_support_bundle(
@@ -329,6 +350,56 @@ mod tests {
 
         assert!(!tmp.exists());
         assert_eq!(fs::read(&dest).unwrap(), b"KEEP-SENTINEL");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn zip_skips_nested_zip_and_tmp_even_when_dest_is_inside_logs() {
+        let root = std::env::temp_dir().join(format!(
+            "mtls-router-support-bundle-skip-{}",
+            Uuid::new_v4()
+        ));
+        let log_dir = root.join("logs");
+        fs::create_dir_all(&log_dir).unwrap();
+        fs::write(log_dir.join("session.log"), b"keep").unwrap();
+        fs::write(log_dir.join("old.zip"), b"previous-bundle").unwrap();
+        fs::write(log_dir.join(".bundle-leftover.tmp"), b"partial").unwrap();
+
+        let dest = log_dir.join("export.zip");
+        write_support_bundle(&minimal_snapshot(), &log_dir, &dest).unwrap();
+
+        let bytes = fs::read(&dest).unwrap();
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let mut names = Vec::new();
+        for i in 0..archive.len() {
+            names.push(archive.by_index(i).unwrap().name().to_owned());
+        }
+        assert!(names.contains(&"last-diagnostics.json".to_owned()));
+        assert!(names.contains(&"mtls-router-logs/session.log".to_owned()));
+        assert!(!names.iter().any(|name| name.ends_with(".zip")));
+        assert!(!names.iter().any(|name| name.ends_with(".tmp")));
+        assert!(!names.iter().any(|name| name.contains("old.zip")));
+        assert!(!names.iter().any(|name| name.contains("leftover")));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bundle_temp_and_dest_are_owner_readable_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = std::env::temp_dir().join(format!(
+            "mtls-router-support-bundle-mode-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let dest = root.join("out.zip");
+        write_support_bundle(&minimal_snapshot(), root.join("no-logs").as_path(), &dest).unwrap();
+
+        let mode = fs::metadata(&dest).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
 
         let _ = fs::remove_dir_all(root);
     }

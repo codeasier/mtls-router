@@ -71,7 +71,8 @@ pub fn classify(snapshot: &PollSnapshot, now: DateTime<Utc>) -> &'static str {
         "starting" => "starting",
         "stopping" => "stopping",
         "absent" => "not_started",
-        "desktop_owned" | "external_compatible" | "degraded" => {
+        "degraded" => "degraded",
+        "desktop_owned" | "external_compatible" => {
             let Some(health) = snapshot.health.as_ref() else {
                 return "health_stale";
             };
@@ -117,8 +118,11 @@ pub fn from_poll(
         .as_ref()
         .map(|status| (status.manager_stage.clone(), status.manager_code.clone()))
         .unwrap_or((None, None));
-    let manager_stage = manager_stage.or_else(|| manager.map(|(stage, _)| stage.to_owned()));
-    let manager_code = manager_code.or_else(|| manager.map(|(_, code)| code.to_owned()));
+    let ring = (snapshot.status_error.is_some() || snapshot.health_error.is_some())
+        .then_some(manager)
+        .flatten();
+    let manager_stage = manager_stage.or_else(|| ring.map(|(stage, _)| stage.to_owned()));
+    let manager_code = manager_code.or_else(|| ring.map(|(_, code)| code.to_owned()));
 
     DiagnosticSnapshot {
         schema_version: SCHEMA_VERSION,
@@ -250,10 +254,7 @@ impl DiagnosticSnapshot {
             fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600))?;
             fs::rename(&tmp, path)?;
             #[cfg(unix)]
-            {
-                fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-                OpenOptions::new().read(true).open(parent)?.sync_all()?;
-            }
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
             Ok(())
         })();
         if result.is_err() {
@@ -450,6 +451,33 @@ mod tests {
     }
 
     #[test]
+    fn classification_degraded_is_closed_regardless_of_health() {
+        let health_cases = [
+            None,
+            Some(stale_health()),
+            Some(fresh_unhealthy()),
+            Some(fresh_ok()),
+        ];
+        for health in health_cases {
+            let snapshot = PollSnapshot {
+                status: Some(RouterStatus {
+                    state: "degraded".into(),
+                    owner: Some("desktop".into()),
+                    ..RouterStatus::default()
+                }),
+                health,
+                ..PollSnapshot::default()
+            };
+            assert_eq!(
+                classify(&snapshot, now()),
+                "degraded",
+                "health={:?}",
+                snapshot.health.as_ref().map(|health| &health.status)
+            );
+        }
+    }
+
+    #[test]
     fn classification_desktop_owned_fresh_ok() {
         let snapshot = PollSnapshot {
             status: Some(RouterStatus {
@@ -602,7 +630,10 @@ mod tests {
                     state: "desktop_owned".into(),
                     ..RouterStatus::default()
                 }),
-                health: Some(fresh_ok()),
+                health: Some(RouterHealth {
+                    status: "ok".into(),
+                    checked_at: Utc::now().to_rfc3339(),
+                }),
                 ..PollSnapshot::default()
             },
             None,
@@ -638,14 +669,84 @@ mod tests {
     }
 
     #[test]
-    fn from_poll_uses_manager_fallback_when_status_missing() {
+    fn from_poll_ignores_manager_fallback_on_recovered_poll() {
+        let diagnostic = from_poll(
+            &PollSnapshot {
+                status: Some(RouterStatus {
+                    state: "desktop_owned".into(),
+                    ..RouterStatus::default()
+                }),
+                health: Some(fresh_ok()),
+                ..PollSnapshot::default()
+            },
+            Some(("watchdog_timeout", "OPERATION_TIMEOUT")),
+            now(),
+        );
+        assert_eq!(diagnostic.classification, "healthy");
+        assert_eq!(diagnostic.manager_stage, None);
+        assert_eq!(diagnostic.manager_code, None);
+        assert!(!diagnostic.summary().contains("manager_stage="));
+        assert!(!diagnostic.summary().contains("manager_code="));
+    }
+
+    #[test]
+    fn from_poll_uses_manager_fallback_when_status_error_present() {
+        let diagnostic = from_poll(
+            &PollSnapshot {
+                status_error: Some(
+                    PollError::new("OPERATION_TIMEOUT").with_stage("watchdog_timeout"),
+                ),
+                ..PollSnapshot::default()
+            },
+            Some(("watchdog_timeout", "OPERATION_TIMEOUT")),
+            now(),
+        );
+        assert_eq!(diagnostic.classification, "control_plane_unread");
+        assert_eq!(
+            diagnostic.manager_stage.as_deref(),
+            Some("watchdog_timeout")
+        );
+        assert_eq!(
+            diagnostic.manager_code.as_deref(),
+            Some("OPERATION_TIMEOUT")
+        );
+    }
+
+    #[test]
+    fn from_poll_uses_manager_fallback_when_health_error_present() {
+        let diagnostic = from_poll(
+            &PollSnapshot {
+                status: Some(RouterStatus {
+                    state: "desktop_owned".into(),
+                    ..RouterStatus::default()
+                }),
+                health: Some(fresh_ok()),
+                health_error: Some(PollError::new("OPERATION_TIMEOUT")),
+                ..PollSnapshot::default()
+            },
+            Some(("watchdog_timeout", "OPERATION_TIMEOUT")),
+            now(),
+        );
+        assert_eq!(diagnostic.classification, "healthy");
+        assert_eq!(
+            diagnostic.manager_stage.as_deref(),
+            Some("watchdog_timeout")
+        );
+        assert_eq!(
+            diagnostic.manager_code.as_deref(),
+            Some("OPERATION_TIMEOUT")
+        );
+    }
+
+    #[test]
+    fn from_poll_does_not_use_manager_fallback_without_poll_error() {
         let diagnostic = from_poll(
             &PollSnapshot::default(),
             Some(("boot", "SIDECAR_INVALID")),
             now(),
         );
-        assert_eq!(diagnostic.manager_stage.as_deref(), Some("boot"));
-        assert_eq!(diagnostic.manager_code.as_deref(), Some("SIDECAR_INVALID"));
+        assert_eq!(diagnostic.manager_stage, None);
+        assert_eq!(diagnostic.manager_code, None);
     }
 
     #[test]
