@@ -682,18 +682,47 @@ describe("typed desktop API", () => {
       if (command === COMMANDS.routerLogs) {
         return { lines: [`Authorization: Bearer ${secretKey}`, pem] };
       }
+      if (command === COMMANDS.diagnosticsSnapshot) {
+        return {
+          schema_version: 1,
+          captured_at: "2026-09-03T10:00:00Z",
+          classification: "not_started",
+          desktop: "0.1.0",
+          manager: "0.1.0",
+          management_protocol: "4",
+          deployment_id: "dev",
+          target: "aarch64-apple-darwin",
+          health_stale: true,
+          summary: `classification=not_started\napi_key=${secretKey}\n${pem}`,
+        };
+      }
       return { summary: `api_key=${secretKey}\n${pem}` };
     });
     const api = createDesktopApi(invoke as InvokeFn);
 
     const logs = await api.getRouterLogs();
     const diagnostics = await api.collectDiagnostics();
+    const snapshot = await api.getDiagnosticSnapshot();
 
+    expect(invoke).toHaveBeenCalledWith(COMMANDS.diagnosticsSnapshot);
     expect(logs.lines.join("\n")).not.toContain(secretKey);
     expect(logs.lines.join("\n")).not.toContain("private-canary-material");
     expect(diagnostics.summary).not.toContain(secretKey);
     expect(diagnostics.summary).not.toContain("private-canary-material");
     expect(diagnostics.summary).toContain("[REDACTED");
+    expect(snapshot.summary).not.toContain(secretKey);
+    expect(snapshot.summary).not.toContain("private-canary-material");
+    expect(snapshot.summary).toContain("[REDACTED");
+    expect(snapshot.classification).toBe("not_started");
+  });
+
+  it("invokes export_support_bundle without arguments", async () => {
+    const invoke = vi.fn().mockResolvedValue(undefined);
+    const api = createDesktopApi(invoke as InvokeFn);
+
+    await api.exportSupportBundle();
+
+    expect(invoke).toHaveBeenCalledWith(COMMANDS.exportSupportBundle);
   });
 });
 

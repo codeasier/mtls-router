@@ -59,6 +59,8 @@ Rust 桌面运行时是 `installation.json` 的唯一所有者。稳定 installa
 
 桌面端管理的每次启动都会分别写入应用数据目录下的 `mtls-router-logs/YYYY-MM-DD/HH-MM-SS.log`。日志页面跟随当前或最近一次启动；**打开日志位置**则可用于人工查看按会话分组的历史记录。
 
+每次 poll 时，桌面端会用当前内存中的诊断快照覆盖写入 `{data_dir}/last-diagnostics.json`。Router 与日志页可不经 manager 复制该快照。**导出支持包**会写入用户选定的 zip，内含 `last-diagnostics.json` 以及 `mtls-router-logs/` 下的全部文件；不包含凭据、Agent 配置或备份。原始会话日志仅供维护者使用。对应 Tauri 命令为 `diagnostics_snapshot` 与 `export_support_bundle`。
+
 恢复步骤见[故障排查](TROUBLESHOOTING.md)。
 
 ## 托盘、关闭和退出

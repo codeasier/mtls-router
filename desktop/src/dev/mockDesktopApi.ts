@@ -169,6 +169,19 @@ export function createMockDesktopApi(
     collectDiagnostics: async () => ({
       summary: `${browserMockMarker}: diagnostics summary (in-memory only)`,
     }),
+    getDiagnosticSnapshot: async () => ({
+      schema_version: 1,
+      captured_at: "2026-09-03T10:00:00Z",
+      classification: "not_started",
+      desktop: "0.1.0",
+      manager: "0.1.0",
+      management_protocol: "4",
+      deployment_id: "dev",
+      target: "aarch64-apple-darwin",
+      health_stale: true,
+      summary: "classification=not_started",
+    }),
+    exportSupportBundle: async () => undefined,
     openLogLocation: async () => undefined,
     detectAgents: async () => {
       if (currentScenario() === "protocol-error") {

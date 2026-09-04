@@ -248,7 +248,7 @@ describe("RouterPage states", () => {
     );
     expect(
       await screen.findByText(
-        "无法读取路由状态。请重新启动桌面应用或查看日志。",
+        "无法读取路由状态（MANAGER_FAILED）。请先复制诊断快照或导出日志包发给维护者，然后再考虑重新启动。",
       ),
     ).toBeInTheDocument();
 
@@ -262,7 +262,7 @@ describe("RouterPage states", () => {
 
     await waitFor(() =>
       expect(
-        screen.queryByText("无法读取路由状态。请重新启动桌面应用或查看日志。"),
+        screen.queryByText(/无法读取路由状态（MANAGER_FAILED）/),
       ).not.toBeInTheDocument(),
     );
     expect(
@@ -304,13 +304,15 @@ describe("RouterPage states", () => {
     );
 
     expect(
-      screen.getByRole("heading", { name: "路由运行正常" }),
+      screen.getByRole("heading", { name: "路由状态暂时不可用" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("无法读取路由状态。请重新启动桌面应用或查看日志。"),
+      screen.getByText(/无法读取路由状态（OPERATION_TIMEOUT）/),
     ).toBeInTheDocument();
-    expect(screen.queryByText("路由启动失败")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "停止路由" })).toBeEnabled();
+    expect(screen.getByText("进程状态（上次已知）")).toBeInTheDocument();
+    expect(screen.getByText("上游健康（上次已知）")).toBeInTheDocument();
+    expect(screen.queryByText("路由启动失败")).not.toBeInTheDocument();
   });
 
   it("shows status unavailable when the first status poll fails", async () => {
@@ -333,7 +335,111 @@ describe("RouterPage states", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText("路由启动失败")).not.toBeInTheDocument();
     expect(
-      screen.getByText("无法读取路由状态。请重新启动桌面应用或查看日志。"),
+      screen.getByText(
+        "无法读取路由状态（OPERATION_TIMEOUT）。请先复制诊断快照或导出日志包发给维护者，然后再考虑重新启动。",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("shows status unavailable on first poll OPERATION_TIMEOUT with watchdog stage", async () => {
+    const api = createMockApi({
+      getPollSnapshot: vi.fn().mockResolvedValue({
+        revision: 1,
+        status_error: {
+          code: "OPERATION_TIMEOUT",
+          stage: "watchdog_timeout",
+        },
+      }),
+    });
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "路由状态暂时不可用" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("路由启动失败")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "无法读取路由状态（OPERATION_TIMEOUT / watchdog_timeout）。请先复制诊断快照或导出日志包发给维护者，然后再考虑重新启动。",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "停止路由" })).toBeDisabled();
+  });
+
+  it("keeps start_failed heading when status_error arrives", async () => {
+    const api = createMockApi({
+      getPollSnapshot: vi.fn().mockResolvedValue({
+        revision: 1,
+        status: { state: "start_failed", last_error: "stage=spawn code=FAIL" },
+        status_error: { code: "OPERATION_TIMEOUT" },
+      }),
+    });
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "路由启动失败" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/无法读取路由状态（OPERATION_TIMEOUT）/),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps occupied heading when status_error arrives", async () => {
+    const api = createMockApi({
+      getPollSnapshot: vi.fn().mockResolvedValue({
+        revision: 1,
+        status: { state: "unknown_occupant" },
+        status_error: { code: "OPERATION_TIMEOUT" },
+      }),
+    });
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "端口已被占用" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/无法读取路由状态（OPERATION_TIMEOUT）/),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps legacy heading when status_error arrives", async () => {
+    const api = createMockApi({
+      getPollSnapshot: vi.fn().mockResolvedValue({
+        revision: 1,
+        status: { state: "legacy_managed", owner: "desktop" },
+        status_error: { code: "OPERATION_TIMEOUT" },
+      }),
+    });
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "发现历史桌面路由" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/无法读取路由状态（OPERATION_TIMEOUT）/),
     ).toBeInTheDocument();
   });
 
@@ -381,7 +487,7 @@ describe("RouterPage states", () => {
 
     expect(
       await screen.findByText(
-        "无法读取路由状态。请重新启动桌面应用或查看日志。",
+        "无法读取路由状态（OPERATION_TIMEOUT）。请先复制诊断快照或导出日志包发给维护者，然后再考虑重新启动。",
       ),
     ).toBeInTheDocument();
     expect(
@@ -524,7 +630,7 @@ describe("RouterPage states", () => {
     [
       "status failure",
       { code: "MANAGER_FAILED" },
-      "无法读取路由状态。请重新启动桌面应用或查看日志。",
+      "无法读取路由状态（MANAGER_FAILED）。请先复制诊断快照或导出日志包发给维护者，然后再考虑重新启动。",
     ],
     [
       "sidecar failure",
@@ -626,6 +732,107 @@ describe("RouterPage states", () => {
     expect(screen.queryByText("manager-v1")).not.toBeInTheDocument();
     expect(screen.queryByText("router-v1")).not.toBeInTheDocument();
     expect(api.getComponentVersions).not.toHaveBeenCalled();
+  });
+
+  it("always shows copy and export diagnostics actions while healthy", async () => {
+    const api = createMockApi({
+      getRouterStatus: vi.fn().mockResolvedValue({
+        state: "desktop_owned",
+        owner: "desktop",
+      }),
+    });
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "路由运行正常" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "复制诊断快照" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "导出日志包" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "日志包含本地运行日志原文，仅发给维护者，不要发到公开群。",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("copies the diagnostic snapshot summary to the clipboard", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, {
+      clipboard: { writeText },
+    });
+    const api = createMockApi({
+      getRouterStatus: vi.fn().mockResolvedValue({
+        state: "desktop_owned",
+        owner: "desktop",
+      }),
+      getDiagnosticSnapshot: vi.fn().mockResolvedValue({
+        schema_version: 1,
+        captured_at: "2026-09-03T10:00:00Z",
+        classification: "healthy",
+        desktop: "0.1.0",
+        manager: "0.1.0",
+        management_protocol: "4",
+        deployment_id: "dev",
+        target: "aarch64-apple-darwin",
+        health_stale: false,
+        summary: "classification=healthy",
+      }),
+    });
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
+    await screen.findByRole("heading", { name: "路由运行正常" });
+
+    fireEvent.click(screen.getByRole("button", { name: "复制诊断快照" }));
+
+    await waitFor(() =>
+      expect(api.getDiagnosticSnapshot).toHaveBeenCalledOnce(),
+    );
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith("classification=healthy"),
+    );
+    expect(await screen.findByText("已复制诊断快照。")).toBeInTheDocument();
+  });
+
+  it("exports a support bundle and reports cancelled exports without alert role", async () => {
+    const api = createMockApi({
+      getRouterStatus: vi.fn().mockResolvedValue({
+        state: "desktop_owned",
+        owner: "desktop",
+      }),
+      exportSupportBundle: vi
+        .fn()
+        .mockRejectedValue({ code: "DIALOG_CANCELLED" }),
+    });
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
+    await screen.findByRole("heading", { name: "路由运行正常" });
+
+    fireEvent.click(screen.getByRole("button", { name: "导出日志包" }));
+
+    await waitFor(() => expect(api.exportSupportBundle).toHaveBeenCalledOnce());
+    const cancelled = await screen.findByText("已取消导出。");
+    expect(cancelled).toBeInTheDocument();
+    expect(cancelled).not.toHaveAttribute("role", "alert");
   });
 });
 

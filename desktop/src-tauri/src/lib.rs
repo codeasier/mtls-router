@@ -1,6 +1,7 @@
 mod autostart;
 mod commands;
 mod credential;
+mod diagnostic_snapshot;
 mod error;
 mod installation;
 mod lifecycle;
@@ -13,6 +14,7 @@ mod port_recovery;
 mod process_identity;
 mod scheduler;
 mod sidecar;
+mod support_bundle;
 mod tray;
 mod types;
 mod updater;
@@ -155,8 +157,20 @@ fn build_app() -> tauri::Result<tauri::App<tauri::Wry>> {
                 },
                 (Err(error), _) | (_, Err(error)) => ManagerClient::failed(error),
             };
+            let diagnostics = diagnostic_snapshot::DiagnosticStore::new(
+                paths::last_diagnostics_path(&paths.data_dir),
+            );
             let observer_app = app.handle().clone();
+            let observer_diagnostics = diagnostics.clone();
+            let observer_manager = manager.clone();
             let scheduler = PollScheduler::with_observer(manager.clone(), move |snapshot| {
+                let failure = observer_manager.last_diagnostic();
+                observer_diagnostics.capture_and_persist(
+                    &snapshot,
+                    failure
+                        .as_ref()
+                        .map(|value| (value.stage.as_str(), value.code.as_str())),
+                );
                 if snapshot.status.is_some() || snapshot.status_error.is_some() {
                     tray::update_poll_snapshot(&observer_app, &snapshot);
                 }
@@ -179,6 +193,7 @@ fn build_app() -> tauri::Result<tauri::App<tauri::Wry>> {
                 pending_occupant: Default::default(),
                 credentials,
                 lifecycle: lifecycle.clone(),
+                diagnostics,
             });
             scheduler.start();
             let app_handle = app.handle().clone();
@@ -230,6 +245,8 @@ fn build_app() -> tauri::Result<tauri::App<tauri::Wry>> {
             updater::update_check,
             updater::update_install,
             commands::diagnostics_collect,
+            commands::diagnostics_snapshot,
+            commands::export_support_bundle,
             commands::open_log_location,
             commands::agent_detect,
             commands::agent_models,
