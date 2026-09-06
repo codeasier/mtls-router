@@ -2,6 +2,34 @@
 
 [中文](zh-CN/CHANGELOG.md)
 
+## v0.4.1 - 2026-09-06
+
+This release tightens the desktop console: primary controls stay reachable on a narrow first screen, API key deletion asks for confirmation, warm/light/dark appearance themes arrive, and stale health results can no longer mask or masquerade as real upstream states.
+
+### Added
+
+- Added Warm sand, Light, and Dark appearance themes in Settings; the choice is saved only in local browser storage on the device and is not sent to the manager.
+- Added an explicit confirmation dialog before deleting a saved API key, so the credential is not removed by a stray click; the key contents are never read back or displayed.
+- Added a "Last checked" readout on the Router page so the age of the displayed health result is visible without opening Logs.
+
+### Changed
+
+- Reworked the Router first screen: primary controls are pinned so actions stay reachable, the layout stays usable down to 320px, and numbered navigation markers were replaced with semantic icons.
+- Distinguished health states: a current failed check reads degraded / upstream unavailable, a current unknown check reads awaiting a result, and a result older than 30 seconds reads out of date — stale or pending health is no longer presented as a current upstream failure.
+- Updated the desktop documentation to cover the appearance themes, delete confirmation, and the refined health copy.
+
+### Fixed
+
+- An expired health result can no longer rewrite a manager-reported degraded state into stale copy; the stale overlay is gated so real failures stay visible.
+- Light-theme warning copy and the blue accent now meet WCAG AA contrast, and process readouts keep process-scoped labels instead of describing a running process as expired.
+- The Stop control is gated while a health check is in flight, preventing actions against an unconfirmed state.
+
+### Security and recovery
+
+- Theme and language preferences stay in local browser storage only; the delete confirmation runs entirely inside the existing desktop webview sandbox and grants no new capabilities.
+
+---
+
 ## v0.4.0 - 2026-09-04
 
 This release makes desktop router failures diagnosable even when the manager is unreachable, with one-click diagnostic snapshot copy and log-bundle export on the failure surface, plus a sidebar animation fix.
