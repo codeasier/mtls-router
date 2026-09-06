@@ -42,4 +42,4 @@ pub use tls::{MtlsTransport, TlsMaterials, TlsMinVersion};
 #[cfg(test)]
 mod parity;
 #[cfg(test)]
-mod test_support;
+pub(crate) mod test_support;

@@ -8,8 +8,39 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::time::Duration;
 
 pub const MANAGEMENT_PROTOCOL_VERSION: &str = "4";
+
+/// Legacy ancestor protocol versions that explicit migration may replace.
+/// Discovery and lifecycle gating must use this single source of truth.
+pub fn is_legacy_lineage_version(version: &str) -> bool {
+    matches!(version, "1" | "3")
+}
+
+/// Server-side deadline for every protocol v4 method, matching Go `Deadlines()`.
+pub fn deadline(method: Method) -> Duration {
+    match method {
+        Method::ManagerInfo | Method::RouterStatus | Method::RouterVersion => {
+            Duration::from_secs(1)
+        }
+        Method::RouterLogs | Method::RouterInspectOccupant => Duration::from_secs(2),
+        Method::RouterForceTerminateOccupant => Duration::from_secs(3),
+        Method::DiagnosticsCollect
+        | Method::AgentDetect
+        | Method::AgentRender
+        | Method::AgentPreview
+        | Method::AgentCleanupPreview => Duration::from_secs(5),
+        Method::RouterStop => Duration::from_secs(7),
+        Method::RouterHealth => Duration::from_secs(12),
+        Method::RouterStart => Duration::from_secs(20),
+        Method::RouterMigrateLegacy => Duration::from_secs(27),
+        Method::AgentModels | Method::AgentWrite | Method::AgentCleanupWrite => {
+            Duration::from_secs(30)
+        }
+        Method::ApiKeyUsage => Duration::from_secs(60),
+    }
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -150,6 +181,80 @@ pub enum RouterOwner {
     Cli,
 }
 
+impl RouterOwner {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Desktop => "desktop",
+            Self::Cli => "cli",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RouterLogsParams {
+    #[serde(default)]
+    pub limit: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ManagerInfoResult {
+    pub version: String,
+    pub commit: String,
+    pub build_date: String,
+    pub target: String,
+    pub deployment_id: String,
+    pub management_protocol_version: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DiagnosticsResult {
+    pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub router_state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manager_failure: Option<ManagerFailure>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ManagerFailure {
+    pub stage: String,
+    pub code: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RouterStatusResult {
+    pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listen_addr: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recent_logs: Option<Vec<String>>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RouterHealthResult {
+    pub status: String,
+    pub checked_at: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RouterVersionResult {
+    pub version: String,
+    pub deployment_id: String,
+    pub management_protocol_version: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RouterLogsResult {
+    pub lines: Vec<String>,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ForceTerminateOccupantParams {
@@ -230,6 +335,24 @@ mod tests {
         let parsed: ForceTerminateOccupantParams =
             serde_json::from_str(r#"{"confirmation_token":"token"}"#).unwrap();
         assert_eq!(parsed.confirmation_token, "token");
+    }
+
+    #[test]
+    fn freezes_protocol_v4_deadlines_and_legacy_lineage() {
+        assert_eq!(deadline(Method::ManagerInfo), Duration::from_secs(1));
+        assert_eq!(deadline(Method::DiagnosticsCollect), Duration::from_secs(5));
+        assert_eq!(deadline(Method::RouterStart), Duration::from_secs(20));
+        assert_eq!(
+            deadline(Method::RouterMigrateLegacy),
+            Duration::from_secs(27)
+        );
+        assert_eq!(deadline(Method::RouterStop), Duration::from_secs(7));
+        assert_eq!(deadline(Method::RouterHealth), Duration::from_secs(12));
+        assert_eq!(deadline(Method::ApiKeyUsage), Duration::from_secs(60));
+        assert!(is_legacy_lineage_version("1"));
+        assert!(is_legacy_lineage_version("3"));
+        assert!(!is_legacy_lineage_version(MANAGEMENT_PROTOCOL_VERSION));
+        assert!(!is_legacy_lineage_version("2"));
     }
 
     #[test]

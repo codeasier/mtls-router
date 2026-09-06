@@ -6,6 +6,7 @@ mod error;
 mod installation;
 mod lifecycle;
 mod manager;
+mod manager_core;
 mod manager_diagnostics;
 mod model_config;
 mod orchestration;
