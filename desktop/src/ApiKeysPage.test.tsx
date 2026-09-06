@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -53,7 +59,7 @@ describe("ApiKeysPage", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("returns to the absent state after deletion", async () => {
+  it("confirms deletion and returns to the absent state", async () => {
     const api = createMockApi({
       getCredential: vi.fn().mockResolvedValue({
         present: true,
@@ -63,9 +69,17 @@ describe("ApiKeysPage", () => {
     });
     renderPage(api);
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: "删除已保存密钥" }),
-    );
+    const deleteButton = await screen.findByRole("button", {
+      name: "删除已保存密钥",
+    });
+    fireEvent.click(deleteButton);
+
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(deleteButton).toHaveFocus();
+    fireEvent.click(deleteButton);
+    fireEvent.click(screen.getByRole("button", { name: "确认删除" }));
 
     await waitFor(() => expect(api.deleteCredential).toHaveBeenCalledOnce());
     expect(screen.getByText("尚未配置")).toBeInTheDocument();
@@ -85,5 +99,96 @@ describe("ApiKeysPage", () => {
 
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(input).toHaveValue("");
+  });
+
+  it("shows saving progress and ignores a second submit", async () => {
+    let finishSave!: (summary: {
+      present: boolean;
+      fingerprint: string;
+      saved_at: string | null;
+    }) => void;
+    const saveCredential = vi.fn(
+      () =>
+        new Promise<{
+          present: boolean;
+          fingerprint: string;
+          saved_at: string | null;
+        }>((resolve) => {
+          finishSave = resolve;
+        }),
+    );
+    renderPage(
+      createMockApi({
+        getCredential: vi.fn().mockResolvedValue({
+          present: false,
+          fingerprint: "",
+          saved_at: null,
+        }),
+        saveCredential,
+      }),
+    );
+    const input = await screen.findByLabelText("API key");
+    await userEvent.type(input, "fixture-secret");
+
+    fireEvent.click(screen.getByRole("button", { name: "保存密钥" }));
+
+    const saving = await screen.findByRole("button", { name: "正在保存..." });
+    expect(saving).toBeDisabled();
+    fireEvent.click(saving);
+    expect(saveCredential).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      finishSave({
+        present: true,
+        fingerprint: "ABCD",
+        saved_at: "2026-07-26T00:00:00Z",
+      });
+    });
+    expect(await screen.findByText("已配置")).toBeInTheDocument();
+  });
+
+  it("shows deleting progress after confirmation", async () => {
+    let finishDelete!: (summary: {
+      present: boolean;
+      fingerprint: string;
+      saved_at: string | null;
+    }) => void;
+    const deleteCredential = vi.fn(
+      () =>
+        new Promise<{
+          present: boolean;
+          fingerprint: string;
+          saved_at: string | null;
+        }>((resolve) => {
+          finishDelete = resolve;
+        }),
+    );
+    renderPage(
+      createMockApi({
+        getCredential: vi.fn().mockResolvedValue({
+          present: true,
+          fingerprint: "WXYZ",
+          saved_at: "2026-07-26T00:00:00Z",
+        }),
+        deleteCredential,
+      }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "删除已保存密钥" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "确认删除" }));
+
+    const deleting = await screen.findByRole("button", { name: "正在删除..." });
+    expect(deleting).toBeDisabled();
+    expect(deleteCredential).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      finishDelete({
+        present: false,
+        fingerprint: "",
+        saved_at: null,
+      });
+    });
+    expect(await screen.findByText("尚未配置")).toBeInTheDocument();
   });
 });

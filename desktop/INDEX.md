@@ -23,33 +23,35 @@ React UI ──Tauri invoke──▶ Rust commands.rs ──stdin/stdout JSON─
 
 ## 前端（src/）
 
-| 文件                                                      | 职责                                                                                                                                          |
-| --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ipc.ts`                                                  | `DesktopApi` 类型化包装；严格定义 cleanup detection/preview、update check/install/progress event、API key 用量、日志目录与精确 invoke payload |
-| `dev/fixtures.ts`                                         | 与 Vitest 解耦的浏览器/单测共用 fixture 数据、cleanup preview/result 与 mock 场景解析                                                         |
-| `dev/mockDesktopApi.ts`                                   | 仅开发 mock 的内存 `DesktopApi`；模拟 cleanup 与 updater 状态，但不读写真实凭据、Agent 配置或网络                                             |
-| `dev/resolveDesktopApi.ts`                                | mock 入口门控：仅 `DEV && VITE_MOCK=true` 时启用；生产构建始终走真实 Tauri API                                                                |
-| `App.tsx`                                                 | 根布局、区块导航、单次静默启动更新检查与注册式 Agent leave guard；面板存续期同步原生退出保护并共用可访问确认框                                |
-| `RouterPage.tsx`                                          | router 状态、start/stop、health、占用者检查/终止                                                                                              |
-| `AgentPage.tsx`                                           | Agents 页面协调器：本地检测总览、互斥的单 Agent 配置/cleanup 目标、cleanup busy leave guard、完成后刷新与返回焦点恢复                         |
-| `AgentOverview.tsx`                                       | Claude Code / OpenCode / Codex 总览；展示配置与 cleanup 状态；只为 managed/available Agent 提供单 Agent 清理入口                              |
-| `AgentPanel.tsx`                                          | 持久单 Agent 面板：编辑器与 sticky preview/status rail 共存，覆盖导入导出、刷新冲突、写入、结果 dismiss 与 guard                              |
-| `useAgentPanelController.ts`                              | 单 Agent detection/discovery flow、草稿基线、刷新冲突、preview/write/reload 的持久状态机                                                      |
-| `AgentConfigFields.tsx`                                   | Claude Code / OpenCode / Codex 结构化配置字段；提供 imperative snapshot 以同步本地 JSON 草稿                                                  |
-| `AgentPreviewPane.tsx`                                    | 脱敏 preview、文件影响、漂移/auth 审批、rebuild 确认与写入结果；导出配置/cleanup 共用的 `AgentFileEffectCard`                                 |
-| `AgentCleanupPanel.tsx`                                   | 独立的无 key cleanup 审阅：removed paths、replace/delete、敏感备份、漂移批准、stale/retry 与结果                                              |
-| `agentCleanupState.ts`                                    | Cleanup-only reducer：`loading-preview/previewing/writing/result/stale/failed` 与写入门控                                                     |
-| `useAgentCleanupController.ts`                            | 单 Agent cleanup preview/write/repreview/retry 编排；generation guard 丢弃迟到结果，不调用凭据/目录/model flow                                |
-| `AgentCleanupPanel.test.tsx`、`agentCleanupState.test.ts` | Cleanup UI、漂移门控、stale/retry、重复提交、保留数据警告与 reducer transition 测试                                                           |
-| `agentPresentation.tsx`                                   | Agent 名称/logo、完整 detection 校验、安装/配置状态与 recovery 文案的共享展示模型                                                             |
-| `ApiKeysPage.tsx`                                         | 全局 API key 保存、替换、删除及摘要展示；提交后清空输入，不提供明文回读                                                                       |
-| `UsagePage.tsx`                                           | 独立「用量」导航页：读取凭据状态并加载当前密钥用量窗口；无 key 时不查询，提供前往 API 密钥页的入口                                            |
-| `ApiKeyUsageCard.tsx`                                     | 当前密钥用量窗口：周期选择、汇总、配额与按模型明细；模型列支持多选筛选（含全部），请求/Token/费用列支持排序；无 key 时不查询                  |
-| `LogsPage.tsx`                                            | 有界的、安全过滤的 router 日志，手动刷新                                                                                                      |
-| `SettingsPage.tsx`                                        | 自启动、组件版本、手动更新检查、确认后安装/进度、数据/日志目录、诊断、卸载准备与语言                                                          |
-| `model.ts`                                                | 共享类型（`SectionId`、`navigationItems`）                                                                                                    |
-| `i18n.tsx`                                                | I18n context provider，含 `zh-CN` 与 `en` locale                                                                                              |
-| `locales/zh-CN.ts`、`locales/en.ts`                       | 翻译字典                                                                                                                                      |
+| 文件                                                      | 职责                                                                                                                                                                        |
+| --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ipc.ts`                                                  | `DesktopApi` 类型化包装；严格定义 cleanup detection/preview、update check/install/progress event、API key 用量、日志目录与精确 invoke payload                               |
+| `dev/fixtures.ts`                                         | 与 Vitest 解耦的浏览器/单测共用 fixture 数据、cleanup preview/result，以及 `success` / Agent 失败 / Router occupied·stale·unavailable·reinstall·reoccupied 等 mock 场景解析 |
+| `dev/mockDesktopApi.ts`                                   | 仅开发 mock 的内存 `DesktopApi`；模拟 cleanup 与 updater 状态，但不读写真实凭据、Agent 配置或网络                                                                           |
+| `dev/resolveDesktopApi.ts`                                | mock 入口门控：仅 `DEV && VITE_MOCK=true` 时启用；生产构建始终走真实 Tauri API                                                                                              |
+| `App.tsx`                                                 | 根布局、区块导航（语义 SVG 图标）、主题 provider、单次静默启动更新检查与注册式 Agent leave guard；面板存续期同步原生退出保护并共用可访问确认框                              |
+| `NavIcon.tsx`                                             | 主导航语义图标：路由节点、Agent 终端、密钥、用量柱、日志页、设置齿轮；不引入第三方图标库                                                                                    |
+| `RouterPage.tsx`                                          | router 状态、start/stop、health、占用者检查/终止                                                                                                                            |
+| `AgentPage.tsx`                                           | Agents 页面协调器：本地检测总览、互斥的单 Agent 配置/cleanup 目标、cleanup busy leave guard、完成后刷新与返回焦点恢复                                                       |
+| `AgentOverview.tsx`                                       | Claude Code / OpenCode / Codex 总览；展示配置与 cleanup 状态；只为 managed/available Agent 提供单 Agent 清理入口                                                            |
+| `AgentPanel.tsx`                                          | 持久单 Agent 面板：编辑器与 sticky preview/status rail 共存；桌面双栏下预览正文在 rail 内滚动、写入操作钉在 rail 底部，900px 以下改为单栏并钉住提交                         |
+| `useAgentPanelController.ts`                              | 单 Agent detection/discovery flow、草稿基线、刷新冲突、preview/write/reload 的持久状态机                                                                                    |
+| `AgentConfigFields.tsx`                                   | Claude Code / OpenCode / Codex 结构化配置字段；提供 imperative snapshot 以同步本地 JSON 草稿                                                                                |
+| `AgentPreviewPane.tsx`                                    | 脱敏 preview、文件影响、漂移/auth 审批、rebuild 确认与写入结果；导出配置/cleanup 共用的 `AgentFileEffectCard`                                                               |
+| `AgentCleanupPanel.tsx`                                   | 独立的无 key cleanup 审阅：removed paths、replace/delete、敏感备份、漂移批准、stale/retry 与结果                                                                            |
+| `agentCleanupState.ts`                                    | Cleanup-only reducer：`loading-preview/previewing/writing/result/stale/failed` 与写入门控                                                                                   |
+| `useAgentCleanupController.ts`                            | 单 Agent cleanup preview/write/repreview/retry 编排；generation guard 丢弃迟到结果，不调用凭据/目录/model flow                                                              |
+| `AgentCleanupPanel.test.tsx`、`agentCleanupState.test.ts` | Cleanup UI、漂移门控、stale/retry、重复提交、保留数据警告与 reducer transition 测试                                                                                         |
+| `agentPresentation.tsx`                                   | Agent 名称/logo、完整 detection 校验、安装/配置状态与 recovery 文案的共享展示模型                                                                                           |
+| `ApiKeysPage.tsx`                                         | 全局 API key 保存、替换、删除及摘要展示；提交后清空输入，不提供明文回读                                                                                                     |
+| `UsagePage.tsx`                                           | 独立「用量」导航页：读取凭据状态并加载当前密钥用量窗口；无 key 时不查询，提供前往 API 密钥页的入口                                                                          |
+| `ApiKeyUsageCard.tsx`                                     | 当前密钥用量窗口：周期选择、汇总、配额与按模型明细；模型列支持多选筛选（含全部），请求/Token/费用列支持排序；无 key 时不查询                                                |
+| `LogsPage.tsx`                                            | 有界的、安全过滤的 router 日志，手动刷新                                                                                                                                    |
+| `SettingsPage.tsx`                                        | 自启动、组件版本、手动更新检查、确认后安装/进度、数据/日志目录、诊断、卸载准备、语言与外观主题                                                                              |
+| `model.ts`                                                | 共享类型（`SectionId`、`navigationItems`）                                                                                                                                  |
+| `theme.tsx`                                               | 外观主题 `warm` / `light` / `dark`；仅写入 `localStorage`，通过 `document.documentElement.dataset.theme` 切换 CSS token。浅色浅灰底 + 真白卡片，大面板不铺满纯白            |
+| `i18n.tsx`                                                | I18n context provider，含 `zh-CN` 与 `en` locale                                                                                                                            |
+| `locales/zh-CN.ts`、`locales/en.ts`                       | 翻译字典                                                                                                                                                                    |
 
 ## 后端（src-tauri/src/）
 
@@ -91,13 +93,13 @@ React UI ──Tauri invoke──▶ Rust commands.rs ──stdin/stdout JSON─
 
 按改动类型选择最短反馈循环（均不绕过 sidecar 哈希、manager 握手、preview/revision 或事务写入保护）：
 
-| 改动类型                    | 命令                                                                            | 说明                                                                                                                                          |
-| --------------------------- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| 仅 React/UI                 | `npm run dev:mock`                                                              | 只跑 Vite + HMR；注入内存 `DesktopApi`；可选 `?mockScenario=success\|protocol-error\|preview-stale\|write-fail`                               |
-| Rust/Tauri（sidecar 未变）  | `npm run dev:tauri:reuse`                                                       | 启动 `tauri dev` 但跳过 `sidecars:build`；sidecar 缺失则 fail closed                                                                          |
-| 真实 Agent 链路（隔离路径） | `npm run dev:agent`                                                             | 显式覆盖 `MTLS_ROUTER_DESKTOP_DATA_DIR` / `CLAUDE_CONFIG_DIR` / `OPENCODE_CONFIG` / `CODEX_HOME` 后走 reuse；不隔离固定端口 `127.0.0.1:19099` |
-| Manager/router 或嵌入元数据 | `npm run sidecars:build` 后 `npm run dev:tauri:reuse` 或 `npm run tauri -- dev` | Go sidecar 变化后必须重建；Rust 会重新嵌入哈希                                                                                                |
-| 安装器/发布验证             | `make desktop-package-current`                                                  | 完整打包                                                                                                                                      |
+| 改动类型                    | 命令                                                                            | 说明                                                                                                                                                                                                    |
+| --------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 仅 React/UI                 | `npm run dev:mock`                                                              | 只跑 Vite + HMR；注入内存 `DesktopApi`；可选 `?mockScenario=success\|protocol-error\|preview-stale\|write-fail\|router-occupied\|router-stale\|router-unavailable\|router-reinstall\|router-reoccupied` |
+| Rust/Tauri（sidecar 未变）  | `npm run dev:tauri:reuse`                                                       | 启动 `tauri dev` 但跳过 `sidecars:build`；sidecar 缺失则 fail closed                                                                                                                                    |
+| 真实 Agent 链路（隔离路径） | `npm run dev:agent`                                                             | 显式覆盖 `MTLS_ROUTER_DESKTOP_DATA_DIR` / `CLAUDE_CONFIG_DIR` / `OPENCODE_CONFIG` / `CODEX_HOME` 后走 reuse；不隔离固定端口 `127.0.0.1:19099`                                                           |
+| Manager/router 或嵌入元数据 | `npm run sidecars:build` 后 `npm run dev:tauri:reuse` 或 `npm run tauri -- dev` | Go sidecar 变化后必须重建；Rust 会重新嵌入哈希                                                                                                                                                          |
+| 安装器/发布验证             | `make desktop-package-current`                                                  | 完整打包                                                                                                                                                                                                |
 
 `npm run tauri` 仍始终先执行 `sidecars:build`，适合首次准备与完整本地启动。
 

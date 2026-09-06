@@ -13,8 +13,10 @@ import { desktopApi, type DesktopApi, type UpdateCheckResult } from "./ipc";
 import { LogsPage } from "./LogsPage";
 import type { TranslationKey } from "./locales/zh-CN";
 import { navigationItems, type SectionId } from "./model";
+import { NavIcon } from "./NavIcon";
 import { RouterPage } from "./RouterPage";
 import { SettingsPage } from "./SettingsPage";
+import { ThemeProvider } from "./theme";
 import { UsagePage } from "./UsagePage";
 
 const sectionKeys: Record<SectionId, string> = {
@@ -315,28 +317,31 @@ function AppContent({ api }: { api: DesktopApi }) {
         </a>
 
         <nav aria-label={t("app.navigationAria")}>
-          {navigationItems.map((item) => (
+          {navigationItems.map((id) => (
             <button
-              key={item.id}
+              key={id}
               type="button"
               className={
-                activeSection === item.id ? "nav-item is-active" : "nav-item"
+                activeSection === id ? "nav-item is-active" : "nav-item"
               }
               aria-label={
-                item.id === "settings" && updateAvailable
-                  ? `${t(navigationKeys[item.id])} - ${t("app.updateBadgeAria")}`
-                  : t(navigationKeys[item.id])
+                id === "settings" && updateAvailable
+                  ? `${t(navigationKeys[id])} - ${t("app.updateBadgeAria")}`
+                  : t(navigationKeys[id])
               }
-              aria-current={activeSection === item.id ? "page" : undefined}
-              onClick={(event) => navigate(item.id, event.currentTarget)}
+              aria-current={activeSection === id ? "page" : undefined}
+              onClick={(event) => navigate(id, event.currentTarget)}
             >
+              <span className="nav-marker" aria-hidden="true">
+                <NavIcon id={id} />
+              </span>
               <strong className="nav-label--full">
-                {t(navigationKeys[item.id])}
+                {t(navigationKeys[id])}
               </strong>
               <strong className="nav-label--short">
-                {t(shortNavigationKeys[item.id])}
+                {t(shortNavigationKeys[id])}
               </strong>
-              {item.id === "settings" && updateAvailable && (
+              {id === "settings" && updateAvailable && (
                 <span className="nav-badge" aria-hidden="true">
                   1
                 </span>
@@ -480,8 +485,10 @@ function AppContent({ api }: { api: DesktopApi }) {
 
 export function App({ api = desktopApi }: { api?: DesktopApi }) {
   return (
-    <I18nProvider synchronizeNativeLanguage={api.setNativeLanguage}>
-      <AppContent api={api} />
-    </I18nProvider>
+    <ThemeProvider>
+      <I18nProvider synchronizeNativeLanguage={api.setNativeLanguage}>
+        <AppContent api={api} />
+      </I18nProvider>
+    </ThemeProvider>
   );
 }

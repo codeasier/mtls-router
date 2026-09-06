@@ -137,6 +137,17 @@ describe("AgentPreviewPane", () => {
     );
   });
 
+  it("keeps write actions inside the approval rail", () => {
+    const view = renderWithI18n(
+      <AgentPreviewPane {...props} preview={preview("one")} />,
+    );
+
+    const write = screen.getByRole("button", { name: /写入所选 Agent/ });
+    expect(
+      view.container.querySelector(".approval-rail")?.contains(write),
+    ).toBe(true);
+  });
+
   it("collects actual drift and auth approvals for a controller write", () => {
     const onWrite = vi.fn();
     renderWithI18n(

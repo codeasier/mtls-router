@@ -100,6 +100,63 @@ describe("AgentOverview", () => {
     );
   });
 
+  it("promotes configured edit as the primary action and keeps the path in details", () => {
+    const configured: AgentDetection = {
+      agents: detection.agents.map((agent) =>
+        agent.agent === "claude"
+          ? {
+              ...agent,
+              command: "/safe/bin/claude",
+              exists: true,
+              writable: true,
+              configured: true,
+              invalid: false,
+            }
+          : agent,
+      ),
+    };
+    render(
+      <AgentOverview
+        detection={configured}
+        refreshing={false}
+        stale={false}
+        issue={null}
+        {...callbacks()}
+      />,
+    );
+
+    const card = screen
+      .getByRole("heading", { name: "Claude Code" })
+      .closest("li");
+    expect(card).not.toBeNull();
+    expect(within(card!).getByText("已配置")).toBeVisible();
+    expect(
+      within(card!).getByRole("button", { name: "编辑 Claude Code 配置" }),
+    ).toHaveClass("control-button");
+    expect(within(card!).getByText("路径与诊断详情")).toBeVisible();
+    expect(
+      within(card!).getByTitle("/safe/claude/settings.json"),
+    ).toBeVisible();
+  });
+
+  it("keeps readonly cards disabled with path details still available", () => {
+    render(
+      <AgentOverview
+        detection={detection}
+        refreshing={false}
+        stale={false}
+        issue={null}
+        {...callbacks()}
+      />,
+    );
+
+    const card = screen.getByRole("heading", { name: "Codex" }).closest("li");
+    expect(card).not.toBeNull();
+    expect(within(card!).getByText("不可写")).toBeVisible();
+    expect(within(card!).getByRole("button", { name: /Codex/ })).toBeDisabled();
+    expect(within(card!).getByTitle("/safe/codex/config.toml")).toBeVisible();
+  });
+
   it("emits one immutable target per card action and disables blocked cards", () => {
     const props = callbacks();
     render(

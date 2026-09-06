@@ -48,6 +48,9 @@ export const zhCN = {
   "router.state.degraded.signal": "降级运行",
   "router.state.degraded.detail":
     "路由进程仍在运行，但上游健康检查失败或已过期。",
+  "router.state.stale.title": "健康检查结果已过期",
+  "router.state.stale.detail":
+    "路由进程仍在运行。请等待下一次自动同步，或重试健康检查。当前结果不能当作健康。",
   "router.state.external.title": "外部路由正在运行",
   "router.state.external.signal": "外部托管",
   "router.state.external.detail":
@@ -80,6 +83,8 @@ export const zhCN = {
   "router.health.healthy": "健康",
   "router.health.degraded": "上游不可用",
   "router.health.stale": "结果已过期",
+  "router.lastChecked.label": "最近检查",
+  "router.lastChecked.never": "尚未检查",
   "router.error.load":
     "无法读取路由状态（{code}）。请先复制诊断快照或导出日志包发给维护者，然后再考虑重新启动。",
   "router.error.start": "启动失败。请查看安全过滤后的日志并重试。",
@@ -314,6 +319,11 @@ export const zhCN = {
   "settings.languageDescription": "语言偏好仅保存在本机浏览器存储中。",
   "settings.chinese": "简体中文",
   "settings.english": "English",
+  "settings.theme": "外观主题",
+  "settings.themeDescription": "外观主题仅保存在本机浏览器存储中。",
+  "settings.theme.warm": "暖沙",
+  "settings.theme.light": "浅色",
+  "settings.theme.dark": "深色",
   "settings.components": "组件版本",
   "settings.locations": "存储位置",
   "settings.dataLocation": "应用数据",
@@ -364,6 +374,11 @@ export const zhCN = {
   "apikey.save": "保存密钥",
   "apikey.replace": "替换密钥",
   "apikey.delete": "删除已保存密钥",
+  "apikey.deleteConfirm.title": "确认删除 API key？",
+  "apikey.deleteConfirm.description":
+    "删除后，本地路由和 Agent 将无法继续使用这份凭据。此操作不会回读或显示密钥内容。",
+  "apikey.deleteConfirm.confirm": "确认删除",
+  "apikey.deleteConfirm.cancel": "取消",
   "apikey.saving": "正在保存...",
   "apikey.deleting": "正在删除...",
   "apikey.explainer.usage.heading": "用于何处",
@@ -519,6 +534,7 @@ export const zhCN = {
   "agents.stage.preview": "预览",
   "agents.stage.write": "写入",
   "agents.stage.result": "结果",
+  "agents.card.details": "路径与诊断详情",
   "agents.continue": "继续发现模型",
   "agents.credentialHeading": "使用已保存的密钥发现模型",
   "agents.credentialNote":

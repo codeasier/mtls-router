@@ -76,6 +76,36 @@ describe("localization resources", () => {
     expect(zhCN["agents.cleanup.completeNote"]).not.toMatch(/检测|刷新/);
   });
 
+  it("keeps stale router copy distinct from healthy and degraded", () => {
+    for (const catalog of [en, zhCN]) {
+      expect(catalog["router.state.stale.title"]).toBeTruthy();
+      expect(catalog["router.state.stale.detail"]).toBeTruthy();
+      expect(catalog["router.state.stale.title"]).not.toEqual(
+        catalog["router.state.healthy.title"],
+      );
+      expect(catalog["router.state.stale.title"]).not.toEqual(
+        catalog["router.state.degraded.title"],
+      );
+      expect(catalog["router.state.stale.detail"]).toMatch(
+        /not a current healthy|不能当作健康/,
+      );
+    }
+  });
+
+  it("keeps Settings and Logs status copy bilingual and distinct", () => {
+    for (const catalog of [en, zhCN]) {
+      expect(catalog["logs.loading"]).toBeTruthy();
+      expect(catalog["logs.empty"]).toBeTruthy();
+      expect(catalog["logs.error.load"]).toBeTruthy();
+      expect(catalog["settings.general"]).toBeTruthy();
+      expect(catalog["settings.components"]).toBeTruthy();
+      expect(catalog["settings.locations"]).toBeTruthy();
+      expect(catalog["settings.prepareTitle"]).toBeTruthy();
+      expect(catalog["settings.error.load"]).toBeTruthy();
+      expect(catalog["logs.loading"]).not.toEqual(catalog["logs.empty"]);
+    }
+  });
+
   it("keeps ambiguous cleanup recovery and explicit finish actions bilingual", () => {
     expect(en["agents.cleanup.ambiguous"]).toMatch(/confirm|unknown/i);
     expect(zhCN["agents.cleanup.ambiguous"]).toMatch(/无法确认|未知/);

@@ -132,7 +132,7 @@ export function LogsPage({ api }: { api: DesktopApi }) {
       </div>
 
       <div
-        className="log-screen"
+        className="log-screen log-screen--scroll"
         role="log"
         aria-live="polite"
         aria-busy={loading}

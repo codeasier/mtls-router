@@ -17,13 +17,26 @@ import type {
 } from "../ipc";
 
 export type MockScenario =
-  "success" | "protocol-error" | "preview-stale" | "write-fail";
+  | "success"
+  | "protocol-error"
+  | "preview-stale"
+  | "write-fail"
+  | "router-occupied"
+  | "router-stale"
+  | "router-unavailable"
+  | "router-reinstall"
+  | "router-reoccupied";
 
 export const MOCK_SCENARIOS: readonly MockScenario[] = [
   "success",
   "protocol-error",
   "preview-stale",
   "write-fail",
+  "router-occupied",
+  "router-stale",
+  "router-unavailable",
+  "router-reinstall",
+  "router-reoccupied",
 ] as const;
 
 export const fixtureDetection: AgentDetection = {
@@ -121,6 +134,11 @@ export const fixtureOwnedStatus: RouterStatus = {
   owner: "desktop",
   listen_addr: "127.0.0.1:19099",
   pid: 19099,
+};
+
+export const fixtureOccupiedStatus: RouterStatus = {
+  state: "unknown_occupant",
+  listen_addr: "127.0.0.1:19099",
 };
 
 export const fixtureHealthOk: RouterHealth = {
@@ -246,6 +264,48 @@ export function cleanupPreviewFor(agent: AgentId): AgentCleanupPreview {
       backup_sensitive: false,
     },
   };
+}
+
+export function initialStatusForMockScenario(
+  scenario: MockScenario,
+): RouterStatus {
+  if (scenario === "router-occupied" || scenario === "router-reoccupied") {
+    return structuredClone(fixtureOccupiedStatus);
+  }
+  if (scenario === "router-stale") {
+    return structuredClone(fixtureOwnedStatus);
+  }
+  return structuredClone(fixtureAbsentStatus);
+}
+
+export function snapshotForMockScenario(
+  scenario: MockScenario,
+  status: RouterStatus,
+  revision: number,
+): PollSnapshot {
+  switch (scenario) {
+    case "router-unavailable":
+      return { revision, status_error: { code: "OPERATION_TIMEOUT" } };
+    case "router-reinstall":
+      return { revision, status_error: { code: "SIDECAR_MISSING" } };
+    case "router-occupied":
+      return pollSnapshotFor(fixtureOccupiedStatus, revision);
+    case "router-reoccupied":
+      return {
+        ...pollSnapshotFor(fixtureOccupiedStatus, revision),
+        release_observation: { state: "reoccupied" },
+      };
+    case "router-stale":
+      return {
+        ...pollSnapshotFor(fixtureOwnedStatus, revision),
+        health: {
+          status: "ok",
+          checked_at: new Date(Date.now() - 31_000).toISOString(),
+        },
+      };
+    default:
+      return pollSnapshotFor(status, revision);
+  }
 }
 
 export function pollSnapshotFor(

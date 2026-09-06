@@ -1886,10 +1886,42 @@ describe("AgentPanel integration", () => {
     expect(view.container.querySelector(".agent-panel__editor")).toBeVisible();
 
     await act(async () => pendingPreview.resolve(previewFor(configs.claude)));
-    expect(
-      await screen.findByRole("button", { name: /写入所选 Agent/ }),
-    ).toBeVisible();
+    const write = await screen.findByRole("button", { name: /写入所选 Agent/ });
+    expect(write).toBeVisible();
     expect(view.container.querySelector(".agent-panel__preview")).toBeVisible();
+    expect(rail?.contains(write)).toBe(true);
+    expect(
+      view.container.querySelector(".approval-rail")?.contains(write),
+    ).toBe(true);
+  });
+
+  it("disables preview while a refresh is in flight", async () => {
+    const pendingDetect = deferred<typeof detection>();
+    const api = readyApi();
+    renderWithI18n(
+      <AgentPanel
+        api={api}
+        target="claude"
+        onBack={vi.fn()}
+        onNavigateToApiKeys={vi.fn()}
+      />,
+    );
+
+    await screen.findByLabelText(/^主模型$/);
+    vi.mocked(api.detectAgents).mockImplementationOnce(
+      () => pendingDetect.promise,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /重新检测/ }));
+
+    expect(
+      await screen.findByRole("button", { name: /正在重新检测/ }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: /生成写入预览/ })).toBeDisabled();
+
+    await act(async () => pendingDetect.resolve(detection));
+    expect(
+      await screen.findByRole("button", { name: /生成写入预览/ }),
+    ).toBeEnabled();
   });
 
   it("keeps the disabled editor mounted beside preview and focuses its heading on mobile", async () => {

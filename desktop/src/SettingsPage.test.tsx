@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 import { LANGUAGE_STORAGE_KEY } from "./i18n";
+import { THEME_STORAGE_KEY } from "./theme";
 import { createMockApi } from "./test/api";
 
 async function openSettings(api = createMockApi()) {
@@ -38,9 +39,31 @@ describe("SettingsPage", () => {
     expect(
       screen.getByText("/safe/app-data/mtls-router-logs"),
     ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "常规" })).toBeVisible();
+    expect(screen.getByRole("radiogroup", { name: "外观主题" })).toBeVisible();
+    expect(screen.getByRole("radio", { name: "暖沙" })).toBeChecked();
+    expect(screen.getByRole("heading", { name: "组件版本" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "存储位置" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "准备卸载" })).toBeVisible();
     expect(
       screen.queryByText(/上游 URL|证书导入|自动更新|PATH/),
     ).not.toBeInTheDocument();
+  });
+
+  it("surfaces a safe load error when settings reads fail", async () => {
+    await openSettings(
+      createMockApi({
+        getAutostart: vi
+          .fn()
+          .mockRejectedValue(new Error("secret path /tmp/settings")),
+      }),
+    );
+
+    expect(
+      await screen.findByText("部分设置无法读取，请稍后重试。"),
+    ).toBeVisible();
+    expect(document.body).not.toHaveTextContent("secret path");
+    expect(document.body).not.toHaveTextContent("/tmp/settings");
   });
 
   it("changes current-user autostart through the typed API", async () => {
@@ -175,6 +198,38 @@ describe("SettingsPage", () => {
     await waitFor(() =>
       expect(api.setNativeLanguage).toHaveBeenLastCalledWith("en"),
     );
+  });
+
+  it("switches appearance themes and persists only the theme key", async () => {
+    await openSettings();
+    const light = screen.getByRole("radio", { name: "浅色" });
+
+    expect(screen.getByRole("radio", { name: "暖沙" })).toBeChecked();
+    expect(document.documentElement.dataset.theme).toBe("warm");
+
+    fireEvent.click(light);
+
+    expect(light).toBeChecked();
+    expect(document.documentElement.dataset.theme).toBe("light");
+    expect(document.documentElement.style.colorScheme).toBe("light");
+    expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("light");
+    expect(localStorage.getItem(LANGUAGE_STORAGE_KEY)).toBeNull();
+  });
+
+  it("loads a stored dark theme and ignores unsupported stored themes", async () => {
+    localStorage.setItem(THEME_STORAGE_KEY, "dark");
+    const first = render(<App api={createMockApi()} />);
+    fireEvent.click(await screen.findByRole("button", { name: /系统设置/ }));
+    expect(await screen.findByRole("radio", { name: "深色" })).toBeChecked();
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(document.documentElement.style.colorScheme).toBe("dark");
+    first.unmount();
+
+    localStorage.setItem(THEME_STORAGE_KEY, "neon");
+    render(<App api={createMockApi()} />);
+    fireEvent.click(await screen.findByRole("button", { name: /系统设置/ }));
+    expect(await screen.findByRole("radio", { name: "暖沙" })).toBeChecked();
+    expect(document.documentElement.dataset.theme).toBe("warm");
   });
 
   it("loads valid English and ignores unsupported stored languages", async () => {

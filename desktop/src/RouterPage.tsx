@@ -168,6 +168,22 @@ function failureGuide(
   };
 }
 
+function displayCopy(
+  t: Translator,
+  currentState: ViewState,
+  observedHealth: HealthState,
+): StateCopy {
+  const copy = getStateCopy(t)[currentState];
+  if (observedHealth !== "stale" || currentState !== "degraded") {
+    return copy;
+  }
+  return {
+    ...copy,
+    title: t("router.state.stale.title"),
+    detail: t("router.state.stale.detail"),
+  };
+}
+
 function getStateCopy(t: Translator): Record<ViewState, StateCopy> {
   return {
     "not-started": {
@@ -516,6 +532,7 @@ export function RouterPage({
   const autoInspectionKey = useRef<string | null>(null);
   const copyRequest = useRef(0);
   const focusGeneration = useRef(0);
+  const actionLock = useRef(false);
   const startRouterRef = useRef<HTMLButtonElement>(null);
   const occupantRetryRef = useRef<HTMLButtonElement>(null);
   const forceTriggerRef = useRef<HTMLButtonElement>(null);
@@ -762,7 +779,7 @@ export function RouterPage({
     statusReadFailed,
     reinstallRequired,
   );
-  const copy = getStateCopy(t)[currentState];
+  const copy = displayCopy(t, currentState, observedHealth);
   const failureDiagnostics = sanitizedFailureDiagnostics(status);
   const failureGuidance =
     failureDiagnostics.lastError || failureDiagnostics.recentLogs.length > 0
@@ -786,6 +803,12 @@ export function RouterPage({
       status.owner === "desktop");
   const canRetryHealth = available && !operation && !checkingHealth;
   const pidOnlyOccupant = occupant?.verification_mode === "windows_pid_only";
+  const lastChecked = health?.checked_at
+    ? new Date(health.checked_at).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : t("router.lastChecked.never");
 
   useEffect(() => {
     if (
@@ -809,6 +832,8 @@ export function RouterPage({
   }
 
   async function start() {
+    if (actionLock.current) return;
+    actionLock.current = true;
     setOperation("starting");
     setActionFailed(false);
     setMessage("");
@@ -846,10 +871,14 @@ export function RouterPage({
         setActionFailed(true);
         setMessage(actionErrorKey("start"));
       }
+    } finally {
+      actionLock.current = false;
     }
   }
 
   async function stop() {
+    if (actionLock.current) return;
+    actionLock.current = true;
     setOperation("stopping");
     setMessage("");
     try {
@@ -861,10 +890,14 @@ export function RouterPage({
     } catch {
       setOperation(null);
       setMessage(actionErrorKey("stop"));
+    } finally {
+      actionLock.current = false;
     }
   }
 
   async function retryHealth() {
+    if (actionLock.current) return;
+    actionLock.current = true;
     setCheckingHealth(true);
     setMessage("");
     try {
@@ -875,6 +908,7 @@ export function RouterPage({
       setMessage(actionErrorKey("health"));
     } finally {
       setCheckingHealth(false);
+      actionLock.current = false;
     }
   }
 
@@ -1011,6 +1045,10 @@ export function RouterPage({
               {status?.listen_addr ?? "127.0.0.1:19099"}
             </dd>
           </div>
+          <div>
+            <dt>{t("router.lastChecked.label")}</dt>
+            <dd>{lastChecked}</dd>
+          </div>
         </dl>
 
         {message && (message !== "router.error.start" || !failureGuidance) && (
@@ -1056,45 +1094,6 @@ export function RouterPage({
               </div>
             </div>
           </section>
-        )}
-
-        {failureGuidance && (
-          <details
-            className="failure-diagnostics"
-            aria-label={t("router.failureDiagnostics")}
-          >
-            <summary>
-              <span>{t("router.failureTechnicalDetails")}</span>
-              <small>{t("router.failureTechnicalHint")}</small>
-            </summary>
-            <div className="failure-diagnostics__body">
-              {failureDiagnostics.lastError && (
-                <div>
-                  <strong>{t("router.failureLastError")}</strong>
-                  <code>{failureDiagnostics.lastError}</code>
-                </div>
-              )}
-              {failureDiagnostics.recentLogs.length > 0 && (
-                <div>
-                  <strong>{t("router.failureRecentLogs")}</strong>
-                  <ol>
-                    {failureDiagnostics.recentLogs.map((line, index) => (
-                      <li key={`${index}-${line}`}>
-                        <code>{line}</code>
-                      </li>
-                    ))}
-                  </ol>
-                </div>
-              )}
-              <button
-                type="button"
-                className="text-button failure-diagnostics__action"
-                onClick={onNavigateToLogs}
-              >
-                {t("router.viewFullRuntimeLogs")}
-              </button>
-            </div>
-          </details>
         )}
 
         {currentState === "occupied" && (
@@ -1280,6 +1279,45 @@ export function RouterPage({
             {t("router.retryHealth")}
           </button>
         </div>
+
+        {failureGuidance && (
+          <details
+            className="failure-diagnostics"
+            aria-label={t("router.failureDiagnostics")}
+          >
+            <summary>
+              <span>{t("router.failureTechnicalDetails")}</span>
+              <small>{t("router.failureTechnicalHint")}</small>
+            </summary>
+            <div className="failure-diagnostics__body">
+              {failureDiagnostics.lastError && (
+                <div>
+                  <strong>{t("router.failureLastError")}</strong>
+                  <code>{failureDiagnostics.lastError}</code>
+                </div>
+              )}
+              {failureDiagnostics.recentLogs.length > 0 && (
+                <div>
+                  <strong>{t("router.failureRecentLogs")}</strong>
+                  <ol>
+                    {failureDiagnostics.recentLogs.map((line, index) => (
+                      <li key={`${index}-${line}`}>
+                        <code>{line}</code>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              )}
+              <button
+                type="button"
+                className="text-button failure-diagnostics__action"
+                onClick={onNavigateToLogs}
+              >
+                {t("router.viewFullRuntimeLogs")}
+              </button>
+            </div>
+          </details>
+        )}
 
         <div className="router-next">
           <div>

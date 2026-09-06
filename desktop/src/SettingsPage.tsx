@@ -9,6 +9,14 @@ import type {
   UpdateCheckResult,
   UpdateProgress,
 } from "./ipc";
+import type { TranslationKey } from "./locales/zh-CN";
+import { THEMES, useTheme, type ThemeId } from "./theme";
+
+const themeKeys: Record<ThemeId, TranslationKey> = {
+  warm: "settings.theme.warm",
+  light: "settings.theme.light",
+  dark: "settings.theme.dark",
+};
 
 interface SettingsPageProps {
   api: DesktopApi;
@@ -26,6 +34,7 @@ export function SettingsPage({
   onCheckForUpdate,
 }: SettingsPageProps) {
   const { language, setLanguage, t } = useI18n();
+  const { theme, setTheme } = useTheme();
   const [autostart, setAutostart] = useState<boolean | null>(null);
   const [versions, setVersions] = useState<ComponentVersions | null>(null);
   const [paths, setPaths] = useState<DesktopPaths | null>(null);
@@ -208,6 +217,61 @@ export function SettingsPage({
               </select>
             </span>
           </label>
+          <div className="setting-row setting-row--theme">
+            <span>
+              <strong id="settings-theme-label">{t("settings.theme")}</strong>
+              <small>{t("settings.themeDescription")}</small>
+            </span>
+            <div
+              className="theme-picker"
+              role="radiogroup"
+              aria-labelledby="settings-theme-label"
+              onKeyDown={(event) => {
+                if (
+                  event.key !== "ArrowRight" &&
+                  event.key !== "ArrowLeft" &&
+                  event.key !== "ArrowDown" &&
+                  event.key !== "ArrowUp"
+                ) {
+                  return;
+                }
+                event.preventDefault();
+                const delta =
+                  event.key === "ArrowRight" || event.key === "ArrowDown"
+                    ? 1
+                    : -1;
+                const next =
+                  THEMES[
+                    (THEMES.indexOf(theme) + delta + THEMES.length) %
+                      THEMES.length
+                  ];
+                setTheme(next);
+                const nextButton =
+                  event.currentTarget.querySelector<HTMLElement>(
+                    `[data-theme-preview="${next}"]`,
+                  );
+                nextButton?.focus();
+              }}
+            >
+              {THEMES.map((id) => (
+                <button
+                  key={id}
+                  type="button"
+                  role="radio"
+                  data-theme-preview={id}
+                  className={
+                    theme === id ? "theme-option is-active" : "theme-option"
+                  }
+                  aria-checked={theme === id}
+                  tabIndex={theme === id ? 0 : -1}
+                  onClick={() => setTheme(id)}
+                >
+                  <span className="theme-option__swatch" aria-hidden="true" />
+                  {t(themeKeys[id])}
+                </button>
+              ))}
+            </div>
+          </div>
         </section>
 
         <section className="settings-block settings-block--versions">
@@ -379,11 +443,15 @@ export function SettingsPage({
           <dl>
             <div>
               <dt>{t("settings.dataLocation")}</dt>
-              <dd>{paths?.data_dir ?? t("settings.unavailable")}</dd>
+              <dd title={paths?.data_dir}>
+                {paths?.data_dir ?? t("settings.unavailable")}
+              </dd>
             </div>
             <div>
               <dt>{t("settings.logLocation")}</dt>
-              <dd>{paths?.log_directory ?? t("settings.unavailable")}</dd>
+              <dd title={paths?.log_directory}>
+                {paths?.log_directory ?? t("settings.unavailable")}
+              </dd>
             </div>
           </dl>
         </section>
