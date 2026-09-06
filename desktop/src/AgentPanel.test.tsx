@@ -2102,6 +2102,10 @@ describe("AgentPanel integration", () => {
         onNavigateToApiKeys={vi.fn()}
       />,
     );
+    const phaseRail = await screen.findByRole("list", {
+      name: "生成预览、审查文件影响与批准项，然后写入配置。",
+    });
+    expect(phaseRail.querySelector(".is-current")).toHaveTextContent("配置");
     fireEvent.click(
       await screen.findByRole("button", { name: /生成写入预览/ }),
     );
@@ -2110,6 +2114,7 @@ describe("AgentPanel integration", () => {
     );
 
     expect(await screen.findByText("成功")).toBeVisible();
+    expect(phaseRail.querySelector(".is-current")).toHaveTextContent("结果");
     expect(screen.getByLabelText(/^主模型$/)).toHaveValue("preset-claude");
     expect(screen.getByLabelText(/claude-primary 显示名称/)).toHaveValue(
       "Reloaded",

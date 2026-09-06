@@ -83,6 +83,9 @@ describe("ApiKeysPage", () => {
 
     await waitFor(() => expect(api.deleteCredential).toHaveBeenCalledOnce());
     expect(screen.getByText("尚未配置")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: "接入凭据" })).toHaveFocus(),
+    );
   });
 
   it("clears the plaintext input when saving fails", async () => {

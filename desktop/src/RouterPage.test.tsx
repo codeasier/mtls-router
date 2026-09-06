@@ -156,11 +156,72 @@ describe("RouterPage states", () => {
     expect(
       screen.getByRole("heading", { name: "健康检查结果已过期" }),
     ).toBeInTheDocument();
+    expect(document.querySelector(".signal")).toHaveTextContent("已过期");
+    expect(screen.queryByText("降级运行")).not.toBeInTheDocument();
     expect(
       screen.queryByRole("heading", { name: "路由运行正常" }),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "停止路由" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "重试健康检查" })).toBeEnabled();
+  });
+
+  it("does not rewrite manager-reported degraded copy when health is also stale", async () => {
+    const api = createMockApi({
+      getRouterStatus: vi.fn().mockResolvedValue({
+        state: "degraded",
+        owner: "desktop",
+      }),
+      retryRouterHealth: vi.fn().mockResolvedValue({
+        status: "degraded",
+        checked_at: new Date(Date.now() - 31_000).toISOString(),
+      }),
+    });
+
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "上游连接不可用" }),
+    ).toBeInTheDocument();
+    expect(document.querySelector(".signal")).toHaveTextContent("降级运行");
+    expect(
+      screen.queryByRole("heading", { name: "健康检查结果已过期" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("treats expired unknown health as stale instead of upstream failure", async () => {
+    const api = createMockApi({
+      getRouterStatus: vi.fn().mockResolvedValue({
+        state: "desktop_owned",
+        owner: "desktop",
+      }),
+      retryRouterHealth: vi.fn().mockResolvedValue({
+        status: "unknown",
+        checked_at: new Date(Date.now() - 31_000).toISOString(),
+      }),
+    });
+
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "健康检查结果已过期" }),
+    ).toBeInTheDocument();
+    expect(document.querySelector(".signal")).toHaveTextContent("已过期");
+    expect(
+      screen.queryByRole("heading", { name: "上游连接不可用" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("降级运行")).not.toBeInTheDocument();
   });
 
   it("rerenders when fresh health crosses the thirty second stale boundary", async () => {

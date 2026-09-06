@@ -227,30 +227,30 @@ export function SettingsPage({
               role="radiogroup"
               aria-labelledby="settings-theme-label"
               onKeyDown={(event) => {
-                if (
-                  event.key !== "ArrowRight" &&
-                  event.key !== "ArrowLeft" &&
-                  event.key !== "ArrowDown" &&
-                  event.key !== "ArrowUp"
-                ) {
+                const home = event.key === "Home";
+                const end = event.key === "End";
+                const nextArrow =
+                  event.key === "ArrowRight" || event.key === "ArrowDown";
+                const prevArrow =
+                  event.key === "ArrowLeft" || event.key === "ArrowUp";
+                if (!home && !end && !nextArrow && !prevArrow) {
                   return;
                 }
                 event.preventDefault();
-                const delta =
-                  event.key === "ArrowRight" || event.key === "ArrowDown"
-                    ? 1
-                    : -1;
-                const next =
-                  THEMES[
-                    (THEMES.indexOf(theme) + delta + THEMES.length) %
-                      THEMES.length
-                  ];
+                const next = home
+                  ? THEMES[0]
+                  : end
+                    ? THEMES[THEMES.length - 1]
+                    : THEMES[
+                        (THEMES.indexOf(theme) +
+                          (nextArrow ? 1 : -1) +
+                          THEMES.length) %
+                          THEMES.length
+                      ];
                 setTheme(next);
-                const nextButton =
-                  event.currentTarget.querySelector<HTMLElement>(
-                    `[data-theme-preview="${next}"]`,
-                  );
-                nextButton?.focus();
+                event.currentTarget
+                  .querySelector<HTMLElement>(`[data-theme-preview="${next}"]`)
+                  ?.focus();
               }}
             >
               {THEMES.map((id) => (

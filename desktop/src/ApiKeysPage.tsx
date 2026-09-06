@@ -21,6 +21,7 @@ function errorTranslation(error: unknown): TranslationKey {
 
 export function ApiKeysPage({ api }: { api: DesktopApi }) {
   const { language, t } = useI18n();
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [summary, setSummary] = useState<CredentialSummary | null>(null);
   const [paths, setPaths] = useState<DesktopPaths | null>(null);
@@ -96,6 +97,9 @@ export function ApiKeysPage({ api }: { api: DesktopApi }) {
     } finally {
       setOperation("");
       operationLock.current = false;
+      window.requestAnimationFrame(() => {
+        (deleteTriggerRef.current ?? headingRef.current)?.focus();
+      });
     }
   }
 
@@ -125,7 +129,9 @@ export function ApiKeysPage({ api }: { api: DesktopApi }) {
     <section className="apikey-panel" aria-labelledby="apikey-heading">
       <header className="apikey-heading">
         <p className="overline">{t("apikey.overline")}</p>
-        <h2 id="apikey-heading">{t("apikey.heading")}</h2>
+        <h2 id="apikey-heading" ref={headingRef} tabIndex={-1}>
+          {t("apikey.heading")}
+        </h2>
       </header>
 
       {error && (

@@ -80,11 +80,15 @@ describe("localization resources", () => {
     for (const catalog of [en, zhCN]) {
       expect(catalog["router.state.stale.title"]).toBeTruthy();
       expect(catalog["router.state.stale.detail"]).toBeTruthy();
+      expect(catalog["router.state.stale.signal"]).toBeTruthy();
       expect(catalog["router.state.stale.title"]).not.toEqual(
         catalog["router.state.healthy.title"],
       );
       expect(catalog["router.state.stale.title"]).not.toEqual(
         catalog["router.state.degraded.title"],
+      );
+      expect(catalog["router.state.stale.signal"]).not.toEqual(
+        catalog["router.state.degraded.signal"],
       );
       expect(catalog["router.state.stale.detail"]).toMatch(
         /not a current healthy|不能当作健康/,

@@ -46,9 +46,9 @@ export const zhCN = {
   "router.state.healthy.detail": "本地进程可用，上游 mTLS 健康检查已通过。",
   "router.state.degraded.title": "上游连接不可用",
   "router.state.degraded.signal": "降级运行",
-  "router.state.degraded.detail":
-    "路由进程仍在运行，但上游健康检查失败或已过期。",
+  "router.state.degraded.detail": "路由进程仍在运行，但上游健康检查失败。",
   "router.state.stale.title": "健康检查结果已过期",
+  "router.state.stale.signal": "已过期",
   "router.state.stale.detail":
     "路由进程仍在运行。请等待下一次自动同步，或重试健康检查。当前结果不能当作健康。",
   "router.state.external.title": "外部路由正在运行",

@@ -200,6 +200,33 @@ describe("SettingsPage", () => {
     );
   });
 
+  it("moves theme selection with arrows, Home, and End", async () => {
+    await openSettings();
+    const group = screen.getByRole("radiogroup", { name: "外观主题" });
+    const warm = screen.getByRole("radio", { name: "暖沙" });
+    const light = screen.getByRole("radio", { name: "浅色" });
+    const dark = screen.getByRole("radio", { name: "深色" });
+
+    expect(warm).toHaveAttribute("tabIndex", "0");
+    expect(light).toHaveAttribute("tabIndex", "-1");
+    warm.focus();
+    fireEvent.keyDown(group, { key: "ArrowRight" });
+    expect(light).toBeChecked();
+    expect(light).toHaveFocus();
+    fireEvent.keyDown(group, { key: "ArrowLeft" });
+    expect(warm).toBeChecked();
+    expect(warm).toHaveFocus();
+    fireEvent.keyDown(group, { key: "ArrowLeft" });
+    expect(dark).toBeChecked();
+    expect(dark).toHaveFocus();
+    fireEvent.keyDown(group, { key: "Home" });
+    expect(warm).toBeChecked();
+    expect(warm).toHaveFocus();
+    fireEvent.keyDown(group, { key: "End" });
+    expect(dark).toBeChecked();
+    expect(dark).toHaveFocus();
+  });
+
   it("switches appearance themes and persists only the theme key", async () => {
     await openSettings();
     const light = screen.getByRole("radio", { name: "浅色" });

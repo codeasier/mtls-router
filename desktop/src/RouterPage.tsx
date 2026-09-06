@@ -172,15 +172,21 @@ function displayCopy(
   t: Translator,
   currentState: ViewState,
   observedHealth: HealthState,
+  reportedState: RouterStatus["state"] | undefined,
 ): StateCopy {
   const copy = getStateCopy(t)[currentState];
-  if (observedHealth !== "stale" || currentState !== "degraded") {
+  if (
+    observedHealth !== "stale" ||
+    currentState !== "degraded" ||
+    reportedState === "degraded"
+  ) {
     return copy;
   }
   return {
     ...copy,
     title: t("router.state.stale.title"),
     detail: t("router.state.stale.detail"),
+    signal: t("router.state.stale.signal"),
   };
 }
 
@@ -303,9 +309,9 @@ function sanitizedFailureDiagnostics(
 
 function healthState(health: RouterHealth | null, now: number): HealthState {
   if (!health) return "unknown";
-  if (health.status === "unknown") return "unknown";
   const checkedAt = Date.parse(health.checked_at);
   if (!Number.isFinite(checkedAt) || now - checkedAt > 30_000) return "stale";
+  if (health.status === "unknown") return "unknown";
   return health.status === "ok" ? "healthy" : "degraded";
 }
 
@@ -779,7 +785,7 @@ export function RouterPage({
     statusReadFailed,
     reinstallRequired,
   );
-  const copy = displayCopy(t, currentState, observedHealth);
+  const copy = displayCopy(t, currentState, observedHealth, status?.state);
   const failureDiagnostics = sanitizedFailureDiagnostics(status);
   const failureGuidance =
     failureDiagnostics.lastError || failureDiagnostics.recentLogs.length > 0
@@ -787,6 +793,7 @@ export function RouterPage({
       : null;
   const canStart =
     !operation &&
+    !checkingHealth &&
     !reinstallRequired &&
     (currentState === "not-started" ||
       currentState === "failed" ||

@@ -13,7 +13,7 @@ export const en: Record<TranslationKey, string> = {
   "nav.router": "Router control",
   "nav.routerShort": "Router",
   "nav.agents": "Agent configuration",
-  "nav.agentsShort": "Agents",
+  "nav.agentsShort": "Agent",
   "nav.apiKeys": "API key",
   "nav.apiKeysShort": "Key",
   "nav.usage": "Usage",
@@ -51,8 +51,9 @@ export const en: Record<TranslationKey, string> = {
   "router.state.degraded.title": "Upstream unavailable",
   "router.state.degraded.signal": "Degraded",
   "router.state.degraded.detail":
-    "The router is still running, but the upstream health check failed or expired.",
+    "The router is still running, but the upstream health check failed.",
   "router.state.stale.title": "Health check is out of date",
+  "router.state.stale.signal": "Out of date",
   "router.state.stale.detail":
     "The router is still running. Wait for the next automatic sync, or retry the health check. This result is not a current healthy status.",
   "router.state.external.title": "External router is running",

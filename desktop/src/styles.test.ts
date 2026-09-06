@@ -403,6 +403,10 @@ describe("appearance themes", () => {
     expect(light).toMatch(/--signal:\s*#3b82f6;/);
     expect(light).toMatch(/--good:\s*#3b82f6;/);
     expect(light).toMatch(/--danger:\s*#3a3a3a;/);
+    expect(light).toMatch(/--warning:\s*#6b5e3a;/);
+    expect(light).toMatch(/--muted:\s*#636366;/);
+    expect(light).not.toMatch(/--warning:\s*#8e8e93;/);
+    expect(light).not.toMatch(/--muted:\s*#8e8e93;/);
     expect(light).not.toMatch(
       /#c2410c|#b94722|#2c2c2a|#eeeeee|#fafafa|#fafaf8|#f3f0ea|#f6f5f2|#f7f2ea/,
     );

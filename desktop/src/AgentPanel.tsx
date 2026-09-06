@@ -50,13 +50,13 @@ function phaseMessage(kind: string) {
   return "agents.discovering" as const;
 }
 
-function activePhase(kind: string) {
+function activePhase(kind: string, hasResult: boolean) {
+  if (kind === "writing" || kind === "reloading") return "write";
+  if (hasResult || kind === "reload-failed") return "result";
   if (kind === "loading") return "discover";
   if (kind === "readonly" || kind === "blocked-dirty" || kind === "editing")
     return "configure";
   if (kind === "preview-loading" || kind === "previewing") return "preview";
-  if (kind === "writing" || kind === "reloading") return "write";
-  if (kind === "reload-failed") return "result";
   return "configure";
 }
 
@@ -357,7 +357,8 @@ export function AgentPanel({
           <li
             key={phase}
             className={
-              activePhase(controller.phase.kind) === phase
+              activePhase(controller.phase.kind, Boolean(controller.result)) ===
+              phase
                 ? "is-current"
                 : undefined
             }

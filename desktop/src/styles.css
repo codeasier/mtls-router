@@ -79,17 +79,17 @@
   --signal: #3b82f6;
   --signal-hover: #2563eb;
   --signal-soft: #e8f1fc;
-  --warning: #8e8e93;
+  --warning: #6b5e3a;
   --warning-soft: #f0f0f0;
   --danger: #3a3a3a;
   --danger-hover: #1c1c1e;
   --danger-soft: #f0f0f0;
   --good: #3b82f6;
   --good-soft: #e8f1fc;
-  --muted: #8e8e93;
+  --muted: #636366;
   --log: #ffffff;
   --log-ink: #3a3a3a;
-  --log-muted: #8e8e93;
+  --log-muted: #636366;
   --log-line: #e8e8e8;
   --log-hover: #f5f5f5;
   --on-signal: #ffffff;
@@ -112,7 +112,7 @@
   --scrim-shadow: 0 22px 60px rgba(0, 0, 0, 0.18);
   --catalog: #f0f0f0;
   --catalog-ink: #3a3a3a;
-  --catalog-muted: #8e8e93;
+  --catalog-muted: #636366;
 }
 
 [data-theme="dark"] {
