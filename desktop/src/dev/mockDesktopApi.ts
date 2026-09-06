@@ -20,11 +20,12 @@ import {
   fixtureHealthOk,
   fixtureOccupant,
   fixtureOwnedStatus,
+  initialStatusForMockScenario,
   mockCommandError,
   parseMockScenario,
-  pollSnapshotFor,
   previewFor,
   resolveMockScenarioFromLocation,
+  snapshotForMockScenario,
   type MockScenario,
   writeResultFor,
 } from "./fixtures";
@@ -63,7 +64,7 @@ export function createMockDesktopApi(
   const browserMockMarker = "__MTLS_BROWSER_MOCK__";
   const scenario = options.scenario ?? resolveMockScenarioFromLocation();
   let status: RouterStatus = structuredClone(
-    options.initialStatus ?? fixtureAbsentStatus,
+    options.initialStatus ?? initialStatusForMockScenario(scenario),
   );
   let credential = structuredClone(
     options.credentialPresent === false
@@ -88,7 +89,11 @@ export function createMockDesktopApi(
 
   function emitPoll() {
     revision += 1;
-    const snapshot = pollSnapshotFor(status, revision);
+    const snapshot = snapshotForMockScenario(
+      currentScenario(),
+      status,
+      revision,
+    );
     for (const listener of pollListeners) listener(snapshot);
   }
 
@@ -106,7 +111,7 @@ export function createMockDesktopApi(
   return {
     getPollSnapshot: async () => {
       revision += 1;
-      return pollSnapshotFor(status, revision);
+      return snapshotForMockScenario(currentScenario(), status, revision);
     },
     subscribePollSnapshots: async (listener) => {
       pollListeners.add(listener);

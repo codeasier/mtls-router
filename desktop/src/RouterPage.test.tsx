@@ -16,6 +16,17 @@ const freshHealthy: RouterHealth = {
   checked_at: new Date().toISOString(),
 };
 
+function processStatusValue() {
+  const value = screen
+    .getByText("进程状态")
+    .closest("div")
+    ?.querySelector("dd");
+  if (!value) {
+    throw new Error("missing process status value");
+  }
+  return value;
+}
+
 describe("RouterPage states", () => {
   it.each<{
     name: string;
@@ -154,10 +165,108 @@ describe("RouterPage states", () => {
 
     expect(await screen.findByText("结果已过期")).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { name: "上游连接不可用" }),
+      screen.getByRole("heading", { name: "健康检查结果已过期" }),
     ).toBeInTheDocument();
+    expect(document.querySelector(".signal")).toHaveTextContent("已过期");
+    expect(processStatusValue()).toHaveTextContent("运行中");
+    expect(screen.queryByText("降级运行")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "路由运行正常" }),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "停止路由" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "重试健康检查" })).toBeEnabled();
+  });
+
+  it("does not rewrite manager-reported degraded copy when health is also stale", async () => {
+    const api = createMockApi({
+      getRouterStatus: vi.fn().mockResolvedValue({
+        state: "degraded",
+        owner: "desktop",
+      }),
+      retryRouterHealth: vi.fn().mockResolvedValue({
+        status: "degraded",
+        checked_at: new Date(Date.now() - 31_000).toISOString(),
+      }),
+    });
+
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "上游连接不可用" }),
+    ).toBeInTheDocument();
+    expect(document.querySelector(".signal")).toHaveTextContent("降级运行");
+    expect(
+      screen.queryByRole("heading", { name: "健康检查结果已过期" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("treats expired unknown health as stale instead of upstream failure", async () => {
+    const api = createMockApi({
+      getRouterStatus: vi.fn().mockResolvedValue({
+        state: "desktop_owned",
+        owner: "desktop",
+      }),
+      retryRouterHealth: vi.fn().mockResolvedValue({
+        status: "unknown",
+        checked_at: new Date(Date.now() - 31_000).toISOString(),
+      }),
+    });
+
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "健康检查结果已过期" }),
+    ).toBeInTheDocument();
+    expect(document.querySelector(".signal")).toHaveTextContent("已过期");
+    expect(processStatusValue()).toHaveTextContent("运行中");
+    expect(
+      screen.queryByRole("heading", { name: "上游连接不可用" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("降级运行")).not.toBeInTheDocument();
+  });
+
+  it("treats fresh unknown health as pending instead of upstream failure", async () => {
+    const api = createMockApi({
+      getRouterStatus: vi.fn().mockResolvedValue({
+        state: "desktop_owned",
+        owner: "desktop",
+      }),
+      retryRouterHealth: vi.fn().mockResolvedValue({
+        status: "unknown",
+        checked_at: new Date().toISOString(),
+      }),
+    });
+
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "尚未得到健康检查结果" }),
+    ).toBeInTheDocument();
+    expect(document.querySelector(".signal")).toHaveTextContent("等待检查");
+    expect(processStatusValue()).toHaveTextContent("运行中");
+    expect(screen.getByText("等待检查", { selector: ".health-value" }));
+    expect(
+      screen.queryByRole("heading", { name: "上游连接不可用" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("降级运行")).not.toBeInTheDocument();
   });
 
   it("rerenders when fresh health crosses the thirty second stale boundary", async () => {
@@ -836,6 +945,154 @@ describe("RouterPage states", () => {
   });
 });
 
+describe("RouterPage display hierarchy", () => {
+  function renderRouter(api: ReturnType<typeof createMockApi>) {
+    return renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
+  }
+
+  function follows(earlier: HTMLElement, later: HTMLElement) {
+    expect(
+      earlier.compareDocumentPosition(later) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).not.toBe(0);
+  }
+
+  it("leads a healthy router with the running conclusion, address, and Stop", async () => {
+    renderRouter(
+      createMockApi({
+        getRouterStatus: vi.fn().mockResolvedValue({
+          state: "desktop_owned",
+          owner: "desktop",
+          listen_addr: "127.0.0.1:19099",
+        }),
+        retryRouterHealth: vi.fn().mockResolvedValue(freshHealthy),
+      }),
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "路由运行正常" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("127.0.0.1:19099")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "停止路由" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "启动路由" })).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: "强制终止占用进程" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("路由失败诊断")).not.toBeInTheDocument();
+    expect(screen.queryByText("桌面组件无效")).not.toBeInTheDocument();
+  });
+
+  it("keeps failed next steps and Start above folded diagnostics", async () => {
+    renderRouter(
+      createMockApi({
+        getRouterStatus: vi.fn().mockResolvedValue({
+          state: "start_failed",
+          last_error: "stage=process_exit code=ROUTER_START_FAILED",
+          recent_logs: ["safe diagnostic line"],
+        }),
+      }),
+    );
+
+    const heading = await screen.findByRole("heading", {
+      name: "路由启动失败",
+    });
+    const nextStep = screen.getByText("建议处理");
+    const actions = screen.getByLabelText("路由操作");
+    const details = screen.getByLabelText("路由失败诊断");
+
+    expect(details).not.toHaveAttribute("open");
+    expect(screen.getByRole("button", { name: "启动路由" })).toBeEnabled();
+    expect(
+      screen.queryByRole("button", { name: "强制终止占用进程" }),
+    ).not.toBeInTheDocument();
+    follows(heading, nextStep);
+    follows(nextStep, actions);
+    follows(actions, details);
+  });
+
+  it("keeps occupied recovery in the summary and Stop disabled", async () => {
+    renderRouter(
+      createMockApi({
+        getRouterStatus: vi.fn().mockResolvedValue({
+          state: "unknown_occupant",
+          listen_addr: "127.0.0.1:19099",
+        }),
+        inspectRouterOccupant: vi.fn().mockResolvedValue({
+          pid: 4242,
+          verification_mode: "verified_identity",
+          process_name: "example-server",
+          executable: "/safe/bin/example-server",
+          listen_addr: "127.0.0.1:19099",
+          recovery: { action: "force_terminate" },
+          confirmation_token: "opaque-confirmation-token",
+          expires_at: "2026-07-18T12:00:30Z",
+        }),
+      }),
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "端口已被占用" }),
+    ).toBeInTheDocument();
+    const recovery = await screen.findByRole("heading", {
+      name: "检查端口占用进程",
+    });
+    expect(screen.getByRole("button", { name: "停止路由" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "强制终止占用进程" }),
+    ).toBeEnabled();
+    expect(screen.queryByText("桌面组件无效")).not.toBeInTheDocument();
+    follows(recovery, screen.getByLabelText("路由操作"));
+  });
+
+  it("surfaces reoccupied observation without offering Stop", async () => {
+    let observer: ((snapshot: PollSnapshot) => void) | undefined;
+    renderRouter(
+      createMockApi({
+        getPollSnapshot: vi.fn().mockResolvedValue({
+          revision: 1,
+          status: { state: "unknown_occupant" },
+        }),
+        subscribePollSnapshots: vi.fn(async (listener) => {
+          observer = listener;
+          return () => undefined;
+        }),
+        inspectRouterOccupant: vi.fn().mockResolvedValue({
+          pid: 4242,
+          verification_mode: "verified_identity",
+          process_name: "example-server",
+          executable: "/safe/bin/example-server",
+          listen_addr: "127.0.0.1:19099",
+          recovery: { action: "force_terminate" },
+          confirmation_token: "opaque-confirmation-token",
+          expires_at: "2026-07-18T12:00:30Z",
+        }),
+      }),
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "端口已被占用" }),
+    ).toBeInTheDocument();
+
+    act(() =>
+      observer?.({
+        revision: 2,
+        status: { state: "unknown_occupant" },
+        release_observation: { state: "reoccupied" },
+      }),
+    );
+
+    expect(
+      await screen.findByText("替代进程或监管器重新占用端口"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "停止路由" })).toBeDisabled();
+  });
+});
+
 describe("RouterPage actions", () => {
   it("starts, refreshes status, and retries health", async () => {
     const getRouterStatus = vi
@@ -864,6 +1121,122 @@ describe("RouterPage actions", () => {
     expect(api.startRouter).toHaveBeenCalledOnce();
     expect(getRouterStatus).toHaveBeenCalledTimes(2);
     expect(api.retryRouterHealth).toHaveBeenCalledOnce();
+  });
+
+  it("blocks a second start click and shows the starting summary", async () => {
+    let finishStart!: (status: RouterStatus) => void;
+    const startRouter = vi.fn(
+      () =>
+        new Promise<RouterStatus>((resolve) => {
+          finishStart = resolve;
+        }),
+    );
+    const api = createMockApi({ startRouter });
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
+    const start = await screen.findByRole("button", { name: "启动路由" });
+
+    fireEvent.click(start);
+    fireEvent.click(start);
+
+    expect(
+      await screen.findByRole("heading", { name: "正在启动路由" }),
+    ).toBeInTheDocument();
+    expect(start).toBeDisabled();
+    expect(screen.getByRole("button", { name: "停止路由" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "重试健康检查" })).toBeDisabled();
+    expect(startRouter).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      finishStart({
+        state: "desktop_owned",
+        owner: "desktop",
+        listen_addr: "127.0.0.1:19099",
+      });
+    });
+  });
+
+  it("blocks a second stop click and shows the stopping summary", async () => {
+    let finishStop!: (status: RouterStatus) => void;
+    const stopRouter = vi.fn(
+      () =>
+        new Promise<RouterStatus>((resolve) => {
+          finishStop = resolve;
+        }),
+    );
+    const api = createMockApi({
+      getRouterStatus: vi.fn().mockResolvedValue({
+        state: "desktop_owned",
+        owner: "desktop",
+      }),
+      stopRouter,
+    });
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
+    const stop = await screen.findByRole("button", { name: "停止路由" });
+    await waitFor(() => expect(stop).toBeEnabled());
+
+    fireEvent.click(stop);
+    fireEvent.click(stop);
+
+    expect(
+      await screen.findByRole("heading", { name: "正在停止路由" }),
+    ).toBeInTheDocument();
+    expect(stop).toBeDisabled();
+    expect(stopRouter).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      finishStop({ state: "absent" });
+    });
+  });
+
+  it("blocks a second health retry and shows the checking readout", async () => {
+    let finishRetry!: (health: RouterHealth) => void;
+    const retryRouterHealth = vi.fn(
+      () =>
+        new Promise<RouterHealth>((resolve) => {
+          finishRetry = resolve;
+        }),
+    );
+    const api = createMockApi({
+      getPollSnapshot: vi.fn().mockResolvedValue({
+        revision: 1,
+        status: { state: "desktop_owned", owner: "desktop" },
+        health: freshHealthy,
+      }),
+      retryRouterHealth,
+    });
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
+    const retry = await screen.findByRole("button", { name: "重试健康检查" });
+    await waitFor(() => expect(retry).toBeEnabled());
+
+    fireEvent.click(retry);
+    fireEvent.click(retry);
+
+    expect(await screen.findByText("检查中")).toBeInTheDocument();
+    expect(retry).toBeDisabled();
+    expect(screen.getByRole("button", { name: "停止路由" })).toBeDisabled();
+    expect(retryRouterHealth).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      finishRetry(freshHealthy);
+    });
   });
 
   it("stops only a desktop-owned router", async () => {

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
+import { ConfirmDialog } from "./ConfirmDialog";
 import { useI18n } from "./i18n";
 import type { CredentialSummary, DesktopApi, DesktopPaths } from "./ipc";
 import type { TranslationKey } from "./locales/zh-CN";
@@ -20,12 +21,17 @@ function errorTranslation(error: unknown): TranslationKey {
 
 export function ApiKeysPage({ api }: { api: DesktopApi }) {
   const { language, t } = useI18n();
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [summary, setSummary] = useState<CredentialSummary | null>(null);
   const [paths, setPaths] = useState<DesktopPaths | null>(null);
   const [show, setShow] = useState(false);
   const [operation, setOperation] = useState<"" | "save" | "delete">("");
   const [error, setError] = useState<TranslationKey | "">("");
+  const [deleteConfirmationOpen, setDeleteConfirmationOpen] = useState(false);
+  const deleteTriggerRef = useRef<HTMLButtonElement>(null);
+  const deleteRestoreFocusRef = useRef<HTMLElement | null>(null);
+  const operationLock = useRef(false);
 
   function clearInput() {
     if (inputRef.current) inputRef.current.value = "";
@@ -57,13 +63,14 @@ export function ApiKeysPage({ api }: { api: DesktopApi }) {
 
   async function save(event: React.FormEvent) {
     event.preventDefault();
-    if (operation || !inputRef.current) return;
+    if (operationLock.current || operation || !inputRef.current) return;
     const key = inputRef.current.value.trim();
     if (!key || new TextEncoder().encode(key).length > MAX_KEY_BYTES) {
       clearInput();
       setError("apikey.error.length");
       return;
     }
+    operationLock.current = true;
     setOperation("save");
     setError("");
     try {
@@ -73,11 +80,13 @@ export function ApiKeysPage({ api }: { api: DesktopApi }) {
     } finally {
       clearInput();
       setOperation("");
+      operationLock.current = false;
     }
   }
 
   async function remove() {
-    if (operation) return;
+    if (operationLock.current || operation) return;
+    operationLock.current = true;
     setOperation("delete");
     setError("");
     try {
@@ -87,7 +96,26 @@ export function ApiKeysPage({ api }: { api: DesktopApi }) {
       setError(errorTranslation(deleteError));
     } finally {
       setOperation("");
+      operationLock.current = false;
+      window.requestAnimationFrame(() => {
+        (deleteTriggerRef.current ?? headingRef.current)?.focus();
+      });
     }
+  }
+
+  function openDeleteConfirmation() {
+    deleteRestoreFocusRef.current =
+      document.activeElement instanceof HTMLElement &&
+      document.activeElement !== document.body
+        ? document.activeElement
+        : null;
+    setDeleteConfirmationOpen(true);
+  }
+
+  function cancelDeleteConfirmation() {
+    setDeleteConfirmationOpen(false);
+    (deleteRestoreFocusRef.current ?? deleteTriggerRef.current)?.focus();
+    deleteRestoreFocusRef.current = null;
   }
 
   const savedAt = summary?.saved_at
@@ -101,7 +129,9 @@ export function ApiKeysPage({ api }: { api: DesktopApi }) {
     <section className="apikey-panel" aria-labelledby="apikey-heading">
       <header className="apikey-heading">
         <p className="overline">{t("apikey.overline")}</p>
-        <h2 id="apikey-heading">{t("apikey.heading")}</h2>
+        <h2 id="apikey-heading" ref={headingRef} tabIndex={-1}>
+          {t("apikey.heading")}
+        </h2>
       </header>
 
       {error && (
@@ -177,8 +207,9 @@ export function ApiKeysPage({ api }: { api: DesktopApi }) {
             {summary?.present && (
               <button
                 type="button"
+                ref={deleteTriggerRef}
                 className="text-button apikey-delete"
-                onClick={() => void remove()}
+                onClick={openDeleteConfirmation}
                 disabled={Boolean(operation)}
               >
                 {operation === "delete"
@@ -207,6 +238,21 @@ export function ApiKeysPage({ api }: { api: DesktopApi }) {
           </p>
         </aside>
       </section>
+      {deleteConfirmationOpen && (
+        <ConfirmDialog
+          title={t("apikey.deleteConfirm.title")}
+          description={t("apikey.deleteConfirm.description")}
+          confirmLabel={t("apikey.deleteConfirm.confirm")}
+          cancelLabel={t("apikey.deleteConfirm.cancel")}
+          danger
+          onCancel={cancelDeleteConfirmation}
+          onConfirm={() => {
+            setDeleteConfirmationOpen(false);
+            deleteRestoreFocusRef.current = null;
+            void remove();
+          }}
+        />
+      )}
     </section>
   );
 }

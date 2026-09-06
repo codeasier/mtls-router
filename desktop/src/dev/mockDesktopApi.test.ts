@@ -156,6 +156,48 @@ describe("createMockDesktopApi", () => {
     ).rejects.toMatchObject({ code: "AGENT_WRITE_REVISION_MISMATCH" });
   });
 
+  it.each([
+    ["router-occupied", { state: "unknown_occupant" }, {}],
+    ["router-stale", { state: "desktop_owned" }, { health: { status: "ok" } }],
+    [
+      "router-unavailable",
+      undefined,
+      { status_error: { code: "OPERATION_TIMEOUT" } },
+    ],
+    [
+      "router-reinstall",
+      undefined,
+      { status_error: { code: "SIDECAR_MISSING" } },
+    ],
+    [
+      "router-reoccupied",
+      { state: "unknown_occupant" },
+      { release_observation: { state: "reoccupied" } },
+    ],
+  ] as const satisfies ReadonlyArray<
+    readonly [MockScenario, { state?: string } | undefined, object]
+  >)(
+    "exposes the %s router fixture without touching real processes",
+    async (scenario, status, extra) => {
+      const api = createMockDesktopApi({ scenario });
+      const snapshot = await api.getPollSnapshot();
+      if (status) {
+        expect(snapshot.status?.state).toBe(status.state);
+      } else {
+        expect(snapshot.status).toBeUndefined();
+      }
+      expect(snapshot).toMatchObject(extra);
+      if (scenario === "router-occupied") {
+        expect(snapshot.health).toBeUndefined();
+      }
+      if (scenario === "router-stale") {
+        expect(Date.parse(snapshot.health?.checked_at ?? "")).toBeLessThan(
+          Date.now() - 30_000,
+        );
+      }
+    },
+  );
+
   it("exposes a desktop-owned fixture status when requested", async () => {
     const api = createMockDesktopApi({ initialStatus: fixtureOwnedStatus });
     expect(await api.getRouterStatus()).toEqual(fixtureOwnedStatus);

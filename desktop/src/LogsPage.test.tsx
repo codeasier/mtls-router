@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -11,6 +11,16 @@ import { LogsPage } from "./LogsPage";
 import { createMockApi } from "./test/api";
 import { renderWithI18n } from "./test/render";
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 const writeText = vi.fn().mockResolvedValue(undefined);
 
 beforeEach(() => {
@@ -22,6 +32,48 @@ beforeEach(() => {
 });
 
 describe("LogsPage", () => {
+  it("distinguishes loading, empty, and populated log states", async () => {
+    const pending = deferred<{ lines: string[] }>();
+    const api = createMockApi({
+      getRouterLogs: vi.fn(() => pending.promise),
+    });
+    const view = renderWithI18n(<LogsPage api={api} />);
+
+    const log = screen.getByRole("log");
+    expect(log).toHaveClass("log-screen--scroll");
+    expect(log).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByText("正在读取受限范围...")).toBeVisible();
+
+    await act(async () => pending.resolve({ lines: [] }));
+    expect(await screen.findByText("暂无路由日志")).toBeVisible();
+    expect(log).toHaveAttribute("aria-busy", "false");
+    expect(screen.queryByText("正在读取受限范围...")).not.toBeInTheDocument();
+
+    view.unmount();
+    const populated = createMockApi({
+      getRouterLogs: vi.fn().mockResolvedValue({ lines: ["safe line"] }),
+    });
+    renderWithI18n(<LogsPage api={populated} />);
+    expect(await screen.findByText("safe line")).toBeVisible();
+    expect(screen.queryByText("暂无路由日志")).not.toBeInTheDocument();
+  });
+
+  it("refreshes the bounded range from the toolbar", async () => {
+    const api = createMockApi({
+      getRouterLogs: vi
+        .fn()
+        .mockResolvedValueOnce({ lines: ["first safe line"] })
+        .mockResolvedValueOnce({ lines: ["second safe line"] }),
+    });
+    renderWithI18n(<LogsPage api={api} />);
+    expect(await screen.findByText("first safe line")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "刷新" }));
+    expect(await screen.findByText("second safe line")).toBeVisible();
+    expect(api.getRouterLogs).toHaveBeenCalledTimes(2);
+    expect(api.getRouterLogs).toHaveBeenNthCalledWith(2, MAX_LOG_LINES);
+  });
+
   it("requests and renders only the bounded recent log range", async () => {
     const api = createMockApi({
       getRouterLogs: vi.fn().mockResolvedValue({

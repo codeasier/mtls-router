@@ -26,7 +26,7 @@ Release asset 集中每个桌面包都有一个 `.sha256` 文件和一个 `signi
 2. 检查 `127.0.0.1:19099`。
 3. 复用由 CLI 安装脚本启动且可信兼容的 router；端口空闲时则启动打包的 router。
 4. 打开 Router 页面，分别检查进程可用性和上游 mTLS 健康状态。
-5. 默认启用当前用户登录时启动。无需管理员权限即可立即在设置中关闭。
+5. 默认启用当前用户登录时启动。无需管理员权限即可立即在设置中关闭。设置页还可选择暖沙、浅色、深色外观主题；选择只留在本机，不会发给 manager。
 
 首次启动绝不会修改 Claude Code、opencode 或 Codex 文件。第二次启动应用只会激活现有窗口，不会再启动一组 manager/router。
 
@@ -44,7 +44,7 @@ Stable 桌面 release 在 Windows x86_64/arm64、macOS Intel/Apple Silicon 和 L
 
 ## Router 所有权和状态
 
-Router 页面会区分本地进程和上游健康。运行中的进程可能处于健康、降级，或健康结果已超过 30 秒的 stale 状态。先前桌面会话或旧协议世代留下的仍在运行的 router 会显示为关联的历史进程。当前桌面可以在不停止进程的情况下接管兼容世代；不兼容世代只有在用户明确执行“启动”、且 router 与前一 manager 的完整身份均通过校验后，才会停止并重建。普通 manager 传输恢复绝不会触发该迁移。
+Router 页面会区分本地进程和上游健康。运行中的进程可能处于健康、当前降级、尚在等待当前结果，或健康结果已超过 30 秒的 stale 状态。当前 unknown 检查会标成等待结果。过期健康（含过期的 unknown 检查）会标成结果已过期，而不是当前上游失败。这两种情况下进程读数仍用进程标签（如运行中 / 外部托管）。manager 明确上报的 degraded 状态即使健康时间戳也已过期，仍保留“上游不可用”文案。先前桌面会话或旧协议世代留下的仍在运行的 router 会显示为关联的历史进程。当前桌面可以在不停止进程的情况下接管兼容世代；不兼容世代只有在用户明确执行“启动”、且 router 与前一 manager 的完整身份均通过校验后，才会停止并重建。普通 manager 传输恢复绝不会触发该迁移。
 Rust 桌面运行时是 `installation.json` 的唯一所有者。稳定 installation ID 用于建立当前安装谱系；其中的 sidecar 哈希仅记录已通过内嵌哈希校验的当前打包二进制。它们不是历史哈希 allowlist，也不授权 protocol 1 或 protocol 3 迁移；旧版迁移授权仍仅依赖受支持的协议谱系以及完整的 router 与前一 manager 进程身份。
 
 - **桌面托管 router：**应用监督一个前台子进程。只有 PID、启动标识、可执行文件标识和所有权都通过检查时，停止和退出操作才可终止它。
@@ -55,7 +55,7 @@ Rust 桌面运行时是 `installation.json` 的唯一所有者。稳定 installa
 - **终止与观察：**在完整身份模式下，manager 成功证明已确认的进程身份变为不存在且端口曾被观察到释放。在 Windows 仅 PID 模式下，成功只证明终止请求成功，并且原 listener PID 已从该精确端口消失；它不独立证明进程已完全结束。两种模式都不启动 router，也不承诺持续释放。桌面端随后在约 10 秒内定期采样状态。**端口保持释放**表示采样检查发现端口已释放且未检测到重新占用；采样发现新占用者时会显示**服务或守护程序重新占用端口**并触发新检查。两次检查之间的重新占用可能无法检测。主动启动 router 会取消观察，避免把桌面自有 router 误报为重新占用。
 - **人工恢复与错误：**如果恢复不可用、你不接受引导或终止失败，请使用操作系统工具识别并停止或重新配置 listener，然后重试。确认阶段权限丢失、终止请求失败和未能及时证明端口释放会分别报告 `OCCUPANT_PERMISSION_DENIED`、`OCCUPANT_TERMINATION_FAILED` 和 `PORT_RELEASE_TIMEOUT`；这些错误都不表示向替代进程发送过信号。
 - **陈旧状态：**PID 或可执行文件不匹配会报告 stale，且不会发送信号。人工清理前先核实进程和状态。
-- **降级或陈旧健康：**router 进程可能仍接受本地连接，但当前无法证明上游可达。请重试健康检查并查看日志；不要把 stale 健康结果当作健康。
+- **降级或陈旧健康：**router 进程可能仍接受本地连接。当前检查失败显示为降级 / 上游不可用；当前 unknown 检查显示为等待结果；超过 30 秒的结果显示为 stale / 已过期。请重试健康检查并查看日志；不要把 stale 或尚未返回的健康结果当作健康，也不要把当前上游失败写成仅仅过期。
 
 桌面端管理的每次启动都会分别写入应用数据目录下的 `mtls-router-logs/YYYY-MM-DD/HH-MM-SS.log`。日志页面跟随当前或最近一次启动；**打开日志位置**则可用于人工查看按会话分组的历史记录。
 
@@ -112,7 +112,7 @@ Rebuild 输出有意只包含托管内容：Claude `settings.json` 只包含托�
 
 ## API key 边界和限制
 
-API 密钥页面会在桌面凭据存储中保存、替换或删除一个全局 API key；webview 只能读取摘要，绝不能回读明文。主导航中独立的「用量」页面展示当前密钥的用量窗口，按模型明细表支持模型多选筛选，以及请求、Token、费用列排序。Rust 一次性加载 key，manager 经可信本地路由查询 `GET /v1/usage`，webview 只收到有界的 per-key 快照（请求数、token、费用、可选配额与按模型明细）。若服务尚未提供该接口，窗口只报告用量不可用，不泄露 key 或上游细节。Agent 总览既不读取也不验证该 key。只有点击卡片操作后，Rust 才会按需为 `agent.models` 加载它，并在 `agent.write` 前再次加载当前保存值。桌面 `ModelFlow` 只包含 Agent、目录和预览模式状态，不包含 API key。Timeout、malformed response、manager restart 或 uncertain delivery 后，secret-bearing 调用绝不会自动 replay。除凭据存储以及 Agent 文件或已批准备份外，应用不会有意把 key 放入桌面或 manager 持久状态、进程参数、环境变量、日志、诊断、model config、catalog/revision token、预览响应或写入响应。
+API 密钥页面会在桌面凭据存储中保存、替换或删除一个全局 API key；webview 只能读取摘要，绝不能回读明文。删除已保存密钥前会先要求确认。主导航中独立的「用量」页面展示当前密钥的用量窗口，按模型明细表支持模型多选筛选，以及请求、Token、费用列排序。Rust 一次性加载 key，manager 经可信本地路由查询 `GET /v1/usage`，webview 只收到有界的 per-key 快照（请求数、token、费用、可选配额与按模型明细）。若服务尚未提供该接口，窗口只报告用量不可用，不泄露 key 或上游细节。Agent 总览既不读取也不验证该 key。只有点击卡片操作后，Rust 才会按需为 `agent.models` 加载它，并在 `agent.write` 前再次加载当前保存值。桌面 `ModelFlow` 只包含 Agent、目录和预览模式状态，不包含 API key。Timeout、malformed response、manager restart 或 uncertain delivery 后，secret-bearing 调用绝不会自动 replay。除凭据存储以及 Agent 文件或已批准备份外，应用不会有意把 key 放入桌面或 manager 持久状态、进程参数、环境变量、日志、诊断、model config、catalog/revision token、预览响应或写入响应。
 
 在清理该 Agent 前，目标 Agent 的配置文件仍需按该 Agent 的要求持久化 key。单 Agent 清理会删除 Agent 文件中的托管凭据，但有意保留桌面全局 key。用户批准的恢复与清理备份也可能持久化旧 key。Rust 每次按需使用 key 时都会把它保存在 zeroizing 内存中，但清除应用引用只是 best effort，不保证能从进程或操作系统内存中进行取证级擦除。
 

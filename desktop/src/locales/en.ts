@@ -13,7 +13,7 @@ export const en: Record<TranslationKey, string> = {
   "nav.router": "Router control",
   "nav.routerShort": "Router",
   "nav.agents": "Agent configuration",
-  "nav.agentsShort": "Agents",
+  "nav.agentsShort": "Agent",
   "nav.apiKeys": "API key",
   "nav.apiKeysShort": "Key",
   "nav.usage": "Usage",
@@ -51,7 +51,15 @@ export const en: Record<TranslationKey, string> = {
   "router.state.degraded.title": "Upstream unavailable",
   "router.state.degraded.signal": "Degraded",
   "router.state.degraded.detail":
-    "The router is still running, but the upstream health check failed or expired.",
+    "The router is still running, but the upstream health check failed.",
+  "router.state.stale.title": "Health check is out of date",
+  "router.state.stale.signal": "Out of date",
+  "router.state.stale.detail":
+    "The router is still running. Wait for the next automatic sync, or retry the health check. This result is not a current healthy status.",
+  "router.state.pending.title": "Health check has no result yet",
+  "router.state.pending.signal": "Awaiting check",
+  "router.state.pending.detail":
+    "The router is still running. The upstream health check has not returned a current result yet.",
   "router.state.external.title": "External router is running",
   "router.state.external.signal": "Externally managed",
   "router.state.external.detail":
@@ -86,6 +94,8 @@ export const en: Record<TranslationKey, string> = {
   "router.health.healthy": "Healthy",
   "router.health.degraded": "Upstream unavailable",
   "router.health.stale": "Result expired",
+  "router.lastChecked.label": "Last checked",
+  "router.lastChecked.never": "Not checked yet",
   "router.error.load":
     "Unable to read router status ({code}). Copy the diagnostic snapshot or export the log bundle for the maintainer before considering a restart.",
   "router.error.start":
@@ -339,6 +349,12 @@ export const en: Record<TranslationKey, string> = {
     "Only the language preference is saved in local browser storage.",
   "settings.chinese": "简体中文",
   "settings.english": "English",
+  "settings.theme": "Appearance",
+  "settings.themeDescription":
+    "The appearance theme is saved only in local browser storage.",
+  "settings.theme.warm": "Warm sand",
+  "settings.theme.light": "Light",
+  "settings.theme.dark": "Dark",
   "settings.components": "Component versions",
   "settings.locations": "Storage locations",
   "settings.dataLocation": "Application data",
@@ -391,6 +407,11 @@ export const en: Record<TranslationKey, string> = {
   "apikey.save": "Save key",
   "apikey.replace": "Replace key",
   "apikey.delete": "Delete saved key",
+  "apikey.deleteConfirm.title": "Delete this API key?",
+  "apikey.deleteConfirm.description":
+    "The local router and Agents will no longer be able to use this credential. The key contents are never read back or displayed.",
+  "apikey.deleteConfirm.confirm": "Delete key",
+  "apikey.deleteConfirm.cancel": "Cancel",
   "apikey.saving": "Saving...",
   "apikey.deleting": "Deleting...",
   "apikey.explainer.usage.heading": "Where it is used",
@@ -579,6 +600,7 @@ export const en: Record<TranslationKey, string> = {
   "agents.stage.preview": "Preview",
   "agents.stage.write": "Write",
   "agents.stage.result": "Result",
+  "agents.card.details": "Path and diagnostic details",
   "agents.continue": "Continue to model discovery",
   "agents.credentialHeading": "Discover models with the saved key",
   "agents.credentialNote":

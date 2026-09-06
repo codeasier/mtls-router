@@ -125,6 +125,9 @@ describe("AgentCleanupPanel", () => {
     const write = screen.getByRole("button", { name: "备份并清理" });
     expect(write).toBeEnabled();
     expect(write).toHaveClass("control-button--danger");
+    expect(
+      document.querySelector(".cleanup-approval-rail")?.contains(write),
+    ).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "返回 Agent 概览" }));
     expect(onBack).toHaveBeenCalledOnce();
     expect(api.getCredential).not.toHaveBeenCalled();

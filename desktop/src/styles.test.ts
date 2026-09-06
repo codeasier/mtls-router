@@ -257,6 +257,201 @@ describe("responsive rebuild flow", () => {
   });
 });
 
+describe("responsive Agent workspace", () => {
+  it("keeps a sticky dual-column rail above 900px", () => {
+    const workspace = compact(
+      extractBlock(
+        css,
+        /\.agent-panel__workspace\s*\{/,
+        "agent panel workspace",
+      ),
+    );
+    const rail = compact(
+      extractBlock(css, /\.agent-panel__rail\s*\{/, "agent panel rail"),
+    );
+    const preview = compact(
+      findRuleDeclarations(css, ".agent-panel__rail .preview-layout"),
+    );
+    const previewMain = compact(
+      findRuleDeclarations(css, ".agent-panel__rail .preview-main"),
+    );
+    const approval = compact(
+      findRuleDeclarations(css, ".agent-panel__rail .approval-rail"),
+    );
+
+    expect(workspace).toMatch(
+      /grid-template-columns:\s*minmax\(0,\s*1fr\)\s+minmax\(310px,\s*0\.38fr\);/,
+    );
+    expect(rail).toMatch(/position:\s*sticky;/);
+    expect(rail).toMatch(/max-height:\s*calc\(100dvh - 190px\);/);
+    expect(rail).toMatch(/overflow:\s*auto;/);
+    expect(preview).toMatch(/display:\s*flex;/);
+    expect(previewMain).toMatch(/overflow:\s*auto;/);
+    expect(approval).toMatch(/position:\s*sticky;/);
+    expect(approval).toMatch(/bottom:\s*0;/);
+  });
+
+  it("stacks the workspace and keeps submit pinned below 900px", () => {
+    const medium = compact(extractMediaBlock(css, 900));
+    expect(medium).toMatch(
+      /\.agent-panel__workspace[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\);/,
+    );
+    expect(medium).toMatch(/\.agent-panel__editor\s*\{[^}]*min-height:\s*0;/);
+    expect(medium).toMatch(/\.agent-panel__rail\s*\{[^}]*position:\s*static;/);
+    expect(medium).toMatch(/\.agent-panel__rail\s*\{[^}]*overflow:\s*visible;/);
+    expect(medium).toMatch(
+      /\.agent-panel__rail \.preview-main\s*\{[^}]*overflow:\s*visible;/,
+    );
+    expect(medium).toMatch(
+      /\.cleanup-approval-rail\s*\{[^}]*position:\s*sticky;[^}]*bottom:\s*12px;/,
+    );
+  });
+});
+
+describe("logs scroll boundary", () => {
+  it("keeps long log lines inside the log screen", () => {
+    const panel = compact(findRuleDeclarations(css, ".logs-panel"));
+    const screen = compact(findRuleDeclarations(css, ".log-screen"));
+    const scroll = compact(findRuleDeclarations(css, ".log-screen--scroll"));
+    const line = compact(findRuleDeclarations(css, ".log-screen code"));
+
+    expect(panel).toMatch(/overflow:\s*hidden;/);
+    expect(screen).toMatch(/overflow:\s*auto;/);
+    expect(scroll).toMatch(/overflow:\s*auto;/);
+    expect(scroll).toMatch(/overscroll-behavior:\s*contain;/);
+    expect(line).toMatch(/overflow-wrap:\s*anywhere;/);
+  });
+});
+
+describe("settings path readability", () => {
+  it("lets location paths wrap instead of widening the page", () => {
+    expect(
+      compact(findRuleDeclarations(css, ".settings-block--locations dd")),
+    ).toMatch(/overflow-wrap:\s*anywhere;/);
+  });
+});
+
+describe("appearance themes", () => {
+  it("defines warm, light, and dark token palettes", () => {
+    expect(css).toMatch(/\[data-theme="warm"\]/);
+    expect(css).toMatch(/\[data-theme="light"\]/);
+    expect(css).toMatch(/\[data-theme="dark"\]/);
+    expect(compact(findRuleDeclarations(css, ".nav-marker"))).not.toMatch(
+      /font-family/,
+    );
+    expect(compact(findRuleDeclarations(css, ".theme-picker"))).toMatch(
+      /role|flex/,
+    );
+  });
+
+  it("keeps chrome, logos, and catalog wells on theme tokens", () => {
+    expect(compact(findRuleDeclarations(css, ".topbar"))).toMatch(
+      /color:\s*var\(--ink\);/,
+    );
+    expect(compact(findRuleDeclarations(css, ".topbar"))).toMatch(
+      /background:\s*var\(--topbar\);/,
+    );
+    expect(compact(findRuleDeclarations(css, ".dialog-backdrop"))).toMatch(
+      /background:\s*var\(--scrim\);/,
+    );
+    expect(compact(findRuleDeclarations(css, ".danger-dialog"))).toMatch(
+      /box-shadow:\s*var\(--scrim-shadow\);/,
+    );
+    expect(compact(findRuleDeclarations(css, ".agent-logo--claude"))).toMatch(
+      /color:\s*#d97757;/,
+    );
+    expect(compact(findRuleDeclarations(css, ".agent-logo--opencode"))).toMatch(
+      /color:\s*#211e1e;/,
+    );
+    expect(compact(findRuleDeclarations(css, ".agent-logo--codex"))).toMatch(
+      /color:\s*#302a25;/,
+    );
+    expect(css).not.toMatch(/\[data-theme="light"\]\s+\.agent-logo--claude/);
+    expect(compact(findRuleDeclarations(css, ".catalog-rail"))).toMatch(
+      /background:\s*var\(--catalog\);/,
+    );
+    expect(compact(findRuleDeclarations(css, ".catalog-rail"))).toMatch(
+      /color:\s*var\(--catalog-ink\);/,
+    );
+    expect(compact(findRuleDeclarations(css, ".failure-guidance"))).not.toMatch(
+      /255,\s*250,\s*244/,
+    );
+
+    for (const theme of ["warm", "light", "dark"]) {
+      const block = compact(
+        extractBlock(
+          css,
+          new RegExp(`\\[data-theme="${theme}"\\]\\s*\\{`),
+          `${theme} theme tokens`,
+        ),
+      );
+      expect(block).toMatch(/--topbar:/);
+      expect(block).toMatch(/--scrim:/);
+      expect(block).toMatch(/--catalog:/);
+      expect(block).toMatch(/--log-ink:/);
+    }
+  });
+
+  it("keeps the light theme to cool paper, ink, and one blue", () => {
+    const light = compact(
+      extractBlock(css, /\[data-theme="light"\]\s*\{/, "light theme tokens"),
+    );
+    expect(light).toMatch(/--paper:\s*#f5f5f5;/);
+    expect(light).toMatch(/--surface:\s*#ffffff;/);
+    expect(light).toMatch(/--surface-raised:\s*#ffffff;/);
+    expect(light).toMatch(/--ink:\s*#3a3a3a;/);
+    expect(light).toMatch(/--signal:\s*#2563eb;/);
+    expect(light).toMatch(/--signal-hover:\s*#1d4ed8;/);
+    expect(light).toMatch(/--good:\s*#2563eb;/);
+    expect(light).toMatch(/--danger:\s*#3a3a3a;/);
+    expect(light).toMatch(/--warning:\s*#6b5e3a;/);
+    expect(light).toMatch(/--muted:\s*#636366;/);
+    expect(light).not.toMatch(/--signal:\s*#3b82f6;/);
+    expect(light).not.toMatch(/--good:\s*#3b82f6;/);
+    expect(light).not.toMatch(/--warning:\s*#8e8e93;/);
+    expect(light).not.toMatch(/--muted:\s*#8e8e93;/);
+    expect(light).not.toMatch(
+      /#c2410c|#b94722|#2c2c2a|#eeeeee|#fafafa|#fafaf8|#f3f0ea|#f6f5f2|#f7f2ea/,
+    );
+    expect(
+      compact(findRuleDeclarations(css, ".agent-state--create")),
+    ).not.toMatch(/185,\s*71,\s*34/);
+    expect(compact(findRuleDeclarations(css, ".toggle span"))).not.toMatch(
+      /76,\s*57,\s*43/,
+    );
+  });
+});
+
+describe("narrow overview and compact nav", () => {
+  it("lets Agent cards shrink below 280px instead of overflowing", () => {
+    expect(compact(findRuleDeclarations(css, ".agent-card-grid"))).toMatch(
+      /grid-template-columns:\s*repeat\(\s*auto-fit,\s*minmax\(\s*min\(\s*280px,\s*100%\s*\),\s*1fr\s*\)\s*\);/,
+    );
+    expect(compact(findRuleDeclarations(css, ".agent-card-grid"))).toMatch(
+      /(?:^|;)\s*min-width:\s*0\s*;/,
+    );
+  });
+
+  it("keeps Router actions above the decorative instrument on narrow screens", () => {
+    const narrow = compact(extractMediaBlock(css, 540));
+    expect(narrow).toMatch(
+      /\.primary-panel \.readout-grid\s*\{[^}]*grid-template-columns:\s*repeat\(\s*2,\s*minmax\(\s*0,\s*1fr\s*\)\s*\);/,
+    );
+    expect(narrow).toMatch(/\.primary-panel \.action-row\s*\{[^}]*order:\s*3;/);
+    expect(narrow).toMatch(/\.primary-panel \.instrument\s*\{[^}]*order:\s*5;/);
+  });
+
+  it("keeps compact navigation icon-only for the collapse control", () => {
+    const compactNav = compact(extractMediaBlock(css, 800));
+    expect(compactNav).toMatch(/\.nav-label--full\s*\{[^}]*display:\s*none;/);
+    expect(compactNav).toMatch(/\.nav-label--short\s*\{[^}]*display:\s*block;/);
+    expect(compactNav).toMatch(/\.sidebar-collapse\s*\{[^}]*width:\s*40px;/);
+    expect(compactNav).toMatch(
+      /\.sidebar-collapse__label\s*\{[^}]*display:\s*none;/,
+    );
+  });
+});
+
 describe("responsive Agent cleanup", () => {
   it("stacks card actions below 900px", () => {
     const medium = compact(extractMediaBlock(css, 900));

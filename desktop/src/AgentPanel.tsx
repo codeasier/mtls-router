@@ -50,6 +50,16 @@ function phaseMessage(kind: string) {
   return "agents.discovering" as const;
 }
 
+function activePhase(kind: string, hasResult: boolean) {
+  if (kind === "writing" || kind === "reloading") return "write";
+  if (hasResult || kind === "reload-failed") return "result";
+  if (kind === "loading") return "discover";
+  if (kind === "readonly" || kind === "blocked-dirty" || kind === "editing")
+    return "configure";
+  if (kind === "preview-loading" || kind === "previewing") return "preview";
+  return "configure";
+}
+
 export function AgentPanel({
   api,
   target,
@@ -320,6 +330,7 @@ export function AgentPanel({
       aria-labelledby="agent-panel-heading"
       data-phase={controller.phase.kind}
       data-busy={busy}
+      aria-busy={busy}
     >
       <header className="agents-workbench__header agent-panel__header">
         <div>
@@ -330,6 +341,32 @@ export function AgentPanel({
           {t("agents.panel.back")}
         </button>
       </header>
+      <ol
+        className="agent-phase-rail"
+        aria-label={t("agents.panel.previewSteps")}
+      >
+        {(
+          [
+            ["discover", "agents.stage.discover"],
+            ["configure", "agents.stage.configure"],
+            ["preview", "agents.stage.preview"],
+            ["write", "agents.stage.write"],
+            ["result", "agents.stage.result"],
+          ] as const
+        ).map(([phase, label]) => (
+          <li
+            key={phase}
+            className={
+              activePhase(controller.phase.kind, Boolean(controller.result)) ===
+              phase
+                ? "is-current"
+                : undefined
+            }
+          >
+            {t(label)}
+          </li>
+        ))}
+      </ol>
 
       <div
         className={

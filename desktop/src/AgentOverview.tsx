@@ -265,34 +265,37 @@ export function AgentOverview({
                   {configurationLabel(configuration.state, t)}
                 </span>
               </div>
-              <p
-                className="agent-card__config-path"
-                title={sanitizeSensitiveText(agent.path)}
-              >
-                {sanitizeSensitiveText(agent.path)}
-              </p>
               <p className="agent-card__guidance">
                 {configurationGuidance(agent, configuration.state, t)}
               </p>
-              {configuration.state === "invalid" && (
-                <ul className="agent-recovery-reasons">
-                  {(reasons.length ? reasons : [""]).map((reason) => (
-                    <li key={reason || "unknown"}>
-                      {recoveryReason(reason, t)}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {agent.cleanup.reason === "model_state_invalid" && (
-                <p className="agent-cleanup-diagnostic" role="note">
-                  {t("agents.cleanup.diagnostic.modelStateInvalid")}
+              <details className="agent-card__details" open>
+                <summary>{t("agents.card.details")}</summary>
+                <p
+                  className="agent-card__config-path"
+                  title={sanitizeSensitiveText(agent.path)}
+                >
+                  {sanitizeSensitiveText(agent.path)}
                 </p>
-              )}
-              {agent.cleanup.reason === "writes_disabled" && (
-                <p className="agent-cleanup-diagnostic" role="note">
-                  {t("agents.cleanup.diagnostic.writesDisabled")}
-                </p>
-              )}
+                {configuration.state === "invalid" && (
+                  <ul className="agent-recovery-reasons">
+                    {(reasons.length ? reasons : [""]).map((reason) => (
+                      <li key={reason || "unknown"}>
+                        {recoveryReason(reason, t)}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {agent.cleanup.reason === "model_state_invalid" && (
+                  <p className="agent-cleanup-diagnostic" role="note">
+                    {t("agents.cleanup.diagnostic.modelStateInvalid")}
+                  </p>
+                )}
+                {agent.cleanup.reason === "writes_disabled" && (
+                  <p className="agent-cleanup-diagnostic" role="note">
+                    {t("agents.cleanup.diagnostic.writesDisabled")}
+                  </p>
+                )}
+              </details>
               <div className="agent-card__actions">
                 <button
                   type="button"
