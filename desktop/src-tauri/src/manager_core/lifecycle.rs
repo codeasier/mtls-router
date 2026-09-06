@@ -2,6 +2,7 @@ use std::future::Future;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::Instant;
 
 use chrono::{DateTime, Utc};
 use serde::de::DeserializeOwned;
@@ -9,15 +10,18 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::protocol::{
-    deadline, DiagnosticsResult, ErrorCode, ManagerInfoResult, Method, ProtocolError, Request,
-    Response, RouterHealthResult, RouterLogsParams, RouterLogsResult, RouterOwner,
-    RouterStartParams, RouterStatusResult, RouterVersionResult,
+    deadline, DiagnosticsResult, ErrorCode, ForceTerminateOccupantParams, ManagerInfoResult,
+    Method, ProtocolError, Request, Response, RouterHealthResult, RouterLogsParams,
+    RouterLogsResult, RouterOwner, RouterStartParams, RouterStatusResult, RouterVersionResult,
 };
 use crate::redaction::{bound_text, sanitize_text, MAX_DIAGNOSTICS_SIZE};
 
 use super::errors::{
-    discovery_error, invalid_params, map_lifecycle_error, method_unavailable, startup_diagnostic,
-    timeout_error, LifecycleError, StartupStage,
+    discovery_error, invalid_params, map_lifecycle_error, map_occupant_code, method_unavailable,
+    startup_diagnostic, timeout_error, LifecycleError, StartupStage,
+};
+use super::occupant::{
+    CallContext, Inspection as OccupantInspection, OccupantService, TerminateResult,
 };
 use super::types::{
     AgentLine, Classification, DiscoverySnapshot, HealthInfo, StartedRouter, VersionInfo,
@@ -53,6 +57,7 @@ pub struct Manager<B> {
     detect: fn() -> Result<Vec<AgentLine>, ()>,
     desktop_log_path: Option<PathBuf>,
     backend: B,
+    occupant: OccupantService,
     failure: Mutex<Option<LatchedFailure>>,
 }
 
@@ -64,8 +69,14 @@ impl<B: Backend> Manager<B> {
             detect: || Err(()),
             desktop_log_path: None,
             backend,
+            occupant: OccupantService::new(Default::default(), Default::default()),
             failure: Mutex::new(None),
         }
+    }
+
+    pub fn with_occupant(mut self, occupant: OccupantService) -> Self {
+        self.occupant = occupant;
+        self
     }
 
     pub fn with_clock(mut self, now: fn() -> DateTime<Utc>) -> Self {
@@ -136,6 +147,10 @@ impl<B: Backend> Manager<B> {
             Method::RouterHealth => to_value(self.router_health(&params).await?),
             Method::RouterVersion => to_value(self.router_version(&params).await?),
             Method::RouterLogs => to_value(self.router_logs(&params).await?),
+            Method::RouterInspectOccupant => to_value(self.router_inspect_occupant(&params).await?),
+            Method::RouterForceTerminateOccupant => {
+                to_value(self.router_force_terminate_occupant(&params).await?)
+            }
             _ => Err(method_unavailable()),
         }
     }
@@ -355,6 +370,38 @@ impl<B: Backend> Manager<B> {
         }
     }
 
+    async fn router_inspect_occupant(
+        &self,
+        params: &Value,
+    ) -> Result<OccupantInspection, ProtocolError> {
+        decode_empty(params)?;
+        let found = self.backend.discover_status().await;
+        self.occupant
+            .inspect_for(
+                &occupant_ctx(Method::RouterInspectOccupant),
+                found.classification,
+            )
+            .map_err(map_occupant_error)
+    }
+
+    async fn router_force_terminate_occupant(
+        &self,
+        params: &Value,
+    ) -> Result<TerminateResult, ProtocolError> {
+        let request: ForceTerminateOccupantParams = decode_params(params)?;
+        if request.confirmation_token.trim().is_empty() {
+            return Err(invalid_params("confirmation_token is required"));
+        }
+        let found = self.backend.discover_status().await;
+        self.occupant
+            .force_terminate_for(
+                &occupant_ctx(Method::RouterForceTerminateOccupant),
+                found.classification,
+                &request.confirmation_token,
+            )
+            .map_err(map_occupant_error)
+    }
+
     fn failed_status(&self) -> Option<RouterStatusResult> {
         let failure = self.failure.lock().expect("failure lock");
         failure.as_ref().map(|failure| RouterStatusResult {
@@ -469,6 +516,14 @@ fn status_from_state(value: &StartedRouter) -> RouterStatusResult {
         pid: value.pid,
         ..RouterStatusResult::default()
     }
+}
+
+fn occupant_ctx(method: Method) -> CallContext {
+    CallContext::with_deadline(Instant::now() + deadline(method))
+}
+
+fn map_occupant_error(error: super::occupant::OccupantError) -> ProtocolError {
+    map_occupant_code(error.as_protocol_code())
 }
 
 fn decode_empty(params: &Value) -> Result<(), ProtocolError> {

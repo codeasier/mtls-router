@@ -9,6 +9,8 @@ mod backend;
 mod errors;
 mod lifecycle;
 mod metadata;
+mod occupant;
+mod process;
 mod types;
 
 pub use backend::{FakeBackend, SupervisorBackend};
@@ -23,6 +25,9 @@ pub use lifecycle::{
     last_lines, merge_log_lines, Backend, Manager, DEFAULT_LOG_LINES, MAX_LOG_LINE_BYTES,
 };
 pub use metadata::{info, validate_production, ArtifactIdentity};
+pub use occupant::{
+    CallContext, OccupantConfig, OccupantDependencies, OccupantError, OccupantService,
+};
 pub use types::{
     AgentLine, Classification, DiscoverySnapshot, HealthInfo, StartedRouter, VersionInfo,
 };

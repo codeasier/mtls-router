@@ -470,6 +470,198 @@ async fn supervisor_start_stop_and_probe_failure_keep_protocol_codes() {
     failed_manager.into_backend().shutdown().await.ok();
 }
 
+#[tokio::test]
+async fn inspect_occupant_absent_maps_to_not_found() {
+    let manager = manager_with(FakeBackend::default());
+    let response = call(&manager, Method::RouterInspectOccupant, json!({})).await;
+    let error = error_of(response);
+    assert_eq!(error["code"], "OCCUPANT_NOT_FOUND");
+    assert_eq!(error["message"], "port occupant was not found");
+}
+
+#[tokio::test]
+async fn inspect_and_force_terminate_occupant_follow_confirmation_contract() {
+    use std::io::Cursor;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    use crate::manager_core::occupant::{
+        fill_random_from_reader, Identity, OccupantConfig, OccupantDependencies, OccupantService,
+        RecoveryReason, Supervisor, SupervisorKind, SupervisorScope, Target, VerificationMode,
+    };
+    use crate::manager_core::process::{Identity as ProcessIdentity, Status};
+    use crate::types::OccupantInspection;
+
+    let identity = Identity {
+        listen_addr: "127.0.0.1:19099".into(),
+        network: "tcp4".into(),
+        socket_id: "socket".into(),
+        process: ProcessIdentity {
+            pid: 42,
+            started_at: "start".into(),
+            executable: "/tmp/listener".into(),
+        },
+        user_id: "user".into(),
+    };
+    let status = Arc::new(Mutex::new(Status::Genuine));
+    let signals = Arc::new(AtomicUsize::new(0));
+    let mut deps = OccupantDependencies::default();
+    let inspect_identity = identity.clone();
+    deps.inspect = Some(Box::new(move |_, _| {
+        Ok(Target {
+            mode: Some(VerificationMode::VerifiedIdentity),
+            pid: inspect_identity.process.pid,
+            listen_addr: inspect_identity.listen_addr.clone(),
+            identity: inspect_identity.clone(),
+            supervisor: None,
+            block_reason: None,
+        })
+    }));
+    deps.current_user = Some(Box::new(|| Ok("user".into())));
+    deps.same_process = Some(Box::new(|left, right| Ok(left == right)));
+    let status_validate = status.clone();
+    deps.validate = Some(Box::new(move |_, _| Ok(*status_validate.lock().unwrap())));
+    let signals_signal = signals.clone();
+    let status_signal = status.clone();
+    deps.signal = Some(Box::new(move |_| {
+        signals_signal.fetch_add(1, Ordering::SeqCst);
+        *status_signal.lock().unwrap() = Status::Absent;
+        Ok(())
+    }));
+    deps.dial = Some(Box::new(|_, _, _| {
+        Err(crate::manager_core::OccupantError::NotFound)
+    }));
+    deps.random = Some(Box::new(|buffer| {
+        fill_random_from_reader(&mut Cursor::new([7u8; 64]), buffer)
+    }));
+    deps.now = Some(Box::new(|| {
+        Utc.with_ymd_and_hms(2026, 7, 18, 1, 2, 3).unwrap()
+    }));
+    let backend = FakeBackend::default();
+    backend.set_status(DiscoverySnapshot {
+        classification: Classification::UnknownOccupant,
+        ..DiscoverySnapshot::absent()
+    });
+    let manager = Manager::new(test_info(), backend).with_occupant(OccupantService::new(
+        OccupantConfig {
+            listen_addr: "127.0.0.1:19099".into(),
+            ..OccupantConfig::default()
+        },
+        deps,
+    ));
+
+    let inspection_json = result_of(call(&manager, Method::RouterInspectOccupant, json!({})).await);
+    let inspection: OccupantInspection =
+        serde_json::from_value(inspection_json.clone()).expect("desktop inspection shape");
+    assert_eq!(inspection.pid, 42);
+    assert_eq!(inspection.listen_addr, "127.0.0.1:19099");
+    assert_eq!(inspection_json["verification_mode"], "verified_identity");
+    assert_eq!(inspection_json["expires_at"], "2026-07-18T01:02:33Z");
+    assert_eq!(inspection.confirmation_token.as_ref().unwrap().len(), 43);
+
+    let blank = error_of(
+        call(
+            &manager,
+            Method::RouterForceTerminateOccupant,
+            json!({"confirmation_token": "   "}),
+        )
+        .await,
+    );
+    assert_eq!(blank["code"], "INVALID_PARAMS");
+    assert_eq!(blank["message"], "confirmation_token is required");
+
+    let extra = error_of(
+        call(
+            &manager,
+            Method::RouterForceTerminateOccupant,
+            json!({"confirmation_token": "token", "pid": 42}),
+        )
+        .await,
+    );
+    assert_eq!(extra["code"], "INVALID_PARAMS");
+
+    let terminated = result_of(
+        call(
+            &manager,
+            Method::RouterForceTerminateOccupant,
+            json!({"confirmation_token": inspection.confirmation_token}),
+        )
+        .await,
+    );
+    assert_eq!(terminated["termination"], "process_terminated");
+    assert_eq!(terminated["port_state"], "released");
+    assert_eq!(signals.load(Ordering::SeqCst), 1);
+
+    let replay = error_of(
+        call(
+            &manager,
+            Method::RouterForceTerminateOccupant,
+            json!({"confirmation_token": inspection.confirmation_token}),
+        )
+        .await,
+    );
+    assert_eq!(replay["code"], "CONFIRMATION_EXPIRED");
+    assert_eq!(replay["message"], "occupant confirmation expired");
+    assert_eq!(signals.load(Ordering::SeqCst), 1);
+
+    let mut blocked_deps = OccupantDependencies::default();
+    blocked_deps.inspect = Some(Box::new(move |_, _| {
+        Ok(Target {
+            mode: Some(VerificationMode::VerifiedIdentity),
+            pid: identity.process.pid,
+            listen_addr: identity.listen_addr.clone(),
+            identity: identity.clone(),
+            supervisor: Some(Supervisor {
+                kind: SupervisorKind::WindowsService,
+                scope: SupervisorScope::System,
+                identifiers: vec!["RouterSvc".into()],
+            }),
+            block_reason: None,
+        })
+    }));
+    blocked_deps.current_user = Some(Box::new(|| Ok("user".into())));
+    blocked_deps.random = Some(Box::new(|buffer| {
+        fill_random_from_reader(&mut Cursor::new([0u8; 32]), buffer)
+    }));
+    let blocked_backend = FakeBackend::default();
+    blocked_backend.set_status(DiscoverySnapshot {
+        classification: Classification::UnknownOccupant,
+        ..DiscoverySnapshot::absent()
+    });
+    let blocked = Manager::new(test_info(), blocked_backend).with_occupant(OccupantService::new(
+        OccupantConfig {
+            listen_addr: "127.0.0.1:19099".into(),
+            ..OccupantConfig::default()
+        },
+        blocked_deps,
+    ));
+    let blocked_json = result_of(call(&blocked, Method::RouterInspectOccupant, json!({})).await);
+    let blocked_inspection: OccupantInspection =
+        serde_json::from_value(blocked_json.clone()).expect("blocked inspection");
+    assert_eq!(
+        blocked_inspection.recovery.reason,
+        Some(crate::types::RecoveryReason::ServiceManaged)
+    );
+    assert!(blocked_inspection.confirmation_token.is_none());
+    assert_eq!(blocked_json["recovery"]["action"], "manual_stop_required");
+}
+
+#[tokio::test]
+async fn occupant_errors_use_closed_messages() {
+    let backend = FakeBackend::default();
+    backend.set_status(DiscoverySnapshot {
+        classification: Classification::DesktopOwned,
+        listen_addr: Some(format!("127.0.0.1:19099?api_key={INTEGRATION_KEY}")),
+        ..DiscoverySnapshot::absent()
+    });
+    let manager = manager_with(backend);
+    let error = error_of(call(&manager, Method::RouterInspectOccupant, json!({})).await);
+    assert_eq!(error["code"], "OCCUPANT_PROTECTED");
+    assert_eq!(error["message"], "port occupant is protected");
+    let serialized = error.to_string();
+    assert!(!serialized.contains(INTEGRATION_KEY));
+}
+
 async fn call_any<B: super::Backend>(manager: &Manager<B>, method: Method, params: Value) -> Value {
     let response = manager
         .handle(Request {
