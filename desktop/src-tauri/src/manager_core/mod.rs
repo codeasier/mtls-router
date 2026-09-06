@@ -14,7 +14,10 @@ mod lifecycle;
 mod metadata;
 mod modelcatalog;
 mod occupant;
+mod paths;
 mod process;
+mod session;
+mod state;
 mod trustedrouter;
 mod types;
 
@@ -37,6 +40,12 @@ pub use metadata::{info, validate_production, ArtifactIdentity};
 pub use occupant::{
     CallContext, OccupantConfig, OccupantDependencies, OccupantError, OccupantService,
 };
+pub use paths::Paths;
+pub use session::{
+    current_identity, desktop_eligible, fixture_config, fixture_manager, InProcessFactory,
+    SessionConfig,
+};
+pub use state::{read as read_router_state, write as write_router_state, RouterState};
 pub use types::{
     AgentLine, Classification, DiscoverySnapshot, HealthInfo, StartedRouter, VersionInfo,
 };

@@ -1110,3 +1110,46 @@ fn rejects_invalid_and_protected_pid_only_targets() {
         assert!(inspection.confirmation_token.is_none(), "{name}");
     }
 }
+
+#[test]
+fn state_files_protect_recorded_pid_and_full_identity() {
+    let dir = std::env::temp_dir().join(format!(
+        "mtls-occupant-state-{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let desktop = dir.join("desktop-state.json");
+    let identity = test_identity();
+    crate::manager_core::state::write(
+        &desktop,
+        &crate::manager_core::state::RouterState {
+            pid: identity.process.pid,
+            process_started_at: identity.process.started_at.clone(),
+            process_executable: identity.process.executable.clone(),
+            ..crate::manager_core::state::RouterState::default()
+        },
+    )
+    .unwrap();
+
+    let mut deps = unknown_discover();
+    let live = identity.clone();
+    deps.inspect = Some(Box::new(move |_, _| Ok(verified_target(live.clone()))));
+    deps.current_user = Some(Box::new(|| Ok("user".into())));
+    deps.signal = Some(Box::new(|_| panic!("unexpected signal")));
+    let service = OccupantService::new(
+        OccupantConfig {
+            listen_addr: identity.listen_addr.clone(),
+            state_paths: vec![desktop],
+            ..OccupantConfig::default()
+        },
+        deps,
+    );
+    let inspection = service.inspect(&CallContext::unbounded()).unwrap();
+    assert_eq!(inspection.recovery.action, RecoveryAction::Unavailable);
+    assert_eq!(
+        inspection.recovery.reason,
+        Some(RecoveryReason::ProtectedProcess)
+    );
+    assert!(inspection.confirmation_token.is_none());
+    let _ = std::fs::remove_dir_all(dir);
+}

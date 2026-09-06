@@ -2559,6 +2559,38 @@ mod tests {
     }
 
     #[test]
+    fn inprocess_manager_serves_existing_command_helpers() {
+        tauri::async_runtime::block_on(async {
+            let manager =
+                ManagerClient::new(Arc::new(crate::manager_core::InProcessFactory::fixture()));
+            let detect = agent_detect_command(&manager).await.unwrap();
+            assert_eq!(detect.agents.len(), 3);
+            assert!(detect.agents.iter().all(|agent| !agent.exists));
+
+            let pending = Arc::new(Mutex::new(None));
+            let occupant = inspect_occupant_command(&manager, &pending)
+                .await
+                .unwrap_err();
+            assert_eq!(occupant.code, "OCCUPANT_NOT_FOUND");
+            assert!(pending.lock().await.is_none());
+
+            let (_dir, credentials) =
+                configured_credentials("inprocess-usage", "sk-fixture-not-logged").await;
+            let usage = apikey_usage_command(
+                APIKeyUsageRequest {
+                    period: "7d".into(),
+                },
+                &manager,
+                &credentials,
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(usage.code, "USAGE_UNAVAILABLE");
+            assert_eq!(usage.message, "usage is unavailable");
+        });
+    }
+
+    #[test]
     fn manager_failure_summary_is_bounded_and_included_once() {
         let failure = ManagerFailure {
             stage: "handshake".to_owned(),

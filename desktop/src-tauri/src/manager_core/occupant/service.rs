@@ -1,5 +1,5 @@
 use std::io::{ErrorKind, Read};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -25,6 +25,7 @@ pub struct OccupantConfig {
     pub manager_identity: ProcessIdentity,
     pub is_protected: Option<fn(&Identity) -> bool>,
     pub is_protected_pid: Option<fn(i32) -> bool>,
+    pub state_paths: Vec<PathBuf>,
     pub release_timeout: Duration,
     pub poll_interval: Duration,
 }
@@ -37,6 +38,7 @@ impl Default for OccupantConfig {
             manager_identity: ProcessIdentity::default(),
             is_protected: None,
             is_protected_pid: None,
+            state_paths: Vec::new(),
             release_timeout: Duration::from_secs(2),
             poll_interval: Duration::from_millis(50),
         }
@@ -493,6 +495,7 @@ impl OccupantService {
         }
         if identity.process.pid == self.config.desktop_pid
             || identity.process.pid == self.config.manager_identity.pid
+            || self.state_protects_identity(identity)
             || self
                 .config
                 .is_protected
@@ -507,6 +510,7 @@ impl OccupantService {
         pid > 0
             && (pid == self.config.desktop_pid
                 || pid == self.config.manager_identity.pid
+                || super::super::state::protects_pid(&self.config.state_paths, pid)
                 || self
                     .config
                     .is_protected_pid
@@ -523,10 +527,25 @@ impl OccupantService {
             return false;
         }
         self.is_protected_pid(target.identity.process.pid)
+            || self.state_protects_identity(&target.identity)
             || self
                 .config
                 .is_protected
                 .is_some_and(|is_protected| is_protected(&target.identity))
+    }
+
+    fn state_protects_identity(&self, identity: &Identity) -> bool {
+        self.config.state_paths.iter().any(|path| {
+            let Ok(value) = super::super::state::read(path) else {
+                return false;
+            };
+            let managed = ProcessIdentity {
+                pid: value.pid,
+                started_at: value.process_started_at,
+                executable: value.process_executable,
+            };
+            process::same_identity(&identity.process, &managed).unwrap_or(false)
+        })
     }
 
     fn discover(&self, ctx: &CallContext) -> Result<Classification, OccupantError> {
