@@ -40,4 +40,6 @@ pub use supervisor::{
 pub use tls::{MtlsTransport, TlsMaterials, TlsMinVersion};
 
 #[cfg(test)]
+mod parity;
+#[cfg(test)]
 mod test_support;

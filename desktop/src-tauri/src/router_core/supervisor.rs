@@ -19,6 +19,7 @@ use tokio::task::JoinSet;
 use tokio::time::timeout;
 
 use super::config::validate_upstream_url;
+use super::proxy::ProxyLogger;
 use super::{
     prepare_startup, serve_request, BuildInfo, Prober, ReverseProxy, RouterDefaults, RouterEnv,
     RouterFlags, StartupError, StartupReason, TlsMaterials,
@@ -57,6 +58,7 @@ pub struct SupervisorConfig {
     pub materials: TlsMaterials,
     pub identity: BuildInfo,
     pub limits: SupervisorLimits,
+    pub logger: Option<ProxyLogger>,
 }
 
 impl fmt::Debug for SupervisorConfig {
@@ -561,8 +563,12 @@ fn serving_from_prepared(
         .map_err(SupervisorError::Startup)?;
     let prober =
         Prober::new(prepared.config(), prepared.transport()).map_err(SupervisorError::Startup)?;
+    let mut proxy = ReverseProxy::new(upstream, prepared.transport().clone());
+    if let Some(logger) = &config.logger {
+        proxy = proxy.with_logger(logger.clone());
+    }
     Ok(Serving {
-        proxy: ReverseProxy::new(upstream, prepared.transport().clone()),
+        proxy,
         prober,
         identity: config.identity.clone(),
         started_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
@@ -709,6 +715,7 @@ mod tests {
             materials,
             identity: BuildInfo::default(),
             limits: test_limits(),
+            logger: None,
         }
     }
 

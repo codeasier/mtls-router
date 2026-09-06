@@ -156,6 +156,20 @@ where
     H: Fn(Request<Incoming>) -> F + Send + Sync + 'static,
     F: Future<Output = Response<BoxBody<Bytes, Infallible>>> + Send + 'static,
 {
+    start_mtls_optional_handler(move |request| {
+        let response = handler(request);
+        async move { Some(response.await) }
+    })
+    .await
+}
+
+/// Like [`start_mtls_handler`], but `None` drops the TLS/HTTP connection after
+/// the request is received so the proxy observes an upstream reset.
+pub async fn start_mtls_optional_handler<H, F>(handler: H) -> TestMtlsServer
+where
+    H: Fn(Request<Incoming>) -> F + Send + Sync + 'static,
+    F: Future<Output = Option<Response<BoxBody<Bytes, Infallible>>>> + Send + 'static,
+{
     let certs = TestCerts::generate();
     let server_certs = parse_pem_certificates(certs.server_cert.as_bytes()).expect("server certs");
     let server_key = parse_pem_private_key(certs.server_key.as_bytes()).expect("server key");
@@ -193,7 +207,12 @@ where
                         let io = TokioIo::new(tls);
                         let service = service_fn(move |request| {
                             let handler = handler.clone();
-                            async move { Ok::<_, Infallible>(handler(request).await) }
+                            async move {
+                                match handler(request).await {
+                                    Some(response) => Ok(response),
+                                    None => Err(std::io::Error::other("drop upstream response")),
+                                }
+                            }
                         });
                         let _ = hyper::server::conn::http1::Builder::new()
                             .serve_connection(io, service)
