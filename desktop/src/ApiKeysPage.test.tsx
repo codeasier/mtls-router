@@ -88,6 +88,34 @@ describe("ApiKeysPage", () => {
     );
   });
 
+  it("restores focus to the delete button when deletion fails", async () => {
+    const api = createMockApi({
+      getCredential: vi.fn().mockResolvedValue({
+        present: true,
+        fingerprint: "WXYZ",
+        saved_at: "2026-07-26T00:00:00Z",
+      }),
+      deleteCredential: vi.fn().mockRejectedValue({
+        code: "CREDENTIAL_IO_ERROR",
+      }),
+    });
+    renderPage(api);
+
+    const deleteButton = await screen.findByRole("button", {
+      name: "删除已保存密钥",
+    });
+    fireEvent.click(deleteButton);
+    fireEvent.click(screen.getByRole("button", { name: "确认删除" }));
+
+    await waitFor(() => expect(api.deleteCredential).toHaveBeenCalledOnce());
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "无法读写凭据文件，请稍后重试。",
+    );
+    await waitFor(() => expect(deleteButton).toHaveFocus());
+    expect(screen.getByText("已配置")).toBeInTheDocument();
+    expect(deleteButton).toBeEnabled();
+  });
+
   it("clears the plaintext input when saving fails", async () => {
     const api = createMockApi({
       saveCredential: vi.fn().mockRejectedValue({

@@ -400,11 +400,14 @@ describe("appearance themes", () => {
     expect(light).toMatch(/--surface:\s*#ffffff;/);
     expect(light).toMatch(/--surface-raised:\s*#ffffff;/);
     expect(light).toMatch(/--ink:\s*#3a3a3a;/);
-    expect(light).toMatch(/--signal:\s*#3b82f6;/);
-    expect(light).toMatch(/--good:\s*#3b82f6;/);
+    expect(light).toMatch(/--signal:\s*#2563eb;/);
+    expect(light).toMatch(/--signal-hover:\s*#1d4ed8;/);
+    expect(light).toMatch(/--good:\s*#2563eb;/);
     expect(light).toMatch(/--danger:\s*#3a3a3a;/);
     expect(light).toMatch(/--warning:\s*#6b5e3a;/);
     expect(light).toMatch(/--muted:\s*#636366;/);
+    expect(light).not.toMatch(/--signal:\s*#3b82f6;/);
+    expect(light).not.toMatch(/--good:\s*#3b82f6;/);
     expect(light).not.toMatch(/--warning:\s*#8e8e93;/);
     expect(light).not.toMatch(/--muted:\s*#8e8e93;/);
     expect(light).not.toMatch(

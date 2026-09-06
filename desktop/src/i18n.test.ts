@@ -96,6 +96,21 @@ describe("localization resources", () => {
     }
   });
 
+  it("keeps pending router copy distinct from degraded and stale", () => {
+    for (const catalog of [en, zhCN]) {
+      expect(catalog["router.state.pending.title"]).toBeTruthy();
+      expect(catalog["router.state.pending.detail"]).toBeTruthy();
+      expect(catalog["router.state.pending.signal"]).toBeTruthy();
+      expect(catalog["router.state.pending.title"]).not.toEqual(
+        catalog["router.state.degraded.title"],
+      );
+      expect(catalog["router.state.pending.title"]).not.toEqual(
+        catalog["router.state.stale.title"],
+      );
+      expect(catalog["router.state.pending.detail"]).not.toMatch(/failed|失败/);
+    }
+  });
+
   it("keeps Settings and Logs status copy bilingual and distinct", () => {
     for (const catalog of [en, zhCN]) {
       expect(catalog["logs.loading"]).toBeTruthy();

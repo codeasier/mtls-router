@@ -168,26 +168,58 @@ function failureGuide(
   };
 }
 
-function displayCopy(
-  t: Translator,
+type HealthOverlay = "stale" | "pending" | null;
+
+function healthOverlay(
   currentState: ViewState,
   observedHealth: HealthState,
   reportedState: RouterStatus["state"] | undefined,
+): HealthOverlay {
+  if (currentState !== "degraded" || reportedState === "degraded") {
+    return null;
+  }
+  if (observedHealth === "stale") return "stale";
+  if (observedHealth === "unknown") return "pending";
+  return null;
+}
+
+function displayCopy(
+  t: Translator,
+  currentState: ViewState,
+  overlay: HealthOverlay,
 ): StateCopy {
   const copy = getStateCopy(t)[currentState];
-  if (
-    observedHealth !== "stale" ||
-    currentState !== "degraded" ||
-    reportedState === "degraded"
-  ) {
-    return copy;
+  if (overlay === "stale") {
+    return {
+      ...copy,
+      title: t("router.state.stale.title"),
+      detail: t("router.state.stale.detail"),
+      signal: t("router.state.stale.signal"),
+    };
   }
-  return {
-    ...copy,
-    title: t("router.state.stale.title"),
-    detail: t("router.state.stale.detail"),
-    signal: t("router.state.stale.signal"),
-  };
+  if (overlay === "pending") {
+    return {
+      ...copy,
+      title: t("router.state.pending.title"),
+      detail: t("router.state.pending.detail"),
+      signal: t("router.state.pending.signal"),
+    };
+  }
+  return copy;
+}
+
+function processCopy(
+  t: Translator,
+  currentState: ViewState,
+  overlay: HealthOverlay,
+  reportedState: RouterStatus["state"] | undefined,
+): string {
+  if (overlay) {
+    return reportedState === "external_compatible"
+      ? t("router.state.external.signal")
+      : t("router.state.healthy.signal");
+  }
+  return getStateCopy(t)[currentState].signal;
 }
 
 function getStateCopy(t: Translator): Record<ViewState, StateCopy> {
@@ -785,7 +817,9 @@ export function RouterPage({
     statusReadFailed,
     reinstallRequired,
   );
-  const copy = displayCopy(t, currentState, observedHealth, status?.state);
+  const overlay = healthOverlay(currentState, observedHealth, status?.state);
+  const copy = displayCopy(t, currentState, overlay);
+  const processSignal = processCopy(t, currentState, overlay, status?.state);
   const failureDiagnostics = sanitizedFailureDiagnostics(status);
   const failureGuidance =
     failureDiagnostics.lastError || failureDiagnostics.recentLogs.length > 0
@@ -799,15 +833,12 @@ export function RouterPage({
       currentState === "failed" ||
       currentState === "legacy");
   const canStop =
-    (!operation &&
-      status?.state === "desktop_owned" &&
-      status.owner === "desktop") ||
-    (!operation &&
-      status?.state === "degraded" &&
-      status.owner === "desktop") ||
-    (!operation &&
-      status?.state === "legacy_managed" &&
-      status.owner === "desktop");
+    !operation &&
+    !checkingHealth &&
+    status?.owner === "desktop" &&
+    (status.state === "desktop_owned" ||
+      status.state === "degraded" ||
+      status.state === "legacy_managed");
   const canRetryHealth = available && !operation && !checkingHealth;
   const pidOnlyOccupant = occupant?.verification_mode === "windows_pid_only";
   const lastChecked = health?.checked_at
@@ -1032,7 +1063,7 @@ export function RouterPage({
                   : "router.processStatus",
               )}
             </dt>
-            <dd>{copy.signal}</dd>
+            <dd>{processSignal}</dd>
           </div>
           <div>
             <dt>

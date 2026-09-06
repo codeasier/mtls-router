@@ -16,6 +16,17 @@ const freshHealthy: RouterHealth = {
   checked_at: new Date().toISOString(),
 };
 
+function processStatusValue() {
+  const value = screen
+    .getByText("进程状态")
+    .closest("div")
+    ?.querySelector("dd");
+  if (!value) {
+    throw new Error("missing process status value");
+  }
+  return value;
+}
+
 describe("RouterPage states", () => {
   it.each<{
     name: string;
@@ -157,6 +168,7 @@ describe("RouterPage states", () => {
       screen.getByRole("heading", { name: "健康检查结果已过期" }),
     ).toBeInTheDocument();
     expect(document.querySelector(".signal")).toHaveTextContent("已过期");
+    expect(processStatusValue()).toHaveTextContent("运行中");
     expect(screen.queryByText("降级运行")).not.toBeInTheDocument();
     expect(
       screen.queryByRole("heading", { name: "路由运行正常" }),
@@ -218,6 +230,39 @@ describe("RouterPage states", () => {
       await screen.findByRole("heading", { name: "健康检查结果已过期" }),
     ).toBeInTheDocument();
     expect(document.querySelector(".signal")).toHaveTextContent("已过期");
+    expect(processStatusValue()).toHaveTextContent("运行中");
+    expect(
+      screen.queryByRole("heading", { name: "上游连接不可用" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("降级运行")).not.toBeInTheDocument();
+  });
+
+  it("treats fresh unknown health as pending instead of upstream failure", async () => {
+    const api = createMockApi({
+      getRouterStatus: vi.fn().mockResolvedValue({
+        state: "desktop_owned",
+        owner: "desktop",
+      }),
+      retryRouterHealth: vi.fn().mockResolvedValue({
+        status: "unknown",
+        checked_at: new Date().toISOString(),
+      }),
+    });
+
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "尚未得到健康检查结果" }),
+    ).toBeInTheDocument();
+    expect(document.querySelector(".signal")).toHaveTextContent("等待检查");
+    expect(processStatusValue()).toHaveTextContent("运行中");
+    expect(screen.getByText("等待检查", { selector: ".health-value" }));
     expect(
       screen.queryByRole("heading", { name: "上游连接不可用" }),
     ).not.toBeInTheDocument();
@@ -1186,6 +1231,7 @@ describe("RouterPage actions", () => {
 
     expect(await screen.findByText("检查中")).toBeInTheDocument();
     expect(retry).toBeDisabled();
+    expect(screen.getByRole("button", { name: "停止路由" })).toBeDisabled();
     expect(retryRouterHealth).toHaveBeenCalledOnce();
 
     await act(async () => {

@@ -51,6 +51,10 @@ export const zhCN = {
   "router.state.stale.signal": "已过期",
   "router.state.stale.detail":
     "路由进程仍在运行。请等待下一次自动同步，或重试健康检查。当前结果不能当作健康。",
+  "router.state.pending.title": "尚未得到健康检查结果",
+  "router.state.pending.signal": "等待检查",
+  "router.state.pending.detail":
+    "路由进程仍在运行，上游健康检查尚未返回当前结果。",
   "router.state.external.title": "外部路由正在运行",
   "router.state.external.signal": "外部托管",
   "router.state.external.detail":

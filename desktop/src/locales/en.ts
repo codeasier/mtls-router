@@ -56,6 +56,10 @@ export const en: Record<TranslationKey, string> = {
   "router.state.stale.signal": "Out of date",
   "router.state.stale.detail":
     "The router is still running. Wait for the next automatic sync, or retry the health check. This result is not a current healthy status.",
+  "router.state.pending.title": "Health check has no result yet",
+  "router.state.pending.signal": "Awaiting check",
+  "router.state.pending.detail":
+    "The router is still running. The upstream health check has not returned a current result yet.",
   "router.state.external.title": "External router is running",
   "router.state.external.signal": "Externally managed",
   "router.state.external.detail":
