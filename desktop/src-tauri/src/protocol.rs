@@ -261,6 +261,101 @@ pub struct ForceTerminateOccupantParams {
     pub confirmation_token: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentModelsParams {
+    pub owner: RouterOwner,
+    pub agents: Vec<String>,
+    pub api_key: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentConfigParams {
+    pub agents: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub modes: std::collections::HashMap<String, String>,
+    pub catalog_token: String,
+    pub model_config: Value,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentWriteParams {
+    pub agents: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub modes: std::collections::HashMap<String, String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub approve_rebuild: Vec<String>,
+    pub catalog_token: String,
+    pub model_config: Value,
+    pub revision_token: String,
+    pub approve_managed_overwrite: Option<bool>,
+    pub approve_codex_auth_change: Option<bool>,
+    pub api_key: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentCleanupParams {
+    pub agent: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentCleanupWriteParams {
+    pub agent: String,
+    pub revision_token: String,
+    pub approve_managed_overwrite: Option<bool>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct APIKeyUsageParams {
+    pub owner: RouterOwner,
+    #[serde(default)]
+    pub period: String,
+    pub api_key: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct APIKeyUsageSummary {
+    pub requests: i64,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub cost: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct APIKeyUsageQuota {
+    pub used: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<f64>,
+    pub unit: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub resets_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct APIKeyUsageModel {
+    pub model: String,
+    pub requests: i64,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub cost: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct APIKeyUsageResult {
+    pub period: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub as_of: String,
+    pub summary: APIKeyUsageSummary,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota: Option<APIKeyUsageQuota>,
+    pub by_model: Vec<APIKeyUsageModel>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

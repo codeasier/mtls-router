@@ -3,6 +3,8 @@ use serde_json::{json, Value};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
+use super::agent::StaticCatalog;
+use super::apikeyusage::{Model, Period, Quota, QuotaUnit, Snapshot, Summary};
 use crate::protocol::{
     deadline, ErrorCode, ManagerInfoResult, Method, Request, RouterOwner, RouterStatusResult,
     MANAGEMENT_PROTOCOL_VERSION,
@@ -109,7 +111,9 @@ async fn diagnostics_use_status_discovery_and_sanitize_listen_query() {
     assert!(!summary.contains(INTEGRATION_KEY));
     assert!(summary.contains("listen=http://127.0.0.1:19099?[REDACTED]"));
     assert!(summary.contains(" health=\n"));
-    assert!(summary.contains("agents unavailable"));
+    assert!(summary.contains("agent name=claude detected=true"));
+    assert!(summary.contains("agent name=opencode detected=true"));
+    assert!(summary.contains("agent name=codex detected=true"));
     assert_eq!(result["router_state"], "desktop_owned");
 }
 
@@ -342,6 +346,48 @@ async fn stop_reports_absent_and_unported_methods_are_unavailable() {
     assert_eq!(unavailable["code"], "INVALID_REQUEST");
     assert_eq!(unavailable["message"], "method is unavailable");
     assert_eq!(deadline(Method::RouterMigrateLegacy).as_secs(), 27);
+
+    let detected = result_of(call(&manager, Method::AgentDetect, json!({})).await);
+    assert_eq!(detected["agents"].as_array().map(Vec::len), Some(3));
+    assert_eq!(detected["agents"][0]["agent"], "claude");
+    assert_eq!(detected["agents"][0]["detected"], true);
+    assert_eq!(detected["agents"][0]["command"], "");
+
+    let models = error_of(
+        call(
+            &manager,
+            Method::AgentModels,
+            json!({"owner":"desktop","agents":["claude"],"api_key":"k"}),
+        )
+        .await,
+    );
+    assert_eq!(models["code"], "MODEL_DISCOVERY_FAILED");
+    assert_eq!(models["message"], "model discovery is unavailable");
+
+    let cleanup = error_of(
+        call(
+            &manager,
+            Method::AgentCleanupPreview,
+            json!({"agent":"claude"}),
+        )
+        .await,
+    );
+    assert_eq!(cleanup["code"], "AGENT_NOT_MANAGED");
+    assert_eq!(
+        cleanup["message"],
+        "Agent is not managed by CodeasierRouter"
+    );
+
+    let usage = error_of(
+        call(
+            &manager,
+            Method::ApiKeyUsage,
+            json!({"owner":"desktop","period":"7d","api_key":"k"}),
+        )
+        .await,
+    );
+    assert_eq!(usage["code"], "USAGE_UNAVAILABLE");
+    assert_eq!(usage["message"], "usage is unavailable");
 }
 
 #[tokio::test]
@@ -660,6 +706,83 @@ async fn occupant_errors_use_closed_messages() {
     assert_eq!(error["message"], "port occupant is protected");
     let serialized = error.to_string();
     assert!(!serialized.contains(INTEGRATION_KEY));
+}
+
+#[tokio::test]
+async fn apikey_usage_returns_key_free_snapshot() {
+    const KEY: &str = "apikey-usage-protocol-secret-canary";
+    let catalog = StaticCatalog {
+        usage: Some(Snapshot {
+            period: Period::SevenDays,
+            as_of: "2026-08-28T00:00:00Z".into(),
+            summary: Summary {
+                requests: 4,
+                prompt_tokens: 10,
+                completion_tokens: 2,
+                cost: 0.75,
+            },
+            quota: Some(Quota {
+                used: 0.75,
+                limit: Some(100.0),
+                unit: QuotaUnit::Usd,
+                resets_at: "2026-09-01T00:00:00Z".into(),
+            }),
+            by_model: vec![Model {
+                model: "claude-sonnet".into(),
+                requests: 4,
+                prompt_tokens: 10,
+                completion_tokens: 2,
+                cost: 0.75,
+            }],
+        }),
+        ..StaticCatalog::default()
+    };
+    let manager = Manager::new(test_info(), FakeBackend::default()).with_trusted(Arc::new(catalog));
+    let response = call(
+        &manager,
+        Method::ApiKeyUsage,
+        json!({"owner":"desktop","period":"7d","api_key": KEY}),
+    )
+    .await;
+    let encoded = response.to_string();
+    assert!(!encoded.contains(KEY));
+    let result = result_of(response);
+    assert_eq!(result["period"], "7d");
+    assert_eq!(result["summary"]["requests"], 4);
+    assert_eq!(result["quota"]["used"], 0.75);
+    assert_eq!(result["by_model"][0]["model"], "claude-sonnet");
+}
+
+#[tokio::test]
+async fn apikey_usage_rejects_invalid_period_without_calling_trusted() {
+    const KEY: &str = "apikey-usage-invalid-period-canary";
+    let manager =
+        Manager::new(test_info(), FakeBackend::default()).with_trusted(Arc::new(StaticCatalog {
+            usage: Some(Snapshot {
+                period: Period::SevenDays,
+                as_of: String::new(),
+                summary: Summary {
+                    requests: 1,
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                    cost: 0.0,
+                },
+                quota: None,
+                by_model: Vec::new(),
+            }),
+            ..StaticCatalog::default()
+        }));
+    let response = call(
+        &manager,
+        Method::ApiKeyUsage,
+        json!({"owner":"desktop","period":"week","api_key": KEY}),
+    )
+    .await;
+    let encoded = response.to_string();
+    assert!(!encoded.contains(KEY));
+    let error = error_of(response);
+    assert_eq!(error["code"], "INVALID_PARAMS");
+    assert_eq!(error["message"], "usage period is invalid");
 }
 
 async fn call_any<B: super::Backend>(manager: &Manager<B>, method: Method, params: Value) -> Value {

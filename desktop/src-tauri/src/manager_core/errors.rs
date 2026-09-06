@@ -162,6 +162,17 @@ pub fn map_lifecycle_code(code: ErrorCode) -> ProtocolError {
     closed_error(code, message)
 }
 
+pub fn map_agent_error(error: crate::manager_core::agent::OperationError) -> ProtocolError {
+    let mut mapped = map_agent_code(error.code);
+    if let (Some(path), Some(rule)) = (&error.path, &error.rule) {
+        mapped.details = Some(crate::protocol::ErrorDetails {
+            path: path.clone(),
+            rule: rule.clone(),
+        });
+    }
+    mapped
+}
+
 pub fn map_agent_code(code: ErrorCode) -> ProtocolError {
     let message = match code {
         ErrorCode::InvalidParams => "invalid Agent parameters",
