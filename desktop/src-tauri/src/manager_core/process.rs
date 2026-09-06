@@ -22,6 +22,12 @@ pub enum Status {
     Stale,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum SignalKind {
+    Interrupt,
+    Kill,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProcessError {
     NotFound,
@@ -131,8 +137,18 @@ pub fn same_identity(left: &Identity, right: &Identity) -> Result<bool, ProcessE
 }
 
 pub fn signal_identity(expected: &Identity) -> Result<(), ProcessError> {
-    match validate(expected, &expected.executable)? {
-        Status::Genuine => signal_process(expected.pid),
+    signal(expected, &expected.executable, SignalKind::Kill)
+}
+
+/// Validates complete identity immediately before signaling. There is no
+/// PID-only signaling API.
+pub fn signal(
+    expected: &Identity,
+    binary_path: &str,
+    kind: SignalKind,
+) -> Result<(), ProcessError> {
+    match validate(expected, binary_path)? {
+        Status::Genuine => signal_process(expected.pid, kind),
         _ => Err(ProcessError::IdentityMismatch),
     }
 }
@@ -368,8 +384,12 @@ fn same_start_identity(expected: &str, live: &str) -> bool {
 }
 
 #[cfg(unix)]
-fn signal_process(pid: i32) -> Result<(), ProcessError> {
-    let rc = unsafe { libc::kill(pid, libc::SIGKILL) };
+fn signal_process(pid: i32, kind: SignalKind) -> Result<(), ProcessError> {
+    let sig = match kind {
+        SignalKind::Interrupt => libc::SIGINT,
+        SignalKind::Kill => libc::SIGKILL,
+    };
+    let rc = unsafe { libc::kill(pid, sig) };
     if rc == 0 {
         return Ok(());
     }
@@ -377,7 +397,26 @@ fn signal_process(pid: i32) -> Result<(), ProcessError> {
 }
 
 #[cfg(windows)]
-fn signal_process(pid: i32) -> Result<(), ProcessError> {
+fn signal_process(pid: i32, kind: SignalKind) -> Result<(), ProcessError> {
+    if kind == SignalKind::Interrupt {
+        return signal_interrupt_windows(pid);
+    }
+    signal_kill_windows(pid)
+}
+
+#[cfg(windows)]
+fn signal_interrupt_windows(pid: i32) -> Result<(), ProcessError> {
+    use windows_sys::Win32::System::Console::GenerateConsoleCtrlEvent;
+    const CTRL_BREAK_EVENT: u32 = 1;
+    let ok = unsafe { GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, pid as u32) };
+    if ok == 0 {
+        return Err(ProcessError::from_io(&io::Error::last_os_error()));
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn signal_kill_windows(pid: i32) -> Result<(), ProcessError> {
     use windows_sys::Win32::{
         Foundation::{CloseHandle, GetLastError, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER},
         System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE},

@@ -10,6 +10,7 @@ mod apikeyusage;
 mod backend;
 mod errors;
 mod httpget;
+mod legacy;
 mod lifecycle;
 mod metadata;
 mod modelcatalog;
@@ -32,6 +33,10 @@ pub use errors::{
     map_lifecycle_error, map_model_catalog_code, map_occupant_code, map_usage_code,
     method_unavailable, sidecar_invalid, sidecar_missing, startup_diagnostic, timeout_error,
     unknown_method, LifecycleError, StartupStage,
+};
+pub use legacy::{
+    parse_current_installation, parse_record, record_allows_migration, CurrentLineage,
+    LegacyRuntime, RecordedIdentity,
 };
 pub use lifecycle::{
     last_lines, merge_log_lines, Backend, Manager, DEFAULT_LOG_LINES, MAX_LOG_LINE_BYTES,

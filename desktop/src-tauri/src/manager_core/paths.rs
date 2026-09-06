@@ -33,6 +33,10 @@ impl Paths {
     pub fn state_files(&self) -> [PathBuf; 2] {
         [self.desktop_state_file.clone(), self.cli_state_file.clone()]
     }
+
+    pub fn installation_file(&self) -> PathBuf {
+        self.desktop_data_dir.join("installation.json")
+    }
 }
 
 pub fn resolve_with(os: &str, home: &Path, getenv: impl Fn(&str) -> String) -> Paths {
@@ -167,6 +171,10 @@ mod tests {
         assert_eq!(
             got.agent_state_dir(),
             PathBuf::from("desktop-data/agent-transactions")
+        );
+        assert_eq!(
+            got.installation_file(),
+            PathBuf::from("desktop-data/installation.json")
         );
     }
 }

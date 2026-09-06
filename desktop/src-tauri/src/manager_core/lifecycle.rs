@@ -28,6 +28,7 @@ use super::errors::{
     map_occupant_code, method_unavailable, startup_diagnostic, timeout_error, LifecycleError,
     StartupStage,
 };
+use super::legacy::{prepare_legacy_stop, LegacyRuntime};
 use super::occupant::{
     CallContext, Inspection as OccupantInspection, OccupantService, TerminateResult,
 };
@@ -68,6 +69,7 @@ pub struct Manager<B> {
     occupant: OccupantService,
     agent: AgentService,
     trusted: Option<Arc<dyn TrustedCatalog>>,
+    legacy: Option<LegacyRuntime>,
     failure: Mutex<Option<LatchedFailure>>,
 }
 
@@ -82,6 +84,7 @@ impl<B: Backend> Manager<B> {
             occupant: OccupantService::new(Default::default(), Default::default()),
             agent: isolated_service(),
             trusted: None,
+            legacy: None,
             failure: Mutex::new(None),
         }
     }
@@ -108,6 +111,11 @@ impl<B: Backend> Manager<B> {
 
     pub fn with_trusted(mut self, trusted: Arc<dyn TrustedCatalog>) -> Self {
         self.trusted = Some(trusted);
+        self
+    }
+
+    pub fn with_legacy(mut self, legacy: LegacyRuntime) -> Self {
+        self.legacy = Some(legacy);
         self
     }
 
@@ -165,6 +173,7 @@ impl<B: Backend> Manager<B> {
             Method::DiagnosticsCollect => to_value(self.diagnostics_collect(&params).await?),
             Method::RouterStatus => to_value(self.router_status(&params).await?),
             Method::RouterStart => to_value(self.router_start(&params).await?),
+            Method::RouterMigrateLegacy => to_value(self.router_migrate_legacy(&params).await?),
             Method::RouterStop => to_value(self.router_stop(&params).await?),
             Method::RouterHealth => to_value(self.router_health(&params).await?),
             Method::RouterVersion => to_value(self.router_version(&params).await?),
@@ -181,7 +190,6 @@ impl<B: Backend> Manager<B> {
             Method::AgentCleanupPreview => to_value(self.agent_cleanup_preview(&params)?),
             Method::AgentCleanupWrite => to_value(self.agent_cleanup_write(&params)?),
             Method::ApiKeyUsage => to_value(self.api_key_usage(&params)?),
-            _ => Err(method_unavailable()),
         }
     }
 
@@ -286,6 +294,39 @@ impl<B: Backend> Manager<B> {
                     }
                 }
                 if request.owner == RouterOwner::Desktop && start_err.should_latch() {
+                    self.latch_startup_failure(&start_err);
+                }
+                Err(map_lifecycle_error(&start_err))
+            }
+        }
+    }
+
+    async fn router_migrate_legacy(
+        &self,
+        params: &Value,
+    ) -> Result<RouterStatusResult, ProtocolError> {
+        let Some(legacy) = &self.legacy else {
+            return Err(method_unavailable());
+        };
+        decode_empty(params)?;
+        if let Err(error) = prepare_legacy_stop(
+            &legacy.current,
+            &legacy.desktop_state_path,
+            legacy.host.as_ref(),
+            &legacy.budget,
+        ) {
+            if error.should_latch() {
+                self.latch_startup_failure(&error);
+            }
+            return Err(map_lifecycle_error(&error));
+        }
+        match self.backend.start(RouterOwner::Desktop).await {
+            Ok(value) => {
+                self.clear_failure();
+                Ok(status_from_state(&value))
+            }
+            Err(start_err) => {
+                if start_err.should_latch() {
                     self.latch_startup_failure(&start_err);
                 }
                 Err(map_lifecycle_error(&start_err))
