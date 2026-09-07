@@ -143,6 +143,7 @@ fn unix_mode(info: &fs::Metadata) -> u32 {
     }
     #[cfg(not(unix))]
     {
+        let _ = info;
         0
     }
 }

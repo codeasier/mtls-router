@@ -320,9 +320,9 @@ pub(crate) fn process_uid(pid: i32) -> Result<String, ProcessError> {
 fn inspect_platform(pid: i32) -> Result<(String, String), ProcessError> {
     use windows_sys::Win32::{
         Foundation::{CloseHandle, GetLastError, ERROR_GEN_FAILURE, ERROR_INVALID_PARAMETER},
-        System::{
-            ProcessStatus::QueryFullProcessImageNameW,
-            Threading::{GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION},
+        System::Threading::{
+            GetProcessTimes, OpenProcess, QueryFullProcessImageNameW,
+            PROCESS_QUERY_LIMITED_INFORMATION,
         },
     };
 

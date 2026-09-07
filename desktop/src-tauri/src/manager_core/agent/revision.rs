@@ -130,6 +130,7 @@ fn unix_perm(info: &fs::Metadata) -> u32 {
     }
     #[cfg(not(unix))]
     {
+        let _ = info;
         0o600
     }
 }

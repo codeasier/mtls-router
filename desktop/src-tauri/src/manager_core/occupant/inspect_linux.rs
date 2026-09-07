@@ -652,6 +652,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn inspect_linux_correlates_socket_owner() {
         let root = write_proc_net(&[(
             "tcp",

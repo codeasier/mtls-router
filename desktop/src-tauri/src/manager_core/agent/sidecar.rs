@@ -484,6 +484,7 @@ fn unix_mode(info: &std::fs::Metadata) -> u32 {
     }
     #[cfg(not(unix))]
     {
+        let _ = info;
         0
     }
 }
