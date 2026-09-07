@@ -2,6 +2,16 @@
 
 [中文](zh-CN/CHANGELOG.md)
 
+## v0.5.1 - 2026-09-07
+
+This patch release fixes desktop package verification so Intel (`x86_64`) macOS builds can be validated and published.
+
+### Fixed
+
+- Release package verification no longer confirms target identity by byte-scanning the compiled binary for the `rustc` target triple. LLVM can fold the 19-byte `x86_64-apple-darwin` triple into `movabs` immediates instead of a contiguous string, so the scan never matched and the `v0.5.0` Intel build failed verification; the `--verify-manager-handshake` output is now the source of truth for both the target OS/arch and the embedded rustc triple.
+
+---
+
 ## v0.5.0 - 2026-09-07
 
 This release moves the router and its management control plane into the desktop process and ends the standalone CLI: new versions ship the desktop application only, while every historical CLI release stays downloadable from its tag.
