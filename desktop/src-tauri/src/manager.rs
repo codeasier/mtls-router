@@ -1,12 +1,16 @@
+//! Protocol v4 client actor over a line-oriented transport.
+//!
+//! The only production transport is the in-process manager session
+//! (`manager_core::production_factory`); no Go sidecar is spawned. The actor
+//! keeps the Go-era guarantees: one request in flight, per-method watchdogs,
+//! a single recovery respawn for recoverable failures, and zeroized params.
+
 use crate::{
     error::{CommandError, Result},
-    installation::InstallationOwnership,
     manager_diagnostics::{
         stage_for_code, ManagerDiagnostic, ManagerDiagnosticRing, STAGE_HANDSHAKE,
         STAGE_PROTOCOL_PARSE, STAGE_SPAWN, STAGE_UNEXPECTED_EXIT, STAGE_WATCHDOG_TIMEOUT,
     },
-    process_identity::ProcessIdentity,
-    sidecar::SidecarPaths,
     types::ManagerInfo,
 };
 use serde::de::DeserializeOwned;
@@ -19,11 +23,6 @@ use std::{
     },
     time::Duration,
 };
-use tauri::AppHandle;
-use tauri_plugin_shell::{
-    process::{CommandChild, CommandEvent},
-    ShellExt,
-};
 use tokio::sync::{mpsc, oneshot, watch};
 use zeroize::{Zeroize, Zeroizing};
 
@@ -34,7 +33,10 @@ const ROUTER_MIGRATE_LEGACY: &str = "router.migrate_legacy";
 const FORCE_TERMINATE_OCCUPANT: &str = "router.force_terminate_occupant";
 const AGENT_CLEANUP_WRITE: &str = "agent.cleanup.write";
 
+/// Line transport events. The in-process session only produces `Stdout`;
+/// the remaining variants keep the recovery contract testable.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum TransportEvent {
     Stdout(Vec<u8>),
     Stderr(Vec<u8>),
@@ -54,101 +56,6 @@ pub struct TransportSession {
 
 pub trait TransportFactory: Send + Sync {
     fn spawn(&self) -> Result<TransportSession>;
-}
-
-struct TauriChild(CommandChild);
-
-impl TransportChild for TauriChild {
-    fn write(&mut self, bytes: &[u8]) -> Result<()> {
-        self.0
-            .write(bytes)
-            .map_err(|_| CommandError::manager_failed())
-    }
-
-    fn kill(self: Box<Self>) {
-        let _ = self.0.kill();
-    }
-}
-
-pub struct TauriTransportFactory {
-    app: AppHandle,
-    sidecars: SidecarPaths,
-    parent: ProcessIdentity,
-    session_id: String,
-    installation: InstallationOwnership,
-}
-
-impl TauriTransportFactory {
-    pub fn new(
-        app: AppHandle,
-        sidecars: SidecarPaths,
-        parent: ProcessIdentity,
-        session_id: String,
-        installation: InstallationOwnership,
-    ) -> Self {
-        Self {
-            app,
-            sidecars,
-            parent,
-            session_id,
-            installation,
-        }
-    }
-}
-
-impl TransportFactory for TauriTransportFactory {
-    fn spawn(&self) -> Result<TransportSession> {
-        let args = vec![
-            "serve".to_owned(),
-            "--router-sidecar".to_owned(),
-            self.sidecars.router.to_string_lossy().into_owned(),
-            "--desktop-session".to_owned(),
-            self.session_id.clone(),
-            "--desktop-installation".to_owned(),
-            self.installation.installation_id.clone(),
-            "--package-generation".to_owned(),
-            self.installation.package_generation.to_string(),
-            "--parent-pid".to_owned(),
-            self.parent.pid.to_string(),
-            "--parent-start".to_owned(),
-            self.parent.started_at.clone(),
-            "--parent-executable".to_owned(),
-            self.parent.executable.to_string_lossy().into_owned(),
-        ];
-        let (mut events, child) = self
-            .app
-            .shell()
-            .sidecar("mtls-router-manager")
-            .map_err(|_| {
-                CommandError::new("SIDECAR_MISSING", "packaged manager is missing")
-                    .with_stage(crate::manager_diagnostics::STAGE_SIDECAR_RESOLUTION)
-            })?
-            .args(args)
-            .spawn()
-            .map_err(|_| {
-                CommandError::new("SIDECAR_INVALID", "packaged manager cannot execute")
-                    .with_stage(STAGE_SPAWN)
-            })?;
-        let (sender, receiver) = mpsc::channel(16);
-        tauri::async_runtime::spawn(async move {
-            while let Some(event) = events.recv().await {
-                let event = match event {
-                    CommandEvent::Stdout(bytes) => TransportEvent::Stdout(bytes),
-                    CommandEvent::Stderr(bytes) => TransportEvent::Stderr(bytes),
-                    CommandEvent::Error(_) => TransportEvent::Error,
-                    CommandEvent::Terminated(_) => TransportEvent::Terminated,
-                    _ => continue,
-                };
-                if sender.send(event).await.is_err() {
-                    break;
-                }
-            }
-        });
-        Ok(TransportSession {
-            child: Box::new(TauriChild(child)),
-            events: receiver,
-        })
-    }
 }
 
 struct Call {

@@ -194,11 +194,11 @@ export const en: Record<TranslationKey, string> = {
   "router.failureGuide.process-exit.action":
     "Resolve the specific cause shown in the technical details and retry. If no cause is available, restart the desktop application.",
   "router.failureGuide.sidecar-resolution.title":
-    "The management component cannot be located",
+    "The management component could not be validated",
   "router.failureGuide.sidecar-resolution.detail":
-    "The desktop could not resolve or validate the packaged manager, so the control plane did not start.",
+    "The desktop could not validate its embedded manager identity or installation metadata, so the control plane did not start.",
   "router.failureGuide.sidecar-resolution.action":
-    "Reinstall the desktop application from a trusted package; do not replace sidecars separately.",
+    "Reinstall the desktop application from a trusted package; no component is downloaded or replaced separately.",
   "router.failureGuide.spawn.title": "The management component could not start",
   "router.failureGuide.spawn.detail":
     "The operating system did not create the manager process, so the desktop cannot manage the router.",
@@ -308,9 +308,6 @@ export const en: Record<TranslationKey, string> = {
   "router.occupant.cancel": "Cancel",
   "router.occupant.confirm": "Force terminate",
   "router.occupant.terminating": "Terminating...",
-  "router.desktop": "Desktop",
-  "router.manager": "Manager",
-  "router.router": "Router",
   "router.next": "NEXT",
   "router.agentNotice":
     "When the router is available, go to Agents to generate a configuration preview. Files are never changed automatically.",
@@ -355,7 +352,10 @@ export const en: Record<TranslationKey, string> = {
   "settings.theme.warm": "Warm sand",
   "settings.theme.light": "Light",
   "settings.theme.dark": "Dark",
-  "settings.components": "Component versions",
+  "settings.components": "Version",
+  "settings.appVersion": "Application version",
+  "settings.externalRouter":
+    "Reused external router (historical CLI installation)",
   "settings.locations": "Storage locations",
   "settings.dataLocation": "Application data",
   "settings.logLocation": "Log directory",

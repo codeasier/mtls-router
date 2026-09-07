@@ -11,7 +11,9 @@ use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use uuid::Uuid;
 
 pub const SCHEMA_VERSION: u32 = 1;
-pub const PACKAGE_GENERATION: u32 = 1;
+/// Generation 1 was the Go-sidecar desktop. The embedded runtime is a new
+/// generation so sidecar-era desktop records are migratable, never reclaimed.
+pub const PACKAGE_GENERATION: u32 = 2;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InstallationOwnership {
@@ -20,6 +22,7 @@ pub struct InstallationOwnership {
     pub package_generation: u32,
     pub deployment_id: String,
     pub management_protocol_version: String,
+    /// Written by generation 1; accepted on read, cleared on the next write.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub manager_sidecar_sha256: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -27,25 +30,22 @@ pub struct InstallationOwnership {
 }
 
 impl InstallationOwnership {
-    pub fn current(sidecar_hashes: (&str, &str)) -> Self {
+    pub fn current() -> Self {
         Self {
             schema_version: SCHEMA_VERSION,
             installation_id: String::new(),
             package_generation: PACKAGE_GENERATION,
             deployment_id: env!("MTLS_DEPLOYMENT_ID").to_owned(),
             management_protocol_version: env!("MTLS_MANAGEMENT_PROTOCOL_VERSION").to_owned(),
-            manager_sidecar_sha256: sidecar_hashes.0.to_owned(),
-            router_sidecar_sha256: sidecar_hashes.1.to_owned(),
+            manager_sidecar_sha256: String::new(),
+            router_sidecar_sha256: String::new(),
         }
     }
 }
 
-pub fn load_or_create(
-    data_dir: &str,
-    sidecar_hashes: (&str, &str),
-) -> Result<InstallationOwnership> {
+pub fn load_or_create(data_dir: &str) -> Result<InstallationOwnership> {
     let path = Path::new(data_dir).join("installation.json");
-    let current = InstallationOwnership::current(sidecar_hashes);
+    let current = InstallationOwnership::current();
     match fs::read(&path) {
         Ok(bytes) => {
             let existing: InstallationOwnership = serde_json::from_slice(&bytes).map_err(|_| {
@@ -59,8 +59,8 @@ pub fn load_or_create(
             updated.package_generation = current.package_generation;
             updated.deployment_id = current.deployment_id;
             updated.management_protocol_version = current.management_protocol_version;
-            updated.manager_sidecar_sha256 = current.manager_sidecar_sha256;
-            updated.router_sidecar_sha256 = current.router_sidecar_sha256;
+            updated.manager_sidecar_sha256.clear();
+            updated.router_sidecar_sha256.clear();
             validate(&updated)?;
             if updated != existing {
                 write_atomic(&path, &updated)?;
@@ -177,30 +177,29 @@ mod tests {
     use super::*;
     use std::fs;
 
-    fn hashes() -> (&'static str, &'static str) {
-        (
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        )
-    }
-
     #[test]
-    fn load_or_create_keeps_stable_id_across_hash_updates() {
+    fn load_or_create_keeps_stable_id_and_advances_sidecar_era_record() {
         let dir = tempfile();
-        let first = load_or_create(&dir, hashes()).unwrap();
-        let updated = load_or_create(
-            &dir,
-            (
-                "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-                hashes().1,
-            ),
+        let first = load_or_create(&dir).unwrap();
+        assert_eq!(first.package_generation, PACKAGE_GENERATION);
+        let again = load_or_create(&dir).unwrap();
+        assert_eq!(first, again);
+
+        let dir = tempfile();
+        fs::write(
+            Path::new(&dir).join("installation.json"),
+            r#"{"schema_version":1,"installation_id":"11111111-1111-4111-8111-111111111111","package_generation":1,"deployment_id":"prod","management_protocol_version":"4","manager_sidecar_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","router_sidecar_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}"#,
         )
         .unwrap();
-        assert_eq!(first.installation_id, updated.installation_id);
+        let upgraded = load_or_create(&dir).unwrap();
         assert_eq!(
-            updated.manager_sidecar_sha256,
-            "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            upgraded.installation_id,
+            "11111111-1111-4111-8111-111111111111"
         );
+        assert_eq!(upgraded.package_generation, 2);
+        assert!(upgraded.manager_sidecar_sha256.is_empty());
+        let raw = fs::read_to_string(Path::new(&dir).join("installation.json")).unwrap();
+        assert!(!raw.contains("sidecar_sha256"), "{raw}");
     }
 
     #[test]
@@ -212,7 +211,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            load_or_create(&dir, hashes()).unwrap_err().code,
+            load_or_create(&dir).unwrap_err().code,
             "INSTALLATION_INVALID"
         );
     }

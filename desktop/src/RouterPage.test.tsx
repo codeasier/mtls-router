@@ -838,8 +838,6 @@ describe("RouterPage states", () => {
     expect(await screen.findByText("127.0.0.1:19999")).toBeInTheDocument();
     expect(screen.queryByText("所有者")).not.toBeInTheDocument();
     expect(screen.queryByText("desktop-v1")).not.toBeInTheDocument();
-    expect(screen.queryByText("manager-v1")).not.toBeInTheDocument();
-    expect(screen.queryByText("router-v1")).not.toBeInTheDocument();
     expect(api.getComponentVersions).not.toHaveBeenCalled();
   });
 

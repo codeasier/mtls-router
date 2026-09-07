@@ -36,11 +36,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # New releases publish the desktop application only. The CLI router,
+  # manager, setup scripts, and service wrappers are frozen at their
+  # historical tags; the desktop embeds the router and manager in-process.
   prepare:
     name: Prepare build matrices
     runs-on: ubuntu-latest
     outputs:
-      cli-matrix: ${{ steps.matrix.outputs.cli-matrix }}
       desktop-matrix: ${{ steps.matrix.outputs.desktop-matrix }}
       online-update: ${{ steps.matrix.outputs.online-update }}
       simplify: ${{ steps.simplify.outputs.simplify }}
@@ -77,14 +79,6 @@ jobs:
               exit 1
             }
           fi
-          cli='[
-            {"name":"linux-amd64","goos":"linux","goarch":"amd64"},
-            {"name":"linux-arm64","goos":"linux","goarch":"arm64"},
-            {"name":"darwin-amd64","goos":"darwin","goarch":"amd64"},
-            {"name":"darwin-arm64","goos":"darwin","goarch":"arm64"},
-            {"name":"windows-amd64","goos":"windows","goarch":"amd64"},
-            {"name":"windows-arm64","goos":"windows","goarch":"arm64"}
-          ]'
           desktop='[
             {"name":"windows-amd64","runner":"windows-2025","target":"x86_64-pc-windows-msvc","os":"windows","arch":"amd64","bundles":"nsis"},
             {"name":"windows-arm64","runner":"windows-11-arm","target":"aarch64-pc-windows-msvc","os":"windows","arch":"arm64","bundles":"nsis"},
@@ -94,75 +88,16 @@ jobs:
             {"name":"linux-arm64","runner":"ubuntu-24.04-arm","target":"aarch64-unknown-linux-gnu","os":"linux","arch":"arm64","bundles":"appimage"}
           ]'
           if [[ "$SELECTED_TARGET" != all ]]; then
-            cli="$(jq -c --arg target "$SELECTED_TARGET" '[.[] | select(.name == $target)]' <<<"$cli")"
             desktop="$(jq -c --arg target "$SELECTED_TARGET" '[.[] | select(.name == $target)]' <<<"$desktop")"
-            [[ "$(jq length <<<"$cli")" -eq 1 && "$(jq length <<<"$desktop")" -eq 1 ]] || {
+            [[ "$(jq length <<<"$desktop")" -eq 1 ]] || {
               echo "unsupported validation target: $SELECTED_TARGET" >&2
               exit 1
             }
           fi
-          printf 'cli-matrix={"include":%s}\n' "$(jq -c . <<<"$cli")" >>"$GITHUB_OUTPUT"
           printf 'desktop-matrix={"include":%s}\n' "$(jq -c . <<<"$desktop")" >>"$GITHUB_OUTPUT"
           online_update=false
           if [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then online_update=true; fi
           printf 'online-update=%s\n' "$online_update" >>"$GITHUB_OUTPUT"
-
-  build:
-    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
-    needs: prepare
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.prepare.outputs.cli-matrix) }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: Prepare release version
-        shell: bash
-        env:
-          DISPATCH_VERSION: ${{ inputs.version }}
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            version="${GITHUB_REF_NAME#v}"
-          else
-            version="$DISPATCH_VERSION"
-          fi
-          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
-          printf 'RELEASE_VERSION=%s\n' "$version" >>"$GITHUB_ENV"
-      - name: Build
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: '0'
-          CLIENT_CERT_PEM: ${{ secrets.CLIENT_CERT_PEM }}
-          CLIENT_KEY_PEM: ${{ secrets.CLIENT_KEY_PEM }}
-          UPSTREAM_CA_PEM: ${{ secrets.UPSTREAM_CA_PEM }}
-          UPSTREAM_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.upstream_url || vars.UPSTREAM_URL }}
-          DEPLOYMENT_ID: ${{ vars.DEPLOYMENT_ID }}
-          AGENT_MODEL_PRESET_BASE64: ${{ vars.AGENT_MODEL_PRESET_BASE64 }}
-          SIMPLIFY: ${{ needs.prepare.outputs.simplify }}
-        run: |
-          case "${DEPLOYMENT_ID:-}" in ""|dev|unknown) echo "DEPLOYMENT_ID must be a non-default production identifier" >&2; exit 1;; esac
-          test -n "$CLIENT_CERT_PEM" && test -n "$CLIENT_KEY_PEM" && test -n "$UPSTREAM_CA_PEM"
-          case "${UPSTREAM_URL:-}" in https://*) ;; *) echo "UPSTREAM_URL must use HTTPS" >&2; exit 1;; esac
-          mkdir -p dist
-          ext=""
-          if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
-          go build -trimpath \
-            -ldflags "-s -w -X 'main.clientCertPEM=${CLIENT_CERT_PEM}' -X 'main.clientKeyPEM=${CLIENT_KEY_PEM}' -X 'main.upstreamCAPEM=${UPSTREAM_CA_PEM}' -X 'main.upstreamURL=${UPSTREAM_URL}' -X 'github.com/codeasier/mtls-router/internal/version.Version=${RELEASE_VERSION}' -X 'github.com/codeasier/mtls-router/internal/version.Commit=${GITHUB_SHA::12}' -X 'github.com/codeasier/mtls-router/internal/version.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)' -X 'github.com/codeasier/mtls-router/internal/version.DeploymentID=${DEPLOYMENT_ID}'" \
-             -o "dist/mtls-router-${GOOS}-${GOARCH}${ext}" .
-          go build -trimpath \
-            -ldflags "-s -w -X 'github.com/codeasier/mtls-router/internal/version.Version=${RELEASE_VERSION}' -X 'github.com/codeasier/mtls-router/internal/version.Commit=${GITHUB_SHA::12}' -X 'github.com/codeasier/mtls-router/internal/version.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)' -X 'github.com/codeasier/mtls-router/internal/version.DeploymentID=${DEPLOYMENT_ID}' -X 'github.com/codeasier/mtls-router/internal/manager/preset.Encoded=${AGENT_MODEL_PRESET_BASE64}' -X 'github.com/codeasier/mtls-router/internal/manager/modelcatalog.Simplify=${SIMPLIFY}'" \
-             -o "dist/mtls-router-manager-${GOOS}-${GOARCH}${ext}" ./cmd/mtls-router-manager
-          printf '{"schema_version":1,"producer":"cli-%s-%s","management_protocol_version":"4"}\n' "$GOOS" "$GOARCH" >"dist/release-metadata-cli-${GOOS}-${GOARCH}.json"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: mtls-router-cli-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dist/*
-          if-no-files-found: error
 
   desktop:
     name: Desktop ${{ matrix.target }}
@@ -172,6 +107,8 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare.outputs.desktop-matrix) }}
     env:
+      # Consumed by desktop/src-tauri/build.rs, which embeds the router
+      # credentials and identity into the desktop executable.
       CLIENT_CERT_PEM: ${{ secrets.CLIENT_CERT_PEM }}
       CLIENT_KEY_PEM: ${{ secrets.CLIENT_KEY_PEM }}
       UPSTREAM_CA_PEM: ${{ secrets.UPSTREAM_CA_PEM }}
@@ -180,6 +117,7 @@ jobs:
       AGENT_MODEL_PRESET_BASE64: ${{ vars.AGENT_MODEL_PRESET_BASE64 }}
       SIMPLIFY: ${{ needs.prepare.outputs.simplify }}
       MANAGEMENT_PROTOCOL_VERSION: '4'
+      RELEASE_BUILD: '1'
       APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
       APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
       APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -244,12 +182,13 @@ jobs:
           printf 'TAURI_UPDATER_CONFIG=%s\n' "$updater_config" >>"$GITHUB_ENV"
           printf 'version=%s\n' "$version" >>"$GITHUB_OUTPUT"
           printf 'VERSION=%s\n' "$version" >>"$GITHUB_ENV"
-      - name: Validate production inputs and build credential-injected sidecars
+      - name: Validate production inputs
         shell: bash
-        env:
-          TARGET: ${{ matrix.target }}
-          RELEASE_BUILD: '1'
-        run: ./desktop/scripts/build-sidecars.sh
+        run: |
+          case "${DEPLOYMENT_ID:-}" in ""|dev|unknown) echo "DEPLOYMENT_ID must be a non-default production identifier" >&2; exit 1;; esac
+          test -n "$CLIENT_CERT_PEM" && test -n "$CLIENT_KEY_PEM" && test -n "$UPSTREAM_CA_PEM"
+          case "${UPSTREAM_URL:-}" in https://*) ;; *) echo "UPSTREAM_URL must use HTTPS" >&2; exit 1;; esac
+          test "$MANAGEMENT_PROTOCOL_VERSION" = 4
       - name: Import Windows signing certificate
         if: runner.os == 'Windows' && env.WINDOWS_CERTIFICATE != '' && env.WINDOWS_CERTIFICATE_PASSWORD != ''
         shell: pwsh
@@ -261,10 +200,6 @@ jobs:
           $certificate = Import-PfxCertificate -FilePath $path -CertStoreLocation Cert:\CurrentUser\My -Password $password
           if (-not $certificate.Thumbprint) { throw 'Windows certificate import produced no thumbprint' }
           "WINDOWS_CERTIFICATE_THUMBPRINT=$($certificate.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          $router = "desktop/src-tauri/binaries/mtls-router-${{ matrix.target }}.exe"
-          $manager = "desktop/src-tauri/binaries/mtls-router-manager-${{ matrix.target }}.exe"
-          & signtool sign /sha1 $certificate.Thumbprint /fd sha256 /tr https://timestamp.digicert.com /td sha256 $router $manager
-          if ($LASTEXITCODE -ne 0) { throw 'sidecar signing failed' }
       - name: Build unsigned Linux package
         if: runner.os == 'Linux'
         working-directory: desktop
@@ -311,15 +246,13 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
-          codesign --force --sign - "src-tauri/binaries/mtls-router-${{ matrix.target }}"
-          codesign --force --sign - "src-tauri/binaries/mtls-router-manager-${{ matrix.target }}"
           npm exec tauri -- build --target ${{ matrix.target }} --bundles app --config "$TAURI_UPDATER_CONFIG" --no-sign --ci
           app=src-tauri/target/${{ matrix.target }}/release/bundle/macos/CodeasierRouter.app
           codesign --force --sign - "$app/Contents/MacOS/mtls-router-desktop"
           codesign --force --sign - "$app"
           ./scripts/create-macos-dmg.sh ${{ matrix.target }} "$VERSION"
           ./scripts/create-macos-updater.sh ${{ matrix.target }}
-      - name: Import macOS signing certificate and pre-sign sidecars
+      - name: Import macOS signing certificate
         if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != '' && env.APPLE_CERTIFICATE_PASSWORD != ''
         shell: bash
         env:
@@ -339,8 +272,6 @@ jobs:
           test -n "$identity"
           printf 'APPLE_SIGNING_IDENTITY=%s\n' "$identity" >>"$GITHUB_ENV"
           printf 'APPLE_SIGNING_KEYCHAIN=%s\n' "$keychain" >>"$GITHUB_ENV"
-          codesign --force --options runtime --timestamp --keychain "$keychain" --sign "$identity" desktop/src-tauri/binaries/mtls-router-${{ matrix.target }}
-          codesign --force --options runtime --timestamp --keychain "$keychain" --sign "$identity" desktop/src-tauri/binaries/mtls-router-manager-${{ matrix.target }}
       - name: Create signed macOS package
         if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != '' && env.APPLE_CERTIFICATE_PASSWORD != ''
         shell: bash
@@ -373,7 +304,7 @@ jobs:
           [[ -f "$package" ]]
           (cd desktop && npm exec tauri -- signer sign "$GITHUB_WORKSPACE/$package")
           [[ -s "$package.sig" ]]
-      - name: Inspect package and sidecars
+      - name: Inspect package
         shell: bash
         env:
           PACKAGE_OUTPUT_DIR: ${{ github.workspace }}/desktop/release-artifacts
@@ -402,9 +333,10 @@ jobs:
           if ((Get-AuthenticodeSignature $package).Status -ne 'Valid') { throw 'signed Windows package failed Authenticode validation' }
           $inspection = Join-Path $env:RUNNER_TEMP 'signed-package'
           7z x -y "-o$inspection" $package | Out-Null
-          foreach ($name in @('mtls-router-desktop.exe', 'mtls-router.exe', 'mtls-router-manager.exe')) {
-            $binary = Get-ChildItem $inspection -Recurse -File -Filter $name | Select-Object -First 1
-            if (-not $binary -or (Get-AuthenticodeSignature $binary).Status -ne 'Valid') { throw "$name failed Authenticode validation" }
+          $binary = Get-ChildItem $inspection -Recurse -File -Filter 'mtls-router-desktop.exe' | Select-Object -First 1
+          if (-not $binary -or (Get-AuthenticodeSignature $binary).Status -ne 'Valid') { throw 'mtls-router-desktop.exe failed Authenticode validation' }
+          foreach ($name in @('mtls-router.exe', 'mtls-router-manager.exe')) {
+            if (Get-ChildItem $inspection -Recurse -File -Filter $name | Select-Object -First 1) { throw "signed package must not contain CLI artifact $name" }
           }
           $status="signed"
           Set-Content desktop/release-artifacts/signing-status-${{ matrix.os }}-${{ matrix.arch }}.txt $status
@@ -442,16 +374,10 @@ jobs:
   release:
     name: Package and publish release
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [prepare, build, desktop]
+    needs: [prepare, desktop]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Download all binaries
-        uses: actions/download-artifact@v4
-        with:
-          pattern: mtls-router-cli-*
-          path: binaries
-          merge-multiple: true
       - name: Download all desktop packages
         uses: actions/download-artifact@v4
         with:
@@ -461,10 +387,9 @@ jobs:
       - name: Collect protocol metadata
         run: |
           mkdir protocol-metadata
-          mv binaries/release-metadata-*.json desktop-packages/release-metadata-*.json protocol-metadata/
+          mv desktop-packages/release-metadata-*.json protocol-metadata/
       - name: Preflight and package
         env:
-          DOWNLOAD_BASE_URL: https://downloads.codeasier.top/${{ github.event.repository.name }}/${{ github.ref_name }}
           DESKTOP_DOWNLOAD_BASE_URL: https://release.codeasier.top/${{ github.event.repository.name }}/${{ github.ref_name }}
           RELEASE_TAG: ${{ github.ref_name }}
           SOURCE_DATE_EPOCH: '0'

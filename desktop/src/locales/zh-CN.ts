@@ -176,11 +176,11 @@ export const zhCN = {
     "组件已被系统执行，但在完成本地监听和身份确认前结束。",
   "router.failureGuide.process-exit.action":
     "按技术详情中的具体原因处理后重试；若没有具体原因，请重新启动桌面应用。",
-  "router.failureGuide.sidecar-resolution.title": "无法定位管理组件",
+  "router.failureGuide.sidecar-resolution.title": "无法校验管理组件",
   "router.failureGuide.sidecar-resolution.detail":
-    "桌面应用未能解析或校验打包的 manager 组件，因此没有建立控制面连接。",
+    "桌面应用未能校验内嵌 manager 的身份或安装元数据，因此没有建立控制面连接。",
   "router.failureGuide.sidecar-resolution.action":
-    "使用可信安装包重新安装桌面应用；不要单独替换 sidecar。",
+    "使用可信安装包重新安装桌面应用；应用不会单独下载或替换任何组件。",
   "router.failureGuide.spawn.title": "无法启动管理组件",
   "router.failureGuide.spawn.detail":
     "操作系统没有成功创建 manager 进程，因此桌面端无法管理路由。",
@@ -285,9 +285,6 @@ export const zhCN = {
   "router.occupant.cancel": "取消",
   "router.occupant.confirm": "强制终止",
   "router.occupant.terminating": "正在终止...",
-  "router.desktop": "桌面应用",
-  "router.manager": "管理器",
-  "router.router": "路由",
   "router.next": "下一步",
   "router.agentNotice":
     "路由可用后，前往 Agent 页面生成配置预览。不会自动修改文件。",
@@ -328,7 +325,9 @@ export const zhCN = {
   "settings.theme.warm": "暖沙",
   "settings.theme.light": "浅色",
   "settings.theme.dark": "深色",
-  "settings.components": "组件版本",
+  "settings.components": "版本",
+  "settings.appVersion": "应用版本",
+  "settings.externalRouter": "复用的外部路由（历史 CLI 安装）",
   "settings.locations": "存储位置",
   "settings.dataLocation": "应用数据",
   "settings.logLocation": "日志目录",

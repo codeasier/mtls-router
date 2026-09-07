@@ -15,16 +15,16 @@ The workflows build six native desktop packages and inspect each one on a matchi
 
 Do not bypass an operating-system warning unless the package checksum, recorded status, distribution policy, and required target-platform launch evidence have all been reviewed. See [Desktop Application](DESKTOP.md#install) and [Build and Release](BUILD.md#package-verification).
 
-## Sidecar validation failed
+## Embedded manager validation failed
 
-Symptoms include `SIDECAR_MISSING`, `SIDECAR_INVALID`, a wrong-architecture report, or a request to reinstall.
+Symptoms include `SIDECAR_INVALID` (the embedded manager identity does not match the desktop build), `INSTALLATION_INVALID`, `MANAGER_INIT_FAILED`, or a request to reinstall. The router and manager run inside the desktop process, so these codes point at a damaged installation or installation metadata rather than at a missing component file.
 
 1. Quit the application.
 2. Confirm that the desktop package matches the operating system and CPU architecture.
 3. Reinstall the complete package from the trusted release source.
-4. Do not download a standalone manager/router, copy a CLI binary into the application, change executable permissions as a workaround, or disable integrity checks.
+4. Do not download a standalone manager/router, copy a historical CLI binary next to the application, or edit `installation.json` as a workaround.
 
-The desktop never repairs or downloads sidecars independently. If reinstalling the verified package fails, preserve the error and package identity for the maintainer.
+The desktop never downloads or replaces components independently. If reinstalling the verified package fails, preserve the error and package identity for the maintainer.
 
 ## Port 19099 is occupied
 
@@ -71,24 +71,20 @@ An unexpected router exit is not restarted in an unlimited loop. If the manager 
 
 1. On Router, if the heading is status unavailable, treat it as control-plane unread, not as a current upstream verdict.
 2. From Router (or Logs), copy the diagnostic snapshot or export the log bundle and send it to the maintainer. The zip contains all session logs under `mtls-router-logs/` plus the snapshot; it does not include credentials, Agent configs, or backups.
-3. Then restart the desktop once if still needed. Reinstall if the error identifies a sidecar validation problem. Do not start another router on a different port as a workaround.
+3. Then restart the desktop once if still needed. Reinstall if the error identifies an embedded manager validation problem. Do not start another router on a different port as a workaround.
 
-If a freshly built or installed manager exits before accepting protocol requests
-with `invalid embedded Agent model preset`, its nonempty build-time
+If a freshly built or installed desktop reports `MANAGER_INIT_FAILED` with an
+invalid embedded Agent model preset, its nonempty build-time
 `AGENT_MODEL_PRESET_BASE64` is invalid. The manager deliberately reports no raw
-encoded or decoded preset content and fails before Agent transaction recovery.
-Users should reinstall a corrected complete release; maintainers should correct
-or clear the repository variable and rebuild both standalone and desktop
-manager artifacts. Do not patch the packaged sidecar or inject the preset into
-the router.
+encoded or decoded preset content and never serves Agent methods. Users should
+reinstall a corrected complete release; maintainers should correct or clear the
+repository variable and rebuild the desktop. The preset is compiled into the
+desktop by `desktop/src-tauri/build.rs`; the router never receives it.
 
-If it exits with `invalid embedded simplify value`, the manager was directly
-linked with an invalid or empty `modelcatalog.Simplify` value. Users should
-reinstall a corrected complete release. Maintainers should use the repository
-build scripts with unset/empty `SIMPLIFY` or an ASCII-case spelling of `true` or
-`false`, then rebuild both standalone and desktop manager artifacts with the
-same normalized value. The scripts reject all other values before compilation;
-do not patch the sidecar or add `SIMPLIFY` to router runtime configuration.
+The `SIMPLIFY` catalog policy is likewise fixed at build time: `build.rs`
+accepts unset/empty or an ASCII-case spelling of `true` or `false` and fails the
+build for every other value, so an installed desktop cannot carry an invalid
+value. It is not a router runtime setting.
 
 ## Agent configuration is unavailable or not writable
 

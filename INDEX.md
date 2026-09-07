@@ -1,22 +1,26 @@
 # mtls-router
 
-面向 AI 编程 Agent（Claude Code、Codex、opencode）的 Go 1.26 本地反向代理系统。本地客户端走明文 HTTP；上游流量走 HTTPS 并内嵌 mTLS 凭证。系统分三层：
+面向 AI 编程 Agent（Claude Code、Codex、opencode）的本地反向代理系统。本地客户端走明文 HTTP；上游流量走 HTTPS 并内嵌 mTLS 凭证。当前交付物是 **Tauri 桌面应用**（React + Rust）：Rust `router_core` 与 `manager_core` 在桌面进程内提供反向代理与 protocol v4 控制面。仓库仍保留三层历史实现作为冻结参考：
 
-1. **mtls-router** — 单二进制反向代理，支持 SSE 流式、健康探测、后台模式
-2. **mtls-router-manager** — 基于 stdin/stdout JSON 协议的控制面，负责路由生命周期与 Agent 配置
-3. **Tauri 桌面应用** — React + Rust GUI，以 sidecar 方式拉起 manager 并通过 JSON 协议通信
+1. **mtls-router**（Go，冻结）— 单二进制反向代理，支持 SSE 流式、健康探测、后台模式
+2. **mtls-router-manager**（Go，冻结）— 基于 stdin/stdout JSON 协议的控制面，负责路由生命周期与 Agent 配置
+3. **Tauri 桌面应用** — 内嵌 Rust router 与 manager；`v0.4.1` 之后的 release 只发布桌面包
 
 > 工作流偏好（本地开发 / 测试 / 提交 / 发布 / 文档规范）见 [AGENTS.md](AGENTS.md)。本 INDEX.md 仅描述项目理解与架构。
 
-## 三层数据流
+## 数据流
 
 ```
-Tauri UI (React) ──invoke──▶ Rust commands ──stdin/stdout JSON──▶ mtls-router-manager ──spawn/HTTP──▶ mtls-router ──mTLS──▶ upstream
+Tauri UI (React) ──invoke──▶ Rust commands ──protocol v4 JSON 行（进程内 ManagerClient）──▶ manager_core ──supervisor 线程──▶ router_core ──mTLS──▶ upstream
 ```
 
-桌面应用绝不直接与 router 通信。它以长驻子进程方式拉起 `mtls-router-manager serve`，通过 stdin/stdout 交换换行分隔的 JSON 请求/响应。
+桌面应用绝不直接与 router 通信：命令层只通过 `ManagerClient` 发 protocol v4 请求，由同进程的 `manager_core` session 线程处理；router 由 `router_core` supervisor 在独立 runtime 线程上运行。正常路径不启动 Go 子进程。历史拓扑（Tauri 拉起 `mtls-router-manager serve` sidecar，再由其管理 `mtls-router` 子进程）对应 `v0.4.1` 及更早版本；桌面会识别该拓扑遗留的 router 并在完整身份校验后一次性迁移。
 
-## Router（`main.go` + `internal/`）
+## CLI 停止维护（`v0.4.1` 之后）
+
+新 release 不再构建或发布 `mtls-router`、`mtls-router-manager`、setup 脚本、CLI 归档与 systemd/Docker/NSSM 包装；`scripts/package-release.sh` 以 allowlist 拒绝它们。Go 源码、`scripts/build.sh`、`setup.*`、`systemd/`、`Dockerfile` 与全部 Go 测试保留在仓库中：它们是内嵌 Rust 实现的对照契约（HTTP 黑盒、protocol v4、状态文件、occupant、legacy 迁移 golden），CI 继续运行 `go test ./...` 与原生 occupant 测试。下文 Router / Manager / Setup 章节描述的是这份冻结实现及其不变量，Rust 实现按同一契约移植。
+
+## Router（`main.go` + `internal/`，冻结）
 
 `run()` 编排流程：meta flags → config.Load（flag > env > build-time > default）→ mTLS transport → upstream probe → reverse proxy + mux → graceful shutdown。
 
@@ -89,27 +93,28 @@ key 绝不出现于环境变量、CLI 参数、model config、日志或 journal 
 
 **后端**（Rust，Tauri 2）：
 
-- `src/lib.rs` — 应用入口：插件注册、setup、invoke handler 注册
+- `src/lib.rs` — 应用入口：插件注册（无 shell 插件）、setup（`installation.json` → `runtime` → 进程内 `InProcessFactory`）、invoke handler 注册；`--verify-manager-handshake` 在临时目录构造内嵌 manager 校验身份
+- `src/runtime.rs` — 生产运行时装配：内嵌凭据（`build.rs` 写入 `OUT_DIR`）、`SupervisorConfig`、`CurrentLineage`/`SessionConfig`、编译期 preset/simplify
 - `src/commands.rs` — Tauri 命令处理器，代理到 manager client；`AppState`、`ModelFlow`，以及不接收凭据/model flow 的 cleanup preview/write command
-- `src/manager.rs` — spawn 并通过 stdin/stdout 与 `mtls-router-manager serve` 通信；握手校验；cleanup write 禁止不确定投递后的自动 replay
+- `src/manager.rs` — `ManagerClient` 与 `TransportFactory` trait：单请求在飞、watchdog、一次性恢复；生产 transport 为 `manager_core::InProcessFactory`；cleanup write 禁止不确定投递后的自动 replay
+- `src/manager_core/` — 内嵌 protocol v4 控制面：lifecycle、occupant、Agent、trusted-router、`discovery`（Go discovery 移植）、`embedded`（生产 `Backend`：状态调和 + 端口分类 + 会话日志 + `desktop-state.json` 自有记录）、`legacy`（一次性完整身份校验迁移与每代际终止闩）、`session`（生产装配）
+- `src/router_core/` — 内嵌 router：HTTP/1 + rustls/`ring`，probe、精确 `/version`/`/health`、流式代理、白名单访问日志、独立 runtime supervisor
 - `src/scheduler.rs` — 轮询调度器，向前端 emit `router-poll-snapshot` 事件
 - `src/port_recovery.rs` — manager 报告首次释放后约 10 秒定期采样，区分未检测到重新占用与已采样到重新占用
 - `src/updater.rs` — stable-only 桌面整包检查/安装：有限网络超时、Tauri 签名下载、desktop-owned router 停止与失败恢复、安装后重启
-- `src/sidecar.rs` — 解析并校验 sidecar 二进制路径（运行时纯名字 `mtls-router[-manager][.exe]`；target-triple 名仅为构建输入）
 - `src/tray.rs` — 系统托盘，状态感知菜单
-- `src/orchestration.rs` — 首次启动流程（sidecar 有效则自动启动 router）
+- `src/orchestration.rs` — 首次启动流程（无 router 时自动启动内嵌 router；`legacy_managed` 走 `router.migrate_legacy`）
 - `src/model_config.rs` — model config 导入/导出校验
 - `src/autostart.rs` — 登录启动插件包装（首次启动默认启用）
 - `src/paths.rs` — 桌面数据目录解析
-- `src/process_identity.rs` — 捕获 PID + 启动时间 + 可执行文件，用于父身份 flag
 - `src/types.rs` — 镜像 manager 协议结果的严格 serde 类型，包含 cleanup detection、preview 与 delete/backup 文件影响
 - `src/error.rs` — 将 manager 协议错误映射为用户可见字符串
 
-Rust 侧绝不向 webview 暴露 shell/fs/http 权限（由 `lib.rs` 中的测试强制保证）。
+Rust 侧绝不向 webview 暴露 shell/fs/http 权限（由 `lib.rs` 中的测试强制保证）；`bundle.externalBin` 为空，Rust 亦不依赖 shell 插件。
 
-桌面在线更新仅由精确 stable `vX.Y.Z` release 启用，固定检查 `https://release.codeasier.top/latest.json`，`latest.json` 中各平台产物 URL 指向 `https://release.codeasier.top/mtls-router/<tag>/`。更新包包含桌面应用及匹配的 manager/router sidecar，必须通过独立 Tauri updater 签名校验并经用户确认后安装；该能力不改变 CLI router、manager 或 setup 脚本的更新行为。
+桌面在线更新仅由精确 stable `vX.Y.Z` release 启用，固定检查 `https://release.codeasier.top/latest.json`，`latest.json` 中各平台产物 URL 指向 `https://release.codeasier.top/mtls-router/<tag>/`。更新包即完整桌面应用（内嵌 manager/router），必须通过独立 Tauri updater 签名校验并经用户确认后安装。
 
-## Setup 脚本（`setup.sh` / `setup.ps1`）
+## Setup 脚本（`setup.sh` / `setup.ps1`，冻结）
 
 路由生命周期（`router install/start/stop/status/setup`）与 Agent 配置（`agent print-config/write-config`）是有意分离的两个命令组。脚本同时安装 `mtls-router` 与 `mtls-router-manager`，按 `SHA256SUMS` 校验 SHA-256，并使用带 pending 标记的事务性安装。
 
@@ -138,7 +143,7 @@ Rust 侧绝不向 webview 暴露 shell/fs/http 权限（由 `lib.rs` 中的测�
 | `internal/log`        | [INDEX.md](internal/log/INDEX.md)        | 访问日志响应记录器                                                                                                                   |
 | `internal/tlspolicy`  | [INDEX.md](internal/tlspolicy/INDEX.md)  | TLS 最低版本解析                                                                                                                     |
 | `internal/manager`    | [INDEX.md](internal/manager/INDEX.md)    | 控制面：19 个协议方法、生命周期、发现、Agent 配置与清理、API key 用量。其 15 个子包各有专属 INDEX，导航见 [子包表](internal/manager/INDEX.md#子包) |
-| `desktop`             | [INDEX.md](desktop/INDEX.md)             | Tauri 2 应用：React 前端 + Rust 后端、sidecar 管理                                                                                   |
+| `desktop`             | [INDEX.md](desktop/INDEX.md)             | Tauri 2 应用：React 前端 + Rust 后端，内嵌 router 与 manager                                                                          |
 
 ## 辅助参考
 

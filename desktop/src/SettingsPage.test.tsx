@@ -23,18 +23,16 @@ async function openSettings(api = createMockApi()) {
 beforeEach(() => localStorage.clear());
 
 describe("SettingsPage", () => {
-  it("shows all component versions and application locations without sensitive controls", async () => {
+  it("shows one application version and application locations without sensitive controls", async () => {
     await openSettings();
 
     expect(screen.getByRole("switch", { name: /开机时启动/ })).toBeChecked();
-    expect(screen.getAllByText("desktop-v1")).not.toHaveLength(0);
-    expect(screen.getByText("manager-v1")).toBeInTheDocument();
-    expect(screen.getByText("router-v1")).toBeInTheDocument();
-    expect(
-      within(screen.getByRole("list", { name: "组件版本" })).getAllByRole(
-        "listitem",
-      ),
-    ).toHaveLength(3);
+    const versionList = screen.getByRole("list", { name: "版本" });
+    const rows = within(versionList).getAllByRole("listitem");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toHaveTextContent("应用版本");
+    expect(rows[0]).toHaveTextContent("desktop-v1");
+    expect(versionList).not.toHaveTextContent(/管理器|路由/);
     expect(screen.getByText("/safe/app-data")).toBeInTheDocument();
     expect(
       screen.getByText("/safe/app-data/mtls-router-logs"),
@@ -42,12 +40,33 @@ describe("SettingsPage", () => {
     expect(screen.getByRole("heading", { name: "常规" })).toBeVisible();
     expect(screen.getByRole("radiogroup", { name: "外观主题" })).toBeVisible();
     expect(screen.getByRole("radio", { name: "暖沙" })).toBeChecked();
-    expect(screen.getByRole("heading", { name: "组件版本" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "版本" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "存储位置" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "准备卸载" })).toBeVisible();
     expect(
       screen.queryByText(/上游 URL|证书导入|自动更新|PATH/),
     ).not.toBeInTheDocument();
+  });
+
+  it("adds a router row only while a foreign router is being reused", async () => {
+    await openSettings(
+      createMockApi({
+        getComponentVersions: vi.fn().mockResolvedValue({
+          version: "desktop-v1",
+          management_protocol: "4",
+          external_router: { owner: "cli", version: "0.4.1" },
+        }),
+      }),
+    );
+
+    const rows = within(
+      screen.getByRole("list", { name: "版本" }),
+    ).getAllByRole("listitem");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveTextContent("应用版本");
+    expect(rows[0]).toHaveTextContent("desktop-v1");
+    expect(rows[1]).toHaveTextContent("复用的外部路由（历史 CLI 安装）");
+    expect(rows[1]).toHaveTextContent("0.4.1");
   });
 
   it("surfaces a safe load error when settings reads fail", async () => {
@@ -99,6 +118,7 @@ describe("SettingsPage", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("无法检查更新");
+    expect(screen.getAllByText("无法检查更新，请稍后重试。")).toHaveLength(1);
     expect(api.checkForUpdate).toHaveBeenCalledOnce();
     expect(
       screen.queryByRole("button", { name: "安装并重启" }),

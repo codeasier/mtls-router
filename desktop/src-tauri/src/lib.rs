@@ -6,14 +6,17 @@ mod error;
 mod installation;
 mod lifecycle;
 mod manager;
+mod manager_core;
 mod manager_diagnostics;
 mod model_config;
 mod orchestration;
 mod paths;
 mod port_recovery;
-mod process_identity;
+mod protocol;
+mod redaction;
+mod router_core;
+mod runtime;
 mod scheduler;
-mod sidecar;
 mod support_bundle;
 mod tray;
 mod types;
@@ -21,17 +24,10 @@ mod updater;
 
 use commands::AppState;
 use credential::{CredentialError, CredentialStore};
-use manager::{ManagerClient, TauriTransportFactory};
+use manager::ManagerClient;
+use manager_core::production_factory;
 use scheduler::PollScheduler;
-use sidecar::SidecarPaths;
-use std::{
-    fs,
-    io::Write,
-    process::{Command, Stdio},
-    sync::Arc,
-    thread,
-    time::{Duration, Instant},
-};
+use std::sync::Arc;
 use tauri::{Emitter, Manager, WindowEvent};
 
 const POLL_SNAPSHOT_EVENT: &str = "router-poll-snapshot";
@@ -47,76 +43,51 @@ fn load_credentials(path: std::path::PathBuf) -> Arc<CredentialStore> {
     credentials
 }
 
-pub fn verify_manager_handshake() -> Result<(), String> {
-    let sidecars = SidecarPaths::resolve().map_err(|error| error.to_string())?;
-    sidecars.validate().map_err(|error| error.to_string())?;
+/// Builds the in-process manager client for this desktop session. There is
+/// no sidecar to resolve, hash, or spawn; the only startup failures are local
+/// paths, installation metadata, and process identity.
+fn embedded_manager(data_dir: &str) -> ManagerClient {
+    let ownership = match installation::load_or_create(data_dir) {
+        Ok(ownership) => ownership,
+        Err(error) => return ManagerClient::failed(error),
+    };
+    match runtime::production_runtime(
+        uuid::Uuid::new_v4().to_string(),
+        &ownership,
+        std::path::Path::new(data_dir),
+    ) {
+        Ok(runtime) => ManagerClient::new(Arc::new(production_factory(runtime))),
+        Err(error) => ManagerClient::failed(error),
+    }
+}
 
+/// Packaging check: the embedded manager must answer `manager.info` with the
+/// identity this desktop build was compiled with. Uses a throwaway data
+/// directory so no user state is touched.
+pub fn verify_manager_handshake() -> Result<(), String> {
     let data_dir =
         std::env::temp_dir().join(format!("mtls-router-handshake-{}", uuid::Uuid::new_v4()));
-    fs::create_dir(&data_dir).map_err(|_| "cannot create verification directory".to_owned())?;
-
+    std::fs::create_dir(&data_dir)
+        .map_err(|_| "cannot create verification directory".to_owned())?;
     let result = (|| {
-        let mut child = Command::new(&sidecars.manager)
-            .arg("serve")
-            .arg("--router-sidecar")
-            .arg(&sidecars.router)
-            .env("MTLS_ROUTER_DESKTOP_DATA_DIR", &data_dir)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|_| "packaged manager cannot execute".to_owned())?;
-
-        child
-            .stdin
-            .take()
-            .ok_or_else(|| "cannot open manager input".to_owned())?
-            .write_all(b"{\"id\":\"desktop-package\",\"method\":\"manager.info\",\"params\":{}}\n")
-            .map_err(|_| "cannot write manager.info request".to_owned())?;
-
-        let deadline = Instant::now() + Duration::from_secs(3);
-        while child
-            .try_wait()
-            .map_err(|_| "cannot wait for packaged manager".to_owned())?
-            .is_none()
-        {
-            if Instant::now() >= deadline {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err("packaged manager handshake timed out".to_owned());
-            }
-            thread::sleep(Duration::from_millis(10));
-        }
-        let output = child
-            .wait_with_output()
-            .map_err(|_| "cannot read manager.info response".to_owned())?;
-        if !output.status.success() {
-            return Err("packaged manager exited unsuccessfully".to_owned());
-        }
-        let response: serde_json::Value = serde_json::from_slice(&output.stdout)
-            .map_err(|_| "manager.info response is malformed".to_owned())?;
-        if response.get("id").and_then(serde_json::Value::as_str) != Some("desktop-package")
-            || response.get("error").is_some_and(|error| !error.is_null())
-        {
-            return Err("manager.info response is invalid".to_owned());
-        }
-        let info: types::ManagerInfo = serde_json::from_value(
-            response
-                .get("result")
-                .cloned()
-                .ok_or_else(|| "manager.info result is missing".to_owned())?,
-        )
-        .map_err(|_| "manager.info result is malformed".to_owned())?;
+        let manager = embedded_manager(&data_dir.to_string_lossy());
+        let info: types::ManagerInfo = tauri::async_runtime::block_on(async {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                manager.call("manager.info", serde_json::json!({})),
+            )
+            .await
+            .map_err(|_| "embedded manager handshake timed out".to_owned())?
+            .map_err(|error| error.to_string())
+        })?;
         manager::validate_handshake(&info).map_err(|error| error.to_string())
     })();
-
-    let _ = fs::remove_dir_all(data_dir);
+    let _ = std::fs::remove_dir_all(data_dir);
     result
 }
 
 fn build_app() -> tauri::Result<tauri::App<tauri::Wry>> {
     let mut builder = tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(autostart::plugin());
@@ -130,33 +101,9 @@ fn build_app() -> tauri::Result<tauri::App<tauri::Wry>> {
 
     builder
         .setup(|app| {
-            let sidecars = SidecarPaths::resolve();
-            let parent = process_identity::current();
             let paths = paths::resolve()?;
             let credentials = load_credentials(std::path::PathBuf::from(&paths.credentials_path));
-            let manager = match (sidecars, parent) {
-                (Ok(sidecars), Ok(parent)) => match sidecars.validate() {
-                    Ok(()) => {
-                        match installation::load_or_create(
-                            &paths.data_dir,
-                            (env!("MTLS_MANAGER_SHA256"), env!("MTLS_ROUTER_SHA256")),
-                        ) {
-                            Ok(ownership) => {
-                                ManagerClient::new(Arc::new(TauriTransportFactory::new(
-                                    app.handle().clone(),
-                                    sidecars,
-                                    parent,
-                                    uuid::Uuid::new_v4().to_string(),
-                                    ownership,
-                                )))
-                            }
-                            Err(error) => ManagerClient::failed(error),
-                        }
-                    }
-                    Err(error) => ManagerClient::failed(error),
-                },
-                (Err(error), _) | (_, Err(error)) => ManagerClient::failed(error),
-            };
+            let manager = embedded_manager(&paths.data_dir);
             let diagnostics = diagnostic_snapshot::DiagnosticStore::new(
                 paths::last_diagnostics_path(&paths.data_dir),
             );
@@ -312,6 +259,49 @@ mod tests {
         assert!(!text.contains("opener:"));
         assert!(!text.contains("fs:"));
         assert!(!text.contains("http:"));
+    }
+
+    #[test]
+    fn bundle_declares_no_external_binaries_and_no_shell_plugin() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert!(
+            config["bundle"].get("externalBin").is_none(),
+            "desktop bundles must not ship Go sidecars"
+        );
+        let shell_plugin = ["tauri-plugin", "-shell"].concat();
+        assert!(!include_str!("../Cargo.toml").contains(&shell_plugin));
+        let spawn_markers = [
+            ["tauri_plugin", "_shell"].concat(),
+            [".side", "car("].concat(),
+            ["std::process::", "Command"].concat(),
+        ];
+        for (name, source) in [
+            ("manager.rs", include_str!("manager.rs")),
+            ("runtime.rs", include_str!("runtime.rs")),
+            ("session.rs", include_str!("manager_core/session.rs")),
+            ("embedded.rs", include_str!("manager_core/embedded.rs")),
+        ] {
+            for marker in &spawn_markers {
+                assert!(!source.contains(marker), "{name} contains {marker}");
+            }
+        }
+    }
+
+    #[test]
+    fn embedded_manager_handshake_needs_no_sidecar_binaries() {
+        let exe_dir = std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        for name in ["mtls-router-manager", "mtls-router"] {
+            assert!(
+                !exe_dir.join(name).exists() && !exe_dir.join(format!("{name}.exe")).exists(),
+                "test binary directory must not contain a Go sidecar"
+            );
+        }
+        verify_manager_handshake().expect("in-process handshake");
     }
 
     #[test]

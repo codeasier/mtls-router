@@ -15,16 +15,16 @@ Workflow 会构建六个原生桌面包，并在匹配的目标 runner 上检查
 
 除非已经审查包 checksum、记录状态、分发策略和所需目标平台启动证据，否则不要绕过操作系统警告。详见[桌面应用](DESKTOP.md#安装)和[构建与发布](BUILD.md#包验证)。
 
-## Sidecar 校验失败
+## 内嵌 manager 校验失败
 
-常见现象包括 `SIDECAR_MISSING`、`SIDECAR_INVALID`、架构错误或提示重新安装。
+常见现象包括 `SIDECAR_INVALID`（内嵌 manager 身份与桌面构建不一致）、`INSTALLATION_INVALID`、`MANAGER_INIT_FAILED` 或提示重新安装。router 与 manager 运行在桌面进程内部，因此这些错误码指向损坏的安装或安装元数据，而不是缺失的组件文件。
 
 1. 退出应用。
 2. 确认桌面包与操作系统和 CPU 架构匹配。
 3. 从可信 release 来源重新安装完整包。
-4. 不要单独下载 manager/router、把 CLI 二进制复制到应用内、把修改执行权限当作绕过方式，也不要关闭完整性检查。
+4. 不要单独下载 manager/router、把历史 CLI 二进制放到应用旁边，也不要把编辑 `installation.json` 当作绕过方式。
 
-桌面应用不会独立修复或下载 sidecar。如果重新安装已验证包后仍失败，请保留错误和包标识并交给维护者。
+桌面应用不会独立下载或替换组件。如果重新安装已验证包后仍失败，请保留错误和包标识并交给维护者。
 
 ## 端口 19099 被占用
 
@@ -71,11 +71,11 @@ Router 意外退出后不会进入无限重启循环。manager 退出时，桌�
 
 1. 在 Router 页，若标题为状态不可用，应视为控制面未读到，而不是当前上游结论。
 2. 在 Router（或日志）页复制诊断快照或导出日志包，并发送给维护者。该 zip 包含 `mtls-router-logs/` 下的全部会话日志以及快照，不含凭据、Agent 配置或备份。
-3. 仍需要时再只重启一次桌面应用。如果错误指向 sidecar 校验问题，请重新安装。不要通过在其他端口启动另一个 router 来绕过。
+3. 仍需要时再只重启一次桌面应用。如果错误指向内嵌 manager 校验问题，请重新安装。不要通过在其他端口启动另一个 router 来绕过。
 
-如果新构建或新安装的 manager 在接受 protocol request 前以 `invalid embedded Agent model preset` 退出，则其非空构建期 `AGENT_MODEL_PRESET_BASE64` 无效。Manager 会有意隐藏原始编码和解码 preset 内容，并在 Agent transaction recovery 前失败。用户应重新安装修正后的完整 release；维护者应修正或清空 repository variable，再重新构建 standalone 和 desktop manager 产物。不要 patch 打包 sidecar，也不要把 preset 注入 router。
+如果新构建或新安装的桌面以 `MANAGER_INIT_FAILED` 报告内嵌 Agent model preset 无效，则其非空构建期 `AGENT_MODEL_PRESET_BASE64` 无效。Manager 会有意隐藏原始编码和解码 preset 内容，并且不会提供任何 Agent 方法。用户应重新安装修正后的完整 release；维护者应修正或清空 repository variable，再重新构建桌面。preset 由 `desktop/src-tauri/build.rs` 编译进桌面；router 绝不会收到它。
 
-如果它以 `invalid embedded simplify value` 退出，则 manager 被直接 link 了无效或空的 `modelcatalog.Simplify` 值。用户应重新安装修正后的完整 release。维护者应通过仓库构建脚本使用未设置/空的 `SIMPLIFY`，或 `true`/`false` 的任意 ASCII 大小写形式，再以相同规范值重新构建 standalone 和 desktop manager 产物。脚本会在编译前拒绝其他所有值；不要 patch sidecar，也不要把 `SIMPLIFY` 加入 router 运行时配置。
+`SIMPLIFY` 目录策略同样在构建期固定：`build.rs` 只接受未设置/空值或 `true`/`false` 的任意 ASCII 大小写形式，其他值会直接让构建失败，因此已安装的桌面不可能携带无效值。它不是 router 运行时设置。
 
 ## Agent 配置不可用或不可写
 

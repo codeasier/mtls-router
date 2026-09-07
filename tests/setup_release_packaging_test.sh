@@ -15,38 +15,50 @@ package_contains() { grep -Fq -- "$1" "$PACKAGE_SCRIPT" || fail "package script 
 [[ "$(grep -c '^  release:$' "$WORKFLOW")" -eq 1 ]] || fail "expected one aggregation/release job"
 [[ "$(grep -c 'softprops/action-gh-release@' "$WORKFLOW")" -eq 1 ]] || fail "release must be published once"
 [[ "$(grep -c 'easingthemes/ssh-deploy@' "$WORKFLOW")" -eq 1 ]] || fail "staged outputs must be mirrored once"
-contains 'needs: [prepare, build, desktop]'
+contains 'needs: [prepare, desktop]'
 contains 'actions/download-artifact@v4'
 contains 'merge-multiple: true'
-package_contains 'LC_ALL=C sha256sum release/mtls-router-*'
-package_contains 'LC_ALL=C sort -k2 >release/SHA256SUMS'
-package_contains 'packages/$package.tar.gz'
-package_contains 'packages/$package.zip'
-contains 'mtls-router-manager-${GOOS}-${GOARCH}${ext}'
-contains './cmd/mtls-router-manager'
-package_contains '"release/$manager"'
+# New versions publish the desktop only; CLI lifecycle artifacts are frozen at
+# historical tags and must be rejected if they reappear.
+for forbidden in 'needs: [prepare, build, desktop]' 'pattern: mtls-router-cli-*' './cmd/mtls-router-manager' \
+  'go build' 'cli-matrix' 'release-metadata-cli-'; do
+  if grep -Fq -- "$forbidden" "$WORKFLOW" "$RECOVERY"; then
+    fail "new releases must not build or publish CLI artifacts: $forbidden"
+  fi
+done
+for forbidden in 'cp setup.sh stage/' 'cp setup.ps1 stage/' 'packages/$package.tar.gz' 'packages/$package.zip' 'cp binaries/'; do
+  if grep -Fq -- "$forbidden" "$PACKAGE_SCRIPT"; then
+    fail "package script must not stage CLI lifecycle artifacts: $forbidden"
+  fi
+done
+package_contains 'allowed_asset()'
+package_contains 'forbidden_asset()'
+package_contains 'mtls-router*|setup.sh|setup.ps1|*.zip|*.tar.gz|*.service|Dockerfile|*.nsh) return 0 ;;'
+package_contains 'CLI lifecycle artifact must not be published'
+package_contains 'artifact is not on the release allowlist'
+package_contains 'unexpected release file'
+package_contains 'test "$(find release -maxdepth 1 -type f -name '\''mtls-router*'\'' | wc -l)" -eq 0'
 contains 'test -n "$CLIENT_CERT_PEM" && test -n "$CLIENT_KEY_PEM" && test -n "$UPSTREAM_CA_PEM"'
 contains 'case "${UPSTREAM_URL:-}" in https://*)'
+contains "RELEASE_BUILD: '1'"
 contains 'files: release/*'
 contains 'SOURCE: release/'
 contains 'TARGET: /home/codeasier/downloads/${{ github.event.repository.name }}/${{ github.ref_name }}/'
 contains 'ARGS: -avz --delete'
-package_contains "grep -Fxc 'DEFAULT_DOWNLOAD_BASE_URL=\"\"' setup.sh"
-contains "grep -Fxc '\$DefaultDownloadBaseUrl = '\\'''\\''' setup.ps1"
-contains "test \"\$(od -An -tx1 -N3 setup.ps1 | tr -d ' \\n')\" = efbbbf"
-package_contains 'test "$(find release -maxdepth 1 -type f -name '\''mtls-router-*'\'' | wc -l)" -eq 12'
-package_contains 'test "$(find release -maxdepth 1 -type f | wc -l)" -eq 19'
-contains 'pattern: mtls-router-cli-*'
 package_contains 'expected_desktop_assets=12'
 package_contains 'if [[ "$online_update" == true ]]; then expected_desktop_assets=20; fi'
 package_contains 'test "$(find release -maxdepth 1 -type f -name '\''signing-status-*'\'' | wc -l)" -eq 6'
-package_contains 'expected_release_files=37'
-package_contains 'expected_release_files=46'
+package_contains 'expected_release_files=19'
+package_contains 'expected_release_files=28'
 contains './scripts/package-release.sh'
 package_contains './scripts/check-release-protocol.sh protocol-metadata'
 [[ -x "$PROTOCOL_CHECK" ]] || fail 'release protocol preflight is missing or not executable'
-[[ "$(grep -Fc 'release-metadata-' "$WORKFLOW")" -ge 3 ]] || fail 'release producers/aggregation do not carry protocol metadata'
-grep -Fq 'mv binaries/release-metadata-*.json desktop-packages/release-metadata-*.json protocol-metadata/' "$RECOVERY" || fail 'recovery release does not collect protocol metadata'
+grep -Fq '(.producer | startswith("desktop-"))' "$PROTOCOL_CHECK" || fail 'release protocol preflight must accept desktop producers only'
+[[ "$(grep -Fc 'release-metadata-' "$WORKFLOW")" -ge 2 ]] || fail 'release producers/aggregation do not carry protocol metadata'
+grep -Fq 'mv desktop-packages/release-metadata-*.json protocol-metadata/' "$RECOVERY" || fail 'recovery release does not collect desktop protocol metadata'
+grep -Fq 'mv desktop-packages/release-metadata-*.json protocol-metadata/' "$WORKFLOW" || fail 'release does not collect desktop protocol metadata'
+[[ "$(grep -Fc 'mtls-router-desktop.exe' "$WORKFLOW")" -ge 1 ]] || fail 'signed Windows validation must inspect the desktop executable'
+grep -Fq 'signed package must not contain CLI artifact' "$WORKFLOW" || fail 'signed Windows validation must reject packaged CLI binaries'
 
 jq -e '
   .manifest_version == 1 and .retrieved == "2026-07-18" and
@@ -66,56 +78,27 @@ jq -e '
 
 protocol_tmp="$(mktemp -d)"
 trap 'rm -rf "$protocol_tmp"' EXIT
-for kind in cli desktop; do
-  for os_arch in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64 windows-arm64; do
-    printf '{"schema_version":1,"producer":"%s-%s","management_protocol_version":"4"}\n' "$kind" "$os_arch" >"$protocol_tmp/release-metadata-$kind-$os_arch.json"
-  done
+for os_arch in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64 windows-arm64; do
+  printf '{"schema_version":1,"producer":"desktop-%s","management_protocol_version":"4"}\n' "$os_arch" >"$protocol_tmp/release-metadata-desktop-$os_arch.json"
 done
-"$PROTOCOL_CHECK" "$protocol_tmp" || fail 'matching protocol-v4 metadata was rejected'
-jq '.management_protocol_version = "3"' "$protocol_tmp/release-metadata-cli-linux-amd64.json" >"$protocol_tmp/deliberate-protocol-v3-mismatch.json"
-mv "$protocol_tmp/deliberate-protocol-v3-mismatch.json" "$protocol_tmp/release-metadata-cli-linux-amd64.json"
+"$PROTOCOL_CHECK" "$protocol_tmp" || fail 'matching desktop protocol-v4 metadata was rejected'
+jq '.management_protocol_version = "3"' "$protocol_tmp/release-metadata-desktop-linux-amd64.json" >"$protocol_tmp/deliberate-protocol-v3-mismatch.json"
+mv "$protocol_tmp/deliberate-protocol-v3-mismatch.json" "$protocol_tmp/release-metadata-desktop-linux-amd64.json"
 if "$PROTOCOL_CHECK" "$protocol_tmp" >/dev/null 2>&1; then
   fail 'deliberate mixed protocol-v3/v4 release metadata was accepted'
 fi
+printf '{"schema_version":1,"producer":"desktop-linux-amd64","management_protocol_version":"4"}\n' >"$protocol_tmp/release-metadata-desktop-linux-amd64.json"
+printf '{"schema_version":1,"producer":"cli-linux-amd64","management_protocol_version":"4"}\n' >"$protocol_tmp/release-metadata-cli-linux-amd64.json"
+if "$PROTOCOL_CHECK" "$protocol_tmp" >/dev/null 2>&1; then
+  fail 'CLI producer metadata was accepted into a desktop-only release'
+fi
+rm "$protocol_tmp/release-metadata-cli-linux-amd64.json"
 
 package_tmp="$protocol_tmp/package-fixture"
-mkdir -p "$package_tmp/bin" "$package_tmp/scripts" "$package_tmp/binaries" "$package_tmp/desktop-packages" "$package_tmp/protocol-metadata"
-cat >"$package_tmp/bin/tar" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-if [[ "${1:-}" != --sort=name ]]; then exec /usr/bin/tar "$@"; fi
-output=
-args=()
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --sort=name|--mtime=@0|--owner=0|--group=0|--numeric-owner) shift ;;
-    -czf) output=$2; shift 2 ;;
-    *) args+=("$1"); shift ;;
-  esac
-done
-exec /usr/bin/tar -czf "$output" "${args[@]}"
-SH
-cat >"$package_tmp/bin/touch" <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-if [[ "${1:-}" == -d ]]; then shift 2; fi
-exec /usr/bin/touch "$@"
-SH
-chmod +x "$package_tmp/bin/tar" "$package_tmp/bin/touch"
+mkdir -p "$package_tmp/scripts" "$package_tmp/desktop-packages" "$package_tmp/protocol-metadata"
 cp "$PACKAGE_SCRIPT" "$PROTOCOL_CHECK" "$package_tmp/scripts/"
-cp "$ROOT/setup.sh" "$ROOT/setup.ps1" "$package_tmp/"
-for kind in cli desktop; do
-  for os_arch in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64 windows-arm64; do
-    printf '{"schema_version":1,"producer":"%s-%s","management_protocol_version":"4"}\n' "$kind" "$os_arch" >"$package_tmp/protocol-metadata/release-metadata-$kind-$os_arch.json"
-  done
-done
-for os_arch in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64; do
-  printf 'router %s\n' "$os_arch" >"$package_tmp/binaries/mtls-router-$os_arch"
-  printf 'manager %s\n' "$os_arch" >"$package_tmp/binaries/mtls-router-manager-$os_arch"
-done
-for os_arch in windows-amd64 windows-arm64; do
-  printf 'router %s\n' "$os_arch" >"$package_tmp/binaries/mtls-router-$os_arch.exe"
-  printf 'manager %s\n' "$os_arch" >"$package_tmp/binaries/mtls-router-manager-$os_arch.exe"
+for os_arch in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64 windows-arm64; do
+  printf '{"schema_version":1,"producer":"desktop-%s","management_protocol_version":"4"}\n' "$os_arch" >"$package_tmp/protocol-metadata/release-metadata-desktop-$os_arch.json"
 done
 for os_arch in linux-amd64 linux-arm64 windows-amd64 windows-arm64 darwin-amd64 darwin-arm64; do
   os=${os_arch%-*}
@@ -133,10 +116,14 @@ for os_arch in linux-amd64 linux-arm64 windows-amd64 windows-arm64 darwin-amd64 
   fi
   printf 'trusted updater signature %s\n' "$os_arch" >"$package_tmp/desktop-packages/$updater.sig"
 done
-(cd "$package_tmp" && PATH="$package_tmp/bin:$PATH" RELEASE_TAG=v1.2.3 DOWNLOAD_BASE_URL=https://downloads.codeasier.top/mtls-router/v1.2.3 DESKTOP_DOWNLOAD_BASE_URL=https://release.codeasier.top/mtls-router/v1.2.3 SOURCE_DATE_EPOCH=0 ./scripts/package-release.sh) || \
+(cd "$package_tmp" && RELEASE_TAG=v1.2.3 DESKTOP_DOWNLOAD_BASE_URL=https://release.codeasier.top/mtls-router/v1.2.3 SOURCE_DATE_EPOCH=0 ./scripts/package-release.sh) || \
   fail 'stable updater release fixture failed to package'
-[[ "$(find "$package_tmp/release" -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 46 ]] || \
+[[ "$(find "$package_tmp/release" -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 28 ]] || \
   fail 'stable updater release fixture has the wrong exact asset count'
+[[ "$(find "$package_tmp/release" -maxdepth 1 -type f -name 'mtls-router*' | wc -l | tr -d ' ')" -eq 0 ]] || \
+  fail 'stable release fixture published a CLI artifact'
+[[ ! -e "$package_tmp/release/setup.sh" && ! -e "$package_tmp/release/setup.ps1" ]] || \
+  fail 'stable release fixture published setup scripts'
 jq -e '
   .version == "1.2.3" and
   (.platforms | length) == 6 and
@@ -146,14 +133,33 @@ jq -e '
 ' "$package_tmp/release/latest.json" >/dev/null || fail 'stable updater latest.json is invalid'
 (cd "$package_tmp/release" && sha256sum -c SHA256SUMS >/dev/null) || fail 'stable updater release checksums are invalid'
 
-[[ "$(grep -Fc 'version="${GITHUB_REF_NAME#v}"' "$WORKFLOW")" -eq 2 ]] || \
-  fail 'CLI and desktop jobs must derive tag versions without the v prefix'
-[[ "$(grep -Fc 'version="$DISPATCH_VERSION"' "$WORKFLOW")" -eq 2 ]] || \
-  fail 'CLI and desktop jobs must use the dispatch version for validation builds'
-[[ "$(grep -Fc "Version=\${RELEASE_VERSION}" "$WORKFLOW")" -eq 2 ]] || \
-  fail 'both CLI binaries must use the derived release version'
+# A stray CLI binary or setup script among the desktop artifacts must fail
+# packaging instead of being published alongside the desktop.
+for stray in mtls-router-linux-amd64 setup.sh mtls-router-windows-amd64.zip; do
+  stray_tmp="$protocol_tmp/stray-$stray"
+  mkdir -p "$stray_tmp"
+  cp -R "$package_tmp/scripts" "$package_tmp/desktop-packages" "$package_tmp/protocol-metadata" "$stray_tmp/"
+  rm -rf "$stray_tmp/release"
+  printf 'stray %s\n' "$stray" >"$stray_tmp/desktop-packages/$stray"
+  if (cd "$stray_tmp" && RELEASE_TAG=v1.2.3 DESKTOP_DOWNLOAD_BASE_URL=https://release.codeasier.top/mtls-router/v1.2.3 SOURCE_DATE_EPOCH=0 ./scripts/package-release.sh >/dev/null 2>&1); then
+    fail "package script published a CLI lifecycle artifact: $stray"
+  fi
+done
+prerelease_tmp="$protocol_tmp/prerelease"
+mkdir -p "$prerelease_tmp"
+cp -R "$package_tmp/scripts" "$package_tmp/desktop-packages" "$package_tmp/protocol-metadata" "$prerelease_tmp/"
+rm -f "$prerelease_tmp"/desktop-packages/*.sig "$prerelease_tmp"/desktop-packages/*.app.tar.gz
+(cd "$prerelease_tmp" && RELEASE_TAG=v1.2.3-rc.1 SOURCE_DATE_EPOCH=0 ./scripts/package-release.sh) || \
+  fail 'pre-release fixture failed to package without updater artifacts'
+[[ "$(find "$prerelease_tmp/release" -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 19 ]] || \
+  fail 'pre-release fixture has the wrong exact asset count'
+
+[[ "$(grep -Fc 'version="${GITHUB_REF_NAME#v}"' "$WORKFLOW")" -eq 1 ]] || \
+  fail 'the desktop job must derive tag versions without the v prefix'
+[[ "$(grep -Fc 'version="$DISPATCH_VERSION"' "$WORKFLOW")" -eq 1 ]] || \
+  fail 'the desktop job must use the dispatch version for validation builds'
 if grep -Fq 'Version=${GITHUB_REF_NAME}' "$WORKFLOW"; then
-  fail 'CLI binaries must not use the branch name as their validation version'
+  fail 'release builds must not use the branch name as their validation version'
 fi
 [[ "$(grep -Fc 'desktop/release-artifacts/CodeasierRouter-windows-${{ matrix.arch }}.exe' "$WORKFLOW")" -eq 2 ]] || \
   fail 'Windows signing checks must use the normalized desktop package name'
@@ -204,26 +210,21 @@ for os_arch in windows-amd64 windows-arm64 darwin-amd64 darwin-arm64 linux-amd64
 done
 grep -Fq 'pattern: CodeasierRouter-desktop-*' "$RECOVERY" || \
   fail 'recovery workflow does not download CodeasierRouter desktop artifacts'
-[[ "$(grep -Fc 'matrix: ${{ fromJSON(needs.prepare.outputs.' "$WORKFLOW")" -eq 2 ]] || \
-  fail 'release producer jobs must consume prepared dynamic matrices'
+[[ "$(grep -Fc 'matrix: ${{ fromJSON(needs.prepare.outputs.' "$WORKFLOW")" -eq 1 ]] || \
+  fail 'the desktop producer job must consume the prepared dynamic matrix'
 grep -Fq 'SELECTED_TARGET: ${{ github.event_name == '\''workflow_dispatch'\'' && inputs.target || '\''all'\'' }}' "$WORKFLOW" || \
   fail 'tag releases must select all build targets'
-[[ "$(grep -Fc 'UPSTREAM_URL: ${{ github.event_name == '\''workflow_dispatch'\'' && inputs.upstream_url || vars.UPSTREAM_URL }}' "$WORKFLOW")" -eq 2 ]] || \
-  fail 'validation upstream override must be isolated to producer jobs'
+[[ "$(grep -Fc 'UPSTREAM_URL: ${{ github.event_name == '\''workflow_dispatch'\'' && inputs.upstream_url || vars.UPSTREAM_URL }}' "$WORKFLOW")" -eq 1 ]] || \
+  fail 'validation upstream override must be isolated to the desktop producer job'
 
 if grep -Fq 'http://' "$WORKFLOW"; then
   fail "workflow contains a plaintext HTTP URL"
 fi
-if awk '/^  build:/{build=1} /^  release:/{build=0} build && /softprops\/action-gh-release|ssh-action|ssh-deploy/' "$WORKFLOW" | grep -q .; then
+if awk '/^  desktop:/{build=1} /^  release:/{build=0} build && /softprops\/action-gh-release|ssh-action|ssh-deploy/' "$WORKFLOW" | grep -q .; then
   fail "matrix build performs publishing"
 fi
 
 [[ -f "$PACKAGE_SCRIPT" ]] || fail 'shared release packaging script is missing'
-grep -Fq '"../../packages/$package.zip"' "$PACKAGE_SCRIPT" || \
-  fail 'Windows archives must resolve to the repository packages directory'
-if grep -Fq '"../../../packages/$package.zip"' "$PACKAGE_SCRIPT"; then
-  fail 'shared release packaging script contains the broken Windows archive path'
-fi
 
 [[ -f "$RECOVERY" ]] || fail 'release recovery workflow is missing'
 for value in \

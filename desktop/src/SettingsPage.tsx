@@ -167,11 +167,19 @@ export function SettingsPage({
     }
   }
 
-  const versionRows = [
-    ["A", t("router.desktop"), versions?.desktop],
-    ["B", t("router.manager"), versions?.manager],
-    ["C", t("router.router"), versions?.router],
+  // One binary, one version. A second row appears only while a router this
+  // application does not own is being reused, because that is the only case
+  // where the running router can carry a different version.
+  const versionRows: [string, string, string | undefined][] = [
+    ["APP", t("settings.appVersion"), versions?.version],
   ];
+  if (versions?.external_router) {
+    versionRows.push([
+      "EXT",
+      t("settings.externalRouter"),
+      versions.external_router.version,
+    ]);
+  }
   return (
     <section className="settings-panel" aria-labelledby="settings-heading">
       <div className="settings-heading">
@@ -319,7 +327,7 @@ export function SettingsPage({
                   <span>{t("update.currentVersion")}</span>
                   <code>
                     {updateResult?.current_version ??
-                      versions?.desktop ??
+                      versions?.version ??
                       t("settings.unavailable")}
                   </code>
                 </div>
@@ -412,30 +420,30 @@ export function SettingsPage({
             </div>
           )}
 
-          {updateCheckError && !updateResult?.available && (
+          {updateCheckError &&
+          !checkingForUpdate &&
+          !updateResult?.available ? (
             <p className="settings-block__update-error" role="alert">
               {t("update.error.check")}
             </p>
-          )}
-
-          <p
-            className={
-              updateResult?.available
-                ? "settings-block__status settings-block__status--update"
-                : "settings-block__status"
-            }
-            role="status"
-          >
-            {checkingForUpdate
-              ? t("update.checking")
-              : updateResult?.available
-                ? t("update.available")
-                : updateCheckError
-                  ? t("update.error.check")
+          ) : (
+            <p
+              className={
+                updateResult?.available
+                  ? "settings-block__status settings-block__status--update"
+                  : "settings-block__status"
+              }
+              role="status"
+            >
+              {checkingForUpdate
+                ? t("update.checking")
+                : updateResult?.available
+                  ? t("update.available")
                   : updateResult
                     ? t("update.current")
                     : t("update.statusUnavailable")}
-          </p>
+            </p>
+          )}
         </section>
 
         <section className="settings-block settings-block--locations">
