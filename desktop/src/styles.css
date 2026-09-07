@@ -2387,11 +2387,29 @@ main {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
-  align-items: center;
+  align-items: flex-start;
+}
+
+.apikey-usage__period-groups {
+  display: grid;
+  gap: 8px;
+}
+
+.apikey-usage__period-group {
+  display: grid;
+  gap: 4px;
+}
+
+.apikey-usage__period-group-label {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 750;
 }
 
 .apikey-usage__periods {
   display: inline-flex;
+  flex-wrap: wrap;
   padding: 3px;
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -2473,6 +2491,15 @@ main {
   margin-top: 6px;
   color: var(--muted);
   font-size: 11px;
+}
+
+.apikey-usage__quotas {
+  display: grid;
+  gap: 12px;
+}
+
+.apikey-usage__quotas-heading {
+  font-size: 12px;
 }
 
 .apikey-usage__quota {

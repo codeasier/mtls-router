@@ -892,6 +892,10 @@ func TestAPIKeyUsageReturnsKeyFreeSnapshot(t *testing.T) {
 				Period: apikeyusage.Period7d, AsOf: "2026-08-28T00:00:00Z",
 				Summary: apikeyusage.Summary{Requests: 4, PromptTokens: 10, CompletionTokens: 2, Cost: 0.75},
 				Quota:   &apikeyusage.Quota{Used: 0.75, Limit: &limit, Unit: apikeyusage.QuotaUSD, ResetsAt: "2026-09-01T00:00:00Z"},
+				Quotas: []apikeyusage.ProviderQuota{{
+					Provider: "*", Period: apikeyusage.BudgetWeek, Used: 0.75, Limit: 100,
+					Unit: apikeyusage.QuotaUSD, ResetsAt: "2026-09-01T00:00:00Z",
+				}},
 				ByModel: []apikeyusage.Model{{Model: "claude-sonnet", Requests: 4, PromptTokens: 10, CompletionTokens: 2, Cost: 0.75}},
 			}}, nil
 		}},
@@ -916,6 +920,7 @@ func TestAPIKeyUsageReturnsKeyFreeSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	if result.Period != "7d" || result.Summary.Requests != 4 || result.Quota == nil || result.Quota.Used != 0.75 ||
+		len(result.Quotas) != 1 || result.Quotas[0].Provider != "*" || result.Quotas[0].Period != "week" ||
 		len(result.ByModel) != 1 || result.ByModel[0].Model != "claude-sonnet" {
 		t.Fatalf("result = %+v", result)
 	}
@@ -943,6 +948,44 @@ func TestAPIKeyUsageRejectsInvalidPeriodAndClearsKey(t *testing.T) {
 	}
 	if response.Error == nil || response.Error.Code != protocol.CodeInvalidParams {
 		t.Fatalf("response = %+v", response)
+	}
+}
+
+func TestAPIKeyUsageAcceptsExtendedPeriodTokens(t *testing.T) {
+	const key = "apikey-usage-extended-period-canary"
+	manager := newWithDependencies(Config{}, dependencies{
+		trusted: fakeTrustedRouter{fetchUsage: func(_ context.Context, owner protocol.RouterOwner, period apikeyusage.Period, gotKey string) (trustedrouter.UsageResult, *protocol.Error) {
+			if owner != protocol.RouterOwnerDesktop || period != apikeyusage.PeriodThisMonth || gotKey != key {
+				t.Fatalf("owner=%q period=%q key=%q", owner, period, gotKey)
+			}
+			return trustedrouter.UsageResult{Snapshot: apikeyusage.Snapshot{
+				Period:  apikeyusage.PeriodThisMonth,
+				Summary: apikeyusage.Summary{},
+				ByModel: []apikeyusage.Model{},
+			}}, nil
+		}},
+	})
+	var output bytes.Buffer
+	request := `{"id":"usage","method":"apikey.usage","params":{"owner":"desktop","period":"this_month","api_key":"` + key + `"}}` + "\n"
+	if err := manager.Serve(context.Background(), strings.NewReader(request), &output); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.String(), key) {
+		t.Fatalf("protocol result leaked key: %s", output.String())
+	}
+	var response protocol.Response
+	if err := json.Unmarshal(bytes.TrimSpace(output.Bytes()), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Error != nil {
+		t.Fatalf("response error = %+v", response.Error)
+	}
+	var result protocol.APIKeyUsageResult
+	if err := json.Unmarshal(response.Result, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Period != "this_month" || result.Quota != nil || len(result.Quotas) != 0 {
+		t.Fatalf("result = %+v", result)
 	}
 }
 

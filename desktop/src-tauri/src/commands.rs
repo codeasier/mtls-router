@@ -947,7 +947,9 @@ pub struct APIKeyUsageRequest {
 
 fn normalize_usage_period(period: &str) -> Result<String> {
     match period {
-        "today" | "7d" | "30d" => Ok(period.to_string()),
+        "1h" | "12h" | "24h" | "7d" | "30d" | "today" | "this_week" | "this_month" => {
+            Ok(period.to_string())
+        }
         _ => Err(CommandError::invalid_params("usage period is invalid")),
     }
 }
@@ -996,6 +998,17 @@ fn valid_usage_snapshot(result: &APIKeyUsage) -> bool {
                 && quota
                     .limit
                     .map_or(true, |limit| limit.is_finite() && limit >= 0.0)
+        })
+        && result.quotas.len() <= 32
+        && result.quotas.iter().all(|quota| {
+            !quota.provider.is_empty()
+                && matches!(quota.period.as_str(), "day" | "week" | "month")
+                && quota.used.is_finite()
+                && quota.used >= 0.0
+                && quota.limit.is_finite()
+                && quota.limit > 0.0
+                && quota.unit == "usd"
+                && !quota.resets_at.is_empty()
         })
 }
 
@@ -1658,6 +1671,14 @@ mod tests {
                     "unit": "usd",
                     "resets_at": "2026-09-01T00:00:00Z"
                 },
+                "quotas": [{
+                    "provider": "*",
+                    "period": "week",
+                    "used": 0.75,
+                    "limit": 100.0,
+                    "unit": "usd",
+                    "resets_at": "2026-09-01T00:00:00Z"
+                }],
                 "by_model": [{
                     "model": "claude-sonnet",
                     "requests": 4,
@@ -1695,17 +1716,22 @@ mod tests {
             .unwrap();
             assert_eq!(snapshot.period, "7d");
             assert_eq!(snapshot.summary.requests, 4);
+            assert_eq!(snapshot.quotas.len(), 1);
+            assert_eq!(snapshot.quotas[0].provider, "*");
+            assert_eq!(snapshot.quotas[0].period, "week");
 
-            let invalid = apikey_usage_command(
-                APIKeyUsageRequest {
-                    period: "week".into(),
-                },
-                &manager,
-                &credentials,
-            )
-            .await
-            .unwrap_err();
-            assert_eq!(invalid.code, "INVALID_PARAMS");
+            for invalid_period in ["week", "month", "1d"] {
+                let invalid = apikey_usage_command(
+                    APIKeyUsageRequest {
+                        period: invalid_period.into(),
+                    },
+                    &manager,
+                    &credentials,
+                )
+                .await
+                .unwrap_err();
+                assert_eq!(invalid.code, "INVALID_PARAMS");
+            }
 
             let requests = requests.lock().unwrap();
             let usage_requests = requests

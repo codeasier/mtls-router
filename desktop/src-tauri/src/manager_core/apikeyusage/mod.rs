@@ -11,7 +11,8 @@ mod parse;
 pub use client::{Client, Request, MAX_BODY_BYTES, REQUEST_TIMEOUT};
 pub use error::{code_of, UsageError};
 pub use parse::{
-    normalize_period, parse, Model, Period, Quota, QuotaUnit, Snapshot, Summary, MAX_MODELS,
+    normalize_period, parse, BudgetPeriod, Model, Period, ProviderQuota, Quota, QuotaUnit,
+    Snapshot, Summary, MAX_MODELS, MAX_QUOTAS,
 };
 
 #[cfg(test)]

@@ -495,7 +495,10 @@ export interface CredentialSummary {
   saved_at: string | null;
 }
 
-export type APIKeyUsagePeriod = "today" | "7d" | "30d";
+export type APIKeyUsagePeriod =
+  "1h" | "12h" | "24h" | "7d" | "30d" | "today" | "this_week" | "this_month";
+
+export type APIKeyUsageBudgetPeriod = "day" | "week" | "month";
 
 export interface APIKeyUsageSummary {
   requests: number;
@@ -511,6 +514,15 @@ export interface APIKeyUsageQuota {
   resets_at?: string;
 }
 
+export interface APIKeyUsageProviderQuota {
+  provider: string;
+  period: APIKeyUsageBudgetPeriod;
+  used: number;
+  limit: number;
+  unit: "usd";
+  resets_at: string;
+}
+
 export interface APIKeyUsageModel {
   model: string;
   requests: number;
@@ -524,6 +536,7 @@ export interface APIKeyUsage {
   as_of?: string;
   summary: APIKeyUsageSummary;
   quota?: APIKeyUsageQuota | null;
+  quotas?: APIKeyUsageProviderQuota[];
   by_model: APIKeyUsageModel[];
 }
 

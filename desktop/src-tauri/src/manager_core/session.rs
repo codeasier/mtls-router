@@ -618,6 +618,7 @@ mod tests {
                         unit: QuotaUnit::Usd,
                         resets_at: String::new(),
                     }),
+                    quotas: Vec::new(),
                     by_model: Vec::new(),
                 });
                 manager_with(

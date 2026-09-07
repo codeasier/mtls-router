@@ -824,6 +824,16 @@ func mapUsage(snapshot apikeyusage.Snapshot) protocol.APIKeyUsageResult {
 			Unit: string(snapshot.Quota.Unit), ResetsAt: snapshot.Quota.ResetsAt,
 		}
 	}
+	if len(snapshot.Quotas) > 0 {
+		result.Quotas = make([]protocol.APIKeyUsageProviderQuota, 0, len(snapshot.Quotas))
+		for _, quota := range snapshot.Quotas {
+			result.Quotas = append(result.Quotas, protocol.APIKeyUsageProviderQuota{
+				Provider: quota.Provider, Period: string(quota.Period),
+				Used: quota.Used, Limit: quota.Limit,
+				Unit: string(quota.Unit), ResetsAt: quota.ResetsAt,
+			})
+		}
+	}
 	for _, model := range snapshot.ByModel {
 		result.ByModel = append(result.ByModel, protocol.APIKeyUsageModel{
 			Model: model.Model, Requests: model.Requests, PromptTokens: model.PromptTokens,

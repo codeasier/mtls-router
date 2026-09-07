@@ -346,6 +346,16 @@ pub struct APIKeyUsageModel {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct APIKeyUsageProviderQuota {
+    pub provider: String,
+    pub period: String,
+    pub used: f64,
+    pub limit: f64,
+    pub unit: String,
+    pub resets_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct APIKeyUsageResult {
     pub period: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -353,6 +363,8 @@ pub struct APIKeyUsageResult {
     pub summary: APIKeyUsageSummary,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quota: Option<APIKeyUsageQuota>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub quotas: Vec<APIKeyUsageProviderQuota>,
     pub by_model: Vec<APIKeyUsageModel>,
 }
 
