@@ -991,6 +991,7 @@ fn valid_usage_snapshot(result: &APIKeyUsage) -> bool {
                 && row.cost.is_finite()
                 && row.cost >= 0.0
         })
+        && (result.as_of.is_empty() || valid_rfc3339(&result.as_of))
         && result.quota.as_ref().map_or(true, |quota| {
             matches!(quota.unit.as_str(), "usd" | "tokens" | "requests")
                 && quota.used.is_finite()
@@ -998,6 +999,7 @@ fn valid_usage_snapshot(result: &APIKeyUsage) -> bool {
                 && quota
                     .limit
                     .map_or(true, |limit| limit.is_finite() && limit >= 0.0)
+                && (quota.resets_at.is_empty() || valid_rfc3339(&quota.resets_at))
         })
         && result.quotas.len() <= 32
         && result.quotas.iter().all(|quota| {
@@ -1008,8 +1010,12 @@ fn valid_usage_snapshot(result: &APIKeyUsage) -> bool {
                 && quota.limit.is_finite()
                 && quota.limit > 0.0
                 && quota.unit == "usd"
-                && !quota.resets_at.is_empty()
+                && valid_rfc3339(&quota.resets_at)
         })
+}
+
+fn valid_rfc3339(value: &str) -> bool {
+    DateTime::parse_from_rfc3339(value).is_ok()
 }
 
 #[tauri::command]
@@ -1742,6 +1748,119 @@ mod tests {
             assert_eq!(usage_requests[0]["params"]["owner"], "desktop");
             assert_eq!(usage_requests[0]["params"]["period"], "7d");
             assert_eq!(usage_requests[0]["params"]["api_key"], "fixture-secret");
+        });
+    }
+
+    fn usage_snapshot_result(period: &str) -> Value {
+        json!({
+            "period": period,
+            "as_of": "2026-08-28T00:00:00Z",
+            "summary": {
+                "requests": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "cost": 0.0
+            },
+            "quotas": [{
+                "provider": "*",
+                "period": "week",
+                "used": 0.0,
+                "limit": 1.0,
+                "unit": "usd",
+                "resets_at": "2026-09-01T00:00:00Z"
+            }],
+            "by_model": []
+        })
+    }
+
+    fn usage_response(id: &str, period: &str) -> Vec<u8> {
+        serde_json::to_vec(&json!({
+            "id": id,
+            "result": usage_snapshot_result(period)
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn apikey_usage_accepts_all_public_period_tokens() {
+        tauri::async_runtime::block_on(async {
+            const PERIODS: [&str; 8] = [
+                "1h",
+                "12h",
+                "24h",
+                "7d",
+                "30d",
+                "today",
+                "this_week",
+                "this_month",
+            ];
+            let (manager, requests) = fake_client(
+                PERIODS
+                    .iter()
+                    .enumerate()
+                    .map(|(index, period)| {
+                        usage_response(&format!("desktop-{}", index + 1), period)
+                    })
+                    .collect(),
+            );
+            let (_directory, credentials) = test_credentials("usage-public-periods");
+            save_credential_command("fixture-secret".into(), &credentials)
+                .await
+                .unwrap();
+
+            for period in PERIODS {
+                let snapshot = apikey_usage_command(
+                    APIKeyUsageRequest {
+                        period: period.into(),
+                    },
+                    &manager,
+                    &credentials,
+                )
+                .await
+                .unwrap();
+                assert_eq!(snapshot.period, period);
+            }
+
+            let requests = requests.lock().unwrap();
+            let usage_requests = requests
+                .iter()
+                .filter(|request| request["method"] == "apikey.usage")
+                .collect::<Vec<_>>();
+            assert_eq!(usage_requests.len(), PERIODS.len());
+            for (request, period) in usage_requests.iter().zip(PERIODS) {
+                assert_eq!(request["params"]["period"], period);
+            }
+        });
+    }
+
+    #[test]
+    fn apikey_usage_rejects_non_rfc3339_timestamps() {
+        tauri::async_runtime::block_on(async {
+            let mut invalid_resets = usage_snapshot_result("7d");
+            invalid_resets["quotas"][0]["resets_at"] = json!("tomorrow");
+            let mut invalid_as_of = usage_snapshot_result("7d");
+            invalid_as_of["as_of"] = json!("tomorrow");
+            let (manager, _) = fake_client(vec![
+                serde_json::to_vec(&json!({"id": "desktop-1", "result": invalid_resets})).unwrap(),
+                serde_json::to_vec(&json!({"id": "desktop-2", "result": invalid_as_of})).unwrap(),
+            ]);
+            let (_directory, credentials) = test_credentials("usage-invalid-timestamps");
+            save_credential_command("fixture-secret".into(), &credentials)
+                .await
+                .unwrap();
+
+            for _ in 0..2 {
+                let invalid = apikey_usage_command(
+                    APIKeyUsageRequest {
+                        period: "7d".into(),
+                    },
+                    &manager,
+                    &credentials,
+                )
+                .await
+                .unwrap_err();
+                assert_eq!(invalid.code, "USAGE_RESPONSE_INVALID");
+            }
         });
     }
 

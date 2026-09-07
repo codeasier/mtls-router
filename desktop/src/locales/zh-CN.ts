@@ -415,7 +415,7 @@ export const zhCN = {
   "apikey.usage.needKey": "保存 API key 后即可查看请求、token 与费用。",
   "apikey.usage.loading": "正在读取用量",
   "apikey.usage.empty": "所选时间范围内没有用量记录。",
-  "apikey.usage.asOf": "统计截至",
+  "apikey.usage.asOf": "统计截至（北京时间）",
   "apikey.usage.metric.requests": "请求",
   "apikey.usage.metric.tokens": "Token",
   "apikey.usage.metric.prompt": "输入",

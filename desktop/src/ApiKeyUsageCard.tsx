@@ -348,12 +348,12 @@ export function ApiKeyUsageCard({
               <strong className="apikey-usage__quotas-heading">
                 {t("apikey.usage.quotas.heading")}
               </strong>
-              {providerQuotas.map((quota) => {
+              {providerQuotas.map((quota, index) => {
                 const percent = quotaPercent(quota);
                 const reset = formatBeijingDateTime(language, quota.resets_at);
                 return (
                   <article
-                    key={`${quota.provider}:${quota.period}:${quota.resets_at}`}
+                    key={`${quota.provider}:${quota.period}:${quota.resets_at}:${index}`}
                     className="apikey-usage__quota"
                   >
                     <header>

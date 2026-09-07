@@ -449,7 +449,7 @@ export const en: Record<TranslationKey, string> = {
     "Save an API key to see requests, tokens, and cost for this device.",
   "apikey.usage.loading": "Reading usage",
   "apikey.usage.empty": "No usage was recorded for the selected period.",
-  "apikey.usage.asOf": "As of",
+  "apikey.usage.asOf": "As of (Beijing time)",
   "apikey.usage.metric.requests": "Requests",
   "apikey.usage.metric.tokens": "Tokens",
   "apikey.usage.metric.prompt": "Input",
