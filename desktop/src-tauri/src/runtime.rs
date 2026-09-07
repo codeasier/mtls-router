@@ -18,7 +18,7 @@ use crate::manager_core::{
 use crate::protocol::MANAGEMENT_PROTOCOL_VERSION;
 use crate::router_core::{
     BuildInfo, RouterDefaults, RouterEnv, RouterFlags, SupervisorConfig, SupervisorLimits,
-    TlsMaterials, DEFAULT_TIMEOUT,
+    TlsMaterials, DEFAULT_REQUEST_TIMEOUT, DEFAULT_TIMEOUT,
 };
 
 const CLIENT_CERT_PEM: &str =
@@ -49,8 +49,10 @@ pub fn build_info() -> BuildInfo {
     )
 }
 
-/// Same effective configuration the desktop passed to the Go router:
-/// loopback listen, TLS 1.2 floor, 10s timeout, debug off, foreground.
+/// Same listen/TLS/probe configuration the desktop passed to the Go router:
+/// loopback listen, TLS 1.2 floor, 10s probe timeout, debug off, foreground.
+/// `request_timeout` is a separate supervisor isolation budget, not Go
+/// `-timeout` / `MTLS_TIMEOUT`.
 pub fn supervisor_config() -> SupervisorConfig {
     SupervisorConfig {
         defaults: RouterDefaults {
@@ -142,6 +144,8 @@ mod tests {
         assert_eq!(config.defaults.listen_addr, "127.0.0.1:19099");
         assert_eq!(config.defaults.tls_min, "tls1.2");
         assert_eq!(config.defaults.timeout, DEFAULT_TIMEOUT);
+        assert_eq!(config.limits.request_timeout, DEFAULT_REQUEST_TIMEOUT);
+        assert_ne!(config.limits.request_timeout, DEFAULT_TIMEOUT);
         assert!(!config.defaults.debug && !config.defaults.backend);
         assert!(config.limits.command_timeout > DEFAULT_TIMEOUT);
         let rendered = format!("{config:?}");

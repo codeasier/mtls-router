@@ -20,6 +20,11 @@ This release moves the router and its management control plane into the desktop 
 - Documentation marks the CLI router, manager, setup scripts, and service wrappers as end of life after `v0.4.1` and describes the embedded topology, build inputs, and release allowlist.
 - Settings shows one application version instead of separate desktop, manager, and router versions, because all three are now the same binary; a router version is listed separately only while a compatible external router from a historical CLI installation is being reused. A failed update check is reported once.
 
+### Fixed
+
+- Exact `/version` and `/health` no longer share the supervisor request timeout or concurrency cap, so they cannot return HTTP 504 when proxied traffic is saturated or a health probe is slow. `/health` still returns HTTP 200 with degradation in the JSON body.
+- The supervisor's proxy header-wait deadline is a separate isolation budget (default 120s) from the 10s upstream probe timeout, so long non-streaming completions are not treated as the probe SLA.
+
 ### Security and recovery
 
 - A router recorded by another process is never signaled outside the verified migration path; Stop only affects the router this process started, and the desktop records its own process identity so legacy tooling's port-recovery flow treats it as protected.

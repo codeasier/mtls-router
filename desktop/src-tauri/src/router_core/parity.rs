@@ -1,9 +1,24 @@
 //! Black-box parity with the frozen Go router HTTP contract.
 //!
-//! Fixtures and assertions are taken from
-//! `internal/proxy/service_contract_test.go` and
-//! `internal/routermeta/handlers_test.go`. Tests speak only to the supervisor
-//! listen port and must not switch the desktop sidecar runtime path.
+//! This suite covers routing, hop-by-hop / secret redaction, SSE flush,
+//! exact `/version` and `/health`, probe-before-bind, and closed 502s —
+//! the fixtures from `internal/proxy/service_contract_test.go` and
+//! `internal/routermeta/handlers_test.go`. Tests speak only to the
+//! supervisor listen port.
+//!
+//! It does not claim connection-management or timing identity:
+//! - Upstream connections are dialed per request (no keep-alive pool).
+//!   Go `http.Transport` reuses idle connections.
+//! - Proxied requests have a supervisor [`super::DEFAULT_REQUEST_TIMEOUT`]
+//!   covering connect + send + response headers. Go sets no
+//!   `ResponseHeaderTimeout`. This is in-process isolation, not the probe
+//!   budget ([`super::DEFAULT_TIMEOUT`] / `-timeout` / `MTLS_TIMEOUT`).
+//! - Proxied requests are capped at [`super::DEFAULT_MAX_CONCURRENT`] until
+//!   response headers. Go has no equivalent.
+//!
+//! Exact `/version` and `/health` are exempt from both the request timeout
+//! and the concurrency cap so `/health` cannot fail at the HTTP layer
+//! under load or a slow probe (probe failure still returns 200 + degraded).
 
 use super::proxy::ProxyLogger;
 use super::test_support::{
