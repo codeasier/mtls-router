@@ -210,6 +210,11 @@ contains "$ROOT/desktop/scripts/verify-package.sh" 'desktop PE subsystem is not 
 contains "$ROOT/desktop/scripts/verify-package.sh" 'package must not contain CLI artifact'
 contains "$ROOT/desktop/scripts/verify-package.sh" 'for forbidden in "mtls-router$extension" "mtls-router-manager$extension"; do'
 contains "$ROOT/desktop/scripts/verify-package.sh" 'embedded manager handshake mismatch'
+contains "$ROOT/desktop/scripts/verify-package.sh" 'triple=$target'
+contains "$ROOT/desktop/src-tauri/src/main.rs" 'env!("MTLS_TARGET_TRIPLE")'
+if grep -Fq 'bytes.includes(Buffer.from(target))' "$ROOT/desktop/scripts/verify-package.sh"; then
+  fail 'package verification must not byte-scan the rustc target triple'
+fi
 if grep -Fq 'src-tauri/binaries' "$ROOT/desktop/scripts/verify-package.sh"; then
   fail 'package verification must not read sidecar sources'
 fi

@@ -113,7 +113,7 @@ npm exec tauri -- build   # 完整 Tauri 构建；build.rs 自动内嵌占位或
 
 `build.rs` 输入与 `RELEASE_BUILD=1` 保护见 [docs/BUILD.md](../docs/BUILD.md#embedded-router-and-manager)。包内不再有 `mtls-router`/`mtls-router-manager` 二进制；`scripts/verify-package.sh` 发现它们即失败。
 
-Release updater 辅助脚本：`scripts/prepare-updater-config.sh` 只为 stable tag 生成权限受限的 Tauri overlay config，并校验 updater 公钥固定指纹及完整签名输入；`scripts/updater-public-key-fingerprint.mjs` 从公钥文件生成该指纹；`scripts/create-macos-updater.sh` 在最终签名 app bundle 后生成并签名 `.app.tar.gz`；`scripts/verify-package.sh` 从包内 desktop executable 构造一次 Tauri app 以覆盖插件初始化，再以 `--verify-manager-handshake` 校验内嵌 manager 身份、确认包内无 CLI 产物、规范化六平台 updater 产物及 `.sig`，并通过 `src-tauri/examples/verify_updater_signature.rs` 验证签名。仓库根 `scripts/package-release.sh` 只允许桌面包、`.sha256`、`.sig`、macOS `.app.tar.gz`、`signing-status-*.txt`、`SHA256SUMS` 与 `latest.json` 进入 release，任何 `mtls-router*`、setup 脚本、CLI 归档或服务包装都会让打包失败。
+Release updater 辅助脚本：`scripts/prepare-updater-config.sh` 只为 stable tag 生成权限受限的 Tauri overlay config，并校验 updater 公钥固定指纹及完整签名输入；`scripts/updater-public-key-fingerprint.mjs` 从公钥文件生成该指纹；`scripts/create-macos-updater.sh` 在最终签名 app bundle 后生成并签名 `.app.tar.gz`；`scripts/verify-package.sh` 从包内 desktop executable 构造一次 Tauri app 以覆盖插件初始化，再以 `--verify-manager-handshake` 校验内嵌 manager 身份（stdout 含 version、deployment、protocol、manager target 与 rustc triple；不在二进制原始字节中扫描 rustc triple）、确认包内无 CLI 产物、规范化六平台 updater 产物及 `.sig`，并通过 `src-tauri/examples/verify_updater_signature.rs` 验证签名。仓库根 `scripts/package-release.sh` 只允许桌面包、`.sha256`、`.sig`、macOS `.app.tar.gz`、`signing-status-*.txt`、`SHA256SUMS` 与 `latest.json` 进入 release，任何 `mtls-router*`、setup 脚本、CLI 归档或服务包装都会让打包失败。
 
 ## 测试
 

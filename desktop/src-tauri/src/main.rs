@@ -15,11 +15,12 @@ fn main() {
             std::process::exit(1);
         }
         println!(
-            "verified manager handshake version={} deployment_id={} protocol={} target={}",
+            "verified manager handshake version={} deployment_id={} protocol={} target={} triple={}",
             env!("MTLS_MANAGER_VERSION"),
             env!("MTLS_DEPLOYMENT_ID"),
             env!("MTLS_MANAGEMENT_PROTOCOL_VERSION"),
-            env!("MTLS_MANAGER_TARGET")
+            env!("MTLS_MANAGER_TARGET"),
+            env!("MTLS_TARGET_TRIPLE")
         );
         return;
     }

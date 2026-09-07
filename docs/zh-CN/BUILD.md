@@ -239,7 +239,7 @@ npm exec tauri -- signer generate -w /secure/offline/CodeasierRouter-updater.key
 
 ## 包验证
 
-两个 workflow 都会在原生匹配 runner 上对六个包逐一调用 `desktop/scripts/verify-package.sh`。该脚本会拒绝 host/target 不匹配；解包 NSIS、DMG 或 AppImage；检查包/版本身份；在包内存在 `mtls-router` 或 `mtls-router-manager` 可执行文件时失败；检查桌面可执行文件的格式及架构；检查 macOS/Linux 可执行权限；从包内 desktop executable 构造 Tauri 应用以初始化已注册插件但不进入事件循环；并执行内嵌 manager 握手，要求编译时的版本、deployment ID、protocol 与目标一致。无图形环境的 Linux 检查会在 Xvfb 下执行初始化 smoke test。Release workflow 还会在发布前验证每个生成的 `.sha256`。
+两个 workflow 都会在原生匹配 runner 上对六个包逐一调用 `desktop/scripts/verify-package.sh`。该脚本会拒绝 host/target 不匹配；解包 NSIS、DMG 或 AppImage；检查包/版本身份；在包内存在 `mtls-router` 或 `mtls-router-manager` 可执行文件时失败；检查桌面可执行文件的格式及架构；检查 macOS/Linux 可执行权限；从包内 desktop executable 构造 Tauri 应用以初始化已注册插件但不进入事件循环；并执行内嵌 manager 握手，要求握手 stdout 中的编译时版本、deployment ID、protocol、manager target 与 rustc target triple 一致。无图形环境的 Linux 检查会在 Xvfb 下执行初始化 smoke test。Release workflow 还会在发布前验证每个生成的 `.sha256`。
 
 这些自动包检查不会安装包，也不覆盖正常 GUI 启动、setup hook、事件循环、首次启动行为或 updater 网络路径。发布前，必须保留 workflow 检查输出，并从每个匹配目标 runner 保留完整 release checklist 的独立证据：
 
