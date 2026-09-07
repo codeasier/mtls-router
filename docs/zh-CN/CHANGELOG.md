@@ -2,6 +2,16 @@
 
 [English](../CHANGELOG.md)
 
+## v0.5.1 - 2026-09-07
+
+本次补丁发布修复桌面应用包验证，使 Intel（`x86_64`）macOS 构建能够正常验证与发布。
+
+### 修复
+
+- release 包验证不再通过扫描编译产物中的 `rustc` target triple 连续字节来确认目标身份：LLVM 会把 19 字节的 `x86_64-apple-darwin` triple 编译进 `movabs` 立即数而非连续字符串，导致扫描永远匹配不到、`v0.5.0` 的 Intel 构建验证失败；现在 `--verify-manager-handshake` 输出同时是目标 OS/架构与内嵌 rustc triple 的唯一身份来源。
+
+---
+
 ## v0.5.0 - 2026-09-07
 
 本次发布把 router 及其管理控制面移入桌面进程，并终止独立 CLI：新版本只发布桌面应用，所有历史 CLI release 仍可从各自 tag 下载。
