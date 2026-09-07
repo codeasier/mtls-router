@@ -18,6 +18,7 @@ This release moves the router and its management control plane into the desktop 
 - Router credentials, upstream URL, version identity, Agent model preset, and catalog policy are compiled into the desktop by its Rust build script; release builds refuse placeholder credentials and default identities.
 - The installation package generation advanced to `2`; the recorded sidecar hashes of older installations are read and cleared.
 - Documentation marks the CLI router, manager, setup scripts, and service wrappers as end of life after `v0.4.1` and describes the embedded topology, build inputs, and release allowlist.
+- Settings shows one application version instead of separate desktop, manager, and router versions, because all three are now the same binary; a router version is listed separately only while a compatible external router from a historical CLI installation is being reused. A failed update check is reported once.
 
 ### Security and recovery
 

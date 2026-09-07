@@ -18,6 +18,7 @@
 - router 凭据、上游 URL、版本身份、Agent model preset 与目录策略由 Rust 构建脚本编译进桌面；release 构建拒绝占位凭据与默认身份。
 - 安装 package generation 提升为 `2`；旧安装记录的 sidecar 哈希读取后清除。
 - 文档将 CLI router、manager、安装脚本与服务包装标记为 `v0.4.1` 之后停止维护，并描述内嵌拓扑、构建输入与 release allowlist。
+- 设置页面只显示一个应用版本，不再分别列出桌面应用、管理器与路由版本，因为三者现在是同一个二进制；只有在复用历史 CLI 安装的兼容外部 router 时才单独列出其版本。更新检查失败的提示只出现一次。
 
 ### 安全与恢复
 

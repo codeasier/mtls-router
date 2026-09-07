@@ -412,11 +412,20 @@ export interface ReleaseObservation {
   state: "observing" | "released" | "reoccupied";
 }
 
+/**
+ * The desktop, manager, and router ship as one binary, so there is a single
+ * application version. `external_router` is present only while the desktop
+ * is reusing a router it does not own (a historical CLI installation).
+ */
 export interface ComponentVersions {
-  desktop: string;
-  manager: string;
-  router: string;
+  version: string;
   management_protocol?: string;
+  external_router?: ExternalRouterVersion | null;
+}
+
+export interface ExternalRouterVersion {
+  owner: string;
+  version: string;
 }
 
 export interface UpdateInfo {

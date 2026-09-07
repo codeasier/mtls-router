@@ -149,9 +149,7 @@ export function createMockDesktopApi(
       checked_at: new Date().toISOString(),
     }),
     getComponentVersions: async () => ({
-      desktop: "mock-desktop",
-      manager: "mock-manager",
-      router: "mock-router",
+      version: "mock-desktop",
       management_protocol: "4",
     }),
     checkForUpdate: async () => ({

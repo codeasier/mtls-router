@@ -308,9 +308,6 @@ export const en: Record<TranslationKey, string> = {
   "router.occupant.cancel": "Cancel",
   "router.occupant.confirm": "Force terminate",
   "router.occupant.terminating": "Terminating...",
-  "router.desktop": "Desktop",
-  "router.manager": "Manager",
-  "router.router": "Router",
   "router.next": "NEXT",
   "router.agentNotice":
     "When the router is available, go to Agents to generate a configuration preview. Files are never changed automatically.",
@@ -355,7 +352,10 @@ export const en: Record<TranslationKey, string> = {
   "settings.theme.warm": "Warm sand",
   "settings.theme.light": "Light",
   "settings.theme.dark": "Dark",
-  "settings.components": "Component versions",
+  "settings.components": "Version",
+  "settings.appVersion": "Application version",
+  "settings.externalRouter":
+    "Reused external router (historical CLI installation)",
   "settings.locations": "Storage locations",
   "settings.dataLocation": "Application data",
   "settings.logLocation": "Log directory",

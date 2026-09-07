@@ -909,12 +909,22 @@ pub struct ManagerInfo {
     pub management_protocol_version: String,
 }
 
+/// The desktop, manager, and router are one binary, so there is exactly one
+/// application version. A router version is reported separately only while
+/// the desktop is reusing a router it does not own (a historical CLI
+/// installation), because that is the only case where it can differ.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct ComponentVersions {
-    pub desktop: String,
-    pub manager: String,
-    pub router: String,
+    pub version: String,
     pub management_protocol: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external_router: Option<ExternalRouterVersion>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct ExternalRouterVersion {
+    pub owner: String,
+    pub version: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]

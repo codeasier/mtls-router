@@ -40,9 +40,7 @@ export function createMockApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
       checked_at: new Date().toISOString(),
     }),
     getComponentVersions: vi.fn().mockResolvedValue({
-      desktop: "desktop-v1",
-      manager: "manager-v1",
-      router: "router-v1",
+      version: "desktop-v1",
       management_protocol: "4",
     }),
     checkForUpdate: vi.fn().mockResolvedValue({

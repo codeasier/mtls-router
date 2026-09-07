@@ -47,7 +47,7 @@ React UI ──Tauri invoke──▶ Rust commands.rs ──ManagerClient (proto
 | `UsagePage.tsx`                                           | 独立「用量」导航页：读取凭据状态并加载当前密钥用量窗口；无 key 时不查询，提供前往 API 密钥页的入口                                                                          |
 | `ApiKeyUsageCard.tsx`                                     | 当前密钥用量窗口：周期选择、汇总、配额与按模型明细；模型列支持多选筛选（含全部），请求/Token/费用列支持排序；无 key 时不查询                                                |
 | `LogsPage.tsx`                                            | 有界的、安全过滤的 router 日志，手动刷新                                                                                                                                    |
-| `SettingsPage.tsx`                                        | 自启动、组件版本、手动更新检查、确认后安装/进度、数据/日志目录、诊断、卸载准备、语言与外观主题                                                                              |
+| `SettingsPage.tsx`                                        | 自启动、单一应用版本（仅复用外部 router 时附加其版本）、手动更新检查、确认后安装/进度、数据/日志目录、诊断、卸载准备、语言与外观主题                                        |
 | `model.ts`                                                | 共享类型（`SectionId`、`navigationItems`）                                                                                                                                  |
 | `theme.tsx`                                               | 外观主题 `warm` / `light` / `dark`；仅写入 `localStorage`，通过 `document.documentElement.dataset.theme` 切换 CSS token。浅色浅灰底 + 真白卡片，大面板不铺满纯白            |
 | `i18n.tsx`                                                | I18n context provider，含 `zh-CN` 与 `en` locale                                                                                                                            |

@@ -9,8 +9,9 @@ use crate::{
     types::{
         APIKeyUsage, AgentCleanupPreview, AgentDetect, AgentFragment, AgentPreview,
         AgentWriteResult, ComponentVersions, CredentialSummary, DesktopPaths, Diagnostics,
-        ManagerFailure, ManagerInfo, NativeLanguage, OccupantInspection, OccupantTerminationResult,
-        PollSnapshot, RecoveryAction, RouterHealth, RouterLogs, RouterStatus, RouterVersion,
+        ExternalRouterVersion, ManagerFailure, ManagerInfo, NativeLanguage, OccupantInspection,
+        OccupantTerminationResult, PollSnapshot, RecoveryAction, RouterHealth, RouterLogs,
+        RouterStatus, RouterVersion,
     },
 };
 use chrono::{DateTime, Utc};
@@ -413,19 +414,27 @@ pub async fn router_logs(limit: u16, state: tauri::State<'_, AppState>) -> Resul
 #[tauri::command]
 pub async fn component_versions(state: tauri::State<'_, AppState>) -> Result<ComponentVersions> {
     let manager: ManagerInfo = state.manager.call("manager.info", json!({})).await?;
-    let router = state
-        .manager
-        .call::<RouterVersion>("router.version", json!({}))
-        .await
-        .ok();
+    let external_router = external_router_version(&state.manager).await;
     Ok(ComponentVersions {
-        desktop: env!("CARGO_PKG_VERSION").to_owned(),
-        manager: manager.version,
-        router: router
-            .as_ref()
-            .map(|value| value.version.clone())
-            .unwrap_or_default(),
+        version: manager.version,
         management_protocol: manager.management_protocol_version,
+        external_router,
+    })
+}
+
+/// The embedded router always carries the application version, so only a
+/// reused router owned by someone else is worth reporting. Any read failure
+/// simply omits the row; it never turns the version card into an error.
+async fn external_router_version(manager: &ManagerClient) -> Option<ExternalRouterVersion> {
+    let status: RouterStatus = manager.call("router.status", json!({})).await.ok()?;
+    let owner = status
+        .owner
+        .clone()
+        .filter(|owner| owner != "desktop" && status.available())?;
+    let router: RouterVersion = manager.call("router.version", json!({})).await.ok()?;
+    Some(ExternalRouterVersion {
+        owner,
+        version: router.version,
     })
 }
 
@@ -1730,6 +1739,61 @@ mod tests {
             },
         };
         assert!(validate_models_result(&result, &["claude".into()]).is_ok());
+    }
+
+    #[test]
+    fn external_router_version_only_reports_reused_foreign_routers() {
+        tauri::async_runtime::block_on(async {
+            let external = serde_json::to_vec(&json!({"id":"desktop-1","result":{
+                "state":"external_compatible","owner":"cli",
+                "listen_addr":"http://127.0.0.1:19099","pid":515
+            }}))
+            .unwrap();
+            let version = serde_json::to_vec(&json!({"id":"desktop-2","result":{
+                "version":"0.4.1","deployment_id":"deploy","management_protocol_version":"4"
+            }}))
+            .unwrap();
+            let (manager, requests) = fake_client(vec![external, version]);
+            assert_eq!(
+                external_router_version(&manager).await,
+                Some(ExternalRouterVersion {
+                    owner: "cli".into(),
+                    version: "0.4.1".into(),
+                })
+            );
+            let methods: Vec<String> = requests
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|request| request["method"].as_str().unwrap().to_owned())
+                .collect();
+            assert_eq!(methods, ["manager.info", "router.status", "router.version"]);
+
+            for status in [
+                json!({"state":"desktop_owned","owner":"desktop","pid":7}),
+                json!({"state":"degraded","owner":"desktop","pid":7}),
+                json!({"state":"legacy_managed","owner":"desktop"}),
+                json!({"state":"absent"}),
+                json!({"state":"unknown_occupant"}),
+                json!({"state":"stale","owner":"cli"}),
+            ] {
+                let response =
+                    serde_json::to_vec(&json!({"id":"desktop-1","result":status.clone()})).unwrap();
+                let (manager, requests) = fake_client(vec![response]);
+                assert!(
+                    external_router_version(&manager).await.is_none(),
+                    "{status}"
+                );
+                assert!(
+                    requests
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .all(|request| request["method"] != "router.version"),
+                    "{status}: the embedded router version is never queried"
+                );
+            }
+        });
     }
 
     #[test]
