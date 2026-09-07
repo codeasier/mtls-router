@@ -98,7 +98,7 @@ key 绝不出现于环境变量、CLI 参数、model config、日志或 journal 
 - `src/commands.rs` — Tauri 命令处理器，代理到 manager client；`AppState`、`ModelFlow`，以及不接收凭据/model flow 的 cleanup preview/write command
 - `src/manager.rs` — `ManagerClient` 与 `TransportFactory` trait：单请求在飞、watchdog、一次性恢复；生产 transport 为 `manager_core::InProcessFactory`；cleanup write 禁止不确定投递后的自动 replay
 - `src/manager_core/` — 内嵌 protocol v4 控制面：lifecycle、occupant、Agent、trusted-router、`discovery`（Go discovery 移植）、`embedded`（生产 `Backend`：状态调和 + 端口分类 + 会话日志 + `desktop-state.json` 自有记录）、`legacy`（一次性完整身份校验迁移与每代际终止闩）、`session`（生产装配）
-- `src/router_core/` — 内嵌 router：HTTP/1 + rustls/`ring`，probe、精确 `/version`/`/health`、流式代理、白名单访问日志、独立 runtime supervisor
+- `src/router_core/` — 内嵌 router：HTTP/1 + rustls/`ring`，probe、精确 `/version`/`/health`、流式代理、白名单访问日志、独立 runtime supervisor。监督器 `request_timeout`（默认 120s，覆盖 connect+发送+等响应头）与并发上限（默认 32）是进程内隔离，只约束代理请求，不是冻结 Go HTTP 契约；二者与探针 `DEFAULT_TIMEOUT`（10s，对应 Go `-timeout`/`MTLS_TIMEOUT`）分离；精确 `/version`/`/health` 豁免，`/health` 在探针失败或上游慢时仍返回 HTTP 200。上游连接目前按请求重拨，不进入 parity 契约
 - `src/scheduler.rs` — 轮询调度器，向前端 emit `router-poll-snapshot` 事件
 - `src/port_recovery.rs` — manager 报告首次释放后约 10 秒定期采样，区分未检测到重新占用与已采样到重新占用
 - `src/updater.rs` — stable-only 桌面整包检查/安装：有限网络超时、Tauri 签名下载、desktop-owned router 停止与失败恢复、安装后重启

@@ -5,8 +5,9 @@
 //! This module locks the HTTP/TLS stack and implements configuration
 //! precedence, mTLS transport, the startup probe, closed startup reason
 //! codes, exact `/version` and `/health` handlers, a streaming reverse
-//! proxy, and a dedicated supervisor runtime. It is not wired into the
-//! current sidecar runtime path.
+//! proxy, and a dedicated supervisor runtime. Supervisor request timeout
+//! and concurrency limits isolate the control plane; they are not the
+//! frozen Go HTTP contract and do not apply to exact `/version`/`/health`.
 
 mod config;
 mod connect;
@@ -35,7 +36,7 @@ pub use stack::{
 pub use startup::{prepare_startup, PreparedRouter, StartupError, StartupReason};
 pub use supervisor::{
     RouterSupervisor, RuntimePhase, RuntimeStatus, SupervisorConfig, SupervisorError,
-    SupervisorLimits,
+    SupervisorLimits, DEFAULT_MAX_CONCURRENT, DEFAULT_REQUEST_TIMEOUT,
 };
 pub use tls::{MtlsTransport, TlsMaterials, TlsMinVersion};
 

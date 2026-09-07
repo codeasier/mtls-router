@@ -41,6 +41,7 @@ test -z "$(gofmt -l .)"                    # 格式检查（CI 强制）
 - 不要缓冲请求体；让 `httputil.ReverseProxy` 自行流式处理。
 - 不要让 `/health` 在 HTTP 层因 upstream 降级而失败。
 - `/version` 与 `/health` 必须以精确 pattern 注册在与反向代理同一个 mux 上；ServeMux 按最具体 pattern 匹配（与注册顺序无关），二者因此不会进入代理链路。新增管理端点一律用精确 pattern，不要引入与 `/` 有歧义的前缀 pattern。
+- 不要对精确 `/version` 与 `/health` 套用 `router_core` supervisor 的请求超时或并发上限；二者必须在代理饱和或上游慢首包时仍完成 HTTP 层处理（`/health` 恒 200）。
 
 ### 密钥与 API key 安全
 

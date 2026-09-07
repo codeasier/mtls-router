@@ -21,18 +21,29 @@ use tokio::time::timeout;
 use super::config::validate_upstream_url;
 use super::proxy::ProxyLogger;
 use super::{
-    prepare_startup, serve_request, BuildInfo, Prober, ReverseProxy, RouterDefaults, RouterEnv,
-    RouterFlags, StartupError, StartupReason, TlsMaterials,
+    is_exact_management_route, prepare_startup, serve_request, BuildInfo, Prober, ReverseProxy,
+    RouterDefaults, RouterEnv, RouterFlags, StartupError, StartupReason, TlsMaterials,
 };
 
 const DEFAULT_COMMAND_QUEUE: usize = 8;
-const DEFAULT_MAX_CONCURRENT: u32 = 32;
+/// Isolation cap on proxied in-flight header waits. Not a Go `MaxConnsPerHost`.
+pub const DEFAULT_MAX_CONCURRENT: u32 = 32;
+/// Isolation deadline for proxied connect + send + response headers.
+/// Independent of the probe-only [`super::DEFAULT_TIMEOUT`] (Go `-timeout` / `MTLS_TIMEOUT`).
+pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// In-process isolation limits. These are not the frozen Go HTTP contract:
+/// Go's transport has no `ResponseHeaderTimeout` and no concurrency cap, and
+/// Go `-timeout` / `MTLS_TIMEOUT` is probe-only ([`super::DEFAULT_TIMEOUT`]).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SupervisorLimits {
     pub command_queue: usize,
+    /// Held until proxied response headers return. Exact `/version` and
+    /// `/health` do not take a slot.
     pub max_concurrent_requests: u32,
     pub command_timeout: Duration,
+    /// Connect + send + wait-for-response-headers on proxied requests.
+    /// Exact `/version` and `/health` are not subject to this deadline.
     pub request_timeout: Duration,
     pub shutdown_timeout: Duration,
     pub read_header_timeout: Duration,
@@ -44,7 +55,7 @@ impl Default for SupervisorLimits {
             command_queue: DEFAULT_COMMAND_QUEUE,
             max_concurrent_requests: DEFAULT_MAX_CONCURRENT,
             command_timeout: Duration::from_secs(2),
-            request_timeout: Duration::from_secs(10),
+            request_timeout: DEFAULT_REQUEST_TIMEOUT,
             shutdown_timeout: Duration::from_secs(5),
             read_header_timeout: Duration::from_secs(10),
         }
@@ -635,6 +646,9 @@ async fn supervised_request(
     shared: Arc<SharedState>,
     limits: SupervisorLimits,
 ) -> Response<BoxBody<Bytes, Infallible>> {
+    if is_exact_management_route(request.uri().path()) {
+        return serve_supervised(request, &serving).await;
+    }
     let permit = match timeout(
         limits.request_timeout,
         serving.semaphore.clone().acquire_owned(),
@@ -645,26 +659,34 @@ async fn supervised_request(
         _ => return timeout_response(),
     };
     shared.begin_request();
-    let started_at = serving.started_at.clone();
-    let provider = move || {
-        let mut extra = Map::new();
-        extra.insert("started_at".to_owned(), json!(started_at));
-        extra
-    };
-    let work = serve_request(
-        request,
-        &serving.identity,
-        Some(&provider),
-        || serving.prober.probe(),
-        &serving.proxy,
-    );
-    let response = match timeout(limits.request_timeout, work).await {
+    let response = match timeout(limits.request_timeout, serve_supervised(request, &serving)).await
+    {
         Ok(response) => response,
         Err(_) => timeout_response(),
     };
     shared.end_request();
     drop(permit);
     response
+}
+
+async fn serve_supervised(
+    request: Request<Incoming>,
+    serving: &Serving,
+) -> Response<BoxBody<Bytes, Infallible>> {
+    let started_at = serving.started_at.clone();
+    let provider = move || {
+        let mut extra = Map::new();
+        extra.insert("started_at".to_owned(), json!(started_at));
+        extra
+    };
+    serve_request(
+        request,
+        &serving.identity,
+        Some(&provider),
+        || serving.prober.probe(),
+        &serving.proxy,
+    )
+    .await
 }
 
 fn timeout_response() -> Response<BoxBody<Bytes, Infallible>> {
@@ -687,10 +709,20 @@ mod tests {
     use crate::router_core::test_support::{
         boxed_bytes, start_mtls_handler, start_mtls_server, MtlsServerOptions,
     };
+    use crate::router_core::{DEFAULT_TIMEOUT, HEALTH_PATH, VERSION_PATH};
     use http_body_util::Empty;
     use std::sync::atomic::AtomicU32;
     use tokio::net::TcpStream;
     use tokio::sync::Notify;
+
+    #[test]
+    fn request_timeout_is_not_the_probe_budget() {
+        let limits = SupervisorLimits::default();
+        assert_eq!(limits.request_timeout, DEFAULT_REQUEST_TIMEOUT);
+        assert_ne!(limits.request_timeout, DEFAULT_TIMEOUT);
+        assert_eq!(limits.max_concurrent_requests, DEFAULT_MAX_CONCURRENT);
+        assert_eq!(limits.read_header_timeout, Duration::from_secs(10));
+    }
 
     fn test_limits() -> SupervisorLimits {
         SupervisorLimits {
@@ -866,6 +898,72 @@ mod tests {
         assert_eq!(first.status(), StatusCode::GATEWAY_TIMEOUT);
         assert_eq!(second.status(), StatusCode::GATEWAY_TIMEOUT);
         assert!(supervisor.status().max_active_requests <= 1);
+        supervisor.shutdown().await.ok();
+    }
+
+    #[tokio::test]
+    async fn management_routes_bypass_request_timeout_and_concurrency_cap() {
+        let seen = Arc::new(AtomicU32::new(0));
+        let upstream = start_mtls_handler({
+            let seen = seen.clone();
+            move |request| {
+                let seen = seen.clone();
+                let path = request.uri().path().to_owned();
+                async move {
+                    if path.starts_with("/v1/") {
+                        seen.fetch_add(1, Ordering::SeqCst);
+                        tokio::time::sleep(Duration::from_millis(250)).await;
+                    }
+                    Response::builder()
+                        .status(StatusCode::NO_CONTENT)
+                        .body(boxed_bytes(Bytes::new()))
+                        .expect("response")
+                }
+            }
+        })
+        .await;
+        let mut config = config_for(&upstream.url, "127.0.0.1:0", upstream.certs.materials());
+        config.limits.request_timeout = Duration::from_millis(50);
+        config.limits.max_concurrent_requests = 1;
+        let supervisor = RouterSupervisor::spawn(config);
+        let addr = supervisor.start().await.expect("start");
+        let first = tokio::spawn({
+            let url = format!("http://{addr}");
+            async move { http1_get(&url, "/v1/hang").await }
+        });
+        tokio::time::sleep(Duration::from_millis(15)).await;
+        let version = http1_get(&format!("http://{addr}"), VERSION_PATH).await;
+        let health = http1_get(&format!("http://{addr}"), HEALTH_PATH).await;
+        let second = http1_get(&format!("http://{addr}"), "/v1/hang-2").await;
+        let first = first.await.expect("join");
+        assert_eq!(version.status(), StatusCode::OK);
+        assert_eq!(health.status(), StatusCode::OK);
+        assert_eq!(first.status(), StatusCode::GATEWAY_TIMEOUT);
+        assert_eq!(second.status(), StatusCode::GATEWAY_TIMEOUT);
+        assert!(supervisor.status().max_active_requests <= 1);
+        assert!(seen.load(Ordering::SeqCst) >= 1);
+        supervisor.shutdown().await.ok();
+    }
+
+    #[tokio::test]
+    async fn health_stays_http_200_when_probe_exceeds_request_timeout() {
+        let upstream = start_mtls_server(MtlsServerOptions {
+            delay: Duration::from_millis(80),
+            ..MtlsServerOptions::default()
+        })
+        .await;
+        let mut config = config_for(&upstream.url, "127.0.0.1:0", upstream.certs.materials());
+        config.defaults.timeout = Duration::from_millis(200);
+        config.limits.request_timeout = Duration::from_millis(25);
+        config.limits.command_timeout = Duration::from_secs(2);
+        let supervisor = RouterSupervisor::spawn(config);
+        let addr = supervisor.start().await.expect("start");
+        let health = http1_get(&format!("http://{addr}"), HEALTH_PATH).await;
+        assert_eq!(
+            health.status(),
+            StatusCode::OK,
+            "health must not inherit the proxy request_timeout"
+        );
         supervisor.shutdown().await.ok();
     }
 
