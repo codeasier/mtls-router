@@ -2,7 +2,7 @@
 
 [中文](zh-CN/CHANGELOG.md)
 
-## Unreleased
+## v0.5.0 - 2026-09-07
 
 This release moves the router and its management control plane into the desktop process and ends the standalone CLI: new versions ship the desktop application only, while every historical CLI release stays downloadable from its tag.
 
@@ -11,6 +11,7 @@ This release moves the router and its management control plane into the desktop 
 - Embedded Rust router and manager inside the desktop process: the router runs on a dedicated supervised runtime thread with request timeouts, bounded concurrency, and panic containment; the manager serves the existing management protocol v4 in-process. No `mtls-router` or `mtls-router-manager` child process is spawned, and the package verifier fails if one is bundled.
 - One-time migration of a router left running by a `v0.4.1` desktop or CLI installation: the target is stopped only after PID, start time, executable, installation lineage, and previous-manager identity all verify; a per-generation record (`legacy-migration.json`) guarantees that retries and relaunches can never send a second termination signal, and the outcome is kept in redacted router diagnostics.
 - Port classification without a helper process: compatible historical CLI routers are still reused, unknown occupants still report `PORT_OCCUPIED`, and stale records still fail closed.
+- Extended usage windows and provider limits on the Usage page: rolling periods (`1h`, `12h`, `24h`, `7d`, `30d`) and calendar periods (`today`, `this week`, `this month`) are grouped separately, calendar windows start at 08:00 Beijing time (UTC day / ISO week / month boundaries), and per-provider USD budgets render under a "Provider limits" heading without the interface computing windows locally.
 
 ### Changed
 
@@ -24,6 +25,7 @@ This release moves the router and its management control plane into the desktop 
 
 - Exact `/version` and `/health` no longer share the supervisor request timeout or concurrency cap, so they cannot return HTTP 504 when proxied traffic is saturated or a health probe is slow. `/health` still returns HTTP 200 with degradation in the JSON body.
 - The supervisor's proxy header-wait deadline is a separate isolation budget (default 120s) from the 10s upstream probe timeout, so long non-streaming completions are not treated as the probe SLA.
+- Usage snapshots fail closed: the command layer rejects malformed RFC3339 timestamps before the Usage page can throw on an invalid date.
 
 ### Security and recovery
 
