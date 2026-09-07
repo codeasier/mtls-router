@@ -80,7 +80,7 @@ bash tests/index_docs_test.sh          # 仅跑 INDEX 覆盖与链接校验
 ```bash
 cd desktop && npm ci
 npm run dev:mock                       # 仅 Vite + 浏览器 mock DesktopApi（无 Go/Cargo/Tauri）
-npm run dev:tauri:reuse                # tauri dev，复用已有 sidecar（缺失则 fail closed）
+npm run dev:tauri:reuse                # tauri dev，内嵌 router/manager，无需前置准备
 npm run dev:agent                      # 隔离 Agent/桌面数据目录后走 reuse
 npm run static:check                   # eslint + prettier
 npm run typecheck                      # tsc --noEmit
@@ -91,7 +91,8 @@ make desktop-verify                    # 同上，仓库根目录入口
 ```
 
 - 分层开发命令与边界见 [desktop/INDEX.md](desktop/INDEX.md) 与 [docs/BUILD.md](docs/BUILD.md)。
-- 不要为加速本地调试而绕过 sidecar 哈希、manager 握手、preview/revision 或事务写入保护。
+- 不要为加速本地调试而绕过 manager 握手、preview/revision 或事务写入保护。
+- 不要给桌面重新引入 Go 子进程：`bundle.externalBin` 保持为空，Rust 不依赖 shell 插件，`lib.rs` 与 `tests/desktop_workflow_test.sh` 会检查这一点。
 - `dev:mock` 仅允许 `import.meta.env.DEV && VITE_MOCK=true`；生产构建必须仍绑定真实 Tauri API。
 
 ### 桌面 Rust（desktop/src-tauri/）
@@ -118,24 +119,22 @@ cargo test --manifest-path desktop/src-tauri/Cargo.toml --locked
 ### 桌面完整打包构建
 
 ```bash
-make desktop-package-current           # sidecars:build → tauri build → package:verify
+make desktop-package-current           # tauri build → package:verify（build.rs 自动内嵌凭据）
 ```
 
 ### 发布产物命名
 
-CLI 产物（6 目标：`linux/darwin/windows` × `amd64/arm64`）：
-- 二进制：`mtls-router-${GOOS}-${GOARCH}[.exe]`、`mtls-router-manager-${GOOS}-${GOARCH}[.exe]`（仅 Windows 带 `.exe`）
-- 归档：非 Windows 为 `mtls-router-${os}-${arch}.tar.gz`，Windows 为 `mtls-router-${os}-${arch}.zip`（均含 `SHA256SUMS` + 对应平台 setup 脚本 + router + manager）
+`v0.4.1` 之后的 release 只包含桌面应用；`scripts/package-release.sh` 以 allowlist 拒绝任何 `mtls-router*` 二进制、setup 脚本、CLI 归档或服务包装。历史 CLI 产物（`mtls-router-${GOOS}-${GOARCH}[.exe]`、`mtls-router-manager-*`、`.tar.gz`/`.zip` 归档）冻结在 `v0.4.1` 及更早的 tag 上，不得覆盖。
 
 桌面应用包：
-- macOS：`CodeasierRouter-darwin-${arch}.dmg`
+- macOS：`CodeasierRouter-darwin-${arch}.dmg`（stable 另有 `CodeasierRouter-darwin-${arch}.app.tar.gz` updater 归档）
 - Windows：`CodeasierRouter-windows-${arch}.exe`（NSIS installer）
 - Linux：`CodeasierRouter-linux-${arch}.AppImage`
 
-附属：`SHA256SUMS`（覆盖二进制、归档与桌面包，不含 signing-status 文件）+ `signing-status-${os}-${arch}.txt`（6 个）。
+附属：`CodeasierRouter-${os}-${arch}.sha256`（6 个）、stable 的 `.sig` 与 `latest.json`、`SHA256SUMS`（不含 signing-status 文件）+ `signing-status-${os}-${arch}.txt`（6 个）。
 
-桌面 sidecar 构建输入在 `src-tauri/binaries/` 下用 target-triple 命名（`mtls-router-<target>`）；Tauri 打包后安装的二进制使用纯名字（`mtls-router`、`mtls-router-manager`）。
-`setup.ps1` 必须保留 UTF-8 BOM 以兼容 Windows PowerShell 5.1；`main_test.go` 会断言这一点。
+桌面包内只有 `mtls-router-desktop[.exe]` 一个可执行文件；router 凭据、upstream URL、版本/deployment/协议、preset 与 simplify 由 `desktop/src-tauri/build.rs` 编译进去（`RELEASE_BUILD=1` 拒绝占位值与默认身份）。
+`setup.ps1` 必须保留 UTF-8 BOM 以兼容 Windows PowerShell 5.1；`main_test.go` 会断言这一点（冻结实现仍受测试）。
 
 ## 文档偏好
 

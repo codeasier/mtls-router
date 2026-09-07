@@ -2,6 +2,30 @@
 
 [English](../CHANGELOG.md)
 
+## Unreleased
+
+本次发布把 router 及其管理控制面移入桌面进程，并终止独立 CLI：新版本只发布桌面应用，所有历史 CLI release 仍可从各自 tag 下载。
+
+### 新增
+
+- 桌面进程内嵌 Rust router 与 manager：router 运行在独立、受监督的运行时线程上，具备请求超时、有界并发和 panic 隔离；manager 在进程内提供既有 management protocol v4。不再拉起 `mtls-router` 或 `mtls-router-manager` 子进程，包验证在发现它们时失败。
+- 对 `v0.4.1` 桌面或 CLI 安装遗留的运行中 router 做一次性迁移：只有 PID、启动时间、可执行文件、安装谱系与前一 manager 身份全部校验通过才会停止目标；每代际一份记录（`legacy-migration.json`）保证重试与重启绝不会发送第二次终止信号，结果保留在脱敏的 router 诊断中。
+- 无辅助进程的端口分类：兼容的历史 CLI router 仍可复用，未知占用者仍报告 `PORT_OCCUPIED`，过期记录仍 fail closed。
+
+### 变更
+
+- Release 清单只包含桌面包、其 checksum、updater 产物与签名、签名状态文件、`SHA256SUMS` 与 `latest.json`；打包脚本拒绝任何 CLI 二进制、安装脚本、归档或服务包装。
+- router 凭据、上游 URL、版本身份、Agent model preset 与目录策略由 Rust 构建脚本编译进桌面；release 构建拒绝占位凭据与默认身份。
+- 安装 package generation 提升为 `2`；旧安装记录的 sidecar 哈希读取后清除。
+- 文档将 CLI router、manager、安装脚本与服务包装标记为 `v0.4.1` 之后停止维护，并描述内嵌拓扑、构建输入与 release allowlist。
+
+### 安全与恢复
+
+- 其他进程记录的 router 绝不会在已验证的迁移路径之外被发信号；停止只影响本进程启动的 router，桌面还会记录自身进程身份，使历史工具的端口恢复流程将其视为受保护进程。
+- 内嵌凭据绝不出现在状态文件、迁移记录、日志、诊断或协议参数中。
+
+---
+
 ## v0.4.1 - 2026-09-06
 
 本次发布收紧桌面控制台：首屏主要操作在窄窗口下依然可达，删除 API key 需先确认，新增浅色/深色/暖沙外观主题，并且过期的健康检查结果不再掩盖或冒充真实的上游状态。

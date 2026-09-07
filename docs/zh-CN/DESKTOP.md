@@ -2,13 +2,15 @@
 
 [English](../DESKTOP.md)
 
-Tauri 桌面应用是固定服务 `mtls-router` 的当前用户控制面板。它打包了架构匹配的 `mtls-router-manager` 和 `mtls-router` sidecar；不会把任一 sidecar 安装到 `PATH`，也不提供证书、上游或 sidecar 替换控件。
+Tauri 桌面应用是固定服务 `mtls-router` 的当前用户控制面板。manager 与 mTLS router 都运行在桌面进程内部：router 由独立、受监督的运行时线程监听 `127.0.0.1:19099`，manager 控制面继续响应桌面一直使用的 management protocol v4 方法。应用不会启动 `mtls-router` 或 `mtls-router-manager` 子进程，不会向 `PATH` 安装任何内容，也不提供证书、上游或组件替换控件。
+
+> **CLI 停止维护。** v0.4.1 之后的版本只发布桌面应用。独立的 CLI router/manager 二进制、`setup.sh` / `setup.ps1` 以及 systemd/Docker/NSSM 服务包装都冻结在各自的历史 release tag 上，仍可从那里下载，但不再有新构建。桌面升级会识别早期 CLI 或 sidecar 时代桌面安装遗留的 router，并且只在完整进程身份校验通过后一次性接管，而不会下载或启动新的 CLI。
 
 > 当前仓库中的 CI 和 release workflow 会构建六个原生桌面包：Windows x86_64/arm64 NSIS 安装器、macOS Intel/Apple Silicon DMG，以及 Linux x86_64/arm64 AppImage。每个 package job 都在匹配的目标 runner 上执行检查和只覆盖初始化的启动 smoke test。Release 签名取决于平台凭据，macOS notarization/stapling 还需要完整的 Apple notarization 凭据；每个目标的状态文件会记录结果。包检查不会安装或正常启动应用，因此仍需单独提供目标 runner 上成功启动的证据。详见[构建与发布](BUILD.md)。
 
 ## 安装
 
-从可信的内部分发渠道获取与操作系统及 CPU 架构匹配的包。不要把 sidecar 从桌面包中移出、替换或单独运行。
+从可信的内部分发渠道获取与操作系统及 CPU 架构匹配的包。包内只有一个内嵌了 router 与 manager 的桌面可执行文件，没有可以移出、替换或单独运行的组件。
 
 - Windows：运行与 x86_64 或 arm64 匹配的当前用户安装器。应用设计不要求管理员提权。
 - macOS：打开与 Intel 或 Apple Silicon 匹配的 DMG，然后把 `CodeasierRouter.app` 拖到 Applications 快捷方式上。
@@ -22,32 +24,32 @@ Release asset 集中每个桌面包都有一个 `.sha256` 文件和一个 `signi
 
 应用首次启动时会：
 
-1. 根据目标架构和构建期 SHA-256 校验打包的 manager/router sidecar，然后检查 manager 的目标平台、版本、deployment ID 和 management protocol。
+1. 在进程内启动内嵌 manager，并校验其目标平台、版本、deployment ID 和 management protocol 与桌面构建一致。
 2. 检查 `127.0.0.1:19099`。
-3. 复用由 CLI 安装脚本启动且可信兼容的 router；端口空闲时则启动打包的 router。
+3. 复用由历史 CLI 安装启动且可信兼容的 router；对关联的历史桌面 router 在完整身份校验后一次性迁移；端口空闲时则启动内嵌 router。
 4. 打开 Router 页面，分别检查进程可用性和上游 mTLS 健康状态。
 5. 默认启用当前用户登录时启动。无需管理员权限即可立即在设置中关闭。设置页还可选择暖沙、浅色、深色外观主题；选择只留在本机，不会发给 manager。
 
 首次启动绝不会修改 Claude Code、opencode 或 Codex 文件。第二次启动应用只会激活现有窗口，不会再启动一组 manager/router。
 
-如果任一 sidecar 缺失、不可执行、被修改或架构错误，启动会安全失败并提示需要重新安装。应用绝不会单独下载或替换某个 sidecar；请从可信来源重新安装完整桌面包，或在已安装应用仍能执行更新时使用有效的桌面整包更新。
+如果内嵌 manager 无法通过校验，或安装元数据无法读取，启动会安全失败并提示需要重新安装。应用绝不会单独下载或替换某个组件；请从可信来源重新安装完整桌面包，或在已安装应用仍能执行更新时使用有效的桌面整包更新。
 
 ## 在线更新
 
-Stable 桌面 release 在 Windows x86_64/arm64、macOS Intel/Apple Silicon 和 Linux x86_64/arm64 上支持整包在线更新。更新会同时替换桌面应用及其匹配的 `mtls-router-manager` 和 `mtls-router` sidecar，不是只更新 sidecar。该能力仅属于桌面应用，不会新增或改变 CLI 二进制或安装脚本的更新行为。
+Stable 桌面 release 在 Windows x86_64/arm64、macOS Intel/Apple Silicon 和 Linux x86_64/arm64 上支持整包在线更新。更新会替换完整的桌面应用，其中已包含内嵌的 manager 和 router。该能力仅属于桌面应用；已冻结的 CLI 二进制与安装脚本没有更新器。
 
 应用每次启动会静默检查一次 `https://release.codeasier.top/latest.json`；检查失败不会阻断启动。设置页面会显示当前和最新桌面版本、release 提供的更新说明，以及手动**检查更新**操作。应用只接受更高版本的 stable SemVer release；不会提供 prerelease 或含 build metadata 的版本，validation/非 stable 构建也不会发布到桌面更新 channel。
 
 应用绝不会在未经确认时下载或安装更新。你确认界面显示的 stable 版本后，应用才会下载平台包、报告进度、校验强制的 Tauri updater 签名、停止经过验证的桌面所属 router 或关联的历史桌面 router、安装完整包并重启应用。若关联的历史 router 无法通过完整进程身份停止，或关联状态仍为 stale、unknown 或无法验证，更新会被拒绝。兼容的外部 router 不会被停止。如果停止桌面端所属 router 后安装失败，应用会尝试重新启动该 router。
 
-在每个平台上，只有当前包运行在对应平台 Tauri updater 支持的安装位置和文件系统布局中时，才能执行在线安装。如果 updater 报告当前位置不受支持或无法替换已安装包，请退出应用，再从可信 release 渠道手工安装完整新包；不要单独替换打包的 manager 或 router。
+在每个平台上，只有当前包运行在对应平台 Tauri updater 支持的安装位置和文件系统布局中时，才能执行在线安装。如果 updater 报告当前位置不受支持或无法替换已安装包，请退出应用，再从可信 release 渠道手工安装完整新包。
 
 ## Router 所有权和状态
 
 Router 页面会区分本地进程和上游健康。运行中的进程可能处于健康、当前降级、尚在等待当前结果，或健康结果已超过 30 秒的 stale 状态。当前 unknown 检查会标成等待结果。过期健康（含过期的 unknown 检查）会标成结果已过期，而不是当前上游失败。这两种情况下进程读数仍用进程标签（如运行中 / 外部托管）。manager 明确上报的 degraded 状态即使健康时间戳也已过期，仍保留“上游不可用”文案。先前桌面会话或旧协议世代留下的仍在运行的 router 会显示为关联的历史进程。当前桌面可以在不停止进程的情况下接管兼容世代；不兼容世代只有在用户明确执行“启动”、且 router 与前一 manager 的完整身份均通过校验后，才会停止并重建。普通 manager 传输恢复绝不会触发该迁移。
-Rust 桌面运行时是 `installation.json` 的唯一所有者。稳定 installation ID 用于建立当前安装谱系；其中的 sidecar 哈希仅记录已通过内嵌哈希校验的当前打包二进制。它们不是历史哈希 allowlist，也不授权 protocol 1 或 protocol 3 迁移；旧版迁移授权仍仅依赖受支持的协议谱系以及完整的 router 与前一 manager 进程身份。
+Rust 桌面运行时是 `installation.json` 的唯一所有者。稳定 installation ID 用于建立当前安装谱系；router 与 manager 移入进程内时 package generation 已提升为 `2`，因此 sidecar 时代桌面（generation `1`）遗留的 router 属于迁移候选而不是可接管对象。旧版本写入的 sidecar 哈希会被读取后清除；它们从未授权 protocol 1 或 protocol 3 迁移，迁移授权仍仅依赖受支持的协议谱系以及完整的 router 与前一 manager 进程身份。每个代际的迁移尝试都会在 `legacy-migration.json` 中记录一次，因此重试或重新启动绝不会向同一历史 router 发送第二次终止信号。
 
-- **桌面托管 router：**应用监督一个前台子进程。只有 PID、启动标识、可执行文件标识和所有权都通过检查时，停止和退出操作才可终止它。
+- **桌面托管 router：**应用在自身进程内的独立运行时线程上监督内嵌 router，并在 router 运行期间把自身进程身份记录到 `desktop-state.json`。停止和退出只会停止这个受监督的 router；其他进程记录的 router 绝不会在已验证的迁移路径之外被发信号。
 - **外部 router：**只有 CLI 安装脚本管理，且记录的进程标识、`deployment_id` 和 `management_protocol_version` 都与桌面构建一致的 router 才能复用。不能只根据手工启动进程的 `/version` 响应结构信任它。
 - **未知端口占用者：**应用绝不会自动终止它，也不会切换到其他端口。Protocol v4 检查会返回结构化恢复 action 和稳定 reason：符合条件的目标为 `force_terminate`，service、权限不足或其他用户为 `manual_stop_required`，生命周期已知的受保护进程或身份不可用为 `unavailable`。`insufficient_privilege` 也涵盖 Windows PPL 等操作系统保护拒绝终止访问的情况；访问被拒绝并不能可靠识别 PPL。`protected_process` 仍只用于应用生命周期已知的受保护目标。只有 `force_terminate` 包含短时、一次性确认 token。默认要求完整身份：只有 manager 验证当前用户所有权、进程名称、PID、启动标识、完整可执行文件路径和 listener 身份后，Router 页面才会提供**强制终止占用进程**。确认对话框会显示已验证详情，并警告终止会立即执行且可能导致未保存数据丢失。
 - **Windows 仅 PID 例外：**如果进程 SID 可读且与桌面用户不同，Windows 会以 `different_user` 拒绝，绝不会把该已知身份降级为仅 PID。SID 或完整进程身份无法读取时可以考虑仅 PID，但前提是 TCP4 owner table 为精确的 `127.0.0.1:19099` listener 找到唯一 PID、已排除受保护生命周期目标，并且无副作用的 `PROCESS_TERMINATE` 权限预检成功。面板只显示 PID，并警告身份、所有者、启动时间和可执行文件仍未验证。终止前一刻，manager 会重复精确 owner 和保护检查并重新取得终止权限；listener 消失、变化、重复、wildcard、格式错误、不明确或此时无权访问都会被拒绝且不发送信号。无法读取的生命周期状态和 PID 重用仍是残余风险。应用绝不请求提权。
@@ -124,9 +126,9 @@ API 密钥页面会在桌面凭据存储中保存、替换或删除一个全局 
 
 ## 凭据模型
 
-每个生产包绑定一个服务环境。router sidecar 包含共享客户端证书、共享私钥、上游 CA 和默认上游 URL。获得包的用户可以提取这些内嵌值；打包方式和桌面 UI 无法阻止提取。桌面包只能分发给可信内部用户。
+每个生产包绑定一个服务环境。桌面可执行文件内嵌了 router 的共享客户端证书、共享私钥、上游 CA 和默认上游 URL。获得包的用户可以提取这些内嵌值；打包方式和桌面 UI 无法阻止提取。桌面包只能分发给可信内部用户。
 
-吊销或轮换需要：使用新凭据材料构建替代 release，分发完整替代包，并在服务端拒绝旧凭据。应用不支持运行时证书导入、profile 切换或独立 sidecar 更新。Stable 桌面整包更新可以在用户确认后分发替代应用及其匹配 sidecar；CLI 安装仍使用现有 CLI 分发和 setup 流程。
+吊销或轮换需要：使用新凭据材料构建替代 release，分发完整替代包，并在服务端拒绝旧凭据。应用不支持运行时证书导入、profile 切换或独立组件更新。Stable 桌面整包更新可以在用户确认后分发替代应用。历史 CLI 安装不会再获得替代构建；请迁移到桌面应用来淘汰它们。
 
 本地 listener 是可信 localhost 上的 plain HTTP。不要把管理端点或 listener 暴露到公网。
 

@@ -2,6 +2,30 @@
 
 [中文](zh-CN/CHANGELOG.md)
 
+## Unreleased
+
+This release moves the router and its management control plane into the desktop process and ends the standalone CLI: new versions ship the desktop application only, while every historical CLI release stays downloadable from its tag.
+
+### Added
+
+- Embedded Rust router and manager inside the desktop process: the router runs on a dedicated supervised runtime thread with request timeouts, bounded concurrency, and panic containment; the manager serves the existing management protocol v4 in-process. No `mtls-router` or `mtls-router-manager` child process is spawned, and the package verifier fails if one is bundled.
+- One-time migration of a router left running by a `v0.4.1` desktop or CLI installation: the target is stopped only after PID, start time, executable, installation lineage, and previous-manager identity all verify; a per-generation record (`legacy-migration.json`) guarantees that retries and relaunches can never send a second termination signal, and the outcome is kept in redacted router diagnostics.
+- Port classification without a helper process: compatible historical CLI routers are still reused, unknown occupants still report `PORT_OCCUPIED`, and stale records still fail closed.
+
+### Changed
+
+- Release manifests contain only desktop packages, their checksums, updater artifacts and signatures, signing-status files, `SHA256SUMS`, and `latest.json`; the release packaging script rejects any CLI binary, setup script, archive, or service wrapper.
+- Router credentials, upstream URL, version identity, Agent model preset, and catalog policy are compiled into the desktop by its Rust build script; release builds refuse placeholder credentials and default identities.
+- The installation package generation advanced to `2`; the recorded sidecar hashes of older installations are read and cleared.
+- Documentation marks the CLI router, manager, setup scripts, and service wrappers as end of life after `v0.4.1` and describes the embedded topology, build inputs, and release allowlist.
+
+### Security and recovery
+
+- A router recorded by another process is never signaled outside the verified migration path; Stop only affects the router this process started, and the desktop records its own process identity so legacy tooling's port-recovery flow treats it as protected.
+- Embedded credentials never appear in state files, migration records, logs, diagnostics, or protocol parameters.
+
+---
+
 ## v0.4.1 - 2026-09-06
 
 This release tightens the desktop console: primary controls stay reachable on a narrow first screen, API key deletion asks for confirmation, warm/light/dark appearance themes arrive, and stale health results can no longer mask or masquerade as real upstream states.

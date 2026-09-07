@@ -25,7 +25,7 @@
 
 ## 注入点
 
-- `scripts/build.sh`（本地）
-- `Dockerfile`（容器）
-- `.github/workflows/release.yml`（发布）
-- `desktop/scripts/build-sidecars.sh`（桌面 sidecar）
+- `scripts/build.sh`（本地，冻结 CLI 参考构建）
+- `Dockerfile`（容器，冻结）
+
+`.github/workflows/release.yml` 自 `v0.4.1` 之后不再构建 Go 二进制。桌面对应值由 `desktop/src-tauri/build.rs` 以 `MTLS_MANAGER_VERSION`、`MTLS_ROUTER_COMMIT`、`MTLS_ROUTER_BUILD_DATE`、`MTLS_DEPLOYMENT_ID` 编译进内嵌 router/manager；协议版本同样为代码所有的 `"4"`（`protocol::MANAGEMENT_PROTOCOL_VERSION`），并与本包保持锁步。
