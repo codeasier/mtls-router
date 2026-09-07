@@ -93,7 +93,7 @@ key 绝不出现于环境变量、CLI 参数、model config、日志或 journal 
 
 **后端**（Rust，Tauri 2）：
 
-- `src/lib.rs` — 应用入口：插件注册（无 shell 插件）、setup（`installation.json` → `runtime` → 进程内 `InProcessFactory`）、invoke handler 注册；`--verify-manager-handshake` 在临时目录构造内嵌 manager 校验身份
+- `src/lib.rs` — 应用入口：插件注册（无 shell 插件）、setup（`installation.json` → `runtime` → 进程内 `InProcessFactory`）、invoke handler 注册；`--verify-manager-handshake` 在临时目录构造内嵌 manager 校验身份，并由 CLI 打印 version、deployment ID、protocol、manager target 与 rustc target triple
 - `src/runtime.rs` — 生产运行时装配：内嵌凭据（`build.rs` 写入 `OUT_DIR`）、`SupervisorConfig`、`CurrentLineage`/`SessionConfig`、编译期 preset/simplify
 - `src/commands.rs` — Tauri 命令处理器，代理到 manager client；`AppState`、`ModelFlow`，以及不接收凭据/model flow 的 cleanup preview/write command
 - `src/manager.rs` — `ManagerClient` 与 `TransportFactory` trait：单请求在飞、watchdog、一次性恢复；生产 transport 为 `manager_core::InProcessFactory`；cleanup write 禁止不确定投递后的自动 replay

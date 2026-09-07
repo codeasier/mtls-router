@@ -97,7 +97,10 @@ else
   "$packaged_desktop" --verify-app-startup
 fi
 handshake="$("$packaged_desktop" --verify-manager-handshake | tr -d '\r')"
-[[ "$handshake" == "verified manager handshake version=$expected_version deployment_id=$expected_deployment protocol=$expected_protocol target=$os/$arch" ]] || {
+# Handshake stdout is the rustc-triple source of truth. LLVM can emit
+# env!("MTLS_TARGET_TRIPLE") as x86_64 immediates, so a contiguous
+# string is not a release invariant.
+[[ "$handshake" == "verified manager handshake version=$expected_version deployment_id=$expected_deployment protocol=$expected_protocol target=$os/$arch triple=$target" ]] || {
   printf 'embedded manager handshake mismatch: %s\n' "$handshake" >&2
   exit 1
 }
@@ -149,9 +152,6 @@ for (const [name, path] of binaries) {
   }
   if (!bytes.includes(Buffer.from(process.env.EXPECTED_VERSION))) {
     throw new Error(`${name} version identity is missing`);
-  }
-  if (name === "desktop" && !bytes.includes(Buffer.from(target))) {
-    throw new Error("desktop target identity is missing");
   }
   if (name === "desktop" && expectedFormat === "pe" && peSubsystem(bytes) !== 2) {
     throw new Error("desktop PE subsystem is not IMAGE_SUBSYSTEM_WINDOWS_GUI");
