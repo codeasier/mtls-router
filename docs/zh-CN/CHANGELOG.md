@@ -2,7 +2,7 @@
 
 [English](../CHANGELOG.md)
 
-## Unreleased
+## v0.5.0 - 2026-09-07
 
 本次发布把 router 及其管理控制面移入桌面进程，并终止独立 CLI：新版本只发布桌面应用，所有历史 CLI release 仍可从各自 tag 下载。
 
@@ -11,6 +11,7 @@
 - 桌面进程内嵌 Rust router 与 manager：router 运行在独立、受监督的运行时线程上，具备请求超时、有界并发和 panic 隔离；manager 在进程内提供既有 management protocol v4。不再拉起 `mtls-router` 或 `mtls-router-manager` 子进程，包验证在发现它们时失败。
 - 对 `v0.4.1` 桌面或 CLI 安装遗留的运行中 router 做一次性迁移：只有 PID、启动时间、可执行文件、安装谱系与前一 manager 身份全部校验通过才会停止目标；每代际一份记录（`legacy-migration.json`）保证重试与重启绝不会发送第二次终止信号，结果保留在脱敏的 router 诊断中。
 - 无辅助进程的端口分类：兼容的历史 CLI router 仍可复用，未知占用者仍报告 `PORT_OCCUPIED`，过期记录仍 fail closed。
+- 用量页新增扩展用量窗口与供应商限额：滚动窗口（`1h`、`12h`、`24h`、`7d`、`30d`）与日历窗口（今天、本周、当月）分组展示，日历窗口自北京时间 08:00 起算（UTC 日 / ISO 周 / 月边界），并按供应商列出 USD 预算（「供应商限额」标题下），界面无需本地自行推算窗口。
 
 ### 变更
 
@@ -24,6 +25,7 @@
 
 - 精确 `/version` 与 `/health` 不再套用 supervisor 的请求超时或并发上限，因此在代理饱和或健康探针偏慢时不会返回 HTTP 504。`/health` 仍始终返回 HTTP 200，降级信息放在 JSON body 中。
 - supervisor 的代理等响应头时限现在是独立的隔离预算（默认 120s），不再复用 10s 上游探针超时，因此长耗时的非流式补全不会按探针 SLA 被 504。
+- 用量快照 fail closed：命令层先拒绝格式非法的 RFC3339 时间戳，避免用量页在非法日期上抛出异常。
 
 ### 安全与恢复
 
