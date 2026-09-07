@@ -982,11 +982,13 @@ mod tests {
             own_root_model: true,
         };
         let mut states = HashMap::new();
+        // Must be absolute on every platform: `safe_display_path` rejects a
+        // Unix-style root on Windows.
         states.insert(
             Agent::Claude,
             path_only_state(
                 Agent::Claude,
-                PathBuf::from("/tmp/.claude/settings.json"),
+                std::env::temp_dir().join(".claude").join("settings.json"),
                 None,
                 Format::Json,
             ),
