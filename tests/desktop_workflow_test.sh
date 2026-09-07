@@ -7,7 +7,7 @@ RELEASE="$ROOT/.github/workflows/release.yml"
 RELEASE_PACKAGE="$ROOT/scripts/package-release.sh"
 PACKAGE="$ROOT/desktop/package.json"
 LOCK="$ROOT/desktop/package-lock.json"
-SIDECARS="$ROOT/desktop/scripts/build-sidecars.sh"
+BUILD_RS="$ROOT/desktop/src-tauri/build.rs"
 PREPARE="$ROOT/desktop/scripts/prepare-version.sh"
 CREATE_DMG="$ROOT/desktop/scripts/create-macos-dmg.sh"
 CREATE_MACOS_UPDATER="$ROOT/desktop/scripts/create-macos-updater.sh"
@@ -73,11 +73,24 @@ for (const [name, value] of Object.entries(required)) {
     throw new Error(`package.json scripts.${name} must be exactly ${value}`);
   }
 }
-if (pkg.scripts?.tauri !== 'npm run sidecars:build && tauri') {
-  throw new Error('package.json scripts.tauri must still build sidecars first');
+if (pkg.scripts?.tauri !== 'tauri') {
+  throw new Error('package.json scripts.tauri must run Tauri directly; the router and manager are embedded');
+}
+if (pkg.scripts?.['sidecars:build'] !== undefined) {
+  throw new Error('package.json must not expose a sidecar build; new desktop versions ship no Go sidecars');
 }
 NODE
-contains "$ROOT/desktop/scripts/dev-tauri-reuse.mjs" 'run `npm run sidecars:build`'
+[[ ! -e "$ROOT/desktop/scripts/build-sidecars.sh" ]] || fail 'desktop sidecar build script must not exist'
+[[ ! -e "$ROOT/desktop/src-tauri/binaries" ]] || fail 'desktop sidecar binaries directory must not exist'
+[[ ! -e "$ROOT/desktop/src-tauri/src/sidecar.rs" ]] || fail 'desktop sidecar hash validation module must not exist'
+node - "$CONFIG" <<'NODE' || fail 'tauri.conf.json must not declare external binaries'
+const config = require(process.argv[2]);
+if (config.bundle?.externalBin !== undefined) process.exit(1);
+NODE
+if grep -Fq 'tauri-plugin-shell' "$ROOT/desktop/src-tauri/Cargo.toml"; then
+  fail 'desktop must not depend on the shell plugin used to spawn sidecars'
+fi
+contains "$ROOT/desktop/scripts/dev-tauri-reuse.mjs" 'no Go sidecars'
 contains "$ROOT/desktop/scripts/dev-tauri-reuse.mjs" 'VITE_MOCK: "false"'
 contains "$ROOT/desktop/scripts/dev-tauri-reuse.mjs" 'shell: process.platform === "win32"'
 contains "$ROOT/desktop/scripts/dev-mock.mjs" 'VITE_MOCK: "true"'
@@ -181,18 +194,26 @@ contains "$ROOT/desktop/src-tauri/src/main.rs" 'verify_manager_handshake()'
 contains "$ROOT/desktop/scripts/verify-package.sh" '"$packaged_desktop" --verify-app-startup'
 contains "$ROOT/desktop/src-tauri/src/main.rs" '"--verify-app-startup"'
 contains "$ROOT/desktop/src-tauri/src/main.rs" 'verify_app_startup()'
-contains "$ROOT/desktop/scripts/build-sidecars.sh" 'management_protocol_version="${MANAGEMENT_PROTOCOL_VERSION:-4}"'
-contains "$ROOT/desktop/scripts/build-sidecars.sh" 'node -p "require('\''./package.json'\'').version"'
+contains "$BUILD_RS" 'unsupported MANAGEMENT_PROTOCOL_VERSION'
+contains "$BUILD_RS" 'RELEASE_BUILD'
+contains "$BUILD_RS" 'release credentials are required'
+contains "$BUILD_RS" 'release UPSTREAM_URL must use HTTPS'
+contains "$BUILD_RS" 'release DEPLOYMENT_ID must be non-default'
+contains "$BUILD_RS" 'provide credential files or environment values, not both'
+contains "$BUILD_RS" 'mtls-router-placeholder'
+contains "$BUILD_RS" 'MTLS_ROUTER_CREDENTIALS_DIR'
+contains "$ROOT/desktop/src-tauri/src/runtime.rs" 'include_str!(concat!(env!("MTLS_ROUTER_CREDENTIALS_DIR"), "/client.key"))'
 contains "$ROOT/desktop/scripts/verify-package.sh" 'node -p "require('\''./package.json'\'').version"'
 contains "$PREPARE" 'const root = process.cwd();'
 contains "$ROOT/desktop/scripts/verify-package.sh" 'expected_protocol="${MANAGEMENT_PROTOCOL_VERSION:-4}"'
 contains "$ROOT/desktop/scripts/verify-package.sh" 'desktop PE subsystem is not IMAGE_SUBSYSTEM_WINDOWS_GUI'
-contains "$ROOT/desktop/src-tauri/build.rs" 'BinaryFormat::Pe'
-contains "$ROOT/desktop/src-tauri/src/sidecar.rs" 'BinaryFormat::Pe'
-if grep -Fq 'BinaryFormat::Coff' "$ROOT/desktop/src-tauri/build.rs" "$ROOT/desktop/src-tauri/src/sidecar.rs"; then
-  fail 'Windows sidecar validation must recognize PE executables'
+contains "$ROOT/desktop/scripts/verify-package.sh" 'package must not contain CLI artifact'
+contains "$ROOT/desktop/scripts/verify-package.sh" 'for forbidden in "mtls-router$extension" "mtls-router-manager$extension"; do'
+contains "$ROOT/desktop/scripts/verify-package.sh" 'embedded manager handshake mismatch'
+if grep -Fq 'src-tauri/binaries' "$ROOT/desktop/scripts/verify-package.sh"; then
+  fail 'package verification must not read sidecar sources'
 fi
-for script in "$ROOT/desktop/scripts/build-sidecars.sh" "$ROOT/desktop/scripts/verify-package.sh" "$PREPARE"; do
+for script in "$ROOT/desktop/scripts/verify-package.sh" "$PREPARE"; do
   if grep -Fq '$desktop_dir/package.json' "$script"; then
     fail "$(basename "$script") must not pass a Git Bash path to Node"
   fi
@@ -226,16 +247,10 @@ for (const file of process.argv.slice(2)) {
 }
 NODE
 
-placeholder_req="$(awk '/openssl req -x509/{print; count++} END{if (count != 1) exit 1}' "$SIDECARS")" || \
-  fail 'sidecar script must have one placeholder openssl req invocation'
-[[ "$placeholder_req" == *"MSYS2_ARG_CONV_EXCL='/CN=' openssl req"* ]] || \
-  fail 'MSYS2_ARG_CONV_EXCL must be command-scoped to placeholder openssl req'
-[[ "$placeholder_req" == *'-keyout "$key" -out "$cert" -subj /CN=mtls-router-placeholder'* ]] || \
-  fail 'placeholder openssl output paths or subject changed unexpectedly'
-[[ "$(awk '/MSYS2_ARG_CONV_EXCL=/{n++} END{print n+0}' "$SIDECARS")" -eq 1 ]] || \
-  fail 'sidecar script must set MSYS2_ARG_CONV_EXCL only once'
-if awk '/MSYS2_ARG_CONV_EXCL=/ && /\*/{found=1} END{exit !found}' "$SIDECARS"; then
-  fail 'sidecar script must not use wildcard MSYS2 conversion exclusion'
+[[ "$(grep -Fc 'fn placeholder_pair' "$BUILD_RS")" -eq 1 ]] || \
+  fail 'build.rs must generate exactly one placeholder credential pair path'
+if grep -Fq 'openssl' "$BUILD_RS"; then
+  fail 'build.rs must not shell out to openssl for placeholder credentials'
 fi
 
 job_block() {
@@ -441,17 +456,31 @@ for block in "$unsigned_macos_block" "$signed_macos_block"; do
 done
 [[ "$unsigned_macos_block" == *'npm exec tauri -- build --target ${{ matrix.target }} --bundles app --config "$TAURI_UPDATER_CONFIG" --no-sign --ci'* ]] || \
   fail 'unsigned macOS packaging must ask Tauri for an app bundle'
-[[ "$unsigned_macos_block" == *'codesign --force --sign - "src-tauri/binaries/mtls-router-${{ matrix.target }}"'* ]] || \
-  fail 'fallback macOS packaging must ad-hoc sign the router sidecar before bundling'
-[[ "$unsigned_macos_block" == *'codesign --force --sign - "src-tauri/binaries/mtls-router-manager-${{ matrix.target }}"'* ]] || \
-  fail 'fallback macOS packaging must ad-hoc sign the manager sidecar before bundling'
 [[ "$unsigned_macos_block" == *'codesign --force --sign - "$app/Contents/MacOS/mtls-router-desktop"'* ]] || \
   fail 'fallback macOS packaging must ad-hoc sign the desktop executable before sealing the bundle'
-[[ "$unsigned_macos_block" == *'codesign --force --sign - "src-tauri/binaries/mtls-router-${{ matrix.target }}"'*'codesign --force --sign - "src-tauri/binaries/mtls-router-manager-${{ matrix.target }}"'*'npm exec tauri -- build --target ${{ matrix.target }} --bundles app --config "$TAURI_UPDATER_CONFIG" --no-sign --ci'*'codesign --force --sign - "$app/Contents/MacOS/mtls-router-desktop"'*'codesign --force --sign - "$app"'*'./scripts/create-macos-dmg.sh ${{ matrix.target }} "$VERSION"'*'./scripts/create-macos-updater.sh ${{ matrix.target }}'* ]] || \
-  fail 'fallback macOS executables and app bundle must be signed in dependency order before DMG creation'
+[[ "$unsigned_macos_block" == *'npm exec tauri -- build --target ${{ matrix.target }} --bundles app --config "$TAURI_UPDATER_CONFIG" --no-sign --ci'*'codesign --force --sign - "$app/Contents/MacOS/mtls-router-desktop"'*'codesign --force --sign - "$app"'*'./scripts/create-macos-dmg.sh ${{ matrix.target }} "$VERSION"'*'./scripts/create-macos-updater.sh ${{ matrix.target }}'* ]] || \
+  fail 'fallback macOS executable and app bundle must be signed in dependency order before DMG creation'
 if [[ "$unsigned_macos_block" == *'codesign --force --deep'* ]]; then
-  fail 'fallback macOS bundle signing must not recursively modify hashed sidecars'
+  fail 'fallback macOS bundle signing must not recursively re-sign nested content'
 fi
+if grep -Fq 'src-tauri/binaries' "$RELEASE" "$CI"; then
+  fail 'workflows must not reference sidecar binaries'
+fi
+if grep -Eq 'build-sidecars|sidecar signing|pre-sign sidecars' "$RELEASE" "$CI"; then
+  fail 'workflows must not build or sign Go sidecars'
+fi
+if grep -q '^  build:$' "$RELEASE"; then
+  fail 'release must not build CLI artifacts for new versions'
+fi
+if grep -Eq 'go build|mtls-router-cli-|cli-matrix' "$RELEASE"; then
+  fail 'release must not produce or collect CLI binaries'
+fi
+[[ "$release_desktop_block" == *"RELEASE_BUILD: '1'"* ]] || \
+  fail 'release desktop build must enforce release credential and identity guards in build.rs'
+[[ "$release_desktop_block" == *'test -n "$CLIENT_CERT_PEM" && test -n "$CLIENT_KEY_PEM" && test -n "$UPSTREAM_CA_PEM"'* ]] || \
+  fail 'release desktop build must validate embedded router credentials before compiling'
+[[ "$release_desktop_block" == *'case "${UPSTREAM_URL:-}" in https://*)'* ]] || \
+  fail 'release desktop build must require an HTTPS upstream'
 if [[ "$unsigned_macos_block" == *'--bundles dmg'* ]]; then
   fail 'unsigned macOS packaging must not ask Tauri to create a DMG'
 fi
@@ -561,12 +590,9 @@ assert_filter_paths frontend "$ci_scope_block" \
   'desktop/src-tauri/capabilities/default.json' 'desktop/eslint.config.js' \
   'desktop/tsconfig.json' 'desktop/vite.config.ts'
 assert_filter_paths rust "$ci_scope_block" \
-  'desktop/src-tauri/**' 'desktop/scripts/build-sidecars.sh' \
-  'cmd/mtls-router-manager/**' 'internal/background/**' 'internal/manager/**' \
-  'internal/version/**' 'go.mod' 'go.sum'
+  'desktop/src-tauri/**' 'internal/manager/**' 'go.mod' 'go.sum'
 assert_filter_paths package "$ci_scope_block" \
-  'desktop/**' 'cmd/mtls-router-manager/**' 'internal/background/**' \
-  'internal/manager/**' 'internal/version/**' 'go.mod' 'go.sum'
+  'desktop/**'
 
 for entry in \
   "go-shell|$ci_go_block" \
@@ -636,9 +662,7 @@ for row in \
   '{"name":"linux-arm64","runner":"ubuntu-24.04-arm","target":"aarch64-unknown-linux-gnu","os":"linux","arch":"arm64","bundles":"appimage"}'; do
   [[ "$release_prepare_block" == *"$row"* ]] || fail "release prepare matrix missing desktop row: $row"
 done
-[[ "$release_build_block" == *'needs: prepare'* ]] || fail 'release CLI build must depend on matrix preparation'
-[[ "$release_build_block" == *'matrix: ${{ fromJSON(needs.prepare.outputs.cli-matrix) }}'* ]] || \
-  fail 'release CLI build must consume the prepared matrix'
+[[ -z "$release_build_block" ]] || fail 'release must not contain a CLI build job'
 [[ "$release_desktop_block" == *'needs: prepare'* ]] || fail 'release desktop build must depend on matrix preparation'
 [[ "$release_desktop_block" == *'matrix: ${{ fromJSON(needs.prepare.outputs.desktop-matrix) }}'* ]] || \
   fail 'release desktop build must consume the prepared matrix'
@@ -666,16 +690,14 @@ normalize_line="$(printf '%s\n' "$release_prepare_block" | awk '/name: Normalize
 preset_preflight_line="$(printf '%s\n' "$release_prepare_block" | awk '/name: Preflight Agent model preset/{print NR; exit}')"
 [[ -n "$normalize_line" && -n "$preset_preflight_line" && "$normalize_line" -lt "$preset_preflight_line" ]] || \
   fail 'release must normalize SIMPLIFY before preset preflight'
-[[ "$release_build_block" == *'SIMPLIFY: ${{ needs.prepare.outputs.simplify }}'* ]] || \
-  fail 'release CLI build must consume prepared SIMPLIFY'
 [[ "$release_desktop_block" == *'SIMPLIFY: ${{ needs.prepare.outputs.simplify }}'* ]] || \
-  fail 'release desktop build must pass prepared SIMPLIFY to build-sidecars'
-[[ "$(grep -Fc 'SIMPLIFY: ${{ needs.prepare.outputs.simplify }}' "$RELEASE")" -eq 2 ]] || \
-  fail 'both release manager producers must consume the same prepared SIMPLIFY'
+  fail 'release desktop build must pass prepared SIMPLIFY to the embedded manager build'
+[[ "$(grep -Fc 'SIMPLIFY: ${{ needs.prepare.outputs.simplify }}' "$RELEASE")" -eq 1 ]] || \
+  fail 'the desktop is the only release producer consuming prepared SIMPLIFY'
 [[ "$release_prepare_block" == *'SELECTED_TARGET: ${{ github.event_name == '\''workflow_dispatch'\'' && inputs.target || '\''all'\'' }}'* ]] || \
   fail 'tag builds must force the complete target matrix'
-[[ "$(grep -Fc 'UPSTREAM_URL: ${{ github.event_name == '\''workflow_dispatch'\'' && inputs.upstream_url || vars.UPSTREAM_URL }}' "$RELEASE")" -eq 2 ]] || \
-  fail 'both producer jobs must use validation-only upstream overrides'
+[[ "$(grep -Fc 'UPSTREAM_URL: ${{ github.event_name == '\''workflow_dispatch'\'' && inputs.upstream_url || vars.UPSTREAM_URL }}' "$RELEASE")" -eq 1 ]] || \
+  fail 'the desktop producer job must use validation-only upstream overrides'
 
 [[ "$(awk '/^[[:space:]]+- run: npm ci$/{n++} END{print n+0}' "$CI")" -eq 2 ]] || \
   fail 'CI must contain exactly two npm ci commands'
@@ -729,7 +751,7 @@ contains "$RELEASE" 'status="signed (notarization credentials unavailable)"'
 contains "$RELEASE" 'status="signed and notarized"'
 contains "$RELEASE" 'status="signed"'
 contains "$RELEASE" 'status="unsigned (credentials unavailable)"'
-contains "$RELEASE" 'needs: [prepare, build, desktop]'
+contains "$RELEASE" 'needs: [prepare, desktop]'
 contains "$RELEASE" './scripts/package-release.sh'
 contains "$RELEASE_PACKAGE" '(cd desktop-packages && sha256sum -c CodeasierRouter-*.sha256)'
 

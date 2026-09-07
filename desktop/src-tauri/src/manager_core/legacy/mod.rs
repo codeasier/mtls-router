@@ -19,6 +19,7 @@ pub use identity::{
 };
 pub use record::{IssuedSignal, MigrationOutcome, MigrationRecord, CORRUPT_RECORD_LINE};
 pub use stop::{
-    prepare_legacy_stop, previous_manager_absent, resample_port, router_genuine, stop_verified,
-    verified_migratable, LegacyRuntime, MigrationHost, ProcessHost, StopBudget,
+    prepare_legacy_stop, previous_manager_absent, recorded_process_absent, resample_port,
+    router_genuine, stop_verified, verified_migratable, LegacyRuntime, MigrationHost, ProcessHost,
+    StopBudget,
 };

@@ -20,6 +20,5 @@ desktop-verify:
 	cd desktop && npm run verify
 
 desktop-package-current:
-	cd desktop && npm run sidecars:build
 	cd desktop && npm exec tauri -- build --target "$$(rustc --print host-tuple)" --no-sign --ci
 	cd desktop && npm run package:verify -- "$$(rustc --print host-tuple)"

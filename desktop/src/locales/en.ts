@@ -194,11 +194,11 @@ export const en: Record<TranslationKey, string> = {
   "router.failureGuide.process-exit.action":
     "Resolve the specific cause shown in the technical details and retry. If no cause is available, restart the desktop application.",
   "router.failureGuide.sidecar-resolution.title":
-    "The management component cannot be located",
+    "The management component could not be validated",
   "router.failureGuide.sidecar-resolution.detail":
-    "The desktop could not resolve or validate the packaged manager, so the control plane did not start.",
+    "The desktop could not validate its embedded manager identity or installation metadata, so the control plane did not start.",
   "router.failureGuide.sidecar-resolution.action":
-    "Reinstall the desktop application from a trusted package; do not replace sidecars separately.",
+    "Reinstall the desktop application from a trusted package; no component is downloaded or replaced separately.",
   "router.failureGuide.spawn.title": "The management component could not start",
   "router.failureGuide.spawn.detail":
     "The operating system did not create the manager process, so the desktop cannot manage the router.",

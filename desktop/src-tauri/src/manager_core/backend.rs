@@ -243,7 +243,7 @@ impl Backend for SupervisorBackend {
     }
 }
 
-async fn fetch_health_status(addr: &str) -> Option<String> {
+pub(super) async fn fetch_health_status(addr: &str) -> Option<String> {
     let stream = TcpStream::connect(addr).await.ok()?;
     let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
         .await

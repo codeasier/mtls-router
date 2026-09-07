@@ -3,7 +3,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOCAL_BUILD="$ROOT/scripts/build.sh"
-SIDECAR_BUILD="$ROOT/desktop/scripts/build-sidecars.sh"
+DESKTOP_BUILD="$ROOT/desktop/src-tauri/build.rs"
+DESKTOP_RUNTIME="$ROOT/desktop/src-tauri/src/runtime.rs"
+DESKTOP_SESSION="$ROOT/desktop/src-tauri/src/manager_core/session.rs"
 RELEASE="$ROOT/.github/workflows/release.yml"
 PREFLIGHT="$ROOT/scripts/preflight-agent-model-preset.sh"
 NORMALIZER="$ROOT/scripts/normalize-simplify.sh"
@@ -38,18 +40,13 @@ for value in 1 0 yes no ' true' 'false ' 'ｔｒｕｅ' 'truе' 'fаlse' "$inval
   fi
 done
 
-for script in "$LOCAL_BUILD" "$SIDECAR_BUILD"; do
-  grep -Fq "${SOURCE}:-" "$script" || fail "$(basename "$script") does not read optional $SOURCE"
-  [[ "$(grep -Fc "$SYMBOL" "$script")" -eq 1 ]] || fail "$(basename "$script") must inject the preset symbol exactly once"
-  [[ "$(grep -Fc "$SIMPLIFY_SYMBOL" "$script")" -eq 1 ]] || fail "$(basename "$script") must inject the simplify symbol exactly once"
-done
+grep -Fq "${SOURCE}:-" "$LOCAL_BUILD" || fail "$(basename "$LOCAL_BUILD") does not read optional $SOURCE"
+[[ "$(grep -Fc "$SYMBOL" "$LOCAL_BUILD")" -eq 1 ]] || fail "$(basename "$LOCAL_BUILD") must inject the preset symbol exactly once"
+[[ "$(grep -Fc "$SIMPLIFY_SYMBOL" "$LOCAL_BUILD")" -eq 1 ]] || fail "$(basename "$LOCAL_BUILD") must inject the simplify symbol exactly once"
 
 local_root_line="$(awk '/^cd "\$\(dirname "\$0"\)\/\.\."$/{print NR; exit}' "$LOCAL_BUILD")"
 local_normalize_line="$(awk '/^simplify="\$\(bash \.\/scripts\/normalize-simplify\.sh\)"$/{print NR; exit}' "$LOCAL_BUILD")"
 [[ -n "$local_root_line" && "$local_normalize_line" -eq $((local_root_line + 1)) ]] || fail 'local build must normalize SIMPLIFY immediately after root resolution'
-desktop_root_line="$(awk '/^repo_dir=/{print NR; exit}' "$SIDECAR_BUILD")"
-desktop_normalize_line="$(awk '/^simplify="\$\(bash "\$repo_dir\/scripts\/normalize-simplify\.sh"\)"$/{print NR; exit}' "$SIDECAR_BUILD")"
-[[ -n "$desktop_root_line" && "$desktop_normalize_line" -eq $((desktop_root_line + 1)) ]] || fail 'desktop build must normalize SIMPLIFY immediately after root resolution'
 
 local_router_block="$(awk '/^go build -trimpath/{build++} build == 1{print} build == 2{exit}' "$LOCAL_BUILD")"
 local_manager_block="$(awk '/^go build -trimpath/{build++} build == 2{print}' "$LOCAL_BUILD")"
@@ -58,22 +55,30 @@ local_manager_block="$(awk '/^go build -trimpath/{build++} build == 2{print}' "$
 [[ "$local_router_block" != *"$SIMPLIFY_SYMBOL"* ]] || fail 'local router build receives the simplify setting'
 [[ "$local_manager_block" == *"$SIMPLIFY_SYMBOL"'=${simplify}'* ]] || fail 'local manager build does not receive normalized simplify metadata'
 
-sidecar_router_line="$(grep 'go build.*-o "\$router"' "$SIDECAR_BUILD")"
-sidecar_manager_line="$(grep 'go build.*-o "\$manager"' "$SIDECAR_BUILD")"
-[[ "$sidecar_router_line" != *manager_metadata* && "$sidecar_router_line" != *"$SYMBOL"* ]] || fail 'desktop router sidecar receives the Agent preset'
-[[ "$sidecar_manager_line" == *manager_metadata* ]] || fail 'desktop manager sidecar does not receive manager-only metadata'
-[[ "$sidecar_router_line" != *"$SIMPLIFY_SYMBOL"* ]] || fail 'desktop router sidecar receives the simplify setting'
-grep -Fq "$SIMPLIFY_SYMBOL"'=$simplify' <<<"$(grep '^manager_metadata=' "$SIDECAR_BUILD")" || fail 'desktop manager metadata does not receive normalized simplify metadata'
+# The desktop embeds the manager: build.rs carries the preset and normalized
+# simplify setting into compile-time environment, and only the embedded
+# manager assembly reads them. No Go linker symbol is involved.
+[[ ! -e "$ROOT/desktop/scripts/build-sidecars.sh" ]] || fail 'desktop must not build Go sidecars'
+grep -Fq 'env::var("AGENT_MODEL_PRESET_BASE64").unwrap_or_default()' "$DESKTOP_BUILD" || fail 'desktop build does not read the optional preset'
+grep -Fq 'cargo:rustc-env=MTLS_AGENT_MODEL_PRESET_BASE64=' "$DESKTOP_BUILD" || fail 'desktop build does not embed the preset'
+grep -Fq 'fn normalize_simplify' "$DESKTOP_BUILD" || fail 'desktop build does not normalize SIMPLIFY'
+grep -Fq 'panic!("invalid SIMPLIFY value: {value}")' "$DESKTOP_BUILD" || fail 'desktop build does not reject invalid SIMPLIFY'
+grep -Fq 'cargo:rustc-env=MTLS_SIMPLIFY=' "$DESKTOP_BUILD" || fail 'desktop build does not embed normalized simplify'
+grep -Fq 'load_embedded_preset(env!("MTLS_AGENT_MODEL_PRESET_BASE64"))' "$DESKTOP_RUNTIME" || fail 'embedded manager does not load the compiled preset'
+grep -Fq 'simplify: env!("MTLS_SIMPLIFY") == "true"' "$DESKTOP_RUNTIME" || fail 'embedded manager does not read normalized simplify'
+grep -Fq 'pub fn load_embedded_preset' "$DESKTOP_SESSION" || fail 'embedded preset loader is missing'
+grep -Fq 'base64::engine::general_purpose::STANDARD' "$DESKTOP_SESSION" || fail 'embedded preset loader must use strict standard base64 like Go preset.Load'
+if grep -Fq "$SYMBOL" "$DESKTOP_BUILD" "$DESKTOP_RUNTIME"; then
+  fail 'desktop build must not reference the Go manager linker symbol'
+fi
 
-[[ "$(grep -Fc "$SYMBOL" "$RELEASE")" -eq 1 ]] || fail 'release workflow must inject the preset directly only into the standalone manager'
-[[ "$(grep -Fc "$SIMPLIFY_SYMBOL" "$RELEASE")" -eq 1 ]] || fail 'release workflow must inject simplify directly only into the standalone manager'
-release_router_block="$(awk '/go build -trimpath/{build++} build == 1{print} build == 2{exit}' "$RELEASE")"
-release_manager_block="$(awk '/go build -trimpath/{build++} build == 2{print} build == 3{exit}' "$RELEASE")"
-[[ "$release_router_block" != *"$SYMBOL"* ]] || fail 'release router receives the Agent preset'
-[[ "$release_manager_block" == *"$SYMBOL"* ]] || fail 'standalone release manager does not receive the Agent preset'
-[[ "$release_router_block" != *"$SIMPLIFY_SYMBOL"* ]] || fail 'release router receives the simplify setting'
-[[ "$release_manager_block" == *"$SIMPLIFY_SYMBOL"'=${SIMPLIFY}'* ]] || fail 'standalone release manager does not receive prepared simplify metadata'
-[[ "$(grep -Fc "AGENT_MODEL_PRESET_BASE64: \${{ vars.AGENT_MODEL_PRESET_BASE64 }}" "$RELEASE")" -eq 3 ]] || fail 'preflight and both release manager producers must source the same repository variable'
+[[ "$(grep -Fc "$SYMBOL" "$RELEASE")" -eq 0 ]] || fail 'release workflow must not inject the preset into a Go manager'
+[[ "$(grep -Fc "$SIMPLIFY_SYMBOL" "$RELEASE")" -eq 0 ]] || fail 'release workflow must not inject simplify into a Go manager'
+[[ "$(grep -Fc "AGENT_MODEL_PRESET_BASE64: \${{ vars.AGENT_MODEL_PRESET_BASE64 }}" "$RELEASE")" -eq 2 ]] || fail 'preflight and the desktop producer must source the same repository variable'
+release_desktop_block="$(awk '$0 == "  desktop:" { capture=1; start=NR } capture && NR > start && $0 ~ /^  [A-Za-z0-9_-]+:/ { exit } capture { print }' "$RELEASE")"
+[[ "$release_desktop_block" == *'AGENT_MODEL_PRESET_BASE64: ${{ vars.AGENT_MODEL_PRESET_BASE64 }}'* ]] || fail 'release desktop build does not receive the Agent preset'
+[[ "$release_desktop_block" == *'SIMPLIFY: ${{ needs.prepare.outputs.simplify }}'* ]] || fail 'release desktop build does not receive prepared simplify'
+[[ "$release_desktop_block" == *"RELEASE_BUILD: '1'"* ]] || fail 'release desktop build does not enable release guards'
 grep -Fq 'run: ./scripts/preflight-agent-model-preset.sh' "$RELEASE" || fail 'release preset preflight is not configured'
 grep -Fq "$SYMBOL" "$PREFLIGHT" || fail 'preflight does not validate through the exact manager linker symbol'
 
@@ -95,18 +100,16 @@ for tool in go rustc; do
   printf '%s\n' '#!/usr/bin/env bash' 'printf '\''%s\n'\'' "$(basename "$0")" >>"$FAKE_TOOL_LOG"' 'exit 99' >"$invalid_bin/$tool"
   chmod +x "$invalid_bin/$tool"
 done
-for script in "$LOCAL_BUILD" "$SIDECAR_BUILD"; do
-  tool_log="$test_work/$(basename "$script").tools"
-  error_file="$test_work/$(basename "$script").error"
-  if PATH="$invalid_bin:$PATH" FAKE_TOOL_LOG="$tool_log" SIMPLIFY="$invalid_canary" bash "$script" >/dev/null 2>"$error_file"; then
-    fail "$(basename "$script") accepted invalid SIMPLIFY"
-  fi
-  [[ "$(<"$error_file")" == 'invalid SIMPLIFY value' ]] || fail "$(basename "$script") did not preserve the sanitized normalization error"
-  [[ ! -e "$tool_log" ]] || fail "$(basename "$script") reached a compiler before rejecting SIMPLIFY"
-  if grep -Fq "$invalid_canary" "$error_file"; then
-    fail "$(basename "$script") leaked invalid SIMPLIFY"
-  fi
-done
+tool_log="$test_work/$(basename "$LOCAL_BUILD").tools"
+error_file="$test_work/$(basename "$LOCAL_BUILD").error"
+if PATH="$invalid_bin:$PATH" FAKE_TOOL_LOG="$tool_log" SIMPLIFY="$invalid_canary" bash "$LOCAL_BUILD" >/dev/null 2>"$error_file"; then
+  fail "$(basename "$LOCAL_BUILD") accepted invalid SIMPLIFY"
+fi
+[[ "$(<"$error_file")" == 'invalid SIMPLIFY value' ]] || fail "$(basename "$LOCAL_BUILD") did not preserve the sanitized normalization error"
+[[ ! -e "$tool_log" ]] || fail "$(basename "$LOCAL_BUILD") reached a compiler before rejecting SIMPLIFY"
+if grep -Fq "$invalid_canary" "$error_file"; then
+  fail "$(basename "$LOCAL_BUILD") leaked invalid SIMPLIFY"
+fi
 
 invocation_block() {
   local log=$1
@@ -186,9 +189,8 @@ snapshot_real_build_paths() {
 
 fixture="$test_work/success-fixture"
 success_bin="$test_work/success-bin"
-mkdir -p "$fixture/scripts" "$fixture/desktop/scripts" "$fixture/desktop/src-tauri" "$fixture/secrets" "$success_bin"
+mkdir -p "$fixture/scripts" "$fixture/secrets" "$success_bin"
 cp "$LOCAL_BUILD" "$fixture/scripts/build.sh"
-cp "$SIDECAR_BUILD" "$fixture/desktop/scripts/build-sidecars.sh"
 cp "$NORMALIZER" "$fixture/scripts/normalize-simplify.sh"
 printf '%s\n' fixture-client-cert >"$fixture/secrets/client.pem"
 printf '%s\n' fixture-client-key >"$fixture/secrets/client.key"
@@ -209,8 +211,6 @@ real_paths=(
   "$ROOT/secrets/client.pem"
   "$ROOT/secrets/client.key"
   "$ROOT/secrets/upstream-ca.pem"
-  "$ROOT/desktop/src-tauri/binaries/mtls-router-x86_64-unknown-linux-gnu"
-  "$ROOT/desktop/src-tauri/binaries/mtls-router-manager-x86_64-unknown-linux-gnu"
 )
 real_state_before="$test_work/real-state-before"
 real_state_after="$test_work/real-state-after"
@@ -222,22 +222,10 @@ PATH="$success_bin:$PATH" FAKE_GO_LOG="$local_go_log" SIMPLIFY=fAlSe VERSION=fix
   fail 'local build entry point rejected valid mixed-case SIMPLIFY=False'
 assert_simplify_build_log local "$local_go_log" mtls-router mtls-router-manager
 
-desktop_go_log="$test_work/desktop-success-go.log"
-desktop_target=x86_64-unknown-linux-gnu
-PATH="$success_bin:$PATH" FAKE_GO_LOG="$desktop_go_log" SIMPLIFY=fAlSe TARGET="$desktop_target" \
-  VERSION=1.2.3 DEPLOYMENT_ID=fixture-deployment AGENT_MODEL_PRESET_BASE64='' \
-  bash "$fixture/desktop/scripts/build-sidecars.sh" >/dev/null || \
-  fail 'desktop build entry point rejected valid mixed-case SIMPLIFY=False'
-assert_simplify_build_log desktop "$desktop_go_log" \
-  "$fixture/desktop/src-tauri/binaries/mtls-router-$desktop_target" \
-  "$fixture/desktop/src-tauri/binaries/mtls-router-manager-$desktop_target"
-
 [[ "$(<"$fixture/secrets/client.pem")" == fixture-client-cert ]] || fail 'local fixture client certificate was modified'
 [[ "$(<"$fixture/secrets/client.key")" == fixture-client-key ]] || fail 'local fixture client key was modified'
 [[ "$(<"$fixture/secrets/upstream-ca.pem")" == fixture-upstream-ca ]] || fail 'local fixture upstream CA was modified'
 [[ ! -e "$fixture/mtls-router" && ! -e "$fixture/mtls-router-manager" ]] || fail 'fake local build created binary output'
-[[ ! -e "$fixture/desktop/src-tauri/binaries/mtls-router-$desktop_target" ]] || fail 'fake desktop build created router output'
-[[ ! -e "$fixture/desktop/src-tauri/binaries/mtls-router-manager-$desktop_target" ]] || fail 'fake desktop build created manager output'
 
 snapshot_real_build_paths "$real_state_after" "${real_paths[@]}"
 cmp -s "$real_state_before" "$real_state_after" || fail 'isolated entry-point tests touched real repository outputs or secrets'

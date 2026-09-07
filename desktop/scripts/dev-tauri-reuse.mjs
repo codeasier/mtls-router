@@ -1,4 +1,3 @@
-import { existsSync, statSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { spawn, spawnSync } from "node:child_process";
@@ -20,20 +19,9 @@ export function resolveTarget(env = process.env) {
   return result.status === 0 ? result.stdout.trim() : "";
 }
 
-export function missingSidecars(target) {
-  const suffix = target.includes("windows") ? ".exe" : "";
-  return ["mtls-router-manager", "mtls-router"]
-    .map((name) =>
-      path.join(
-        desktopDir,
-        "src-tauri",
-        "binaries",
-        `${name}-${target}${suffix}`,
-      ),
-    )
-    .filter((file) => !existsSync(file) || statSync(file).size === 0);
-}
-
+// The router and manager are compiled into the desktop binary; `tauri dev`
+// needs no sidecar preparation. This wrapper only pins the real-API mode and
+// the build identity so mock fixtures can never leak into a native run.
 export function reuseEnvironment(env = process.env) {
   return {
     ...env,
@@ -52,19 +40,8 @@ export function run() {
     return 1;
   }
 
-  const missing = missingSidecars(target);
-  for (const file of missing) {
-    console.error(`dev:tauri:reuse: missing or empty sidecar ${file}`);
-  }
-  if (missing.length > 0) {
-    console.error(
-      "dev:tauri:reuse: run `npm run sidecars:build` (or `npm run tauri -- dev`) once before reuse",
-    );
-    return 1;
-  }
-
   console.log(
-    `dev:tauri:reuse: reusing sidecars for ${target} (no sidecars:build)`,
+    `dev:tauri:reuse: starting embedded desktop for ${target} (no Go sidecars)`,
   );
   const npm = process.platform === "win32" ? "npm.cmd" : "npm";
   const child = spawn(

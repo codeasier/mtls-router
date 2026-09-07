@@ -25,7 +25,7 @@ pub use handlers::{dispatch_management, handle_health, handle_version, BuildInfo
 pub use probe::Prober;
 pub use proxy::{
     normalize_sse_headers, rewrite_upstream_uri, serve_request, ProxyErrorKind, ProxyLog,
-    ReverseProxy,
+    ProxyLogger, ReverseProxy,
 };
 pub use stack::{
     is_exact_management_route, local_http_request, parse_pem_certificates, parse_pem_private_key,

@@ -35,32 +35,6 @@ host="$(rustc --print host-tuple)"
   exit 1
 }
 
-router_source="$desktop_dir/src-tauri/binaries/mtls-router-$target$extension"
-manager_source="$desktop_dir/src-tauri/binaries/mtls-router-manager-$target$extension"
-[[ -f "$router_source" && -f "$manager_source" ]] || { printf 'target sidecars are missing\n' >&2; exit 1; }
-
-actual_router_version="$($router_source -version | tr -d '\r\n')"
-[[ "$actual_router_version" == "mtls-router $expected_version" ]] || {
-  printf 'router version mismatch: %s\n' "$actual_router_version" >&2
-  exit 1
-}
-manager_info="$(printf '{\"id\":\"package\",\"method\":\"manager.info\"}\n' | \
-  MTLS_ROUTER_DESKTOP_DATA_DIR="$work/manager-data" \
-  "$manager_source" serve)"
-MANAGER_INFO="$manager_info" EXPECTED_VERSION="$expected_version" EXPECTED_DEPLOYMENT="$expected_deployment" EXPECTED_PROTOCOL="$expected_protocol" EXPECTED_TARGET="$os/$arch" node <<'NODE'
-const response = JSON.parse(process.env.MANAGER_INFO);
-if (response.error) throw new Error(`manager.info failed: ${response.error.code}`);
-const result = response.result;
-for (const [name, actual, expected] of [
-  ["version", result.version, process.env.EXPECTED_VERSION],
-  ["deployment", result.deployment_id, process.env.EXPECTED_DEPLOYMENT],
-  ["target", result.target, process.env.EXPECTED_TARGET],
-  ["protocol", result.management_protocol_version, process.env.EXPECTED_PROTOCOL],
-]) {
-  if (actual !== expected) throw new Error(`manager ${name} mismatch: ${actual} != ${expected}`);
-}
-NODE
-
 case "$os" in
   darwin)
     package="$(set -- "$bundle_root/dmg"/*.dmg; [[ $# -eq 1 && -f "$1" ]] || exit 1; printf '%s' "$1")"
@@ -95,26 +69,25 @@ case "$os" in
     ;;
 esac
 
-find_packaged() {
-  local name="$1" match
-  match="$(find "$packaged_dir" -type f -name "$name" -print -quit)"
-  [[ -n "$match" ]] || { printf 'package is missing %s\n' "$name" >&2; exit 1; }
-  printf '%s' "$match"
-}
-
 sha256() {
   node -e 'const fs=require("node:fs"),crypto=require("node:crypto"); process.stdout.write(crypto.createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex"))' "$1"
 }
 
-packaged_router="$(find_packaged "mtls-router$extension")"
-packaged_manager="$(find_packaged "mtls-router-manager$extension")"
 [[ -n "$packaged_desktop" && -f "$packaged_desktop" ]] || { printf 'package is missing the desktop executable\n' >&2; exit 1; }
 [[ "$(basename "$package")" == *"$expected_version"* ]] || { printf 'package filename does not contain the desktop version\n' >&2; exit 1; }
-[[ "$(sha256 "$packaged_router")" == "$(sha256 "$router_source")" ]]
-[[ "$(sha256 "$packaged_manager")" == "$(sha256 "$manager_source")" ]]
+
+# The router and manager are embedded in the desktop executable. A package
+# that still carries a Go CLI router or manager would reintroduce the sidecar
+# topology and must fail verification.
+for forbidden in "mtls-router$extension" "mtls-router-manager$extension"; do
+  if [[ -n "$(find "$packaged_dir" -type f -name "$forbidden" -print -quit)" ]]; then
+    printf 'package must not contain CLI artifact %s\n' "$forbidden" >&2
+    exit 1
+  fi
+done
 
 if [[ "$os" != windows ]]; then
-  [[ -x "$packaged_desktop" && -x "$packaged_router" && -x "$packaged_manager" ]] || { printf 'packaged executables have invalid permissions\n' >&2; exit 1; }
+  [[ -x "$packaged_desktop" ]] || { printf 'packaged executable has invalid permissions\n' >&2; exit 1; }
 fi
 
 if [[ "$os" == linux && -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
@@ -123,20 +96,20 @@ if [[ "$os" == linux && -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
 else
   "$packaged_desktop" --verify-app-startup
 fi
-"$packaged_desktop" --verify-manager-handshake
+handshake="$("$packaged_desktop" --verify-manager-handshake | tr -d '\r')"
+[[ "$handshake" == "verified manager handshake version=$expected_version deployment_id=$expected_deployment protocol=$expected_protocol target=$os/$arch" ]] || {
+  printf 'embedded manager handshake mismatch: %s\n' "$handshake" >&2
+  exit 1
+}
 
-PACKAGED_DESKTOP="$packaged_desktop" PACKAGED_ROUTER="$packaged_router" PACKAGED_MANAGER="$packaged_manager" \
+PACKAGED_DESKTOP="$packaged_desktop" \
   EXPECTED_DEPLOYMENT="$expected_deployment" EXPECTED_TARGET="$target" EXPECTED_VERSION="$expected_version" node <<'NODE'
 import fs from "node:fs";
 
 const target = process.env.EXPECTED_TARGET;
 const expectedArch = target.startsWith("aarch64-") ? "arm64" : "amd64";
 const expectedFormat = target.includes("windows") ? "pe" : target.includes("apple") ? "macho" : "elf";
-const binaries = [
-  ["desktop", process.env.PACKAGED_DESKTOP],
-  ["router", process.env.PACKAGED_ROUTER],
-  ["manager", process.env.PACKAGED_MANAGER],
-];
+const binaries = [["desktop", process.env.PACKAGED_DESKTOP]];
 
 function identify(bytes) {
   if (bytes.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))) {

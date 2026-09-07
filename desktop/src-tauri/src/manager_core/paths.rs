@@ -26,6 +26,20 @@ impl Paths {
         }))
     }
 
+    /// Like [`Self::resolve`] but pins the desktop data directory to one the
+    /// caller already resolved, so both path modules agree in-process.
+    pub fn resolve_for_desktop_dir(desktop_data_dir: &Path) -> Result<Self, &'static str> {
+        let home = dirs::home_dir().ok_or("resolve user home directory")?;
+        let pinned = desktop_data_dir.to_string_lossy().into_owned();
+        Ok(resolve_with(current_os(), &home, |key| {
+            if key == "MTLS_ROUTER_DESKTOP_DATA_DIR" {
+                pinned.clone()
+            } else {
+                std::env::var(key).unwrap_or_default()
+            }
+        }))
+    }
+
     pub fn agent_state_dir(&self) -> PathBuf {
         self.desktop_data_dir.join("agent-transactions")
     }

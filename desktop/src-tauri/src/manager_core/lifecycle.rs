@@ -74,7 +74,7 @@ pub struct Manager<B> {
     /// `operationMu`) so two overlapping requests cannot both pass the
     /// once-per-generation check.
     legacy_gate: Mutex<()>,
-    failure: Mutex<Option<LatchedFailure>>,
+    failure: Arc<Mutex<Option<LatchedFailure>>>,
 }
 
 impl<B: Backend> Manager<B> {
@@ -90,7 +90,7 @@ impl<B: Backend> Manager<B> {
             trusted: None,
             legacy: None,
             legacy_gate: Mutex::new(()),
-            failure: Mutex::new(None),
+            failure: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -138,12 +138,14 @@ impl<B: Backend> Manager<B> {
     }
 
     pub fn absent_start_ok(&self) -> bool {
-        self.failure
-            .lock()
-            .expect("failure lock")
-            .as_ref()
-            .map(|failure| failure.absent_start_ok)
-            .unwrap_or(true)
+        absent_start_ok(&self.failure)
+    }
+
+    /// Go `absentStartOK` as a detached closure for the trusted coordinator,
+    /// which is constructed before it is attached to this manager.
+    pub fn absent_start_ok_probe(&self) -> impl Fn() -> bool + Send + Sync + 'static {
+        let failure = self.failure.clone();
+        move || absent_start_ok(&failure)
     }
 
     pub async fn handle(&self, request: Request) -> Response {
@@ -536,6 +538,15 @@ impl<B: Backend> Manager<B> {
     fn clear_failure(&self) {
         *self.failure.lock().expect("failure lock") = None;
     }
+}
+
+fn absent_start_ok(failure: &Mutex<Option<LatchedFailure>>) -> bool {
+    failure
+        .lock()
+        .expect("failure lock")
+        .as_ref()
+        .map(|failure| failure.absent_start_ok)
+        .unwrap_or(true)
 }
 
 fn trusted_version(found: &DiscoverySnapshot) -> String {

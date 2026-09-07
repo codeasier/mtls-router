@@ -1,9 +1,10 @@
-//! Production-shaped manager session behind the existing Tauri transport API.
+//! Manager session behind the existing Tauri transport API.
 //!
 //! Assembles occupant identity, state-file protection, isolated or desktop
-//! Agent state, and optional trusted-router HTTP. The default desktop runtime
-//! still uses the Go sidecar; this module is the in-process host that protocol
-//! v4 fixtures and later cutover can share.
+//! Agent state, optional trusted-router HTTP, and (in production) the
+//! embedded router backend plus the legacy migration runtime. The desktop
+//! runtime serves protocol v4 in-process through [`production_factory`]; the
+//! fixture factory shares the same host for contract tests.
 //!
 //! Blocking Agent / occupant / trusted HTTP work stays on a dedicated session
 //! thread so the Tauri async runtime is not stalled.
@@ -11,6 +12,7 @@
 use std::sync::{mpsc, Arc};
 use std::thread;
 
+use base64::Engine;
 use serde_json::{json, Value};
 
 use crate::error::CommandError;
@@ -20,17 +22,22 @@ use crate::protocol::{
 };
 use crate::redaction::sanitize_protocol_error;
 
-use super::agent::{isolated_service, AgentService, Options as AgentOptions, TrustedCatalog};
+use super::agent::modelconfig::{decode_structural, Config as PresetConfig, MAX_CONFIG_SIZE};
+use super::agent::{
+    isolated_service, AgentService, Detector, Options as AgentOptions, TrustedCatalog,
+};
 use super::backend::FakeBackend;
+use super::embedded::{EmbeddedBackend, EmbeddedLifecycle};
 use super::errors::{closed_error, invalid_params, unknown_method};
+use super::legacy::{CurrentLineage, LegacyRuntime};
 use super::lifecycle::{Backend, Manager};
 use super::metadata;
 use super::occupant::{OccupantConfig, OccupantService};
 use super::paths::Paths;
 use super::process::{self, Identity as ProcessIdentity, Status};
-use super::trustedrouter::{normalize_listener, Coordinator, Listener, TrustedLifecycle};
+use super::trustedrouter::{normalize_listener, Channel, Coordinator, Listener, TrustedLifecycle};
 
-const DEFAULT_LISTEN: &str = "127.0.0.1:19099";
+pub const DEFAULT_LISTEN: &str = "127.0.0.1:19099";
 
 #[derive(Clone, Debug)]
 pub struct SessionConfig {
@@ -165,13 +172,13 @@ pub fn manager_with<B: Backend>(
 }
 
 /// Builds a trusted coordinator only when a verified desktop session exists.
-/// In-process router still omits pid, so fixtures keep `trusted: None` unless
-/// a test injects `StaticCatalog`.
+/// Fixtures keep `trusted: None` unless a test injects `StaticCatalog`.
 pub fn production_trusted(
     config: &SessionConfig,
     discover: impl Fn() -> super::trustedrouter::Discovery + Send + Sync + 'static,
     lifecycle: Arc<dyn TrustedLifecycle>,
     absent_start_ok: impl Fn() -> bool + Send + Sync + 'static,
+    simplify: bool,
 ) -> Option<Arc<dyn TrustedCatalog>> {
     let listen = resolve_listen(&config.listen_addr).ok()?;
     if !desktop_eligible(&config.desktop_session, &config.parent) {
@@ -183,7 +190,10 @@ pub fn production_trusted(
         protocol_version: MANAGEMENT_PROTOCOL_VERSION.to_owned(),
         discover: Arc::new(discover),
         lifecycle,
-        channel: super::trustedrouter::Channel::default(),
+        channel: Channel {
+            simplify,
+            ..Channel::default()
+        },
         desktop_eligible: Arc::new({
             let session = config.desktop_session.clone();
             let parent = config.parent.clone();
@@ -191,6 +201,79 @@ pub fn production_trusted(
         }),
         absent_start_ok: Arc::new(absent_start_ok),
     }))
+}
+
+/// Go `preset.Load`: strict standard base64, size-bounded, structurally
+/// validated. The error carries nothing so preset contents cannot leak.
+pub fn load_embedded_preset(encoded: &str) -> Result<Option<PresetConfig>, ()> {
+    if encoded.is_empty() {
+        return Ok(None);
+    }
+    let max_encoded = MAX_CONFIG_SIZE.div_ceil(3) * 4;
+    if encoded.len() > max_encoded
+        || encoded
+            .chars()
+            .any(|value| matches!(value, '\r' | '\n' | ' ' | '\t'))
+    {
+        return Err(());
+    }
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|_| ())?;
+    if decoded.len() > MAX_CONFIG_SIZE {
+        return Err(());
+    }
+    decode_structural(&decoded).map(Some).map_err(|_| ())
+}
+
+/// Everything one desktop process shares across transport sessions: the
+/// embedded backend must outlive any session respawn so the bound router is
+/// never dropped by recovery.
+pub struct ProductionRuntime {
+    pub session: SessionConfig,
+    pub current: CurrentLineage,
+    pub backend: Arc<EmbeddedBackend>,
+    pub preset: Option<PresetConfig>,
+    pub simplify: bool,
+}
+
+pub fn production_manager(runtime: &ProductionRuntime) -> Manager<Arc<EmbeddedBackend>> {
+    let listen = resolve_listen(&runtime.session.listen_addr).expect("production listen");
+    let occupant = occupant_for(&runtime.session, &listen);
+    let agent = AgentService::new(AgentOptions {
+        state_dir: runtime.session.paths.agent_state_dir(),
+        detector: Detector::default(),
+        preset: runtime.preset.clone(),
+        simplify: runtime.simplify,
+    })
+    .unwrap_or_else(|_| isolated_service());
+    let manager = Manager::new(metadata::info(), runtime.backend.clone())
+        .with_occupant(occupant)
+        .with_agent(agent)
+        .with_desktop_log_path(runtime.session.paths.desktop_log_file.clone())
+        .with_legacy(LegacyRuntime::new(
+            runtime.current.clone(),
+            runtime.session.paths.desktop_state_file.clone(),
+            runtime.session.paths.legacy_migration_file(),
+        ));
+    let discover_backend = runtime.backend.clone();
+    let trusted = production_trusted(
+        &runtime.session,
+        move || discover_backend.trusted_discovery(),
+        Arc::new(EmbeddedLifecycle(runtime.backend.clone())),
+        manager.absent_start_ok_probe(),
+        runtime.simplify,
+    );
+    match trusted {
+        Some(trusted) => manager.with_trusted(trusted),
+        None => manager,
+    }
+}
+
+pub fn production_factory(
+    runtime: Arc<ProductionRuntime>,
+) -> InProcessFactory<Arc<EmbeddedBackend>> {
+    InProcessFactory::new(move || production_manager(&runtime))
 }
 
 pub struct InProcessFactory<B> {
@@ -248,7 +331,7 @@ fn start_session<B: Backend + 'static>(
         .name("mtls-manager-core".into())
         .spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_time()
+                .enable_all()
                 .build()
                 .expect("manager-core runtime");
             while let Ok(bytes) = req_rx.recv() {
@@ -381,7 +464,8 @@ mod tests {
             &config,
             Discovery::absent,
             Arc::new(RejectLifecycle),
-            || true
+            || true,
+            false
         )
         .is_none());
     }
@@ -395,9 +479,25 @@ mod tests {
             &config,
             Discovery::absent,
             Arc::new(RejectLifecycle),
-            || true
+            || true,
+            false
         )
         .is_some());
+    }
+
+    #[test]
+    fn embedded_preset_loader_matches_go_strictness() {
+        assert_eq!(load_embedded_preset(""), Ok(None));
+        let valid = base64::engine::general_purpose::STANDARD
+            .encode(br#"{"version":1,"opencode":{"default_model":"m","models":{"m":{}}}}"#);
+        assert!(load_embedded_preset(&valid).unwrap().is_some());
+        let padded = format!("{valid}\n");
+        assert_eq!(load_embedded_preset(&padded), Err(()));
+        assert_eq!(load_embedded_preset("not*base64"), Err(()));
+        let junk = base64::engine::general_purpose::STANDARD.encode(b"[]");
+        assert_eq!(load_embedded_preset(&junk), Err(()));
+        let oversized = "A".repeat(MAX_CONFIG_SIZE.div_ceil(3) * 4 + 4);
+        assert_eq!(load_embedded_preset(&oversized), Err(()));
     }
 
     #[test]
