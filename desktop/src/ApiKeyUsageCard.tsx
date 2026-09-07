@@ -2,14 +2,24 @@ import { useState } from "react";
 
 import type {
   APIKeyUsage,
+  APIKeyUsageBudgetPeriod,
   APIKeyUsageModel,
   APIKeyUsagePeriod,
+  APIKeyUsageProviderQuota,
   APIKeyUsageQuota,
 } from "./ipc";
 import { useI18n } from "./i18n";
 import type { TranslationKey } from "./locales/zh-CN";
 
-const PERIODS: APIKeyUsagePeriod[] = ["today", "7d", "30d"];
+const BEIJING_TIME_ZONE = "Asia/Shanghai";
+
+const PERIOD_GROUPS: {
+  id: "rolling" | "calendar";
+  periods: APIKeyUsagePeriod[];
+}[] = [
+  { id: "rolling", periods: ["1h", "12h", "24h", "7d", "30d"] },
+  { id: "calendar", periods: ["today", "this_week", "this_month"] },
+];
 
 type UsageSortColumn = "requests" | "tokens" | "cost";
 type UsageSortDirection = "asc" | "desc";
@@ -71,6 +81,25 @@ function formatQuotaAmount(language: string, value: number, unit: string) {
     : formatCount(language, value);
 }
 
+function formatBeijingDateTime(language: string, value: string) {
+  return new Intl.DateTimeFormat(language, {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: BEIJING_TIME_ZONE,
+  }).format(new Date(value));
+}
+
+function providerLabel(provider: string, t: (key: TranslationKey) => string) {
+  return provider === "*" ? t("apikey.usage.quotas.provider.all") : provider;
+}
+
+function budgetPeriodLabel(
+  period: APIKeyUsageBudgetPeriod,
+  t: (key: TranslationKey) => string,
+) {
+  return t(`apikey.usage.quotas.period.${period}`);
+}
+
 function quotaLabel(
   language: string,
   quota: APIKeyUsageQuota,
@@ -84,9 +113,18 @@ function quotaLabel(
   return `${used} / ${formatQuotaAmount(language, quota.limit, quota.unit)} · ${t("apikey.usage.quota.remaining")} ${formatQuotaAmount(language, remaining, quota.unit)}`;
 }
 
-function quotaPercent(quota: APIKeyUsageQuota) {
+function quotaPercent(quota: { used: number; limit: number | null }) {
   if (quota.limit == null || quota.limit <= 0) return null;
   return Math.min(100, Math.max(0, (quota.used / quota.limit) * 100));
+}
+
+function providerQuotaLabel(
+  language: string,
+  quota: APIKeyUsageProviderQuota,
+  t: (key: TranslationKey) => string,
+) {
+  const remaining = Math.max(0, quota.limit - quota.used);
+  return `${formatCost(language, quota.used)} / ${formatCost(language, quota.limit)} · ${t("apikey.usage.quota.remaining")} ${formatCost(language, remaining)}`;
 }
 
 function modelTokens(row: APIKeyUsageModel) {
@@ -163,18 +201,11 @@ export function ApiKeyUsageCard({
     usage.summary.prompt_tokens === 0 &&
     usage.summary.completion_tokens === 0 &&
     usage.by_model.length === 0;
-  const asOf = usage?.as_of
-    ? new Intl.DateTimeFormat(language, {
-        dateStyle: "medium",
-        timeStyle: "short",
-      }).format(new Date(usage.as_of))
-    : "";
+  const asOf = usage?.as_of ? formatBeijingDateTime(language, usage.as_of) : "";
   const resetsAt = usage?.quota?.resets_at
-    ? new Intl.DateTimeFormat(language, {
-        dateStyle: "medium",
-        timeStyle: "short",
-      }).format(new Date(usage.quota.resets_at))
+    ? formatBeijingDateTime(language, usage.quota.resets_at)
     : "";
+  const providerQuotas = usage?.quotas ?? [];
 
   function toggleSort(column: UsageSortColumn) {
     if (column === sortColumn) {
@@ -199,19 +230,32 @@ export function ApiKeyUsageCard({
           <p className="overline">{t("apikey.usage.overline")}</p>
         </div>
         <div className="apikey-usage__toolbar">
-          <div className="apikey-usage__periods" role="tablist">
-            {PERIODS.map((value) => (
-              <button
-                key={value}
-                type="button"
-                role="tab"
-                aria-selected={period === value}
-                className="apikey-usage__period"
-                disabled={loading}
-                onClick={() => onPeriodChange(value)}
-              >
-                {t(`apikey.usage.period.${value}`)}
-              </button>
+          <div className="apikey-usage__period-groups">
+            {PERIOD_GROUPS.map((group) => (
+              <div key={group.id} className="apikey-usage__period-group">
+                <p className="apikey-usage__period-group-label">
+                  {t(`apikey.usage.periodGroup.${group.id}`)}
+                </p>
+                <div
+                  className="apikey-usage__periods"
+                  role="tablist"
+                  aria-label={t(`apikey.usage.periodGroup.${group.id}`)}
+                >
+                  {group.periods.map((value) => (
+                    <button
+                      key={value}
+                      type="button"
+                      role="tab"
+                      aria-selected={period === value}
+                      className="apikey-usage__period"
+                      disabled={loading}
+                      onClick={() => onPeriodChange(value)}
+                    >
+                      {t(`apikey.usage.period.${value}`)}
+                    </button>
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
           <button
@@ -297,6 +341,45 @@ export function ApiKeyUsageCard({
                   {t("apikey.usage.quota.resets")}: {resetsAt}
                 </p>
               )}
+            </section>
+          )}
+          {providerQuotas.length > 0 && (
+            <section className="apikey-usage__quotas">
+              <strong className="apikey-usage__quotas-heading">
+                {t("apikey.usage.quotas.heading")}
+              </strong>
+              {providerQuotas.map((quota, index) => {
+                const percent = quotaPercent(quota);
+                const reset = formatBeijingDateTime(language, quota.resets_at);
+                return (
+                  <article
+                    key={`${quota.provider}:${quota.period}:${quota.resets_at}:${index}`}
+                    className="apikey-usage__quota"
+                  >
+                    <header>
+                      <strong>
+                        {providerLabel(quota.provider, t)} ·{" "}
+                        {budgetPeriodLabel(quota.period, t)}
+                      </strong>
+                      <span>{providerQuotaLabel(language, quota, t)}</span>
+                    </header>
+                    {percent != null && (
+                      <div
+                        className="apikey-usage__bar"
+                        role="progressbar"
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={Math.round(percent)}
+                      >
+                        <span style={{ width: `${percent}%` }} />
+                      </div>
+                    )}
+                    <p>
+                      {t("apikey.usage.quota.resets")}: {reset}
+                    </p>
+                  </article>
+                );
+              })}
             </section>
           )}
           {empty ? (

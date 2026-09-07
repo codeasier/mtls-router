@@ -7,11 +7,11 @@
 | 文件 | 职责 |
 |------|------|
 | `client.go` | `Client`、`New(transport)`、`Fetch(ctx, Request)`；`Request{URL, Period, APIKey}`；`RequestTimeout`（25s 聚合预算）；`Error` 与 `CodeOf(err)` → `protocol.ErrorCode` |
-| `parse.go` | `Period`、`Snapshot`、`NormalizePeriod()`、`Parse(body, period)` —— 流式解码并校验有界 per-key 用量 |
+| `parse.go` | `Period`、`Snapshot`、`ProviderQuota`、`NormalizePeriod()`、`Parse(body, period)` —— 流式解码并校验有界 per-key 用量 |
 
 ## 上游契约
 
-`GET /v1/usage?period=today|7d|30d`，`Authorization: Bearer <api_key>`。本地 router 原样转发；jump 只放行 `/v1/*`，因此用量必须挂在 `/v1/usage`，不能走 `/api/usage`。
+`GET /v1/usage?period=1h|12h|24h|7d|30d|today|this_week|this_month`，`Authorization: Bearer <api_key>`。本仓只转发 `period` token，不计算窗口、不回填单条 `quota`。本地 router 原样转发；jump 只放行 `/v1/*`，因此用量必须挂在 `/v1/usage`，不能走 `/api/usage`。拒绝 `week` / `month` / `1d`，以免和额度 UTC `day|week|month` 撞名。
 
 成功体最少包含：
 
@@ -28,14 +28,14 @@
 }
 ```
 
-可选：`as_of`（RFC3339）、`quota:{used,limit,unit,resets_at}`。`limit` 可为 `null`（无上限）。`unit` 只能是 `usd`、`tokens`、`requests`。`period` 必须回显请求窗口。
+可选：`as_of`（RFC3339）、`quota:{used,limit,unit,resets_at}`、`quotas[]`。单条 `quota` 的 `limit` 可为 `null`（无上限），`unit` 只能是 `usd`、`tokens`、`requests`，不要收紧。`quotas[]` 最多 32 条；缺省、`null` 或 `[]` 视为无额度列表。每条必须是 `provider`（`*` 或句法合法 id）、`period=day|week|month`、有限非负 `used`、有限正数 `limit`、`unit=usd`、RFC3339 `resets_at`。本仓不从 `quotas[]` 合成总览 `quota`，也不对账 `summary.cost`。`period` 必须回显请求窗口。
 
 状态映射：`401/403` → `USAGE_AUTH_FAILED`；`404/405/501` → `USAGE_UNAVAILABLE`；其他非 200 → `USAGE_REQUEST_FAILED`；体不合法 → `USAGE_RESPONSE_INVALID`。
 
 ## 关键不变量
 
 - API key 只以 HTTP 头发出，**绝不进入日志、错误消息或返回值**。
-- 解析要求 `period`、`summary`、`by_model` 均出现；拒绝 `api_key` / `token` / `secret` 等字段名，未知安全字段跳过；`by_model` 最多 64 行。缺失 `by_model` 不得当成空列表。
+- 解析要求 `period`、`summary`、`by_model` 均出现；拒绝 `api_key` / `token` / `secret` 等字段名，未知安全字段跳过；`by_model` 最多 64 行，`quotas` 最多 32 行。缺失 `by_model` 不得当成空列表。
 - 计数必须是非负整数；费用与配额必须是有限非负数。
 - 失败一律 fail closed，不把上游原文或空快照冒充成功。
 

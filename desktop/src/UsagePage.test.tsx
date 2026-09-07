@@ -113,7 +113,7 @@ describe("UsagePage", () => {
     renderPage(api);
     await waitFor(() => expect(api.getAPIKeyUsage).toHaveBeenCalledWith("7d"));
 
-    fireEvent.click(screen.getByRole("tab", { name: "今天" }));
+    fireEvent.click(screen.getByRole("tab", { name: /今天/ }));
 
     await waitFor(() =>
       expect(api.getAPIKeyUsage).toHaveBeenCalledWith("today"),
@@ -152,7 +152,7 @@ describe("UsagePage", () => {
     renderPage(api);
     expect(await screen.findAllByText("claude-sonnet")).toHaveLength(2);
 
-    fireEvent.click(screen.getByRole("tab", { name: "今天" }));
+    fireEvent.click(screen.getByRole("tab", { name: /今天/ }));
 
     await waitFor(() => {
       expect(screen.queryByText("claude-sonnet")).not.toBeInTheDocument();
@@ -273,5 +273,135 @@ describe("UsagePage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /请求/ }));
     expect(requestsHeader).toHaveAttribute("aria-sort", "ascending");
+  });
+
+  it("groups period tabs and does not expose colliding week or month tokens", async () => {
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: /今天/ })).toBeInTheDocument(),
+    );
+
+    expect(screen.getByText("滚动窗口")).toBeInTheDocument();
+    expect(screen.getByText("日历窗口")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "近 1 小时" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: "本周（周一 08:00 起）" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "week" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: "month" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("hides quota blocks when quota and quotas are absent or empty", async () => {
+    renderPage(
+      createMockApi({
+        getAPIKeyUsage: vi.fn().mockResolvedValue({
+          period: "7d",
+          summary: multiModelUsage.summary,
+          quotas: [],
+          by_model: multiModelUsage.by_model,
+        }),
+      }),
+    );
+    await screen.findAllByText("claude-sonnet");
+
+    expect(screen.queryByText("配额")).not.toBeInTheDocument();
+    expect(screen.queryByText("供应商限额")).not.toBeInTheDocument();
+  });
+
+  it("renders provider limits without an overview bar when only quotas are present", async () => {
+    renderPage(
+      createMockApi({
+        getAPIKeyUsage: vi.fn().mockResolvedValue({
+          period: "1h",
+          summary: multiModelUsage.summary,
+          quotas: [
+            {
+              provider: "*",
+              period: "week",
+              used: 1.25,
+              limit: 10,
+              unit: "usd",
+              resets_at: "2026-09-14T00:00:00Z",
+            },
+            {
+              provider: "codex",
+              period: "day",
+              used: 0.4,
+              limit: 2,
+              unit: "usd",
+              resets_at: "2026-09-08T00:00:00Z",
+            },
+          ],
+          by_model: multiModelUsage.by_model,
+        }),
+      }),
+    );
+    await screen.findAllByText("claude-sonnet");
+
+    expect(screen.queryByText("配额")).not.toBeInTheDocument();
+    expect(screen.getByText("供应商限额")).toBeInTheDocument();
+    expect(screen.getByText("全部供应商 · 每周")).toBeInTheDocument();
+    expect(screen.getByText("codex · 每日")).toBeInTheDocument();
+    expect(screen.getAllByText(/重置时间（北京时间）/).length).toBeGreaterThan(
+      0,
+    );
+    expect(screen.getAllByText(/08:00/).length).toBeGreaterThan(0);
+  });
+
+  it("keeps the provider list when a rolling period omits the overview quota", async () => {
+    const api = createMockApi({
+      getAPIKeyUsage: vi.fn().mockImplementation((period: string) => {
+        if (period === "1h") {
+          return Promise.resolve({
+            period: "1h",
+            summary: multiModelUsage.summary,
+            quotas: [
+              {
+                provider: "*",
+                period: "week",
+                used: 1.25,
+                limit: 10,
+                unit: "usd",
+                resets_at: "2026-09-14T00:00:00Z",
+              },
+            ],
+            by_model: multiModelUsage.by_model,
+          });
+        }
+        return Promise.resolve({
+          period: "7d",
+          summary: multiModelUsage.summary,
+          quota: {
+            used: 1.25,
+            limit: 10,
+            unit: "usd",
+            resets_at: "2026-09-14T00:00:00Z",
+          },
+          quotas: [
+            {
+              provider: "*",
+              period: "week",
+              used: 1.25,
+              limit: 10,
+              unit: "usd",
+              resets_at: "2026-09-14T00:00:00Z",
+            },
+          ],
+          by_model: multiModelUsage.by_model,
+        });
+      }),
+    });
+    renderPage(api);
+    await screen.findByText("配额");
+    expect(screen.getByText("供应商限额")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "近 1 小时" }));
+
+    await waitFor(() => expect(api.getAPIKeyUsage).toHaveBeenCalledWith("1h"));
+    expect(await screen.findByText("供应商限额")).toBeInTheDocument();
+    expect(screen.queryByText("配额")).not.toBeInTheDocument();
+    expect(screen.getByText("全部供应商 · 每周")).toBeInTheDocument();
   });
 });

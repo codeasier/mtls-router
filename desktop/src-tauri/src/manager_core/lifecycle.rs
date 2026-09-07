@@ -10,9 +10,9 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::protocol::{
-    deadline, APIKeyUsageModel, APIKeyUsageParams, APIKeyUsageQuota, APIKeyUsageResult,
-    APIKeyUsageSummary, AgentCleanupParams, AgentCleanupWriteParams, AgentConfigParams,
-    AgentModelsParams, AgentWriteParams, DiagnosticsResult, ErrorCode,
+    deadline, APIKeyUsageModel, APIKeyUsageParams, APIKeyUsageProviderQuota, APIKeyUsageQuota,
+    APIKeyUsageResult, APIKeyUsageSummary, AgentCleanupParams, AgentCleanupWriteParams,
+    AgentConfigParams, AgentModelsParams, AgentWriteParams, DiagnosticsResult, ErrorCode,
     ForceTerminateOccupantParams, ManagerInfoResult, Method, ProtocolError, Request, Response,
     RouterHealthResult, RouterLogsParams, RouterLogsResult, RouterOwner, RouterStartParams,
     RouterStatusResult, RouterVersionResult,
@@ -903,6 +903,18 @@ fn map_usage(snapshot: &crate::manager_core::apikeyusage::Snapshot) -> APIKeyUsa
             unit: quota.unit.as_str().to_owned(),
             resets_at: quota.resets_at.clone(),
         }),
+        quotas: snapshot
+            .quotas
+            .iter()
+            .map(|quota| APIKeyUsageProviderQuota {
+                provider: quota.provider.clone(),
+                period: quota.period.as_str().to_owned(),
+                used: quota.used,
+                limit: quota.limit,
+                unit: quota.unit.as_str().to_owned(),
+                resets_at: quota.resets_at.clone(),
+            })
+            .collect(),
         by_model: snapshot
             .by_model
             .iter()

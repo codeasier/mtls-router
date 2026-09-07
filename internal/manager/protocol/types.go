@@ -196,6 +196,15 @@ type APIKeyUsageQuota struct {
 	ResetsAt string   `json:"resets_at,omitempty"`
 }
 
+type APIKeyUsageProviderQuota struct {
+	Provider string  `json:"provider"`
+	Period   string  `json:"period"`
+	Used     float64 `json:"used"`
+	Limit    float64 `json:"limit"`
+	Unit     string  `json:"unit"`
+	ResetsAt string  `json:"resets_at"`
+}
+
 type APIKeyUsageModel struct {
 	Model            string  `json:"model"`
 	Requests         int64   `json:"requests"`
@@ -205,11 +214,12 @@ type APIKeyUsageModel struct {
 }
 
 type APIKeyUsageResult struct {
-	Period  string             `json:"period"`
-	AsOf    string             `json:"as_of,omitempty"`
-	Summary APIKeyUsageSummary `json:"summary"`
-	Quota   *APIKeyUsageQuota  `json:"quota,omitempty"`
-	ByModel []APIKeyUsageModel `json:"by_model"`
+	Period  string                     `json:"period"`
+	AsOf    string                     `json:"as_of,omitempty"`
+	Summary APIKeyUsageSummary         `json:"summary"`
+	Quota   *APIKeyUsageQuota          `json:"quota,omitempty"`
+	Quotas  []APIKeyUsageProviderQuota `json:"quotas,omitempty"`
+	ByModel []APIKeyUsageModel         `json:"by_model"`
 }
 
 type AgentConfigParams struct {

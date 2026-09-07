@@ -1135,6 +1135,17 @@ pub struct APIKeyUsageModel {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct APIKeyUsageProviderQuota {
+    pub provider: String,
+    pub period: String,
+    pub used: f64,
+    pub limit: f64,
+    pub unit: String,
+    pub resets_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct APIKeyUsage {
     pub period: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -1142,6 +1153,8 @@ pub struct APIKeyUsage {
     pub summary: APIKeyUsageSummary,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quota: Option<APIKeyUsageQuota>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub quotas: Vec<APIKeyUsageProviderQuota>,
     pub by_model: Vec<APIKeyUsageModel>,
 }
 
@@ -1370,5 +1383,58 @@ mod tests {
         assert_eq!(parsed.state_backup.unwrap().operation, "backup");
         result["agents"][0]["model_config"] = serde_json::json!({});
         assert!(serde_json::from_value::<AgentWriteResult>(result).is_err());
+    }
+
+    #[test]
+    fn api_key_usage_accepts_optional_quotas_and_rejects_unknown_fields() {
+        let usage: APIKeyUsage = serde_json::from_value(serde_json::json!({
+            "period": "1h",
+            "summary": {
+                "requests": 1,
+                "prompt_tokens": 2,
+                "completion_tokens": 3,
+                "cost": 0.4
+            },
+            "quotas": [{
+                "provider": "codex",
+                "period": "day",
+                "used": 0.4,
+                "limit": 2.0,
+                "unit": "usd",
+                "resets_at": "2026-09-08T00:00:00Z"
+            }],
+            "by_model": []
+        }))
+        .unwrap();
+        assert_eq!(usage.period, "1h");
+        assert_eq!(usage.quotas.len(), 1);
+        assert_eq!(usage.quotas[0].provider, "codex");
+        assert!(usage.quota.is_none());
+
+        let without_quotas: APIKeyUsage = serde_json::from_value(serde_json::json!({
+            "period": "7d",
+            "summary": {
+                "requests": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "cost": 0.0
+            },
+            "by_model": []
+        }))
+        .unwrap();
+        assert!(without_quotas.quotas.is_empty());
+
+        assert!(serde_json::from_value::<APIKeyUsage>(serde_json::json!({
+            "period": "7d",
+            "summary": {
+                "requests": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "cost": 0.0
+            },
+            "by_model": [],
+            "api_key": "secret"
+        }))
+        .is_err());
     }
 }

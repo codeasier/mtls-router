@@ -8,21 +8,72 @@ use serde_json::Number;
 use super::error::{invalid_period, response_invalid, UsageError};
 
 pub const MAX_MODELS: usize = 64;
+pub const MAX_QUOTAS: usize = 32;
 const MAX_ID_BYTES: usize = 256;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Period {
-    Today,
+    OneHour,
+    TwelveHours,
+    TwentyFourHours,
     SevenDays,
     ThirtyDays,
+    Today,
+    ThisWeek,
+    ThisMonth,
 }
 
 impl Period {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Today => "today",
+            Self::OneHour => "1h",
+            Self::TwelveHours => "12h",
+            Self::TwentyFourHours => "24h",
             Self::SevenDays => "7d",
             Self::ThirtyDays => "30d",
+            Self::Today => "today",
+            Self::ThisWeek => "this_week",
+            Self::ThisMonth => "this_month",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "1h" => Some(Self::OneHour),
+            "12h" => Some(Self::TwelveHours),
+            "24h" => Some(Self::TwentyFourHours),
+            "7d" => Some(Self::SevenDays),
+            "30d" => Some(Self::ThirtyDays),
+            "today" => Some(Self::Today),
+            "this_week" => Some(Self::ThisWeek),
+            "this_month" => Some(Self::ThisMonth),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BudgetPeriod {
+    Day,
+    Week,
+    Month,
+}
+
+impl BudgetPeriod {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Day => "day",
+            Self::Week => "week",
+            Self::Month => "month",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "day" => Some(Self::Day),
+            "week" => Some(Self::Week),
+            "month" => Some(Self::Month),
+            _ => None,
         }
     }
 }
@@ -59,6 +110,7 @@ pub struct Snapshot {
     pub as_of: String,
     pub summary: Summary,
     pub quota: Option<Quota>,
+    pub quotas: Vec<ProviderQuota>,
     pub by_model: Vec<Model>,
 }
 
@@ -79,6 +131,16 @@ pub struct Quota {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct ProviderQuota {
+    pub provider: String,
+    pub period: BudgetPeriod,
+    pub used: f64,
+    pub limit: f64,
+    pub unit: QuotaUnit,
+    pub resets_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct Model {
     pub model: String,
     pub requests: i64,
@@ -90,9 +152,7 @@ pub struct Model {
 pub fn normalize_period(value: &str) -> Result<Period, UsageError> {
     match value.trim() {
         "" | "7d" => Ok(Period::SevenDays),
-        "today" => Ok(Period::Today),
-        "30d" => Ok(Period::ThirtyDays),
-        _ => Err(invalid_period()),
+        other => Period::parse(other).ok_or_else(invalid_period),
     }
 }
 
@@ -109,6 +169,7 @@ pub fn parse(body: &[u8], period: Period) -> Result<Snapshot, UsageError> {
         as_of: parsed.as_of,
         summary: parsed.summary,
         quota: parsed.quota,
+        quotas: parsed.quotas,
         by_model: parsed.by_model,
     })
 }
@@ -118,6 +179,7 @@ struct ParsedSnapshot {
     as_of: String,
     summary: Summary,
     quota: Option<Quota>,
+    quotas: Vec<ProviderQuota>,
     by_model: Vec<Model>,
 }
 
@@ -142,6 +204,7 @@ impl<'de> Visitor<'de> for SnapshotVisitor {
         let mut as_of = String::new();
         let mut summary = None;
         let mut quota = None;
+        let mut quotas = Vec::new();
         let mut by_model = None;
         while let Some(key) = map.next_key::<String>()? {
             if !seen_field(&mut seen, &key) {
@@ -150,12 +213,8 @@ impl<'de> Visitor<'de> for SnapshotVisitor {
             match key.as_str() {
                 "period" => {
                     let value = map.next_value::<String>()?;
-                    period = Some(match value.as_str() {
-                        "today" => Period::Today,
-                        "7d" => Period::SevenDays,
-                        "30d" => Period::ThirtyDays,
-                        _ => return Err(de::Error::custom("period")),
-                    });
+                    period =
+                        Some(Period::parse(&value).ok_or_else(|| de::Error::custom("period"))?);
                 }
                 "as_of" => {
                     let value = map.next_value::<String>()?;
@@ -166,6 +225,12 @@ impl<'de> Visitor<'de> for SnapshotVisitor {
                 }
                 "summary" => summary = Some(map.next_value::<Summary>()?),
                 "quota" => quota = map.next_value::<Option<Quota>>()?,
+                "quotas" => {
+                    quotas = map
+                        .next_value::<Option<QuotaRows>>()?
+                        .map(|rows| rows.0)
+                        .unwrap_or_default();
+                }
                 "by_model" => by_model = Some(map.next_value::<ModelRows>()?.0),
                 _ => {
                     let _: IgnoredAny = map.next_value()?;
@@ -180,6 +245,7 @@ impl<'de> Visitor<'de> for SnapshotVisitor {
             as_of,
             summary: summary.ok_or_else(|| de::Error::custom("summary"))?,
             quota,
+            quotas,
             by_model: by_model.ok_or_else(|| de::Error::custom("by_model"))?,
         })
     }
@@ -233,6 +299,40 @@ impl<'de> Deserialize<'de> for Quota {
     }
 }
 
+impl<'de> Deserialize<'de> for ProviderQuota {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let fields = ScalarObject::deserialize(deserializer)?.0;
+        let provider = match fields.get("provider") {
+            Some(Scalar::String(value)) if valid_id(value) => value.clone(),
+            _ => return Err(de::Error::custom("provider")),
+        };
+        let period = match fields.get("period") {
+            Some(Scalar::String(value)) => {
+                BudgetPeriod::parse(value).ok_or_else(|| de::Error::custom("period"))?
+            }
+            _ => return Err(de::Error::custom("period")),
+        };
+        let used = required_amount(&fields, "used")?;
+        let limit = required_positive_amount(&fields, "limit")?;
+        let unit = match fields.get("unit") {
+            Some(Scalar::String(value)) if value == "usd" => QuotaUnit::Usd,
+            _ => return Err(de::Error::custom("unit")),
+        };
+        let resets_at = match fields.get("resets_at") {
+            Some(Scalar::String(value)) if valid_time(value) => value.clone(),
+            _ => return Err(de::Error::custom("resets_at")),
+        };
+        Ok(ProviderQuota {
+            provider,
+            period,
+            used,
+            limit,
+            unit,
+            resets_at,
+        })
+    }
+}
+
 impl<'de> Deserialize<'de> for Model {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let fields = ScalarObject::deserialize(deserializer)?.0;
@@ -272,6 +372,31 @@ impl<'de> Deserialize<'de> for ModelRows {
             }
         }
         deserializer.deserialize_seq(ModelsVisitor)
+    }
+}
+
+struct QuotaRows(Vec<ProviderQuota>);
+
+impl<'de> Deserialize<'de> for QuotaRows {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct QuotasVisitor;
+        impl<'de> Visitor<'de> for QuotasVisitor {
+            type Value = QuotaRows;
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("provider quotas")
+            }
+            fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let mut quotas = Vec::new();
+                while let Some(quota) = seq.next_element::<ProviderQuota>()? {
+                    quotas.push(quota);
+                    if quotas.len() > MAX_QUOTAS {
+                        return Err(de::Error::custom("too many quotas"));
+                    }
+                }
+                Ok(QuotaRows(quotas))
+            }
+        }
+        deserializer.deserialize_seq(QuotasVisitor)
     }
 }
 
@@ -384,6 +509,17 @@ fn required_amount<E: de::Error>(fields: &HashMap<String, Scalar>, key: &str) ->
         Some(value) => decode_amount(value),
         None => Err(de::Error::custom(key)),
     }
+}
+
+fn required_positive_amount<E: de::Error>(
+    fields: &HashMap<String, Scalar>,
+    key: &str,
+) -> Result<f64, E> {
+    let amount = required_amount(fields, key)?;
+    if amount <= 0.0 {
+        return Err(de::Error::custom(key));
+    }
+    Ok(amount)
 }
 
 fn decode_count<E: de::Error>(number: &Number) -> Result<i64, E> {

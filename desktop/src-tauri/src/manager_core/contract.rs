@@ -727,6 +727,14 @@ async fn apikey_usage_returns_key_free_snapshot() {
                 unit: QuotaUnit::Usd,
                 resets_at: "2026-09-01T00:00:00Z".into(),
             }),
+            quotas: vec![crate::manager_core::apikeyusage::ProviderQuota {
+                provider: "*".into(),
+                period: crate::manager_core::apikeyusage::BudgetPeriod::Week,
+                used: 0.75,
+                limit: 100.0,
+                unit: QuotaUnit::Usd,
+                resets_at: "2026-09-01T00:00:00Z".into(),
+            }],
             by_model: vec![Model {
                 model: "claude-sonnet".into(),
                 requests: 4,
@@ -750,6 +758,8 @@ async fn apikey_usage_returns_key_free_snapshot() {
     assert_eq!(result["period"], "7d");
     assert_eq!(result["summary"]["requests"], 4);
     assert_eq!(result["quota"]["used"], 0.75);
+    assert_eq!(result["quotas"][0]["provider"], "*");
+    assert_eq!(result["quotas"][0]["period"], "week");
     assert_eq!(result["by_model"][0]["model"], "claude-sonnet");
 }
 
@@ -768,6 +778,7 @@ async fn apikey_usage_rejects_invalid_period_without_calling_trusted() {
                     cost: 0.0,
                 },
                 quota: None,
+                quotas: Vec::new(),
                 by_model: Vec::new(),
             }),
             ..StaticCatalog::default()

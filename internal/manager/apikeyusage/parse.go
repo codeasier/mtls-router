@@ -15,6 +15,7 @@ import (
 
 const (
 	maxModels  = 64
+	maxQuotas  = 32
 	maxIDBytes = 256
 )
 
@@ -22,9 +23,23 @@ const (
 type Period string
 
 const (
-	PeriodToday Period = "today"
-	Period7d    Period = "7d"
-	Period30d   Period = "30d"
+	Period1h        Period = "1h"
+	Period12h       Period = "12h"
+	Period24h       Period = "24h"
+	Period7d        Period = "7d"
+	Period30d       Period = "30d"
+	PeriodToday     Period = "today"
+	PeriodThisWeek  Period = "this_week"
+	PeriodThisMonth Period = "this_month"
+)
+
+// BudgetPeriod is a UTC quota window, not a usage period token.
+type BudgetPeriod string
+
+const (
+	BudgetDay   BudgetPeriod = "day"
+	BudgetWeek  BudgetPeriod = "week"
+	BudgetMonth BudgetPeriod = "month"
 )
 
 // QuotaUnit is the optional remaining-budget unit.
@@ -42,6 +57,7 @@ type Snapshot struct {
 	AsOf    string
 	Summary Summary
 	Quota   *Quota
+	Quotas  []ProviderQuota
 	ByModel []Model
 }
 
@@ -61,6 +77,16 @@ type Quota struct {
 	ResetsAt string
 }
 
+// ProviderQuota is one provider USD budget copied from the public usage body.
+type ProviderQuota struct {
+	Provider string
+	Period   BudgetPeriod
+	Used     float64
+	Limit    float64
+	Unit     QuotaUnit
+	ResetsAt string
+}
+
 // Model is one per-model row belonging to the authenticated key.
 type Model struct {
 	Model            string
@@ -75,10 +101,20 @@ func NormalizePeriod(value string) (Period, error) {
 	switch strings.TrimSpace(value) {
 	case "", string(Period7d):
 		return Period7d, nil
-	case string(PeriodToday):
-		return PeriodToday, nil
+	case string(Period1h):
+		return Period1h, nil
+	case string(Period12h):
+		return Period12h, nil
+	case string(Period24h):
+		return Period24h, nil
 	case string(Period30d):
 		return Period30d, nil
+	case string(PeriodToday):
+		return PeriodToday, nil
+	case string(PeriodThisWeek):
+		return PeriodThisWeek, nil
+	case string(PeriodThisMonth):
+		return PeriodThisMonth, nil
 	default:
 		return "", &Error{Code: protocol.CodeInvalidParams, msg: "usage period is invalid"}
 	}
@@ -128,6 +164,12 @@ func Parse(body []byte, period Period) (Snapshot, error) {
 				return Snapshot{}, err
 			}
 			snapshot.Quota = quota
+		case "quotas":
+			quotas, err := parseQuotas(decoder)
+			if err != nil {
+				return Snapshot{}, err
+			}
+			snapshot.Quotas = quotas
 		case "by_model":
 			models, err := parseModels(decoder)
 			if err != nil {
@@ -238,6 +280,76 @@ func parseQuota(decoder *json.Decoder) (*Quota, error) {
 		quota.ResetsAt = value
 	}
 	return quota, nil
+}
+
+func parseQuotas(decoder *json.Decoder) ([]ProviderQuota, error) {
+	if decoder == nil {
+		return nil, responseInvalid()
+	}
+	token, err := decoder.Token()
+	if err != nil {
+		return nil, responseInvalid()
+	}
+	if token == nil {
+		return nil, nil
+	}
+	if token != json.Delim('[') {
+		return nil, responseInvalid()
+	}
+	quotas := make([]ProviderQuota, 0)
+	for decoder.More() {
+		quota, err := parseProviderQuota(decoder)
+		if err != nil {
+			return nil, err
+		}
+		quotas = append(quotas, quota)
+		if len(quotas) > maxQuotas {
+			return nil, responseInvalid()
+		}
+	}
+	if token, err := decoder.Token(); err != nil || token != json.Delim(']') {
+		return nil, responseInvalid()
+	}
+	return quotas, nil
+}
+
+func parseProviderQuota(decoder *json.Decoder) (ProviderQuota, error) {
+	fields, err := decodeObject(decoder)
+	if err != nil {
+		return ProviderQuota{}, err
+	}
+	provider, ok := fields["provider"].(string)
+	if !ok || !validID(provider) {
+		return ProviderQuota{}, responseInvalid()
+	}
+	periodValue, ok := fields["period"].(string)
+	if !ok || !validBudgetPeriod(periodValue) {
+		return ProviderQuota{}, responseInvalid()
+	}
+	used, err := requiredAmount(fields, "used")
+	if err != nil {
+		return ProviderQuota{}, err
+	}
+	limit, err := requiredPositiveAmount(fields, "limit")
+	if err != nil {
+		return ProviderQuota{}, err
+	}
+	unitValue, ok := fields["unit"].(string)
+	if !ok || QuotaUnit(unitValue) != QuotaUSD {
+		return ProviderQuota{}, responseInvalid()
+	}
+	resets, ok := fields["resets_at"].(string)
+	if !ok || !validTime(resets) {
+		return ProviderQuota{}, responseInvalid()
+	}
+	return ProviderQuota{
+		Provider: provider,
+		Period:   BudgetPeriod(periodValue),
+		Used:     used,
+		Limit:    limit,
+		Unit:     QuotaUSD,
+		ResetsAt: resets,
+	}, nil
 }
 
 func parseModels(decoder *json.Decoder) ([]Model, error) {
@@ -364,6 +476,26 @@ func requiredAmount(fields map[string]json.Token, key string) (float64, error) {
 		return 0, responseInvalid()
 	}
 	return decodeAmount(value)
+}
+
+func requiredPositiveAmount(fields map[string]json.Token, key string) (float64, error) {
+	amount, err := requiredAmount(fields, key)
+	if err != nil {
+		return 0, err
+	}
+	if amount <= 0 {
+		return 0, responseInvalid()
+	}
+	return amount, nil
+}
+
+func validBudgetPeriod(value string) bool {
+	switch BudgetPeriod(value) {
+	case BudgetDay, BudgetWeek, BudgetMonth:
+		return true
+	default:
+		return false
+	}
 }
 
 func decodeAmount(value json.Token) (float64, error) {

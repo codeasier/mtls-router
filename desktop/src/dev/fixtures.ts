@@ -108,6 +108,16 @@ export function fixtureUsageFor(period: APIKeyUsagePeriod): APIKeyUsage {
       unit: "usd",
       resets_at: "2026-09-01T00:00:00Z",
     },
+    quotas: [
+      {
+        provider: "*",
+        period: "week",
+        used: 1.25,
+        limit: 100,
+        unit: "usd",
+        resets_at: "2026-09-01T00:00:00Z",
+      },
+    ],
     by_model: [
       {
         model: "claude-sonnet",

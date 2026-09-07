@@ -3,7 +3,10 @@ use crate::protocol::ErrorCode;
 
 use super::client::{Client, Request, MAX_BODY_BYTES};
 use super::error::code_of;
-use super::parse::{normalize_period, parse, Period, QuotaUnit, Summary, MAX_MODELS};
+use super::parse::{
+    normalize_period, parse, BudgetPeriod, Period, ProviderQuota, QuotaUnit, Summary, MAX_MODELS,
+    MAX_QUOTAS,
+};
 
 const USAGE_KEY: &str = "usage-key-canary-4419";
 
@@ -38,6 +41,7 @@ fn parse_accepts_bounded_per_key_usage() {
     assert_eq!(quota.resets_at, "2026-09-01T00:00:00Z");
     assert_eq!(snapshot.by_model.len(), 1);
     assert_eq!(snapshot.by_model[0].model, "claude-sonnet");
+    assert!(snapshot.quotas.is_empty());
 }
 
 #[test]
@@ -56,7 +60,59 @@ fn parse_allows_unknown_safe_fields_and_unlimited_quota() {
     let quota = snapshot.quota.expect("quota");
     assert_eq!(quota.limit, None);
     assert_eq!(quota.unit, QuotaUnit::Tokens);
+    assert!(snapshot.quotas.is_empty());
     assert!(snapshot.by_model.is_empty());
+}
+
+#[test]
+fn parse_treats_missing_or_empty_quotas_as_absent() {
+    for body in [
+        br#"{"period":"7d","summary":{"requests":0,"prompt_tokens":0,"completion_tokens":0,"cost":0},"by_model":[]}"#.as_slice(),
+        br#"{"period":"7d","summary":{"requests":0,"prompt_tokens":0,"completion_tokens":0,"cost":0},"quotas":[],"by_model":[]}"#.as_slice(),
+        br#"{"period":"7d","summary":{"requests":0,"prompt_tokens":0,"completion_tokens":0,"cost":0},"quotas":null,"by_model":[]}"#.as_slice(),
+    ] {
+        let snapshot = parse(body, Period::SevenDays).expect("parse");
+        assert!(snapshot.quotas.is_empty());
+    }
+}
+
+#[test]
+fn parse_accepts_provider_quotas_without_synthesizing_overview() {
+    let snapshot = parse(
+        br#"{
+		"period":"1h",
+		"summary":{"requests":2,"prompt_tokens":4,"completion_tokens":1,"cost":0.4},
+		"quotas":[
+			{"provider":"*","period":"week","used":1.25,"limit":10,"unit":"usd","resets_at":"2026-09-14T00:00:00Z"},
+			{"provider":"codex","period":"day","used":0.4,"limit":2,"unit":"usd","resets_at":"2026-09-08T00:00:00Z"}
+		],
+		"by_model":[]
+	}"#,
+        Period::OneHour,
+    )
+    .expect("parse");
+    assert!(snapshot.quota.is_none());
+    assert_eq!(
+        snapshot.quotas,
+        vec![
+            ProviderQuota {
+                provider: "*".into(),
+                period: BudgetPeriod::Week,
+                used: 1.25,
+                limit: 10.0,
+                unit: QuotaUnit::Usd,
+                resets_at: "2026-09-14T00:00:00Z".into(),
+            },
+            ProviderQuota {
+                provider: "codex".into(),
+                period: BudgetPeriod::Day,
+                used: 0.4,
+                limit: 2.0,
+                unit: QuotaUnit::Usd,
+                resets_at: "2026-09-08T00:00:00Z".into(),
+            },
+        ]
+    );
 }
 
 #[test]
@@ -65,6 +121,11 @@ fn parse_rejects_unsafe_or_unbounded_bodies() {
         r#"{{"period":"7d","summary":{{"requests":0,"prompt_tokens":0,"completion_tokens":0,"cost":0}},"by_model":[{}{{"model":"z","requests":0,"prompt_tokens":0,"completion_tokens":0,"cost":0}}]}}"#,
         r#"{"model":"m","requests":0,"prompt_tokens":0,"completion_tokens":0,"cost":0},"#
             .repeat(MAX_MODELS + 1)
+    );
+    let too_many_quotas = format!(
+        r#"{{"period":"7d","summary":{{"requests":0,"prompt_tokens":0,"completion_tokens":0,"cost":0}},"quotas":[{}{{"provider":"z","period":"day","used":0,"limit":1,"unit":"usd","resets_at":"2026-09-08T00:00:00Z"}}],"by_model":[]}}"#,
+        r#"{"provider":"p","period":"day","used":0,"limit":1,"unit":"usd","resets_at":"2026-09-08T00:00:00Z"},"#
+            .repeat(MAX_QUOTAS + 1)
     );
     let cases = [
         (
@@ -114,6 +175,36 @@ fn parse_rejects_unsafe_or_unbounded_bodies() {
             r#"{"period":"7d","summary":{"requests":0,"prompt_tokens":0,"completion_tokens":0,"cost":0},"quota":{"used":0,"unit":"hours"},"by_model":[]}"#,
             Period::SevenDays,
         ),
+        (
+            "quotas not array",
+            r#"{"period":"7d","summary":{"requests":0,"prompt_tokens":0,"completion_tokens":0,"cost":0},"quotas":{},"by_model":[]}"#,
+            Period::SevenDays,
+        ),
+        (
+            "quotas unit tokens",
+            r#"{"period":"7d","summary":{"requests":0,"prompt_tokens":0,"completion_tokens":0,"cost":0},"quotas":[{"provider":"*","period":"day","used":0,"limit":1,"unit":"tokens","resets_at":"2026-09-08T00:00:00Z"}],"by_model":[]}"#,
+            Period::SevenDays,
+        ),
+        (
+            "quotas null limit",
+            r#"{"period":"7d","summary":{"requests":0,"prompt_tokens":0,"completion_tokens":0,"cost":0},"quotas":[{"provider":"*","period":"day","used":0,"limit":null,"unit":"usd","resets_at":"2026-09-08T00:00:00Z"}],"by_model":[]}"#,
+            Period::SevenDays,
+        ),
+        (
+            "quotas zero limit",
+            r#"{"period":"7d","summary":{"requests":0,"prompt_tokens":0,"completion_tokens":0,"cost":0},"quotas":[{"provider":"*","period":"day","used":0,"limit":0,"unit":"usd","resets_at":"2026-09-08T00:00:00Z"}],"by_model":[]}"#,
+            Period::SevenDays,
+        ),
+        (
+            "quotas usage period token",
+            r#"{"period":"7d","summary":{"requests":0,"prompt_tokens":0,"completion_tokens":0,"cost":0},"quotas":[{"provider":"*","period":"today","used":0,"limit":1,"unit":"usd","resets_at":"2026-09-08T00:00:00Z"}],"by_model":[]}"#,
+            Period::SevenDays,
+        ),
+        (
+            "too many quotas",
+            too_many_quotas.as_str(),
+            Period::SevenDays,
+        ),
     ];
     for (name, body, period) in cases {
         let error = parse(body.as_bytes(), period).expect_err(name);
@@ -125,10 +216,24 @@ fn parse_rejects_unsafe_or_unbounded_bodies() {
 #[test]
 fn normalize_period_defaults_and_rejects() {
     assert_eq!(normalize_period("").expect("default"), Period::SevenDays);
-    assert_eq!(
-        code_of(&normalize_period("week").expect_err("week")),
-        ErrorCode::InvalidParams
-    );
+    for want in [
+        Period::OneHour,
+        Period::TwelveHours,
+        Period::TwentyFourHours,
+        Period::SevenDays,
+        Period::ThirtyDays,
+        Period::Today,
+        Period::ThisWeek,
+        Period::ThisMonth,
+    ] {
+        assert_eq!(normalize_period(want.as_str()).expect(want.as_str()), want);
+    }
+    for invalid in ["week", "month", "1d"] {
+        assert_eq!(
+            code_of(&normalize_period(invalid).expect_err(invalid)),
+            ErrorCode::InvalidParams
+        );
+    }
 }
 
 #[test]
