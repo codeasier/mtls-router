@@ -2,22 +2,22 @@
 //!
 //! Covers missing identity, mismatched executable, PID reuse, stop timeout,
 //! signal refusal, and a reoccupied listen port. Each case must keep the
-//! closed protocol error, never issue a PID-only signal, and never start a
-//! replacement router. This is not the default sidecar runtime path.
+//! closed protocol error, never issue a PID-only signal, never start a
+//! replacement router, and never add a termination signal when the same
+//! request is repeated. This is not the default sidecar runtime path.
 
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde_json::{json, Value};
 
+use crate::manager_core::errors::StartupStage;
 use crate::manager_core::legacy::identity::CurrentLineage;
-use crate::manager_core::legacy::stop::{
-    prepare_legacy_stop, LegacyRuntime, MigrationHost, StopBudget,
-};
+use crate::manager_core::legacy::stop::{prepare_legacy_stop, LegacyRuntime, MigrationHost};
 use crate::manager_core::process::{Identity as ProcessIdentity, ProcessError, SignalKind, Status};
 use crate::manager_core::state::{self, write as write_state, RouterState, StateError};
 use crate::manager_core::{FakeBackend, Manager, StartedRouter};
@@ -179,16 +179,29 @@ struct Expect {
     state_kept: bool,
 }
 
-fn assert_prepare(host: &CaseHost, path: &std::path::Path, expect: &Expect) {
-    let error = prepare_legacy_stop(&current_v4(), path, host, &StopBudget::default())
-        .expect_err("fail-closed prepare");
+fn runtime(path: &Path, host: &Arc<CaseHost>) -> LegacyRuntime {
+    LegacyRuntime::new(
+        current_v4(),
+        path.to_path_buf(),
+        path.with_file_name("legacy-migration.json"),
+    )
+    .with_host(host.clone())
+}
+
+fn assert_prepare(host: &Arc<CaseHost>, path: &Path, expect: &Expect) {
+    let runtime = runtime(path, host);
+    let error = prepare_legacy_stop(&runtime).expect_err("fail-closed prepare");
     assert_eq!(error.code, expect.code);
+    assert_eq!(error.stage, Some(StartupStage::StateReconcile));
     assert_eq!(host.signals().len(), expect.signals, "{:?}", host.signals());
     if expect.state_kept {
         assert!(state::read(path).is_ok());
     } else {
         assert_eq!(state::read(path), Err(StateError::NotFound));
     }
+    // Repeating the same request must never add a termination signal.
+    let _ = prepare_legacy_stop(&runtime);
+    assert_eq!(host.signals().len(), expect.signals, "{:?}", host.signals());
 }
 
 async fn assert_manager(host: Arc<CaseHost>, path: PathBuf, expect: &Expect) {
@@ -205,7 +218,7 @@ async fn assert_manager(host: Arc<CaseHost>, path: PathBuf, expect: &Expect) {
         })
     });
     let manager = Manager::new(crate::manager_core::metadata::info(), backend)
-        .with_legacy(LegacyRuntime::new(current_v4(), path.clone()).with_host(host.clone()));
+        .with_legacy(runtime(&path, &host));
     let response = manager
         .handle(Request {
             id: "fail-closed".into(),
@@ -224,6 +237,18 @@ async fn assert_manager(host: Arc<CaseHost>, path: PathBuf, expect: &Expect) {
     } else {
         assert_eq!(state::read(&path), Err(StateError::NotFound));
     }
+    let _ = manager
+        .handle(Request {
+            id: "fail-closed-retry".into(),
+            method: Method::RouterMigrateLegacy,
+            params: Some(json!({})),
+        })
+        .await;
+    assert_eq!(
+        host.signals().len(),
+        expect.signals,
+        "retry must not re-signal"
+    );
     let _ = fs::remove_dir_all(path.parent().unwrap());
 }
 
@@ -231,8 +256,8 @@ fn error_code_name(code: ErrorCode) -> Value {
     serde_json::to_value(code).expect("error code")
 }
 
-fn missing_identity_host(value: &RouterState) -> CaseHost {
-    let host = CaseHost::new();
+fn missing_identity_host(value: &RouterState) -> Arc<CaseHost> {
+    let host = Arc::new(CaseHost::new());
     *host.force_genuine.lock().unwrap() = true;
     host.set_status(value.pid, Status::Genuine);
     host.set_status(value.manager_pid, Status::Absent);
@@ -296,7 +321,7 @@ fn mismatched_executable_never_signals() {
         let mut value = load_release(fixture);
         value.binary_path = r"C:\other\mtls-router.exe".into();
         let path = temp_state(&format!("exe-{fixture}"), &value);
-        let host = CaseHost::new();
+        let host = Arc::new(CaseHost::new());
         *host.mismatch_binary.lock().unwrap() = true;
         host.set_status(value.pid, Status::Genuine);
         host.set_status(value.manager_pid, Status::Absent);
@@ -323,7 +348,7 @@ fn pid_reuse_never_signals() {
     for fixture in RELEASES {
         let value = load_release(fixture);
         let path = temp_state(&format!("reuse-{fixture}"), &value);
-        let host = CaseHost::new();
+        let host = Arc::new(CaseHost::new());
         host.set_status(value.pid, Status::Stale);
         host.set_status(value.manager_pid, Status::Absent);
         host.live_inspect(value.pid, "reused-start", "/other-router");
@@ -344,7 +369,7 @@ fn pid_reuse_never_signals() {
 fn timeout_keeps_state_and_does_not_start() {
     let value = load_release(RELEASES[0]);
     let path = temp_state("timeout", &value);
-    let host = CaseHost::new();
+    let host = Arc::new(CaseHost::new());
     host.set_status(value.pid, Status::Genuine);
     host.set_status(value.manager_pid, Status::Absent);
     assert_prepare(
@@ -370,7 +395,7 @@ fn timeout_keeps_state_and_does_not_start() {
 fn refusal_never_issues_termination() {
     let value = load_release(RELEASES[1]);
     let path = temp_state("refuse", &value);
-    let host = CaseHost::new();
+    let host = Arc::new(CaseHost::new());
     host.set_status(value.pid, Status::Genuine);
     host.set_status(value.manager_pid, Status::Absent);
     *host.refuse.lock().unwrap() = Some(ProcessError::PermissionDenied);
@@ -390,7 +415,7 @@ fn refusal_never_issues_termination() {
 fn reoccupied_port_does_not_start() {
     let value = load_release(RELEASES[0]);
     let path = temp_state("reoccupied", &value);
-    let host = CaseHost::new();
+    let host = Arc::new(CaseHost::new());
     host.set_status(value.pid, Status::Genuine);
     host.set_status(value.manager_pid, Status::Absent);
     host.after_signal

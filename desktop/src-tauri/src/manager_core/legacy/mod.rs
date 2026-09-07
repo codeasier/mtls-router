@@ -1,8 +1,10 @@
-//! Legacy installation identity and verified one-shot stop.
+//! Legacy installation identity, verified one-shot stop, and the durable
+//! per-generation attempt record that forbids duplicate termination.
 //!
 //! This module is not wired into the current sidecar runtime path.
 
 mod identity;
+mod record;
 mod stop;
 
 #[cfg(test)]
@@ -15,6 +17,7 @@ pub use identity::{
     record_allows_migration, record_allows_reclaim, router_identity, supported_legacy_source,
     CurrentLineage, RecordedIdentity,
 };
+pub use record::{IssuedSignal, MigrationOutcome, MigrationRecord, CORRUPT_RECORD_LINE};
 pub use stop::{
     prepare_legacy_stop, previous_manager_absent, resample_port, router_genuine, stop_verified,
     verified_migratable, LegacyRuntime, MigrationHost, ProcessHost, StopBudget,

@@ -7,6 +7,7 @@ use std::fs;
 use std::io::{self, ErrorKind};
 use std::path::Path;
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -74,17 +75,27 @@ impl StateError {
 /// Decodes one JSON object. Missing and permission errors stay distinguishable
 /// from trailing or malformed JSON (`Corrupt`).
 pub fn read(path: impl AsRef<Path>) -> Result<RouterState, StateError> {
+    read_json(path)
+}
+
+pub fn write(path: impl AsRef<Path>, value: &RouterState) -> Result<(), StateError> {
+    write_json(path, value)
+}
+
+pub fn read_json<T: DeserializeOwned>(path: impl AsRef<Path>) -> Result<T, StateError> {
     let bytes = fs::read(path.as_ref()).map_err(|error| StateError::from_io(&error))?;
     let bytes = strip_bom(&bytes);
     let mut de = serde_json::Deserializer::from_slice(bytes);
-    let value = RouterState::deserialize(&mut de).map_err(|_| StateError::Corrupt)?;
+    let value = T::deserialize(&mut de).map_err(|_| StateError::Corrupt)?;
     match de.end() {
         Ok(()) => Ok(value),
         Err(_) => Err(StateError::Corrupt),
     }
 }
 
-pub fn write(path: impl AsRef<Path>, value: &RouterState) -> Result<(), StateError> {
+/// Writes through a same-directory temp file and rename so readers never see
+/// a partial document.
+pub fn write_json<T: Serialize>(path: impl AsRef<Path>, value: &T) -> Result<(), StateError> {
     let path = path.as_ref();
     let dir = path.parent().ok_or(StateError::Io)?;
     fs::create_dir_all(dir).map_err(|error| StateError::from_io(&error))?;

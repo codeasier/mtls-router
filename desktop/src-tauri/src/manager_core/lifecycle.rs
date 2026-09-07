@@ -70,6 +70,10 @@ pub struct Manager<B> {
     agent: AgentService,
     trusted: Option<Arc<dyn TrustedCatalog>>,
     legacy: Option<LegacyRuntime>,
+    /// Serializes the record-then-signal section of legacy migration (Go
+    /// `operationMu`) so two overlapping requests cannot both pass the
+    /// once-per-generation check.
+    legacy_gate: Mutex<()>,
     failure: Mutex<Option<LatchedFailure>>,
 }
 
@@ -85,6 +89,7 @@ impl<B: Backend> Manager<B> {
             agent: isolated_service(),
             trusted: None,
             legacy: None,
+            legacy_gate: Mutex::new(()),
             failure: Mutex::new(None),
         }
     }
@@ -242,6 +247,14 @@ impl<B: Backend> Manager<B> {
             }
             Err(()) => summary.push_str("agents unavailable\n"),
         }
+        if let Some(line) = self
+            .legacy
+            .as_ref()
+            .and_then(LegacyRuntime::diagnostic_line)
+        {
+            summary.push_str(&line);
+            summary.push('\n');
+        }
         Ok(DiagnosticsResult {
             summary: bound_text(&sanitize_text(&summary), MAX_DIAGNOSTICS_SIZE),
             router_state: Some(found.classification.as_str().to_owned()),
@@ -309,12 +322,11 @@ impl<B: Backend> Manager<B> {
             return Err(method_unavailable());
         };
         decode_empty(params)?;
-        if let Err(error) = prepare_legacy_stop(
-            &legacy.current,
-            &legacy.desktop_state_path,
-            legacy.host.as_ref(),
-            &legacy.budget,
-        ) {
+        let prepared = {
+            let _gate = self.legacy_gate.lock().expect("legacy gate");
+            prepare_legacy_stop(legacy)
+        };
+        if let Err(error) = prepared {
             if error.should_latch() {
                 self.latch_startup_failure(&error);
             }

@@ -37,6 +37,11 @@ impl Paths {
     pub fn installation_file(&self) -> PathBuf {
         self.desktop_data_dir.join("installation.json")
     }
+
+    /// Durable once-per-generation legacy migration attempt record.
+    pub fn legacy_migration_file(&self) -> PathBuf {
+        self.desktop_data_dir.join("legacy-migration.json")
+    }
 }
 
 pub fn resolve_with(os: &str, home: &Path, getenv: impl Fn(&str) -> String) -> Paths {
@@ -175,6 +180,10 @@ mod tests {
         assert_eq!(
             got.installation_file(),
             PathBuf::from("desktop-data/installation.json")
+        );
+        assert_eq!(
+            got.legacy_migration_file(),
+            PathBuf::from("desktop-data/legacy-migration.json")
         );
     }
 }
