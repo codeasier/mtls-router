@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "description": "Shared trusted-channel conformance for Go trustedrouter and the Rust workbench client. Authorization is never sent until the same TCP connection has proven router identity. Redial, redirect, proxy, upgrade, timeout, and cancel fail closed.",
+  "key_canary": "conformance-key-canary-9rtr",
+  "trusted": {
+    "pid": 91,
+    "deployment_id": "prod-a",
+    "management_protocol_version": "4"
+  },
+  "cases": [
+    {
+      "id": "happy_same_connection",
+      "listen": "loopback",
+      "version_status": 200,
+      "version": { "pid": 91, "deployment_id": "prod-a", "management_protocol_version": "4" },
+      "process": "genuine",
+      "connection": "keep-alive",
+      "expect_authorization": true,
+      "expect_error": null
+    },
+    {
+      "id": "pid_mismatch",
+      "listen": "loopback",
+      "version_status": 200,
+      "version": { "pid": 92, "deployment_id": "prod-a", "management_protocol_version": "4" },
+      "process": "genuine",
+      "connection": "keep-alive",
+      "expect_authorization": false,
+      "expect_error": "identity"
+    },
+    {
+      "id": "deployment_mismatch",
+      "listen": "loopback",
+      "version_status": 200,
+      "version": { "pid": 91, "deployment_id": "other", "management_protocol_version": "4" },
+      "process": "genuine",
+      "connection": "keep-alive",
+      "expect_authorization": false,
+      "expect_error": "identity"
+    },
+    {
+      "id": "process_stale",
+      "listen": "loopback",
+      "version_status": 200,
+      "version": { "pid": 91, "deployment_id": "prod-a", "management_protocol_version": "4" },
+      "process": "stale",
+      "connection": "keep-alive",
+      "expect_authorization": false,
+      "expect_error": "identity"
+    },
+    {
+      "id": "connection_close_after_version",
+      "listen": "loopback",
+      "version_status": 200,
+      "version": { "pid": 91, "deployment_id": "prod-a", "management_protocol_version": "4" },
+      "process": "genuine",
+      "connection": "close",
+      "expect_authorization": false,
+      "expect_error": "redial"
+    },
+    {
+      "id": "redirect",
+      "listen": "loopback",
+      "version_status": 302,
+      "process": "genuine",
+      "connection": "keep-alive",
+      "expect_authorization": false,
+      "expect_error": "redirect"
+    },
+    {
+      "id": "protocol_upgrade",
+      "listen": "loopback",
+      "version_status": 101,
+      "process": "genuine",
+      "connection": "upgrade",
+      "expect_authorization": false,
+      "expect_error": "upgrade"
+    },
+    {
+      "id": "timeout_during_version",
+      "listen": "loopback",
+      "version_status": 200,
+      "hang": "version",
+      "process": "genuine",
+      "connection": "keep-alive",
+      "expect_authorization": false,
+      "expect_error": "timeout"
+    },
+    {
+      "id": "cancel_during_version",
+      "listen": "loopback",
+      "version_status": 200,
+      "hang": "version",
+      "process": "genuine",
+      "connection": "keep-alive",
+      "expect_authorization": false,
+      "expect_error": "cancel"
+    },
+    {
+      "id": "non_loopback",
+      "listen": "10.66.0.2:19099",
+      "process": "genuine",
+      "expect_authorization": false,
+      "expect_error": "listen"
+    },
+    {
+      "id": "proxy_disabled",
+      "kind": "invariant",
+      "expect_authorization": false,
+      "expect_error": null,
+      "notes": "Clients must not honor HTTP_PROXY/HTTPS_PROXY/ALL_PROXY. Go Channel sets Transport.Proxy=nil. Rust workbench dials TcpStream directly."
+    }
+  ]
+}

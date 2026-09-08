@@ -29,3 +29,7 @@
 - `../modelcatalog` —— 实际的目录 HTTP 请求
 - `../apikeyusage` —— 实际的用量 HTTP 请求
 - `../process`、`../state`、`../protocol`
+
+## 工作台共享向量
+
+- `testdata/workbench-conformance.json` 与 `conformance_test.go` 锁死桌面工作台通道与本包相同的信任语义：PID/deployment 不匹配、非 loopback、redirect、proxy、`Connection: close`、升级、超时、取消时，带 Authorization 的请求不得发出。`Channel::fetch` 语义不变。

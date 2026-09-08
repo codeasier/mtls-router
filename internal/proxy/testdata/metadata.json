@@ -1,0 +1,13 @@
+{
+  "purpose": "Credential-free 9Router contract fixtures for the chat image workbench.",
+  "upstream": "9Router",
+  "version": "v0.5.45",
+  "commit": "6fcd27337a7893642c7fe630840d0a641743f28f",
+  "captured": "2026-09-08",
+  "notes": [
+    "ag/gemini-3.1-flash-image text-to-image succeeded; reference images were dropped by the gateway.",
+    "cx/gpt-5.5-image accepted reference images and occasionally returned 502; edits could take about 77s.",
+    "Approximate IDs such as cx/gpt-5.6-image are not the gpt-image-2 preset.",
+    "URL-only generation payloads are not a success path; the workbench must not download remote URLs."
+  ]
+}

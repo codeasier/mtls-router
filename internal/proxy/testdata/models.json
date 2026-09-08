@@ -1,0 +1,11 @@
+{
+  "object": "list",
+  "data": [
+    { "id": "gemini-3.8-flash", "object": "model" },
+    { "id": "gpt-5.4-mini", "object": "model" },
+    { "id": "deepseek-v4-flash", "object": "model" },
+    { "id": "ag/gemini-3.1-flash-image", "object": "model" },
+    { "id": "cx/gpt-5.5-image", "object": "model" },
+    { "id": "provider/slash-model", "object": "model" }
+  ]
+}
