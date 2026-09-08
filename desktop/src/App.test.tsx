@@ -79,7 +79,7 @@ describe("App navigation", () => {
     render(<App api={createMockApi()} />);
 
     const navigation = screen.getByRole("navigation", { name: "主导航" });
-    expect(navigation.querySelectorAll(".nav-marker svg")).toHaveLength(6);
+    expect(navigation.querySelectorAll(".nav-marker svg")).toHaveLength(7);
     expect(navigation).not.toHaveTextContent("01");
     expect(navigation).not.toHaveTextContent("06");
     expect(screen.getByText("CR")).toBeInTheDocument();

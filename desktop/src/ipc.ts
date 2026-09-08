@@ -45,7 +45,27 @@ export const COMMANDS = {
   resolveAppQuit: "resolve_app_quit",
   updateCheck: "update_check",
   updateInstall: "update_install",
+  workbenchReadiness: "workbench_readiness",
+  workbenchRefreshCatalogs: "workbench_refresh_catalogs",
+  workbenchList: "workbench_list",
+  workbenchCreate: "workbench_create",
+  workbenchSelect: "workbench_select",
+  workbenchDelete: "workbench_delete",
+  workbenchSetOptions: "workbench_set_options",
+  workbenchPickReference: "workbench_pick_reference",
+  workbenchImportBytes: "workbench_import_bytes",
+  workbenchQuoteAsset: "workbench_quote_asset",
+  workbenchSend: "workbench_send",
+  workbenchRegenerate: "workbench_regenerate",
+  workbenchCancel: "workbench_cancel",
+  workbenchSaveAsset: "workbench_save_asset",
+  workbenchRebuild: "workbench_rebuild",
 } as const;
+
+export const WORKBENCH_CHAT_DELTA_EVENT = "workbench-chat-delta";
+export const WORKBENCH_PHASE_EVENT = "workbench-phase";
+export const WORKBENCH_IMAGE_STATUS_EVENT = "workbench-image-status";
+export const WORKBENCH_OPERATION_DONE_EVENT = "workbench-operation-done";
 
 export const MAX_LOG_LINES = 200;
 
@@ -788,6 +808,107 @@ export interface AgentWriteResult {
   state_backup?: AgentBackupFileEffect;
 }
 
+export interface WorkbenchImageChoice {
+  id: string;
+  display_name: string;
+  verified_edit: boolean;
+  allowed: boolean;
+}
+
+export interface WorkbenchReadiness {
+  ready: boolean;
+  has_credential: boolean;
+  router_trusted: boolean;
+  health_ok: boolean;
+  store_corrupt: boolean;
+  store_incompatible: boolean;
+  chat_models: string[];
+  image_models: WorkbenchImageChoice[];
+  can_submit: boolean;
+  reason: string | null;
+  busy: boolean;
+}
+
+export interface WorkbenchConversation {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  selected_chat_model: string | null;
+  selected_image_model: string | null;
+  selected_size: string;
+  message_ids: string[];
+}
+
+export interface WorkbenchMessage {
+  id: string;
+  conversation_id: string;
+  role: string;
+  visible_text: string;
+  created_at: string;
+  reference_asset_id: string | null;
+  phase: string | null;
+  error_kind: string | null;
+  job_ids: string[];
+}
+
+export interface WorkbenchImageJob {
+  id: string;
+  message_id: string;
+  action: string;
+  prompt: string;
+  size: string;
+  status: string;
+  output_asset_id: string | null;
+  error_kind: string | null;
+}
+
+export interface WorkbenchAsset {
+  id: string;
+  format: string;
+  byte_len: number;
+  width: number;
+  height: number;
+  source: string;
+}
+
+export interface WorkbenchSnapshot {
+  selected_conversation_id: string | null;
+  conversations: WorkbenchConversation[];
+  messages: WorkbenchMessage[];
+  jobs: WorkbenchImageJob[];
+  assets: WorkbenchAsset[];
+}
+
+export interface WorkbenchChatDelta {
+  operation_id: string;
+  conversation_id: string;
+  message_id: string;
+  visible_text: string;
+}
+
+export interface WorkbenchPhaseEvent {
+  operation_id: string;
+  conversation_id: string;
+  message_id: string;
+  phase: string;
+}
+
+export interface WorkbenchImageStatusEvent {
+  operation_id: string;
+  conversation_id: string;
+  message_id: string;
+  job_id: string;
+  status: string;
+  output_asset_id?: string | null;
+  error_kind?: string | null;
+}
+
+export interface WorkbenchOperationDone {
+  operation_id: string;
+  conversation_id: string;
+}
+
 export interface DesktopApi {
   getPollSnapshot(): Promise<PollSnapshot>;
   subscribePollSnapshots(
@@ -869,6 +990,52 @@ export interface DesktopApi {
   setNativeLanguage(language: NativeLanguage): Promise<void>;
   getDesktopPaths(): Promise<DesktopPaths>;
   prepareForUninstall(): Promise<void>;
+  getWorkbenchReadiness(): Promise<WorkbenchReadiness>;
+  refreshWorkbenchCatalogs(): Promise<WorkbenchReadiness>;
+  listWorkbench(): Promise<WorkbenchSnapshot>;
+  createWorkbenchConversation(): Promise<WorkbenchConversation>;
+  selectWorkbenchConversation(conversationId: string): Promise<string | null>;
+  deleteWorkbenchConversation(conversationId: string): Promise<{
+    selected_conversation_id: string | null;
+    conversations: WorkbenchConversation[];
+  }>;
+  setWorkbenchOptions(
+    conversationId: string,
+    options: {
+      chatModel?: string;
+      imageModel?: string;
+      size?: string;
+    },
+  ): Promise<void>;
+  pickWorkbenchReference(): Promise<WorkbenchAsset>;
+  importWorkbenchBytes(bytes: Uint8Array): Promise<WorkbenchAsset>;
+  quoteWorkbenchAsset(assetId: string): Promise<WorkbenchAsset>;
+  sendWorkbench(
+    conversationId: string,
+    text: string,
+    forceImage: boolean,
+    referenceAssetId?: string | null,
+  ): Promise<WorkbenchSnapshot>;
+  regenerateWorkbench(
+    conversationId: string,
+    jobId: string,
+    referenceAssetId?: string | null,
+  ): Promise<Pick<WorkbenchSnapshot, "messages" | "jobs" | "assets">>;
+  cancelWorkbench(): Promise<void>;
+  saveWorkbenchAsset(assetId: string): Promise<void>;
+  rebuildWorkbench(): Promise<{ version: number }>;
+  subscribeWorkbenchChatDelta(
+    listener: (event: WorkbenchChatDelta) => void,
+  ): Promise<UnlistenFn>;
+  subscribeWorkbenchPhase(
+    listener: (event: WorkbenchPhaseEvent) => void,
+  ): Promise<UnlistenFn>;
+  subscribeWorkbenchImageStatus(
+    listener: (event: WorkbenchImageStatusEvent) => void,
+  ): Promise<UnlistenFn>;
+  subscribeWorkbenchOperationDone(
+    listener: (event: WorkbenchOperationDone) => void,
+  ): Promise<UnlistenFn>;
 }
 
 export type InvokeFn = <T>(
@@ -1029,6 +1196,75 @@ export function createDesktopApi(
       invoke(COMMANDS.nativeLanguageSet, { language }),
     getDesktopPaths: () => invoke(COMMANDS.desktopPaths),
     prepareForUninstall: () => invoke(COMMANDS.prepareForUninstall),
+    getWorkbenchReadiness: () => invoke(COMMANDS.workbenchReadiness),
+    refreshWorkbenchCatalogs: () => invoke(COMMANDS.workbenchRefreshCatalogs),
+    listWorkbench: () => invoke(COMMANDS.workbenchList),
+    createWorkbenchConversation: () => invoke(COMMANDS.workbenchCreate),
+    selectWorkbenchConversation: (conversationId) =>
+      invoke(COMMANDS.workbenchSelect, {
+        request: { conversation_id: conversationId },
+      }),
+    deleteWorkbenchConversation: (conversationId) =>
+      invoke(COMMANDS.workbenchDelete, {
+        request: { conversation_id: conversationId },
+      }),
+    setWorkbenchOptions: (conversationId, options) =>
+      invoke(COMMANDS.workbenchSetOptions, {
+        request: {
+          conversation_id: conversationId,
+          chat_model: options.chatModel,
+          image_model: options.imageModel,
+          size: options.size,
+        },
+      }),
+    pickWorkbenchReference: () => invoke(COMMANDS.workbenchPickReference),
+    importWorkbenchBytes: (bytes) =>
+      invoke(COMMANDS.workbenchImportBytes, {
+        request: { bytes: Array.from(bytes) },
+      }),
+    quoteWorkbenchAsset: (assetId) =>
+      invoke(COMMANDS.workbenchQuoteAsset, {
+        request: { asset_id: assetId },
+      }),
+    sendWorkbench: (conversationId, text, forceImage, referenceAssetId) =>
+      invoke(COMMANDS.workbenchSend, {
+        request: {
+          conversation_id: conversationId,
+          text,
+          force_image: forceImage,
+          reference_asset_id: referenceAssetId ?? null,
+        },
+      }),
+    regenerateWorkbench: (conversationId, jobId, referenceAssetId) =>
+      invoke(COMMANDS.workbenchRegenerate, {
+        request: {
+          conversation_id: conversationId,
+          job_id: jobId,
+          reference_asset_id: referenceAssetId ?? null,
+        },
+      }),
+    cancelWorkbench: () => invoke(COMMANDS.workbenchCancel),
+    saveWorkbenchAsset: (assetId) =>
+      invoke(COMMANDS.workbenchSaveAsset, {
+        request: { asset_id: assetId },
+      }),
+    rebuildWorkbench: () => invoke(COMMANDS.workbenchRebuild),
+    subscribeWorkbenchChatDelta: (listener) =>
+      listen<WorkbenchChatDelta>(WORKBENCH_CHAT_DELTA_EVENT, (event) =>
+        listener(event.payload),
+      ),
+    subscribeWorkbenchPhase: (listener) =>
+      listen<WorkbenchPhaseEvent>(WORKBENCH_PHASE_EVENT, (event) =>
+        listener(event.payload),
+      ),
+    subscribeWorkbenchImageStatus: (listener) =>
+      listen<WorkbenchImageStatusEvent>(WORKBENCH_IMAGE_STATUS_EVENT, (event) =>
+        listener(event.payload),
+      ),
+    subscribeWorkbenchOperationDone: (listener) =>
+      listen<WorkbenchOperationDone>(WORKBENCH_OPERATION_DONE_EVENT, (event) =>
+        listener(event.payload),
+      ),
   };
 }
 

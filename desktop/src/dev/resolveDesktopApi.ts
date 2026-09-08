@@ -2,6 +2,7 @@ export interface DesktopApiEnv {
   DEV: boolean;
   PROD: boolean;
   VITE_MOCK?: string;
+  VITE_WORKBENCH_LIVE?: string;
 }
 
 /**
@@ -16,6 +17,10 @@ export function shouldUseMockDesktopApi(env: DesktopApiEnv): boolean {
   return env.DEV === true && env.PROD !== true && env.VITE_MOCK === "true";
 }
 
+export function shouldUseLiveWorkbench(env: DesktopApiEnv): boolean {
+  return shouldUseMockDesktopApi(env) && env.VITE_WORKBENCH_LIVE === "true";
+}
+
 export function desktopApiEnvFromImportMeta(
   meta: ImportMetaEnv = import.meta.env,
 ): DesktopApiEnv {
@@ -23,5 +28,6 @@ export function desktopApiEnvFromImportMeta(
     DEV: meta.DEV,
     PROD: meta.PROD,
     VITE_MOCK: meta.VITE_MOCK,
+    VITE_WORKBENCH_LIVE: meta.VITE_WORKBENCH_LIVE,
   };
 }

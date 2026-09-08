@@ -217,4 +217,18 @@ describe("createMockDesktopApi", () => {
     const stop = await api.subscribeUpdateProgress(() => undefined);
     expect(stop()).toBeUndefined();
   });
+
+  it("exposes a workbench fixture without keys, paths, or base64", async () => {
+    const api = createMockDesktopApi({ credentialPresent: true });
+    const conversation = await api.createWorkbenchConversation();
+    const snapshot = await api.sendWorkbench(conversation.id, "画一只猫", true);
+    const serialized = JSON.stringify({
+      readiness: await api.getWorkbenchReadiness(),
+      snapshot,
+    });
+    expect(serialized).not.toMatch(/sk-/);
+    expect(serialized).not.toMatch(/base64/);
+    expect(serialized).not.toMatch(/\/Users\//);
+    expect(serialized).not.toMatch(/image-conversations/);
+  });
 });

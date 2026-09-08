@@ -420,6 +420,86 @@ describe("appearance themes", () => {
       /76,\s*57,\s*43/,
     );
   });
+
+  it("keeps the image workbench on shared theme tokens", () => {
+    expect(compact(findRuleDeclarations(css, ".images-panel"))).toMatch(
+      /color:\s*var\(--ink\);/,
+    );
+    expect(compact(findRuleDeclarations(css, ".images-panel"))).toMatch(
+      /background:\s*var\(--paper\);/,
+    );
+    expect(compact(findRuleDeclarations(css, ".images-rail"))).toMatch(
+      /background:\s*var\(--paper-deep\);/,
+    );
+    expect(compact(findRuleDeclarations(css, ".images-mast"))).toMatch(
+      /background:\s*var\(--surface\);/,
+    );
+    expect(compact(findRuleDeclarations(css, ".images-send"))).toMatch(
+      /background:\s*var\(--signal\);/,
+    );
+    expect(compact(findRuleDeclarations(css, ".images-send"))).toMatch(
+      /color:\s*var\(--on-signal\);/,
+    );
+    expect(compact(findRuleDeclarations(css, ".images-send.is-stop"))).toMatch(
+      /background:\s*var\(--danger\);/,
+    );
+    expect(compact(findRuleDeclarations(css, ".images-conn.is-ok"))).toMatch(
+      /color:\s*var\(--good\);/,
+    );
+    expect(
+      compact(findRuleDeclarations(css, 'main[data-section="images"]')),
+    ).toMatch(/background:\s*var\(--paper\);/);
+    const imagesCss = css.slice(css.indexOf(".images-panel {"));
+    expect(imagesCss).not.toMatch(/--sl-/);
+    expect(imagesCss).not.toMatch(
+      /#f7f7f8|#efeff1|#1f1f1f|#111111|#ececee|#c43c2e|#cfcfd4/,
+    );
+    expect(
+      compact(findRuleDeclarations(css, ".images-composer-shell")),
+    ).toMatch(/border-radius:\s*28px/);
+    expect(
+      compact(findRuleDeclarations(css, ".images-composer-shell")),
+    ).toMatch(/box-shadow:\s*var\(--shadow-card\)/);
+    expect(
+      compact(findRuleDeclarations(css, ".images-composer-shell:focus-within")),
+    ).toMatch(/box-shadow:\s*var\(--focus-ring\)/);
+    expect(
+      compact(
+        findRuleDeclarations(
+          css,
+          ".images-composer-shell textarea:focus-visible",
+        ),
+      ),
+    ).toMatch(/outline:\s*none/);
+    expect(
+      compact(
+        findRuleDeclarations(
+          css,
+          ".images-composer-shell textarea:focus-visible",
+        ),
+      ),
+    ).toMatch(/box-shadow:\s*none/);
+    expect(
+      compact(findRuleDeclarations(css, ".images-stage.is-landing")),
+    ).toMatch(/flex-direction:\s*column/);
+    expect(
+      compact(
+        findRuleDeclarations(css, ".images-stage.is-landing .images-composer"),
+      ),
+    ).toMatch(/justify-content:\s*center/);
+    expect(compact(findRuleDeclarations(css, ".images-suggest"))).toMatch(
+      /margin-top/,
+    );
+    expect(compact(findRuleDeclarations(css, ".images-dial"))).toMatch(
+      /border-radius:\s*999px/,
+    );
+    expect(
+      compact(findRuleDeclarations(css, ".images-dial select:focus-visible")),
+    ).toMatch(/outline:\s*none/);
+    expect(
+      compact(findRuleDeclarations(css, ".images-dial select:focus-visible")),
+    ).toMatch(/box-shadow:\s*none/);
+  });
 });
 
 describe("narrow overview and compact nav", () => {

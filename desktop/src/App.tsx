@@ -8,6 +8,7 @@ import {
 
 import { AgentPage, type LeaveGuard } from "./AgentPage";
 import { ApiKeysPage } from "./ApiKeysPage";
+import { ImagesPage } from "./ImagesPage";
 import { I18nProvider, useI18n } from "./i18n";
 import { desktopApi, type DesktopApi, type UpdateCheckResult } from "./ipc";
 import { LogsPage } from "./LogsPage";
@@ -24,6 +25,7 @@ const sectionKeys: Record<SectionId, string> = {
   agents: "section.agents",
   "api-keys": "section.apiKeys",
   usage: "section.usage",
+  images: "section.images",
   logs: "section.logs",
   settings: "section.settings",
 };
@@ -33,6 +35,7 @@ const navigationKeys: Record<SectionId, TranslationKey> = {
   agents: "nav.agents",
   "api-keys": "nav.apiKeys",
   usage: "nav.usage",
+  images: "nav.images",
   logs: "nav.logs",
   settings: "nav.settings",
 };
@@ -42,6 +45,7 @@ const shortNavigationKeys: Record<SectionId, TranslationKey> = {
   agents: "nav.agentsShort",
   "api-keys": "nav.apiKeysShort",
   usage: "nav.usageShort",
+  images: "nav.imagesShort",
   logs: "nav.logsShort",
   settings: "nav.settingsShort",
 };
@@ -377,7 +381,7 @@ function AppContent({ api }: { api: DesktopApi }) {
         </div>
       </aside>
 
-      <main id="main-content">
+      <main id="main-content" data-section={activeSection}>
         <header className="topbar">
           <h1 ref={sectionHeadingRef} tabIndex={-1}>
             {t(`${sectionKey}.title` as TranslationKey)}
@@ -419,6 +423,7 @@ function AppContent({ api }: { api: DesktopApi }) {
               onNavigateToApiKeys={() => navigate("api-keys")}
             />
           )}
+          {activeSection === "images" && <ImagesPage api={api} />}
           {activeSection === "settings" && (
             <SettingsPage
               api={api}

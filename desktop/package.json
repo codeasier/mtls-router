@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "vite",
     "dev:mock": "node ./scripts/dev-mock.mjs",
+    "dev:mock:live": "node ./scripts/dev-mock-live.mjs",
     "dev:tauri:reuse": "node ./scripts/dev-tauri-reuse.mjs",
     "dev:agent": "node ./scripts/dev-agent.mjs",
     "tauri": "tauri",

@@ -12,6 +12,7 @@ const assetsDir = path.join(desktopDir, "dist", "assets");
 const forbidden = [
   "mockDesktopApi",
   "__MTLS_BROWSER_MOCK__",
+  "__MTLS_LIVE_WORKBENCH__",
   "revision-mock",
   "mock-desktop",
 ];

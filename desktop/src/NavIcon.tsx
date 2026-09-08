@@ -44,6 +44,14 @@ export function NavIcon({ id }: { id: SectionId }) {
           <path d="M3.2 12.2V8.4h2.3V12.2zM6.85 12.2V4.6h2.3v7.6zM10.5 12.2V6.7h2.3v5.5z" />
         </IconShell>
       );
+    case "images":
+      return (
+        <IconShell>
+          <rect x="2.8" y="3.4" width="10.4" height="9.2" rx="1.6" />
+          <path d="M4.4 10.2 6.6 7.6l2.1 2.3 1.4-1.6 2.3 2.1" />
+          <circle cx="6.1" cy="6.1" r="0.85" />
+        </IconShell>
+      );
     case "logs":
       return (
         <IconShell>

@@ -18,6 +18,8 @@ export const en: Record<TranslationKey, string> = {
   "nav.apiKeysShort": "Key",
   "nav.usage": "Usage",
   "nav.usageShort": "Usage",
+  "nav.images": "Chat images",
+  "nav.imagesShort": "Images",
   "nav.logs": "Runtime logs",
   "nav.logsShort": "Logs",
   "nav.settings": "Settings",
@@ -26,6 +28,7 @@ export const en: Record<TranslationKey, string> = {
   "section.agents.title": "Agent configuration",
   "section.apiKeys.title": "API key",
   "section.usage.title": "Usage",
+  "section.images.title": "Chat images",
   "section.logs.title": "Runtime logs",
   "section.settings.title": "Settings",
   "placeholder.overline": "STABLE MODULE BOUNDARY",
@@ -841,4 +844,139 @@ export const en: Record<TranslationKey, string> = {
     "The desktop-saved Agent management state cannot be verified. Restart the app; if this persists, inspect the configuration manually.",
   "agents.cleanup.diagnostic.writesDisabled":
     "Agent configuration writes are unavailable. Recover the pending transaction or restart the app first.",
+  "images.brand": "Chat images",
+  "images.history.expand": "Show conversation history",
+  "images.history.collapse": "Hide conversation history",
+  "images.newConversation": "New conversation",
+  "images.newConversationShort": "New chat",
+  "images.dial.chat": "Chat",
+  "images.dial.image": "Image",
+  "images.uploadShort": "Upload",
+  "images.composerInputHint":
+    "Describe a scene, or just chat. Enter sends, Shift+Enter breaks the line",
+  "images.deleteConversation": "Delete conversation",
+  "images.deleteConfirmTitle": "Delete this conversation?",
+  "images.deleteConfirm":
+    "Messages in this conversation will be removed, and unreferenced images will be deleted.",
+  "images.deleteCancel": "Cancel",
+  "images.deleteAction": "Delete",
+  "images.emptyTitle": "What do you want to draw?",
+  "images.emptyBody":
+    "Say “draw a…”, or tap Imagine. You can also quote a previous image or upload one, then say “make it a night scene.”",
+  "images.suggestions": "Suggestions",
+  "images.chip.cat": "Draw an orange cat on a windowsill",
+  "images.chip.cat.label": "Windowsill cat",
+  "images.chip.edit": "Change the background into a rainy neon night",
+  "images.chip.edit.label": "Rain alley",
+  "images.chip.poster": "Make a square poster",
+  "images.chip.poster.label": "Film breakfast",
+  "images.chip.arch":
+    "Isometric technical illustration: modern microservices cloud architecture on clean white background. Client apps on the left, API gateway and auth in the center with order/inventory/billing services and load balancers, database cluster and cache on the right. Sharp lines, soft shadows, slate blue and teal accents, editorial publishing quality.",
+  "images.chip.arch.label": "Microservices Cloud",
+  "images.chip.arch.desc":
+    "Isometric engineering diagram of services, gateway, and database",
+  "images.chip.cicd":
+    "Isometric 3D illustration: modern CI/CD software factory. Developer pushes git commits onto conveyor belt across test, build, security, release stages. Clean vector 3D style, slate and mint green palette, sharp edges.",
+  "images.chip.cicd.label": "CI/CD Pipeline",
+  "images.chip.cicd.desc":
+    "Automated build, test, security, and deployment factory scene",
+  "images.chip.aiPair":
+    "Cinematic close-up: AI pair programming workstation. Ultrawide monitor showing code editor with TypeScript and AI sidebar with diff highlights. Developer hands on mechanical keyboard, warm ambient light, editorial tech photography.",
+  "images.chip.aiPair.label": "AI Pair Programming",
+  "images.chip.aiPair.desc":
+    "Ultrawide IDE with AI code diffs and holographic suggestions",
+  "images.who.you": "You",
+  "images.who.assistant": "Assistant",
+  "images.conn.ok": "Connected",
+  "images.conn.checking": "Checking",
+  "images.conn.blocked": "Not ready",
+  "images.conn.busy": "In progress",
+  "images.referenceChip": "Reference attached",
+  "images.clearReferenceShort": "Remove reference",
+  "images.chatModel": "Chat model",
+  "images.imageModel": "Image model",
+  "images.size": "Size",
+  "images.size.square": "1:1",
+  "images.size.landscape": "16:9",
+  "images.size.portrait": "9:16",
+  "images.send": "Send",
+  "images.imagine": "Imagine",
+  "images.stop": "Stop",
+  "images.composerPlaceholder": "Describe what you want to chat about or draw",
+  "images.composerHint":
+    "Enter sends, Shift+Enter breaks the line. Quote an image or upload one, then say how to change it. Imagine skips the chat and generates.",
+  "images.upload": "Upload reference",
+  "images.clearReference": "Remove reference",
+  "images.quote": "Use this image",
+  "images.regenerate": "Regenerate",
+  "images.save": "Save image",
+  "images.referenceLabel": "Reference for this conversation",
+  "images.editWarning":
+    "This model is not verified for reference edits, so the gateway may ignore the image. The request still uses your selected model and will not switch to gpt-image-2.",
+  "images.storageNotice":
+    "Conversations and images are stored unencrypted in the image-workbench folder under the app data directory. Delete a conversation or uninstall the app to remove them.",
+  "images.limits":
+    "Text is limited to 20 KiB. Reference images must be static PNG, JPEG, or WebP and at most 20 MiB after decode.",
+  "images.phase.requesting": "Connecting",
+  "images.phase.thinking": "Writing a reply",
+  "images.phase.imaging": "Generating an image",
+  "images.status.running": "Generating",
+  "images.status.succeeded": "Done",
+  "images.status.failed": "Failed",
+  "images.status.cancelled": "Cancelled",
+  "images.status.interrupted": "Unfinished",
+  "images.live.banner":
+    "This browser mock talks to 127.0.0.1:19099. Conversations stay in this page only. If the desktop already saved a key, Vite injects it locally; otherwise paste one on the API key page. This path does not use the Tauri trusted channel.",
+  "images.ready.ok": "Workbench is ready",
+  "images.ready.checking":
+    "Checking 127.0.0.1:19099. The first model catalog fetch can take about 15 seconds…",
+  "images.ready.noCredential":
+    "No API key is saved. Save one on the key page before sending.",
+  "images.refreshReady": "Check again",
+  "images.ready.router":
+    "The local router is not ready. Start it and wait for a healthy check before sending.",
+  "images.ready.catalog":
+    "The model catalog is unavailable, so sending is disabled.",
+  "images.ready.modelMissing":
+    "This conversation's chat or image model is not in the current catalog. Choose a catalog item; nothing is auto-selected.",
+  "images.ready.storeCorrupt":
+    "Local conversation storage cannot be read. You can rebuild an empty workbench; existing data will not be overwritten automatically.",
+  "images.ready.storeIncompatible":
+    "Local conversations were written by a newer app. Update the app first; existing data will not be overwritten automatically.",
+  "images.ready.busy": "A chat-and-image operation is already running.",
+  "images.ready.unknown": "The workbench cannot send yet.",
+  "images.error.busy": "Another operation is running. The draft is unchanged.",
+  "images.error.empty": "Enter text or attach a reference image.",
+  "images.error.tooLarge": "The text exceeds the 20 KiB limit.",
+  "images.error.imageInvalid":
+    "Only static PNG, JPEG, or WebP images are accepted.",
+  "images.error.imageTooLarge":
+    "The image exceeds the size or pixel limit and was not imported.",
+  "images.error.noReference":
+    "This edit needs a reference image in this conversation.",
+  "images.error.cancelled": "Stopped.",
+  "images.error.interrupted":
+    "The previous operation did not finish and will not retry automatically.",
+  "images.error.chatFailed":
+    "The chat request failed, so image generation did not start.",
+  "images.error.imageFailed":
+    "Image generation failed. The model selection is unchanged; you can regenerate.",
+  "images.error.timeout": "The request timed out.",
+  "images.error.identity":
+    "The local router identity changed. The operation stopped and the key was not sent on a new connection.",
+  "images.error.redial":
+    "The trusted connection had to redial, so the operation stopped.",
+  "images.error.notReady": "The workbench is not ready.",
+  "images.error.storeCorrupt": "Local storage cannot be read.",
+  "images.error.storeIncompatible":
+    "Local storage needs a newer app before it can be opened.",
+  "images.error.failed": "The operation failed.",
+  "images.rebuild": "Rebuild empty workbench",
+  "images.rebuildDone": "The workbench was rebuilt empty.",
+  "images.dropHint": "Drop to import a reference image",
+  "images.untitled": "Untitled conversation",
+  "images.noConversations": "No conversations yet.",
+  "images.starterOverline": "DRAFT ONLY",
+  "images.generatedAlt": "Generated image",
+  "images.referenceAlt": "Reference image",
 };
