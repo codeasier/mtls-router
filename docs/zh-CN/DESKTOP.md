@@ -2,7 +2,7 @@
 
 [English](../DESKTOP.md)
 
-Tauri 桌面应用是固定服务 `mtls-router` 的当前用户控制面板。manager 与 mTLS router 都运行在桌面进程内部：router 由独立、受监督的运行时线程监听 `127.0.0.1:19099`，manager 控制面继续响应桌面一直使用的 management protocol v4 方法。应用不会启动 `mtls-router` 或 `mtls-router-manager` 子进程，不会向 `PATH` 安装任何内容，也不提供证书、上游或组件替换控件。
+Tauri 桌面应用是固定服务 `mtls-router` 的当前用户控制面板，并带有本地「对话生图」工作台。manager 与 mTLS router 都运行在桌面进程内部：router 由独立、受监督的运行时线程监听 `127.0.0.1:19099`，manager 控制面继续响应桌面一直使用的 management protocol v4 方法。工作台是独立数据面：Rust 经不可重拨的 HTTP/1.1 连接访问该 loopback router，聊天与生图不走 manager protocol v4。应用不会启动 `mtls-router` 或 `mtls-router-manager` 子进程，不会向 `PATH` 安装任何内容，也不提供证书、上游或组件替换控件。
 
 > **CLI 停止维护。** v0.4.1 之后的版本只发布桌面应用。独立的 CLI router/manager 二进制、`setup.sh` / `setup.ps1` 以及 systemd/Docker/NSSM 服务包装都冻结在各自的历史 release tag 上，仍可从那里下载，但不再有新构建。桌面升级会识别早期 CLI 或 sidecar 时代桌面安装遗留的 router，并且只在完整进程身份校验通过后一次性接管，而不会下载或启动新的 CLI。
 
@@ -119,6 +119,16 @@ API 密钥页面会在桌面凭据存储中保存、替换或删除一个全局 
 在清理该 Agent 前，目标 Agent 的配置文件仍需按该 Agent 的要求持久化 key。单 Agent 清理会删除 Agent 文件中的托管凭据，但有意保留桌面全局 key。用户批准的恢复与清理备份也可能持久化旧 key。Rust 每次按需使用 key 时都会把它保存在 zeroizing 内存中，但清除应用引用只是 best effort，不保证能从进程或操作系统内存中进行取证级擦除。
 
 `MTLS_ROUTER_OPENAI_API_KEY` 已移除，不再提供 key。精确的非交互 manager 自动化见 [stdin manager 自动化](#stdin-manager-自动化)。
+
+## 对话生图工作台
+
+「对话生图」是本地创作面：「发送」只闲聊；「出图」仍先聊天但强制要图。Rust 在已经通过 `/version`、router 进程身份与 `/health` 的同一条不可重拨 loopback 连接上编排 `POST /v1/chat/completions`（SSE）和 `POST /v1/images/generations?response_format=binary`。改图请求同时带 `image` 与 `images: [data URI]`。成功时优先按 magic bytes 识别图片；仅当 body 是 JSON 时读取 `data[0].b64_json`。不会下载远程 `url`。
+
+对话模型是本次 `/v1/models` 里不含 `/` 的 ID，目录含 `gemini-3.8-flash` 时默认选中。生图模型由 `/v1/models/image` 独立解析并原样呈现：每个上游 ID 都以自身名称展示，不做别名映射、过滤或白名单；默认 ID 缺失时自动选中目录第一项。目录整体缺失时禁用提交，直到用户从目录另选。未核验参考图改图的模型在将发送 edit 时显示警告，请求仍发往当前所选模型。
+
+显式参考图（引用、原生对话框上传、粘贴或拖入）使全部 job 为 `edit`。无参考图时点「出图」为 `generate`，即使会话已有图。隐式中英改图闭集只复用本会话上一张图。「重新生成」复用已存 prompt，不再打聊天。全应用同时只有一个工作台操作；「停止」中止当前 HTTP。草稿（含参考图）按会话隔离，重启不恢复。
+
+数据在 `{data_dir}/image-workbench/`（`index.json` 与内容寻址的 `assets/`）。`index.json` 带 `version` 与 `min_reader_version`：旧档就地升级，未知字段回写时保留，更新版本的破坏性格式不会自动覆盖。未额外加密，不写 IndexedDB。删除会话或卸载应用即可清掉。图片经 `image-asset://localhost/<sha256>` 展示（Windows 为 `http://image-asset.localhost/<sha256>`）。另存走原生对话框，不给 opener。上限：文本 20 KiB，解码后静态 PNG/JPEG/WebP 20 MiB，生图响应 32 MiB。页面不出现网关 URL 或 API key 表单。
 
 ## stdin manager 自动化
 

@@ -2,7 +2,7 @@
 
 [中文](zh-CN/DESKTOP.md)
 
-The Tauri desktop application is a current-user control panel for the fixed-service `mtls-router`. The manager and the mTLS router run inside the desktop process itself: the router listens on `127.0.0.1:19099` from a dedicated, supervised runtime thread, and the manager control plane answers the same management protocol v4 methods the desktop always used. No `mtls-router` or `mtls-router-manager` child process is started, nothing is installed into `PATH`, and there are no certificate, upstream, or component replacement controls.
+The Tauri desktop application is a current-user control panel for the fixed-service `mtls-router`, plus a local Chat images workbench. The manager and the mTLS router run inside the desktop process itself: the router listens on `127.0.0.1:19099` from a dedicated, supervised runtime thread, and the manager control plane answers the same management protocol v4 methods the desktop always used. The workbench is a separate data plane: Rust talks to that loopback router over a non-redialable HTTP/1.1 connection and does not use manager protocol v4 for chat or images. No `mtls-router` or `mtls-router-manager` child process is started, nothing is installed into `PATH`, and there are no certificate, upstream, or component replacement controls.
 
 > **CLI end of life.** Versions after v0.4.1 ship the desktop application only. The standalone CLI router and manager binaries, `setup.sh` / `setup.ps1`, and the systemd/Docker/NSSM service wrappers are frozen at their historical release tags and remain downloadable there; they receive no further builds. A desktop upgrade detects a router left behind by an earlier CLI or sidecar-era desktop installation and takes it over once, only after complete process identity verification, instead of downloading or launching a new CLI.
 
@@ -119,6 +119,16 @@ The API Keys page saves, replaces, or deletes one global API key in the desktop 
 The target Agent configuration must persist the key where that Agent requires it until that Agent is cleaned up. Per-Agent cleanup removes the managed Agent-file credential but deliberately retains the desktop global key. User-approved recovery and cleanup backups may also persist an older key. Rust holds each on-demand use in zeroizing memory, but clearing application references is best effort and is not a guarantee of forensic erasure from process or operating-system memory.
 
 `MTLS_ROUTER_OPENAI_API_KEY` has been removed and no longer supplies a key. For exact noninteractive manager automation, see [stdin manager automation](#stdin-manager-automation).
+
+## Chat images workbench
+
+The **Chat images** page is a local creation surface: Send chats only; Imagine still chats first but requires an image block. Rust orchestrates `POST /v1/chat/completions` (SSE) then `POST /v1/images/generations?response_format=binary` on the same non-redialable loopback connection that already passed `/version`, router process identity, and `/health`. Edit requests send both `image` and `images: [data URI]`. Binary magic bytes win over a wrong Content-Type; JSON responses may use `data[0].b64_json` only. Remote `url` values are not downloaded.
+
+Chat models are the current `/v1/models` IDs that do not contain `/`, defaulting to `gemini-3.8-flash` when present. Image models are parsed independently from `/v1/models/image` and shown verbatim: every upstream ID appears with its own name, with no aliasing, filtering, or hidden allowlist; if the default is absent the first catalog entry is selected. If a catalog is missing entirely, submit stays disabled until the user picks an item. Models without a verified reference-edit path show a warning when an edit will be sent; the request still uses the selected model.
+
+An explicit reference (quote, upload via the native file dialog, paste, or drop) forces `edit`. Imagine without a reference is `generate` even if the conversation already has an image. Implicit Chinese/English edit phrases can reuse the last image in that conversation only. Regenerating reuses the stored prompt and does not chat again. One workbench operation runs at a time; Stop cancels the HTTP request. Drafts (including reference images) are per conversation and are not restored after restart.
+
+Storage is `{data_dir}/image-workbench/` (`index.json` plus content-addressed `assets/`). `index.json` carries `version` and `min_reader_version`: older files upgrade in place, unknown fields are preserved on rewrite, and a newer breaking file is left untouched until the user updates the app. It is not encrypted and is not IndexedDB. Delete a conversation or uninstall the app to remove it. Images render through `image-asset://localhost/<sha256>` (`http://image-asset.localhost/<sha256>` on Windows). Save-as uses the native dialog, not an opener. Limits: 20 KiB text, 20 MiB decoded static PNG/JPEG/WebP, 32 MiB generation body. The page never asks for a gateway URL or API key.
 
 ## Stdin manager automation
 

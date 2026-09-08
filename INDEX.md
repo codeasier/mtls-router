@@ -12,9 +12,10 @@
 
 ```
 Tauri UI (React) ──invoke──▶ Rust commands ──protocol v4 JSON 行（进程内 ManagerClient）──▶ manager_core ──supervisor 线程──▶ router_core ──mTLS──▶ upstream
+                 ──invoke/event──▶ image_workbench（独立 loopback HTTP/1.1）──▶ 同一 router_core ──mTLS──▶ 上游聊天/生图
 ```
 
-桌面应用绝不直接与 router 通信：命令层只通过 `ManagerClient` 发 protocol v4 请求，由同进程的 `manager_core` session 线程处理；router 由 `router_core` supervisor 在独立 runtime 线程上运行。正常路径不启动 Go 子进程。历史拓扑（Tauri 拉起 `mtls-router-manager serve` sidecar，再由其管理 `mtls-router` 子进程）对应 `v0.4.1` 及更早版本；桌面会识别该拓扑遗留的 router 并在完整身份校验后一次性迁移。
+桌面应用的**控制面**绝不直接与 router 通信：命令层只通过 `ManagerClient` 发 protocol v4 请求，由同进程的 `manager_core` session 线程处理；router 由 `router_core` supervisor 在独立 runtime 线程上运行。**对话生图工作台**是显式的本地数据面例外：WebView 只做 UI，Rust 持 Key，在不可重拨的 loopback 连接上先校验 `/version`、进程身份与 `/health`，再发 `POST /v1/chat/completions` 与 `POST /v1/images/generations`。工作台流量不走 manager protocol v4。正常路径不启动 Go 子进程。历史拓扑（Tauri 拉起 `mtls-router-manager serve` sidecar，再由其管理 `mtls-router` 子进程）对应 `v0.4.1` 及更早版本；桌面会识别该拓扑遗留的 router 并在完整身份校验后一次性迁移。
 
 ## CLI 停止维护（`v0.4.1` 之后）
 
@@ -85,8 +86,8 @@ key 绝不出现于环境变量、CLI 参数、model config、日志或 journal 
 **前端**（React 19 + TypeScript + Vite）：
 
 - `src/ipc.ts` — 类型化的 `DesktopApi` 接口，包装 Tauri invoke 命令与 updater 下载进度事件；所有敏感文本在客户端脱敏
-- `src/App.tsx` — 根布局与侧边栏导航，分发到 4 个页面组件，并在启动时执行一次静默更新检查
-- `src/RouterPage.tsx`、`src/AgentPage.tsx`、`src/LogsPage.tsx`、`src/SettingsPage.tsx` — 各区块页面；Agent 页面协调独立配置与 cleanup 目标
+- `src/App.tsx` — 根布局与侧边栏导航，分发到各页面组件，并在启动时执行一次静默更新检查
+- `src/RouterPage.tsx`、`src/AgentPage.tsx`、`src/ApiKeysPage.tsx`、`src/UsagePage.tsx`、`src/ImagesPage.tsx`、`src/LogsPage.tsx`、`src/SettingsPage.tsx` — 各区块页面；Agent 页面协调独立配置与 cleanup 目标；对话生图页只经 invoke/event 访问 Rust 工作台
 - `src/AgentCleanupPanel.tsx`、`src/agentCleanupState.ts`、`src/useAgentCleanupController.ts` — 单 Agent cleanup 审阅、状态机与无 key preview/write 编排
 - `src/model.ts` — 共享类型与导航模型
 - i18n：`src/i18n.tsx`（context provider）+ `src/locales/zh-CN.ts`、`src/locales/en.ts`
@@ -106,7 +107,8 @@ key 绝不出现于环境变量、CLI 参数、model config、日志或 journal 
 - `src/orchestration.rs` — 首次启动流程（无 router 时自动启动内嵌 router；`legacy_managed` 走 `router.migrate_legacy`）
 - `src/model_config.rs` — model config 导入/导出校验
 - `src/autostart.rs` — 登录启动插件包装（首次启动默认启用）
-- `src/paths.rs` — 桌面数据目录解析
+- `src/paths.rs` — 桌面数据目录解析；工作台私有目录 `{data_dir}/image-workbench/` 不进入 `DesktopPaths` IPC
+- `src/image_workbench/` — 对话生图数据面：不可重拨通道、目录解析、编排、原子会话/资产（`version` / `min_reader_version`，未知字段保留，不兼容不清盘）、`image-asset` scheme、窄 IPC
 - `src/types.rs` — 镜像 manager 协议结果的严格 serde 类型，包含 cleanup detection、preview 与 delete/backup 文件影响
 - `src/error.rs` — 将 manager 协议错误映射为用户可见字符串
 

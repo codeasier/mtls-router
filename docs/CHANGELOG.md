@@ -2,6 +2,20 @@
 
 [中文](zh-CN/CHANGELOG.md)
 
+## Unreleased
+
+### Added
+
+- Desktop **Chat images** workbench: chat-then-imagine (not prompt-only). Rust holds the API key on a non-redialable loopback connection after `/version`, process identity, and `/health`. Conversations and images live unencrypted under `{data_dir}/image-workbench/`. The snapshot uses `version` / `min_reader_version` so later additive fields can be ignored by this build and breaking files are not wiped. WebView stays at `core:default` and displays images through the `image-asset` scheme.
+- Chat models come from `GET /v1/models` (IDs containing `/` are dropped). Image models come from a separate `GET /v1/models/image` parser and are presented verbatim with no aliasing, filtering, or hidden allowlist. Missing defaults disable submit instead of falling back.
+- Router remains a transparent proxy. New contract fixtures lock SSE chat, binary / `b64_json` generation, slash image IDs, and access-log closure. Supervisor `request_timeout` still applies only through response headers.
+
+### Notes
+
+- This is an explicit product surface, not a router-lifecycle extra. It is not the unpublished prompt-only “image conversations” path.
+
+---
+
 ## v0.5.1 - 2026-09-07
 
 This patch release fixes desktop package verification so Intel (`x86_64`) macOS builds can be validated and published.
