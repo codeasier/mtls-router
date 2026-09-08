@@ -17,7 +17,7 @@ use crate::{
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{collections::HashMap, env, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tauri::AppHandle;
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::Mutex;
@@ -33,6 +33,7 @@ pub struct AppState {
     pub credentials: Arc<CredentialStore>,
     pub lifecycle: Arc<LifecycleState>,
     pub diagnostics: DiagnosticStore,
+    pub workbench: Arc<crate::image_workbench::Workbench>,
 }
 
 #[derive(Deserialize)]
@@ -926,7 +927,10 @@ pub async fn save_credential(
     api_key: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<CredentialSummary> {
-    save_credential_command(api_key, &state.credentials).await
+    let summary = save_credential_command(api_key, &state.credentials).await?;
+    state.workbench.invalidate_catalogs();
+    crate::image_workbench::ipc::refresh_after_credential_change(&state).await;
+    Ok(summary)
 }
 
 async fn delete_credential_command(credentials: &CredentialStore) -> Result<CredentialSummary> {
@@ -936,7 +940,10 @@ async fn delete_credential_command(credentials: &CredentialStore) -> Result<Cred
 
 #[tauri::command]
 pub async fn delete_credential(state: tauri::State<'_, AppState>) -> Result<CredentialSummary> {
-    delete_credential_command(&state.credentials).await
+    let summary = delete_credential_command(&state.credentials).await?;
+    state.workbench.invalidate_catalogs();
+    crate::image_workbench::ipc::refresh_after_credential_change(&state).await;
+    Ok(summary)
 }
 
 #[derive(Deserialize)]
@@ -1033,9 +1040,17 @@ pub async fn window_visibility(visible: bool, state: tauri::State<'_, AppState>)
 }
 
 #[tauri::command]
-pub fn set_native_language(language: String, app: AppHandle) -> Result<()> {
+pub fn set_native_language(
+    language: String,
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<()> {
     let language = NativeLanguage::parse(&language)
         .ok_or_else(|| CommandError::invalid_params("language must be zh-CN or en"))?;
+    state.workbench.set_language(match language {
+        NativeLanguage::En => "en",
+        NativeLanguage::ZhCn => "zh-CN",
+    });
     crate::tray::set_language(&app, language).map_err(|_| {
         CommandError::new(
             "NATIVE_UI_UPDATE_FAILED",
@@ -1999,6 +2014,14 @@ mod tests {
                 lifecycle: Default::default(),
                 diagnostics: DiagnosticStore::new(
                     std::env::temp_dir().join(format!("last-diagnostics-{}.json", Uuid::new_v4())),
+                ),
+                workbench: Arc::new(
+                    crate::image_workbench::Workbench::open(
+                        crate::image_workbench::WorkbenchPaths::from_data_dir(
+                            std::env::temp_dir().join(format!("wb-cmd-{}", Uuid::new_v4())),
+                        ),
+                    )
+                    .expect("workbench"),
                 ),
             };
 

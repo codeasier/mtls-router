@@ -20,7 +20,7 @@ mod metadata;
 mod modelcatalog;
 mod occupant;
 mod paths;
-mod process;
+pub(crate) mod process;
 mod session;
 mod state;
 mod trustedrouter;

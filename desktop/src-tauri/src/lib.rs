@@ -3,6 +3,7 @@ mod commands;
 mod credential;
 mod diagnostic_snapshot;
 mod error;
+mod image_workbench;
 mod installation;
 mod lifecycle;
 mod manager;
@@ -100,6 +101,27 @@ fn build_app() -> tauri::Result<tauri::App<tauri::Wry>> {
     }
 
     builder
+        .register_uri_scheme_protocol("image-asset", |ctx, request| {
+            let state = ctx.app_handle().try_state::<AppState>();
+            let Some(state) = state else {
+                return image_workbench::not_found();
+            };
+            let uri = request.uri().to_string();
+            match image_workbench::asset_id_from_uri(&uri) {
+                Ok(id) => match state.workbench.store().read_asset(&id) {
+                    Ok((meta, bytes)) => {
+                        let mime = match meta.format.as_str() {
+                            "jpg" | "jpeg" => "image/jpeg",
+                            "webp" => "image/webp",
+                            _ => "image/png",
+                        };
+                        image_workbench::serve_asset_response(mime, bytes)
+                    }
+                    Err(_) => image_workbench::not_found(),
+                },
+                Err(_) => image_workbench::not_found(),
+            }
+        })
         .setup(|app| {
             let paths = paths::resolve()?;
             let credentials = load_credentials(std::path::PathBuf::from(&paths.credentials_path));
@@ -132,6 +154,12 @@ fn build_app() -> tauri::Result<tauri::App<tauri::Wry>> {
                 &paths.log_directory,
                 lifecycle.clone(),
             )?;
+            let workbench = std::sync::Arc::new(
+                image_workbench::Workbench::open(image_workbench::WorkbenchPaths::from_data_dir(
+                    &paths.data_dir,
+                ))
+                .map_err(|error| error.to_string())?,
+            );
             app.manage(AppState {
                 manager: manager.clone(),
                 scheduler: scheduler.clone(),
@@ -141,6 +169,7 @@ fn build_app() -> tauri::Result<tauri::App<tauri::Wry>> {
                 credentials,
                 lifecycle: lifecycle.clone(),
                 diagnostics,
+                workbench,
             });
             scheduler.start();
             let app_handle = app.handle().clone();
@@ -217,6 +246,21 @@ fn build_app() -> tauri::Result<tauri::App<tauri::Wry>> {
             commands::set_native_language,
             commands::set_agent_draft_dirty,
             commands::resolve_app_quit,
+            image_workbench::ipc::workbench_readiness,
+            image_workbench::ipc::workbench_refresh_catalogs,
+            image_workbench::ipc::workbench_list,
+            image_workbench::ipc::workbench_create,
+            image_workbench::ipc::workbench_select,
+            image_workbench::ipc::workbench_delete,
+            image_workbench::ipc::workbench_set_options,
+            image_workbench::ipc::workbench_pick_reference,
+            image_workbench::ipc::workbench_import_bytes,
+            image_workbench::ipc::workbench_quote_asset,
+            image_workbench::ipc::workbench_send,
+            image_workbench::ipc::workbench_regenerate,
+            image_workbench::ipc::workbench_cancel,
+            image_workbench::ipc::workbench_save_asset,
+            image_workbench::ipc::workbench_rebuild,
         ])
         .build(tauri::generate_context!())
 }
@@ -234,6 +278,7 @@ pub fn run() {
         .run(|app, event| {
             if let tauri::RunEvent::ExitRequested { api, .. } = event {
                 let lifecycle = &app.state::<AppState>().lifecycle;
+                app.state::<AppState>().workbench.interrupt_on_exit();
                 if tray::should_prevent_exit(lifecycle) {
                     api.prevent_exit();
                     tray::request_quit(app.clone());
@@ -245,6 +290,14 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn csp_uses_image_asset_and_drops_unused_asset_scheme() {
+        let config = include_str!("../tauri.conf.json");
+        assert!(config.contains("image-asset:"));
+        assert!(config.contains("http://image-asset.localhost"));
+        assert!(!config.contains("asset: http://asset.localhost"));
+    }
 
     #[test]
     fn frontend_capability_has_no_arbitrary_shell_file_or_opener_permission() {
@@ -259,6 +312,7 @@ mod tests {
         assert!(!text.contains("opener:"));
         assert!(!text.contains("fs:"));
         assert!(!text.contains("http:"));
+        assert!(!text.contains("dialog:"));
     }
 
     #[test]
