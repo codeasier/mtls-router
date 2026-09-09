@@ -835,9 +835,7 @@ describe("RouterPage states", () => {
       target: { value: "19100" },
     });
     fireEvent.click(screen.getByRole("button", { name: "使用此端口并重启" }));
-    expect(
-      await screen.findByText(/监听覆盖尚未保存/),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/监听覆盖尚未保存/)).toBeInTheDocument();
   });
 
   it("does not offer a listen override for occupied or generic listen failures", async () => {
@@ -910,7 +908,9 @@ describe("RouterPage states", () => {
 
     expect(await screen.findByText("127.0.0.1:19100")).toBeVisible();
     expect(screen.queryByText("改用其他本地端口")).not.toBeInTheDocument();
-    expect(screen.getByText(/会立即重启、丢弃未保存的 Agent 草稿/)).toBeVisible();
+    expect(
+      screen.getByText(/会立即重启、丢弃未保存的 Agent 草稿/),
+    ).toBeVisible();
     fireEvent.click(
       screen.getByRole("button", { name: "恢复为 127.0.0.1:19099" }),
     );
@@ -946,9 +946,7 @@ describe("RouterPage states", () => {
     expect(
       await screen.findByRole("heading", { name: "路由状态暂时不可用" }),
     ).toBeVisible();
-    expect(
-      await screen.findByText(/监听覆盖文件已损坏或不兼容/),
-    ).toBeVisible();
+    expect(await screen.findByText(/监听覆盖文件已损坏或不兼容/)).toBeVisible();
     fireEvent.click(
       screen.getByRole("button", { name: "恢复为 127.0.0.1:19099" }),
     );
