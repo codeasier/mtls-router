@@ -2,17 +2,19 @@
 
 [中文](zh-CN/CHANGELOG.md)
 
-## Unreleased
+## v0.5.2 - 2026-09-09
+
+This release adds a local Chat images workbench: conversations stay on the device, Rust talks to the trusted loopback router, and the webview never receives the API key. It is an explicit product surface, not a router-lifecycle extra, and not the unpublished prompt-only “image conversations” path.
 
 ### Added
 
 - Desktop **Chat images** workbench: chat-then-imagine (not prompt-only). Rust holds the API key on a non-redialable loopback connection after `/version`, process identity, and `/health`. Conversations and images live unencrypted under `{data_dir}/image-workbench/`. The snapshot uses `version` / `min_reader_version` so later additive fields can be ignored by this build and breaking files are not wiped. WebView stays at `core:default` and displays images through the `image-asset` scheme.
-- Chat models come from `GET /v1/models` (IDs containing `/` are dropped). Image models come from a separate `GET /v1/models/image` parser and are presented verbatim with no aliasing, filtering, or hidden allowlist. Missing defaults disable submit instead of falling back.
+- Chat models come from `GET /v1/models` (IDs containing `/` are dropped) and default to `gemini-3.8-flash` when that ID is present. Image models come from a separate `GET /v1/models/image` parser and are presented verbatim with no aliasing, filtering, or hidden allowlist; a missing image default selects the first catalog entry. An empty catalog disables submit instead of inventing a fallback ID.
 - Router remains a transparent proxy. New contract fixtures lock SSE chat, binary / `b64_json` generation, slash image IDs, and access-log closure. Supervisor `request_timeout` still applies only through response headers.
 
-### Notes
+### Security and recovery
 
-- This is an explicit product surface, not a router-lifecycle extra. It is not the unpublished prompt-only “image conversations” path.
+- The workbench never asks for a gateway URL or API key. Rust holds the key on the already-authenticated loopback connection; the webview receives bounded metadata and `image-asset` URLs, not key material or unrestricted filesystem access. Session files are unencrypted under the application data directory and are removed only when the user deletes a conversation or uninstalls the app.
 
 ---
 
