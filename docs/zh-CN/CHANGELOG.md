@@ -2,17 +2,19 @@
 
 [English](../CHANGELOG.md)
 
-## 未发布
+## v0.5.2 - 2026-09-09
+
+本次发布新增本地「对话生图」工作台：会话留在本机，Rust 经可信 loopback router 通信，webview 从不接触 API key。这是显式的产品数据面，不是路由生命周期的附属功能，也不是未发布的「禁止闲聊、仅 prompt 出图」路径。
 
 ### 新增
 
 - 桌面「对话生图」工作台：闲聊编排后再出图（不是纯 prompt 出图）。Rust 持 API key，在不可重拨的 loopback 连接上先校验 `/version`、进程身份与 `/health`。会话与图片未加密存放在 `{data_dir}/image-workbench/`。快照带 `version` / `min_reader_version`，后续加字段旧构建仍可读，破坏性新档不会被自动清空。WebView 仍为 `core:default`，图片经 `image-asset` scheme 展示。
-- 对话模型来自 `GET /v1/models`（丢掉含 `/` 的 ID）。生图模型由独立的 `GET /v1/models/image` 解析并按上游原样呈现，不做别名映射、过滤或白名单。默认 ID 不在目录中时禁用提交，不写死 fallback。
+- 对话模型来自 `GET /v1/models`（丢掉含 `/` 的 ID），目录含 `gemini-3.8-flash` 时默认选中。生图模型由独立的 `GET /v1/models/image` 解析并按上游原样呈现，不做别名映射、过滤或白名单；默认 ID 缺失时选中目录第一项。目录整体为空时禁用提交，不编造 fallback ID。
 - Router 仍是透明代理。新增契约 fixture 锁定聊天 SSE、生图二进制 / `b64_json`、带 `/` 的图片 ID 与访问日志闭合。supervisor `request_timeout` 仍只卡到响应头。
 
-### 说明
+### 安全与恢复
 
-- 这是显式的产品数据面，不是路由生命周期的附属功能；也不是未发布的「禁止闲聊、仅 prompt 出图」路径 A。
+- 工作台从不询问网关 URL 或 API key。Rust 在已通过身份校验的 loopback 连接上持有密钥；webview 只收到有界元数据与 `image-asset` URL，不接触密钥明文或不受限的文件系统。会话文件未加密存放在应用数据目录，仅在用户删除会话或卸载应用时清除。
 
 ---
 
