@@ -3,10 +3,12 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AgentId,
   DesktopApi,
+  ListenConfig,
   ModelConfig,
   PollSnapshot,
   RouterStatus,
 } from "../ipc";
+import { FACTORY_LISTEN, validExactLoopbackListen } from "../ipc";
 import {
   createWorkbenchLiveHandlers,
   setLiveWorkbenchSessionKey,
@@ -75,6 +77,11 @@ export function createMockDesktopApi(
   let status: RouterStatus = structuredClone(
     options.initialStatus ?? initialStatusForMockScenario(scenario),
   );
+  let listenConfig: ListenConfig = {
+    listen_addr: FACTORY_LISTEN,
+    factory_default: FACTORY_LISTEN,
+    overridden: false,
+  };
   const liveWorkbench = shouldUseLiveWorkbench(desktopApiEnvFromImportMeta());
   let credential = structuredClone(
     liveWorkbench || options.credentialPresent === false
@@ -144,6 +151,29 @@ export function createMockDesktopApi(
     setAgentDraftDirty: async () => undefined,
     resolveAppQuit: async () => undefined,
     getRouterStatus: async () => structuredClone(status),
+    getListenConfig: async () => structuredClone(listenConfig),
+    setListenOverride: async (port) => {
+      const listen = `127.0.0.1:${port}`;
+      if (!validExactLoopbackListen(listen)) {
+        throw mockCommandError("INVALID_PARAMS");
+      }
+      listenConfig = {
+        listen_addr: listen,
+        factory_default: FACTORY_LISTEN,
+        overridden: listen !== FACTORY_LISTEN,
+      };
+      if (status.listen_addr) status.listen_addr = listen;
+      return structuredClone(listenConfig);
+    },
+    clearListenOverride: async () => {
+      listenConfig = {
+        listen_addr: FACTORY_LISTEN,
+        factory_default: FACTORY_LISTEN,
+        overridden: false,
+      };
+      if (status.listen_addr) status.listen_addr = FACTORY_LISTEN;
+      return structuredClone(listenConfig);
+    },
     startRouter: async () => {
       if (currentScenario() === "protocol-error") {
         throw mockCommandError("MANAGER_PROTOCOL_ERROR");

@@ -53,10 +53,15 @@ pub fn build_info() -> BuildInfo {
 /// loopback listen, TLS 1.2 floor, 10s probe timeout, debug off, foreground.
 /// `request_timeout` is a separate supervisor isolation budget, not Go
 /// `-timeout` / `MTLS_TIMEOUT`.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn supervisor_config() -> SupervisorConfig {
+    supervisor_config_with_listen(DEFAULT_LISTEN)
+}
+
+pub fn supervisor_config_with_listen(listen_addr: &str) -> SupervisorConfig {
     SupervisorConfig {
         defaults: RouterDefaults {
-            listen_addr: DEFAULT_LISTEN.to_owned(),
+            listen_addr: listen_addr.to_owned(),
             upstream_url: UPSTREAM_URL.to_owned(),
             tls_min: "tls1.2".to_owned(),
             timeout: DEFAULT_TIMEOUT,
@@ -85,7 +90,8 @@ pub fn production_runtime(
         .map_err(|_| init_failed("desktop paths are unavailable"))?;
     let own =
         current_identity().map_err(|_| init_failed("desktop process identity is unavailable"))?;
-    let listener = normalize_listener(DEFAULT_LISTEN)
+    let configured = crate::listen_override::load_configured(desktop_data_dir)?;
+    let listener = normalize_listener(&configured.listen_addr)
         .map_err(|_| init_failed("router listen address is invalid"))?;
     let package_generation = i32::try_from(ownership.package_generation)
         .map_err(|_| init_failed("installation generation is invalid"))?;
@@ -108,11 +114,11 @@ pub fn production_runtime(
             log_base: paths.desktop_log_file.clone(),
             version: env!("MTLS_MANAGER_VERSION").to_owned(),
         },
-        supervisor_config(),
+        supervisor_config_with_listen(&configured.listen_addr),
     ));
     Ok(Arc::new(ProductionRuntime {
         session: SessionConfig {
-            listen_addr: DEFAULT_LISTEN.to_owned(),
+            listen_addr: configured.listen_addr.clone(),
             desktop_session: session_id,
             parent: own.clone(),
             manager_identity: own,
@@ -189,5 +195,39 @@ mod tests {
             "127.0.0.1:19099"
         );
         assert!(!runtime.backend.supervisor().status().bound);
+    }
+
+    #[test]
+    fn production_runtime_uses_persisted_loopback_override_as_sole_listener() {
+        let ownership = InstallationOwnership {
+            installation_id: "11111111-1111-4111-8111-111111111111".into(),
+            ..InstallationOwnership::current()
+        };
+        let dir =
+            std::env::temp_dir().join(format!("mtls-runtime-{}", uuid::Uuid::new_v4().simple()));
+        crate::listen_override::store_override(&dir, "127.0.0.1:19100").unwrap();
+        let runtime = production_runtime("session-under-test".into(), &ownership, &dir).unwrap();
+        assert_eq!(runtime.session.listen_addr, "127.0.0.1:19100");
+        assert_eq!(
+            runtime.backend.config().listener.authority,
+            "127.0.0.1:19100"
+        );
+        assert!(!runtime.backend.supervisor().status().bound);
+    }
+
+    #[test]
+    fn production_runtime_fails_closed_when_listen_override_is_corrupt() {
+        let ownership = InstallationOwnership {
+            installation_id: "11111111-1111-4111-8111-111111111111".into(),
+            ..InstallationOwnership::current()
+        };
+        let dir =
+            std::env::temp_dir().join(format!("mtls-runtime-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("listen-override.json"), b"{not-json").unwrap();
+        match production_runtime("session-under-test".into(), &ownership, &dir) {
+            Ok(_) => panic!("corrupt listen override must fail closed"),
+            Err(error) => assert_eq!(error.code, "LISTEN_OVERRIDE_INVALID"),
+        }
     }
 }

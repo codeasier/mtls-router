@@ -3,6 +3,7 @@ use crate::{
     diagnostic_snapshot::DiagnosticStore,
     error::{CommandError, Result},
     lifecycle::{LifecycleState, OperationOutput, QuitAction},
+    listen_override::{self, ListenConfig},
     manager::ManagerClient,
     model_config::{self, ModelConfig},
     scheduler::PollScheduler,
@@ -222,6 +223,73 @@ pub async fn router_status(state: tauri::State<'_, AppState>) -> Result<RouterSt
 }
 
 #[tauri::command]
+pub fn router_listen_config(state: tauri::State<'_, AppState>) -> Result<ListenConfig> {
+    listen_override::load_configured(std::path::Path::new(&state.paths.data_dir))
+}
+
+#[tauri::command]
+pub async fn router_set_listen_override(
+    port: u16,
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<ListenConfig> {
+    let listen_addr = listen_override::listen_from_port(port)?;
+    if listen_addr != crate::manager_core::DEFAULT_LISTEN {
+        require_listen_override_gate(&state.manager).await?;
+    }
+    persist_listen_override_and_restart(&app, &state, Some(&listen_addr))
+}
+
+#[tauri::command]
+pub async fn router_clear_listen_override(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<ListenConfig> {
+    persist_listen_override_and_restart(&app, &state, None)
+}
+
+fn persist_listen_override_and_restart(
+    app: &AppHandle,
+    state: &AppState,
+    listen_addr: Option<&str>,
+) -> Result<ListenConfig> {
+    let data_dir = std::path::Path::new(&state.paths.data_dir);
+    let config = match listen_addr {
+        Some(addr) => listen_override::store_override(data_dir, addr)?,
+        None => listen_override::clear_override(data_dir)?,
+    };
+    if !state.lifecycle.prepare_restart() {
+        return Err(CommandError::new(
+            "LISTEN_OVERRIDE_RESTART_BLOCKED",
+            "the listen override was saved but restart is blocked",
+        ));
+    }
+    let _ = config;
+    app.restart()
+}
+
+pub(crate) async fn require_listen_override_gate(manager: &ManagerClient) -> Result<()> {
+    let status: RouterStatus = manager.call("router.status", json!({})).await?;
+    if !listen_override::is_reserved_listen_failure(&status) {
+        return Err(CommandError::new(
+            "LISTEN_OVERRIDE_UNAVAILABLE",
+            "listen override is only available after a reserved-port listen failure",
+        ));
+    }
+    match manager
+        .call::<OccupantInspection>("router.inspect_occupant", json!({}))
+        .await
+    {
+        Err(error) if error.code == "OCCUPANT_NOT_FOUND" => Ok(()),
+        Ok(_) => Err(CommandError::new(
+            "LISTEN_OVERRIDE_UNAVAILABLE",
+            "listen override is not available while a port occupant exists",
+        )),
+        Err(error) => Err(error),
+    }
+}
+
+#[tauri::command]
 pub async fn router_start(
     owner: String,
     app: AppHandle,
@@ -257,7 +325,15 @@ pub async fn router_stop(
 pub async fn router_inspect_occupant(
     state: tauri::State<'_, AppState>,
 ) -> Result<OccupantInspection> {
-    inspect_occupant_command(&state.manager, &state.pending_occupant).await
+    let inspection = inspect_occupant_command(&state.manager, &state.pending_occupant).await?;
+    let configured = listen_override::load_configured(std::path::Path::new(&state.paths.data_dir))?;
+    if inspection.listen_addr != configured.listen_addr {
+        return Err(CommandError::new(
+            "INVALID_RESPONSE",
+            "occupant inspection listen address must match the configured listener",
+        ));
+    }
+    Ok(inspection)
 }
 
 async fn inspect_occupant_command(
@@ -2819,6 +2895,84 @@ mod tests {
             .unwrap_err();
             assert_eq!(usage.code, "USAGE_UNAVAILABLE");
             assert_eq!(usage.message, "usage is unavailable");
+        });
+    }
+
+    fn start_failed_status(id: &str, refusal: &str) -> Vec<u8> {
+        serde_json::to_vec(&json!({"id":id,"result":{
+            "state":"start_failed",
+            "owner":"desktop",
+            "last_error":"stage=process_launch code=ROUTER_START_FAILED os_error=10013",
+            "recent_logs":[format!("reason=listen_failed listen_refusal={refusal}")]
+        }}))
+        .unwrap()
+    }
+
+    fn occupant_not_found(id: &str) -> Vec<u8> {
+        serde_json::to_vec(&json!({"id":id,"error":{
+            "code":"OCCUPANT_NOT_FOUND",
+            "message":"port occupant was not found"
+        }}))
+        .unwrap()
+    }
+
+    #[test]
+    fn listen_override_gate_requires_reserved_failure_and_no_occupant() {
+        tauri::async_runtime::block_on(async {
+            let (manager, _) = fake_client(vec![
+                start_failed_status("desktop-1", "access_denied"),
+                occupant_not_found("desktop-2"),
+            ]);
+            require_listen_override_gate(&manager).await.unwrap();
+
+            let (manager, _) =
+                fake_client(vec![start_failed_status("desktop-1", "address_in_use")]);
+            assert_eq!(
+                require_listen_override_gate(&manager)
+                    .await
+                    .unwrap_err()
+                    .code,
+                "LISTEN_OVERRIDE_UNAVAILABLE"
+            );
+
+            let occupied = serde_json::to_vec(&json!({"id":"desktop-1","result":{
+                "state":"unknown_occupant"
+            }}))
+            .unwrap();
+            let (manager, _) = fake_client(vec![occupied]);
+            assert_eq!(
+                require_listen_override_gate(&manager)
+                    .await
+                    .unwrap_err()
+                    .code,
+                "LISTEN_OVERRIDE_UNAVAILABLE"
+            );
+
+            let (manager, _) = fake_client(vec![
+                start_failed_status("desktop-1", "access_denied"),
+                forceable_inspection_response("desktop-2"),
+            ]);
+            assert_eq!(
+                require_listen_override_gate(&manager)
+                    .await
+                    .unwrap_err()
+                    .code,
+                "LISTEN_OVERRIDE_UNAVAILABLE"
+            );
+
+            let probe = serde_json::to_vec(&json!({"id":"desktop-1","result":{
+                "state":"start_failed",
+                "recent_logs":["reason=upstream_probe_failed"]
+            }}))
+            .unwrap();
+            let (manager, _) = fake_client(vec![probe]);
+            assert_eq!(
+                require_listen_override_gate(&manager)
+                    .await
+                    .unwrap_err()
+                    .code,
+                "LISTEN_OVERRIDE_UNAVAILABLE"
+            );
         });
     }
 

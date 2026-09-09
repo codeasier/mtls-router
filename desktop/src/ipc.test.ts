@@ -7,6 +7,7 @@ import {
   POLL_SNAPSHOT_EVENT,
   UPDATE_PROGRESS_EVENT,
   sanitizeSensitiveText,
+  validExactLoopbackListen,
   validOccupantInspection,
   type AgentDetection,
   type AgentCleanupPreview,
@@ -163,6 +164,26 @@ const terminationFixture = {
   port_state: "released",
 } satisfies OccupantTerminationResult;
 
+describe("loopback listen validation", () => {
+  it("accepts only 127.0.0.1 with a non-zero port", () => {
+    expect(validExactLoopbackListen("127.0.0.1:19100")).toBe(true);
+    expect(validExactLoopbackListen("127.0.0.1:1")).toBe(true);
+    expect(validExactLoopbackListen("127.0.0.1:65535")).toBe(true);
+    for (const invalid of [
+      "127.0.0.1:0",
+      "127.0.0.1:65536",
+      "127.0.0.1:019100",
+      "127.0.0.2:19100",
+      "0.0.0.0:19100",
+      "localhost:19100",
+      "[::1]:19100",
+      "19100",
+    ]) {
+      expect(validExactLoopbackListen(invalid)).toBe(false);
+    }
+  });
+});
+
 describe("occupant wire validation", () => {
   it("accepts every discriminated recovery branch and strict termination type", () => {
     expect(validOccupantInspection(forceableOccupant)).toBe(true);
@@ -225,11 +246,19 @@ describe("occupant wire validation", () => {
       executable: "/usr/local/bin/example-server",
     };
     expect(validOccupantInspection(verified)).toBe(true);
+    expect(
+      validOccupantInspection(
+        { ...forceableOccupant, listen_addr: "127.0.0.1:19100" },
+        "127.0.0.1:19100",
+      ),
+    ).toBe(true);
     const redactedDifferentUser = blockedOccupants[5];
     for (const fixture of [
       { ...forceableOccupant, pid: 0 },
       { ...forceableOccupant, pid: 0x1_0000_0000 },
       { ...forceableOccupant, listen_addr: "127.0.0.1:19100" },
+      { ...forceableOccupant, listen_addr: "[::1]:19099" },
+      { ...forceableOccupant, listen_addr: "localhost:19099" },
       { ...forceableOccupant, process_name: "unexpected" },
       { ...forceableOccupant, verification_mode: "verified_identity" },
       { ...blockedOccupants[0], verification_mode: "verified_identity" },
@@ -371,16 +400,31 @@ describe("typed desktop API", () => {
     const api = createDesktopApi(invoke as InvokeFn);
 
     await api.getRouterStatus();
+    await api.getListenConfig();
+    await api.setListenOverride(19100);
+    await api.clearListenOverride();
     await api.startRouter();
     await api.stopRouter();
     await api.retryRouterHealth();
 
     expect(invoke).toHaveBeenNthCalledWith(1, COMMANDS.routerStatus);
-    expect(invoke).toHaveBeenNthCalledWith(2, COMMANDS.routerStart, {
+    expect(invoke).toHaveBeenNthCalledWith(2, COMMANDS.routerListenConfig);
+    expect(invoke).toHaveBeenNthCalledWith(
+      3,
+      COMMANDS.routerSetListenOverride,
+      {
+        port: 19100,
+      },
+    );
+    expect(invoke).toHaveBeenNthCalledWith(
+      4,
+      COMMANDS.routerClearListenOverride,
+    );
+    expect(invoke).toHaveBeenNthCalledWith(5, COMMANDS.routerStart, {
       owner: "desktop",
     });
-    expect(invoke).toHaveBeenNthCalledWith(3, COMMANDS.routerStop);
-    expect(invoke).toHaveBeenNthCalledWith(4, COMMANDS.routerHealth);
+    expect(invoke).toHaveBeenNthCalledWith(6, COMMANDS.routerStop);
+    expect(invoke).toHaveBeenNthCalledWith(7, COMMANDS.routerHealth);
   });
 
   it("exposes one typed snapshot command and event subscription", async () => {

@@ -6,6 +6,7 @@ mod error;
 mod image_workbench;
 mod installation;
 mod lifecycle;
+mod listen_override;
 mod manager;
 mod manager_core;
 mod manager_diagnostics;
@@ -209,6 +210,9 @@ fn build_app() -> tauri::Result<tauri::App<tauri::Wry>> {
         })
         .invoke_handler(tauri::generate_handler![
             commands::router_status,
+            commands::router_listen_config,
+            commands::router_set_listen_override,
+            commands::router_clear_listen_override,
             commands::router_start,
             commands::router_stop,
             commands::router_inspect_occupant,

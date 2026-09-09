@@ -393,9 +393,9 @@ impl<'de> Deserialize<'de> for OccupantInspection {
         if wire.pid == 0 {
             return Err(D::Error::custom("occupant inspection PID must be positive"));
         }
-        if wire.listen_addr != "127.0.0.1:19099" {
+        if crate::listen_override::parse_exact_loopback_listen(&wire.listen_addr).is_err() {
             return Err(D::Error::custom(
-                "occupant inspection listen address must match the fixed endpoint",
+                "occupant inspection listen address must be 127.0.0.1:<port>",
             ));
         }
         let forceable = match (wire.recovery.action, wire.recovery.reason) {
@@ -548,6 +548,14 @@ mod occupant_inspection_tests {
     }
 
     #[test]
+    fn accepts_current_loopback_listener_not_only_factory_default() {
+        let mut shape = forceable();
+        shape["listen_addr"] = json!("127.0.0.1:19100");
+        let inspection: OccupantInspection = serde_json::from_value(shape).unwrap();
+        assert_eq!(inspection.listen_addr, "127.0.0.1:19100");
+    }
+
+    #[test]
     fn deserializes_verified_identity_shape() {
         let shape = json!({
             "pid": 4242,
@@ -637,7 +645,10 @@ mod occupant_inspection_tests {
         for invalid_field in [
             json!({"pid": 0}),
             json!({"pid": 4_294_967_296_u64}),
-            json!({"listen_addr": "127.0.0.1:19100"}),
+            json!({"listen_addr": "[::1]:19099"}),
+            json!({"listen_addr": "0.0.0.0:19099"}),
+            json!({"listen_addr": "localhost:19099"}),
+            json!({"listen_addr": "127.0.0.1:0"}),
             json!({"listen_addr": " "}),
             json!({"confirmation_token": " "}),
             json!({"expires_at": " "}),

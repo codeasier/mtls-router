@@ -8,6 +8,9 @@ export const UPDATE_PROGRESS_EVENT = "update-download-progress";
 
 export const COMMANDS = {
   routerStatus: "router_status",
+  routerListenConfig: "router_listen_config",
+  routerSetListenOverride: "router_set_listen_override",
+  routerClearListenOverride: "router_clear_listen_override",
   routerStart: "router_start",
   routerStop: "router_stop",
   routerInspectOccupant: "router_inspect_occupant",
@@ -68,6 +71,34 @@ export const WORKBENCH_IMAGE_STATUS_EVENT = "workbench-image-status";
 export const WORKBENCH_OPERATION_DONE_EVENT = "workbench-operation-done";
 
 export const MAX_LOG_LINES = 200;
+export const FACTORY_LISTEN = "127.0.0.1:19099";
+
+export interface ListenConfig {
+  listen_addr: string;
+  factory_default: string;
+  overridden: boolean;
+}
+
+export function validExactLoopbackListen(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const match = /^127\.0\.0\.1:([1-9]\d{0,4})$/.exec(value.trim());
+  if (!match) return false;
+  const port = Number(match[1]);
+  return Number.isInteger(port) && port >= 1 && port <= 65535;
+}
+
+export function displayListenAddr(
+  statusListen?: string | null,
+  configured?: string | null,
+): string {
+  const fromStatus = statusListen
+    ?.trim()
+    .replace(/^https?:\/\//, "")
+    .split("/")[0];
+  if (validExactLoopbackListen(fromStatus)) return fromStatus;
+  if (configured && validExactLoopbackListen(configured)) return configured;
+  return FACTORY_LISTEN;
+}
 
 export type RouterState =
   | "absent"
@@ -326,6 +357,7 @@ function validOccupantSupervisor(value: unknown): value is OccupantSupervisor {
 
 export function validOccupantInspection(
   value: unknown,
+  expectedListenAddr: string = FACTORY_LISTEN,
 ): value is OccupantInspection {
   if (!value || typeof value !== "object") return false;
   const inspection = value as Record<string, unknown>;
@@ -333,7 +365,8 @@ export function validOccupantInspection(
     !Number.isInteger(inspection.pid) ||
     (inspection.pid as number) <= 0 ||
     (inspection.pid as number) > 0xffffffff ||
-    inspection.listen_addr !== "127.0.0.1:19099"
+    !validExactLoopbackListen(expectedListenAddr) ||
+    inspection.listen_addr !== expectedListenAddr
   ) {
     return false;
   }
@@ -920,6 +953,9 @@ export interface DesktopApi {
   setAgentDraftDirty(dirty: boolean): Promise<void>;
   resolveAppQuit(confirmed: boolean): Promise<void>;
   getRouterStatus(): Promise<RouterStatus>;
+  getListenConfig(): Promise<ListenConfig>;
+  setListenOverride(port: number): Promise<ListenConfig>;
+  clearListenOverride(): Promise<ListenConfig>;
   startRouter(): Promise<RouterStatus>;
   stopRouter(): Promise<RouterStatus>;
   inspectRouterOccupant(): Promise<OccupantInspection>;
@@ -1089,6 +1125,10 @@ export function createDesktopApi(
     resolveAppQuit: (confirmed) =>
       invoke(COMMANDS.resolveAppQuit, { request: { confirmed } }),
     getRouterStatus: () => invoke(COMMANDS.routerStatus),
+    getListenConfig: () => invoke(COMMANDS.routerListenConfig),
+    setListenOverride: (port) =>
+      invoke(COMMANDS.routerSetListenOverride, { port }),
+    clearListenOverride: () => invoke(COMMANDS.routerClearListenOverride),
     startRouter: () => invoke(COMMANDS.routerStart, { owner: "desktop" }),
     stopRouter: () => invoke(COMMANDS.routerStop),
     inspectRouterOccupant: () => invoke(COMMANDS.routerInspectOccupant),

@@ -1,7 +1,12 @@
 import { vi } from "vitest";
 
 import { createWorkbenchMockHandlers } from "../dev/workbenchMock";
-import type { AgentId, DesktopApi, PollSnapshot } from "../ipc";
+import {
+  FACTORY_LISTEN,
+  type AgentId,
+  type DesktopApi,
+  type PollSnapshot,
+} from "../ipc";
 
 export function createMockApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
   const workbench = createWorkbenchMockHandlers();
@@ -16,6 +21,21 @@ export function createMockApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
     setAgentDraftDirty: vi.fn().mockResolvedValue(undefined),
     resolveAppQuit: vi.fn().mockResolvedValue(undefined),
     getRouterStatus: vi.fn().mockResolvedValue({ state: "absent" }),
+    getListenConfig: vi.fn().mockResolvedValue({
+      listen_addr: FACTORY_LISTEN,
+      factory_default: FACTORY_LISTEN,
+      overridden: false,
+    }),
+    setListenOverride: vi.fn().mockResolvedValue({
+      listen_addr: "127.0.0.1:19100",
+      factory_default: FACTORY_LISTEN,
+      overridden: true,
+    }),
+    clearListenOverride: vi.fn().mockResolvedValue({
+      listen_addr: FACTORY_LISTEN,
+      factory_default: FACTORY_LISTEN,
+      overridden: false,
+    }),
     startRouter: vi.fn().mockResolvedValue({
       state: "desktop_owned",
       owner: "desktop",
