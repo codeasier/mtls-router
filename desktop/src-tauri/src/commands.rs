@@ -18,7 +18,11 @@ use crate::{
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use tauri::AppHandle;
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::Mutex;
@@ -234,6 +238,8 @@ pub async fn router_set_listen_override(
     state: tauri::State<'_, AppState>,
 ) -> Result<ListenConfig> {
     let listen_addr = listen_override::listen_from_port(port)?;
+    // The factory address is a deliberate clear: store_override redirects it to
+    // clear_override, so skip the reserved-port gate used for a new bind.
     if listen_addr != crate::manager_core::DEFAULT_LISTEN {
         require_listen_override_gate(&state.manager).await?;
     }
@@ -253,19 +259,37 @@ fn persist_listen_override_and_restart(
     state: &AppState,
     listen_addr: Option<&str>,
 ) -> Result<ListenConfig> {
-    let data_dir = std::path::Path::new(&state.paths.data_dir);
-    let config = match listen_addr {
-        Some(addr) => listen_override::store_override(data_dir, addr)?,
-        None => listen_override::clear_override(data_dir)?,
-    };
-    if !state.lifecycle.prepare_restart() {
-        return Err(CommandError::new(
-            "LISTEN_OVERRIDE_RESTART_BLOCKED",
-            "the listen override was saved but restart is blocked",
-        ));
-    }
+    let config = commit_listen_override(
+        &state.lifecycle,
+        Path::new(&state.paths.data_dir),
+        listen_addr,
+    )?;
     let _ = config;
     app.restart()
+}
+
+fn commit_listen_override(
+    lifecycle: &LifecycleState,
+    data_dir: &Path,
+    listen_addr: Option<&str>,
+) -> Result<ListenConfig> {
+    let previous_dirty = lifecycle.draft_dirty();
+    if !lifecycle.prepare_restart() {
+        return Err(CommandError::new(
+            "LISTEN_OVERRIDE_RESTART_BLOCKED",
+            "the listen override was not saved because restart is blocked",
+        ));
+    }
+    match match listen_addr {
+        Some(addr) => listen_override::store_override(data_dir, addr),
+        None => listen_override::clear_override(data_dir),
+    } {
+        Ok(config) => Ok(config),
+        Err(error) => {
+            lifecycle.abort_prepared_restart(previous_dirty);
+            Err(error)
+        }
+    }
 }
 
 pub(crate) async fn require_listen_override_gate(manager: &ManagerClient) -> Result<()> {
@@ -325,26 +349,31 @@ pub async fn router_stop(
 pub async fn router_inspect_occupant(
     state: tauri::State<'_, AppState>,
 ) -> Result<OccupantInspection> {
-    let inspection = inspect_occupant_command(&state.manager, &state.pending_occupant).await?;
-    let configured = listen_override::load_configured(std::path::Path::new(&state.paths.data_dir))?;
-    if inspection.listen_addr != configured.listen_addr {
-        return Err(CommandError::new(
-            "INVALID_RESPONSE",
-            "occupant inspection listen address must match the configured listener",
-        ));
-    }
-    Ok(inspection)
+    let configured = listen_override::load_configured(Path::new(&state.paths.data_dir))?;
+    inspect_occupant_command(
+        &state.manager,
+        &state.pending_occupant,
+        &configured.listen_addr,
+    )
+    .await
 }
 
 async fn inspect_occupant_command(
     manager: &ManagerClient,
     pending_occupant: &Arc<Mutex<Option<PendingOccupant>>>,
+    expected_listen: &str,
 ) -> Result<OccupantInspection> {
     let mut pending = pending_occupant.lock().await;
     pending.take();
     let (inspection, manager_session_epoch): (OccupantInspection, u64) = manager
         .call_with_session_epoch("router.inspect_occupant", json!({}))
         .await?;
+    if inspection.listen_addr != expected_listen {
+        return Err(CommandError::new(
+            "INVALID_RESPONSE",
+            "occupant inspection listen address must match the configured listener",
+        ));
+    }
     if inspection.recovery.action == RecoveryAction::ForceTerminate {
         let confirmation_token = inspection
             .confirmation_token
@@ -2697,7 +2726,10 @@ mod tests {
             ]);
             let scheduler = PollScheduler::new(manager.clone());
             let pending = Arc::new(Mutex::new(None));
-            let inspection = inspect_occupant_command(&manager, &pending).await.unwrap();
+            let inspection =
+                inspect_occupant_command(&manager, &pending, crate::manager_core::DEFAULT_LISTEN)
+                    .await
+                    .unwrap();
             let generation_before_force = scheduler.status_generation();
 
             let mismatch = force_terminate_occupant_command(
@@ -2776,9 +2808,13 @@ mod tests {
             ]);
             let pending = Arc::new(Mutex::new(None));
 
-            inspect_occupant_command(&manager, &pending).await.unwrap();
+            inspect_occupant_command(&manager, &pending, crate::manager_core::DEFAULT_LISTEN)
+                .await
+                .unwrap();
             assert!(pending.lock().await.is_some());
-            inspect_occupant_command(&manager, &pending).await.unwrap();
+            inspect_occupant_command(&manager, &pending, crate::manager_core::DEFAULT_LISTEN)
+                .await
+                .unwrap();
             assert!(pending.lock().await.is_none());
 
             *pending.lock().await = Some(PendingOccupant {
@@ -2786,7 +2822,13 @@ mod tests {
                 manager_session_epoch: manager.session_epoch(),
                 expires_at: "2099-07-25T00:00:30Z".parse::<DateTime<Utc>>().unwrap(),
             });
-            assert!(inspect_occupant_command(&manager, &pending).await.is_err());
+            assert!(inspect_occupant_command(
+                &manager,
+                &pending,
+                crate::manager_core::DEFAULT_LISTEN
+            )
+            .await
+            .is_err());
             assert!(pending.lock().await.is_none());
         });
     }
@@ -2802,7 +2844,9 @@ mod tests {
                 fake_client(vec![forceable_inspection_response("desktop-1"), invalid]);
             let scheduler = PollScheduler::new(manager.clone());
             let pending = Arc::new(Mutex::new(None));
-            inspect_occupant_command(&manager, &pending).await.unwrap();
+            inspect_occupant_command(&manager, &pending, crate::manager_core::DEFAULT_LISTEN)
+                .await
+                .unwrap();
             let generation_before_force = scheduler.status_generation();
 
             let error = force_terminate_occupant_command(
@@ -2831,7 +2875,9 @@ mod tests {
                     fake_client(vec![forceable_inspection_response("desktop-1")]);
                 let scheduler = PollScheduler::new(manager.clone());
                 let pending = Arc::new(Mutex::new(None));
-                inspect_occupant_command(&manager, &pending).await.unwrap();
+                inspect_occupant_command(&manager, &pending, crate::manager_core::DEFAULT_LISTEN)
+                    .await
+                    .unwrap();
                 if stale_epoch {
                     manager.invalidate_session_for_test();
                 }
@@ -2876,9 +2922,10 @@ mod tests {
             assert!(detect.agents.iter().all(|agent| !agent.exists));
 
             let pending = Arc::new(Mutex::new(None));
-            let occupant = inspect_occupant_command(&manager, &pending)
-                .await
-                .unwrap_err();
+            let occupant =
+                inspect_occupant_command(&manager, &pending, crate::manager_core::DEFAULT_LISTEN)
+                    .await
+                    .unwrap_err();
             assert_eq!(occupant.code, "OCCUPANT_NOT_FOUND");
             assert!(pending.lock().await.is_none());
 
@@ -2973,6 +3020,71 @@ mod tests {
                     .code,
                 "LISTEN_OVERRIDE_UNAVAILABLE"
             );
+        });
+    }
+
+    #[test]
+    fn commit_listen_override_prepares_restart_before_writing() {
+        let dir =
+            std::env::temp_dir().join(format!("mtls-listen-commit-{}", Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let lifecycle = LifecycleState::default();
+        lifecycle.set_draft_dirty(true);
+
+        let blocked = tauri::async_runtime::block_on(async {
+            lifecycle
+                .run_operation(async {
+                    commit_listen_override(&lifecycle, &dir, Some("127.0.0.1:19100"))
+                })
+                .await
+                .unwrap()
+                .value
+        });
+        assert_eq!(blocked.unwrap_err().code, "LISTEN_OVERRIDE_RESTART_BLOCKED");
+        assert!(!listen_override::override_path(&dir).exists());
+        assert!(lifecycle.draft_dirty());
+
+        let stored = commit_listen_override(&lifecycle, &dir, Some("127.0.0.1:19100")).unwrap();
+        assert_eq!(stored.listen_addr, "127.0.0.1:19100");
+        assert!(stored.overridden);
+        assert!(lifecycle.is_exiting());
+        assert_eq!(listen_override::load_configured(&dir).unwrap(), stored);
+    }
+
+    #[test]
+    fn commit_listen_override_rolls_lifecycle_back_when_write_fails() {
+        let dir = std::env::temp_dir().join(format!(
+            "mtls-listen-commit-fail-{}",
+            Uuid::new_v4().simple()
+        ));
+        std::fs::write(&dir, b"not-a-directory").unwrap();
+        let lifecycle = LifecycleState::default();
+        lifecycle.set_draft_dirty(true);
+
+        assert_eq!(
+            commit_listen_override(&lifecycle, &dir, Some("127.0.0.1:19100"))
+                .unwrap_err()
+                .code,
+            "LISTEN_OVERRIDE_INVALID"
+        );
+        assert!(!lifecycle.is_exiting());
+        assert!(lifecycle.draft_dirty());
+        assert_eq!(
+            lifecycle.request_quit(true),
+            QuitAction::RequestConfirmation
+        );
+    }
+
+    #[test]
+    fn occupant_inspection_does_not_arm_token_when_listen_mismatches() {
+        tauri::async_runtime::block_on(async {
+            let (manager, _) = fake_client(vec![forceable_inspection_response("desktop-1")]);
+            let pending = Arc::new(Mutex::new(None));
+            let error = inspect_occupant_command(&manager, &pending, "127.0.0.1:19100")
+                .await
+                .unwrap_err();
+            assert_eq!(error.code, "INVALID_RESPONSE");
+            assert!(pending.lock().await.is_none());
         });
     }
 

@@ -148,7 +148,9 @@ export const zhCN = {
   "router.listenOverride.apply": "使用此端口并重启",
   "router.listenOverride.reset": "恢复为 127.0.0.1:19099",
   "router.listenOverride.resetHint":
-    "本安装当前监听 {listen}，而不是出厂默认的 127.0.0.1:19099。",
+    "本安装当前监听 {listen}，而不是出厂默认的 127.0.0.1:19099。重置会立即重启、丢弃未保存的 Agent 草稿，并且在你重新预览并写入之前，现有 Agent 文件仍指向覆盖地址。",
+  "router.listenOverride.invalidConfig":
+    "本安装的监听覆盖文件已损坏或不兼容，路由无法启动。重置会删除 listen-override.json 并重启。也可以在设置页显示的数据目录中删除该文件后重新打开应用。",
   "router.listenOverride.invalidPort":
     "请输入 1–65535 的端口。不接受 0、局域网地址、localhost 或 [::1]。",
   "router.listenOverride.unavailable":
@@ -156,7 +158,7 @@ export const zhCN = {
   "router.listenOverride.failed": "无法保存监听覆盖。",
   "router.listenOverride.restarting": "已保存，正在重启桌面应用…",
   "router.listenOverride.restartBlocked":
-    "已保存。请退出并重新打开桌面应用以使用新的监听地址。",
+    "现在无法重启，监听覆盖尚未保存。请在没有其他路由操作进行时重试。",
   "router.failureGuide.process-launch.title": "系统未能启动路由组件",
   "router.failureGuide.process-launch.detail":
     "桌面应用已验证组件，但操作系统没有成功创建路由进程。",

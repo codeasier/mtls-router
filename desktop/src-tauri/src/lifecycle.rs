@@ -142,6 +142,10 @@ impl LifecycleState {
         true
     }
 
+    pub fn draft_dirty(&self) -> bool {
+        self.lock().draft_dirty
+    }
+
     pub fn prepare_restart(&self) -> bool {
         let mut inner = self.lock();
         if inner.operation_active || inner.quit != QuitState::Idle {
@@ -150,6 +154,15 @@ impl LifecycleState {
         inner.draft_dirty = false;
         inner.quit = QuitState::Exiting;
         true
+    }
+
+    pub fn abort_prepared_restart(&self, restore_draft_dirty: bool) {
+        let mut inner = self.lock();
+        if inner.quit != QuitState::Exiting || inner.operation_active {
+            return;
+        }
+        inner.quit = QuitState::Idle;
+        inner.draft_dirty = restore_draft_dirty;
     }
 
     fn lock(&self) -> MutexGuard<'_, LifecycleInner> {
@@ -300,6 +313,30 @@ mod tests {
             assert!(!state.prepare_restart());
             assert_eq!(state.request_quit(true), QuitAction::None);
         });
+    }
+
+    #[test]
+    fn abort_prepared_restart_restores_idle_and_dirty() {
+        let state = LifecycleState::default();
+        state.set_draft_dirty(true);
+        assert!(state.draft_dirty());
+        assert!(state.prepare_restart());
+        assert!(state.is_exiting());
+        assert!(!state.draft_dirty());
+
+        state.abort_prepared_restart(true);
+        assert!(!state.is_exiting());
+        assert!(state.draft_dirty());
+        assert_eq!(state.request_quit(true), QuitAction::RequestConfirmation);
+    }
+
+    #[test]
+    fn abort_prepared_restart_is_a_no_op_unless_restart_was_prepared() {
+        let state = LifecycleState::default();
+        state.set_draft_dirty(true);
+        state.abort_prepared_restart(false);
+        assert!(state.draft_dirty());
+        assert_eq!(state.request_quit(true), QuitAction::RequestConfirmation);
     }
 
     #[test]

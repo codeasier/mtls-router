@@ -161,7 +161,9 @@ export const en: Record<TranslationKey, string> = {
   "router.listenOverride.apply": "Use this port and restart",
   "router.listenOverride.reset": "Reset to 127.0.0.1:19099",
   "router.listenOverride.resetHint":
-    "This installation currently listens on {listen} instead of the factory default 127.0.0.1:19099.",
+    "This installation currently listens on {listen} instead of the factory default 127.0.0.1:19099. Reset restarts immediately, discards an unsaved Agent draft, and leaves existing Agent files on the override URL until you preview and write again.",
+  "router.listenOverride.invalidConfig":
+    "This installation's listen override file is corrupt or incompatible, so the router cannot start. Reset deletes listen-override.json and restarts. You can also delete that file in the data directory shown in Settings, then reopen the app.",
   "router.listenOverride.invalidPort":
     "Enter a port from 1 to 65535. 0, LAN addresses, localhost, and [::1] are not accepted.",
   "router.listenOverride.unavailable":
@@ -170,7 +172,7 @@ export const en: Record<TranslationKey, string> = {
   "router.listenOverride.restarting":
     "Saved. Restarting the desktop application…",
   "router.listenOverride.restartBlocked":
-    "Saved. Quit and reopen the desktop application to use the new listen address.",
+    "Restart is blocked, so the listen override was not saved. Try again when no other Router action is in progress.",
   "router.failureGuide.process-launch.title":
     "The system could not start the router component",
   "router.failureGuide.process-launch.detail":

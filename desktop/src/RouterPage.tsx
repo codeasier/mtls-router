@@ -14,7 +14,6 @@ import type {
 } from "./ipc";
 import {
   displayListenAddr,
-  FACTORY_LISTEN,
   sanitizeSensitiveText,
   validOccupantInspection,
 } from "./ipc";
@@ -568,6 +567,9 @@ export function RouterPage({
   );
   const [message, setMessage] = useState<RouterMessage>("");
   const [listenConfig, setListenConfig] = useState<ListenConfig | null>(null);
+  const [listenConfigError, setListenConfigError] = useState<string | null>(
+    null,
+  );
   const [overridePort, setOverridePort] = useState("");
   const [overrideBusy, setOverrideBusy] = useState(false);
   const [overrideMessage, setOverrideMessage] = useState<TranslationKey | null>(
@@ -715,7 +717,9 @@ export function RouterPage({
           if (
             validOccupantInspection(
               inspected,
-              listenConfig?.listen_addr ?? FACTORY_LISTEN,
+              listenConfig == null
+                ? inspected.listen_addr
+                : listenConfig.listen_addr,
             )
           ) {
             setOccupant(inspected);
@@ -751,7 +755,7 @@ export function RouterPage({
         }
       }
     },
-    [api, listenConfig?.listen_addr],
+    [api, listenConfig],
   );
 
   useEffect(() => {
@@ -759,9 +763,15 @@ export function RouterPage({
     void api
       .getListenConfig()
       .then((config) => {
-        if (current) setListenConfig(config);
+        if (!current) return;
+        setListenConfig(config);
+        setListenConfigError(null);
       })
-      .catch(() => undefined);
+      .catch((error) => {
+        if (!current) return;
+        setListenConfig(null);
+        setListenConfigError(errorCode(error) || "UNKNOWN");
+      });
     return () => {
       current = false;
     };
@@ -870,7 +880,12 @@ export function RouterPage({
   }
 
   async function applyListenOverride() {
-    const port = Number(overridePort.trim());
+    const portText = overridePort.trim();
+    if (!/^\d{1,5}$/.test(portText)) {
+      setOverrideMessage("router.listenOverride.invalidPort");
+      return;
+    }
+    const port = Number(portText);
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
       setOverrideMessage("router.listenOverride.invalidPort");
       return;
@@ -880,6 +895,7 @@ export function RouterPage({
     try {
       const next = await api.setListenOverride(port);
       setListenConfig(next);
+      setListenConfigError(null);
       setOverrideMessage("router.listenOverride.restarting");
     } catch (error) {
       setOverrideMessage(listenOverrideErrorKey(errorCode(error)));
@@ -893,6 +909,7 @@ export function RouterPage({
     try {
       const next = await api.clearListenOverride();
       setListenConfig(next);
+      setListenConfigError(null);
       setOverrideMessage("router.listenOverride.restarting");
     } catch (error) {
       setOverrideMessage(listenOverrideErrorKey(errorCode(error)));
@@ -926,9 +943,11 @@ export function RouterPage({
     currentState,
     failureDiagnostics,
   );
+  const listenOverrideInvalid = listenConfigError === "LISTEN_OVERRIDE_INVALID";
   const canStart =
     !operation &&
     !checkingHealth &&
+    !overrideBusy &&
     !reinstallRequired &&
     (currentState === "not-started" ||
       currentState === "failed" ||
@@ -936,6 +955,7 @@ export function RouterPage({
   const canStop =
     !operation &&
     !checkingHealth &&
+    !overrideBusy &&
     status?.owner === "desktop" &&
     (status.state === "desktop_owned" ||
       status.state === "degraded" ||
@@ -1269,6 +1289,33 @@ export function RouterPage({
                 {t("router.listenOverride.apply")}
               </button>
             </div>
+            {overrideMessage && (
+              <p className="inline-alert" role="status">
+                {t(overrideMessage)}
+              </p>
+            )}
+          </section>
+        )}
+
+        {(listenOverrideInvalid ||
+          (overrideBusy &&
+            overrideMessage &&
+            !canOfferListenOverride &&
+            !listenConfig?.overridden)) && (
+          <section className="listen-override listen-override--active">
+            {listenOverrideInvalid && (
+              <>
+                <p>{t("router.listenOverride.invalidConfig")}</p>
+                <button
+                  type="button"
+                  className="text-button"
+                  disabled={overrideBusy}
+                  onClick={() => void resetListenOverride()}
+                >
+                  {t("router.listenOverride.reset")}
+                </button>
+              </>
+            )}
             {overrideMessage && (
               <p className="inline-alert" role="status">
                 {t(overrideMessage)}

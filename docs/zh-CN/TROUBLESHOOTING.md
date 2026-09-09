@@ -52,7 +52,8 @@ Workflow 会构建六个原生桌面包，并在匹配的目标 runner 上检查
 2. 在管理员 PowerShell 中运行 `netsh interface ipv4 show excludedportrange protocol=tcp`。若已配置端口落在某段内，`netstat` / TCP owner 表不会显示 listener。
 3. 执行 `wsl --shutdown` 或重启 Windows，让排除段重新划分，再从 Router 页重试。
 4. 若保留段无法清除，请在 Router 页输入另一个 `127.0.0.1` 端口（`1–65535`）。应用会把它持久化为本安装的唯一监听并重启，不会自行选端口。仍指向旧 URL 的 Agent 文件需要重新预览并写入。重置则回到 `127.0.0.1:19099`。
-5. 不要强制终止不存在的占用者。不要绑定 `0.0.0.0`、局域网地址、`localhost` 或 `[::1]`。
+5. 若覆盖或降级后 Router 页停在状态不可用，`{data_dir}/listen-override.json` 可能已损坏或 schema 不兼容。启动会 fail closed（`LISTEN_OVERRIDE_INVALID`），避免静默绑回 `19099`。请在 Router 页选择**恢复为 127.0.0.1:19099**：即使 manager 未启动也会删除该文件并重启。若页面没有重置控件，请删除 `{data_dir}/listen-override.json`（设置页会显示数据目录）后重新打开应用。
+6. 不要强制终止不存在的占用者。不要绑定 `0.0.0.0`、局域网地址、`localhost` 或 `[::1]`。
 
 ## Router 状态陈旧
 
