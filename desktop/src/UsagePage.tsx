@@ -67,9 +67,12 @@ export function UsagePage({
       })
       .catch(() => {
         if (!current) return;
-        setPresent(false);
+        // Keep the error visible; a failed read is not proof that no key exists.
+        setPresent(true);
         setUsageError("apikey.usage.error.load");
-        clearUsage();
+        usageGeneration.current += 1;
+        setUsage(null);
+        setUsageLoading(false);
       });
     return () => {
       current = false;

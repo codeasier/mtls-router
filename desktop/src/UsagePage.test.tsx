@@ -91,6 +91,17 @@ describe("UsagePage", () => {
     expect(api.getAPIKeyUsage).not.toHaveBeenCalled();
   });
 
+  it("shows an error when reading the credential fails", async () => {
+    const api = createMockApi({
+      getCredential: vi.fn().mockRejectedValue(new Error("IPC unavailable")),
+    });
+    renderPage(api);
+
+    expect(
+      await screen.findByText("无法读取用量，请稍后重试。"),
+    ).toBeInTheDocument();
+  });
+
   it("navigates to the API key page from the empty state", async () => {
     const api = createMockApi({
       getCredential: vi.fn().mockResolvedValue({
