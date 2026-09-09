@@ -44,6 +44,15 @@ Workflow 会构建六个原生桌面包，并在匹配的目标 runner 上检查
 
 手工启动的 router 会被有意视为未知，除非完整 CLI setup 状态能够证明其进程身份以及 deployment/protocol 兼容性。
 
+## Windows 本地端口被系统保留（WSL / Hyper-V）
+
+若 Router 页显示启动失败 / 无法打开本地端口，且**没有占用恢复面板**，则 Windows 可能通过 WinNAT 或 Hyper-V 保留了 `127.0.0.1:19099`。安装 WSL2 后很常见。此时没有 listener，强制终止帮不上忙。监听地址仍为 `127.0.0.1:19099`。
+
+1. 复制诊断快照。`listen_refusal=access_denied` 且 `os_error=10013`（WSAEACCES）表示保留段；`os_error=10048` / `listen_refusal=address_in_use` 才是真实占用，请按[端口 19099 被占用](#端口-19099-被占用)处理。
+2. 在管理员 PowerShell 中运行 `netsh interface ipv4 show excludedportrange protocol=tcp`。若 `19099` 落在某段内，`netstat` / TCP owner 表不会显示 listener。
+3. 执行 `wsl --shutdown` 或重启 Windows，让排除段重新划分，再从 Router 页重试。
+4. 不要强制终止不存在的占用者，也不要改监听地址。
+
 ## Router 状态陈旧
 
 Stale 表示记录的 PID、进程启动标识或可执行文件标识不再匹配。manager 会保留状态用于诊断，且不会发送信号。

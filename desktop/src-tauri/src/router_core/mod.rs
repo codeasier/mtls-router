@@ -33,7 +33,7 @@ pub use stack::{
     LockedHttpTlsStack, LockedHttpTlsVersions, PemParseError, CRYPTO_BACKEND, DEFAULT_LISTEN_ADDR,
     DEFAULT_TLS_MIN, HEALTH_PATH, LOCKED_HTTP_TLS_VERSIONS, VERSION_PATH,
 };
-pub use startup::{prepare_startup, PreparedRouter, StartupError, StartupReason};
+pub use startup::{prepare_startup, ListenRefusal, PreparedRouter, StartupError, StartupReason};
 pub use supervisor::{
     RouterSupervisor, RuntimePhase, RuntimeStatus, SupervisorConfig, SupervisorError,
     SupervisorLimits, DEFAULT_MAX_CONCURRENT, DEFAULT_REQUEST_TIMEOUT,

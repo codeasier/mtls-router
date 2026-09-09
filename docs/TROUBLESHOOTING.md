@@ -44,6 +44,15 @@ The desktop uses exactly `127.0.0.1:19099`. It never selects an alternate port o
 
 A manually started router is intentionally unknown unless complete CLI setup state proves its process identity and deployment/protocol compatibility.
 
+## Local port reserved on Windows (WSL / Hyper-V)
+
+If the Router page shows start failed / cannot open the local port and there is **no occupant-recovery panel**, Windows may have reserved `127.0.0.1:19099` through WinNAT or Hyper-V. This is common after WSL2 is installed. Nothing is listening, so force-terminate cannot help. The listen address stays `127.0.0.1:19099`.
+
+1. Copy the diagnostic snapshot. `listen_refusal=access_denied` with `os_error=10013` (WSAEACCES) is the reserved-range signal. `os_error=10048` / `listen_refusal=address_in_use` is a real listener conflict — follow [Port 19099 is occupied](#port-19099-is-occupied).
+2. In Administrator PowerShell run `netsh interface ipv4 show excludedportrange protocol=tcp`. If `19099` falls inside a range, `netstat` / the TCP owner table will show no listener.
+3. Run `wsl --shutdown` or restart Windows so excluded ranges can be redrawn, then retry from the Router page.
+4. Do not force-terminate a process that is not there, and do not change the listen address.
+
 ## Stale router state
 
 Stale means recorded PID, process start identity, or executable identity no longer matches. The manager retains state for diagnosis and sends no signal.

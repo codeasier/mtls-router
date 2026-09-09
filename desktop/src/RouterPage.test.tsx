@@ -682,6 +682,70 @@ describe("RouterPage states", () => {
     expect(details).toHaveTextContent(rawLog);
   });
 
+  it("explains a reserved listen refusal without offering occupant recovery", async () => {
+    const diagnostic =
+      "stage=process_launch code=ROUTER_START_FAILED os_error=10013";
+    const recent = "reason=listen_failed listen_refusal=access_denied";
+    const api = createMockApi({
+      getRouterStatus: vi.fn().mockResolvedValue({
+        state: "start_failed",
+        last_error: diagnostic,
+        recent_logs: [recent],
+      }),
+    });
+
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "本地端口被系统保留" }),
+    ).toBeVisible();
+    expect(
+      screen.getByText(/WSL 或 Hyper-V 保留了该端口/, { exact: false }),
+    ).toBeVisible();
+    expect(
+      screen.getByText(/不要强制终止不存在的占用者/, { exact: false }),
+    ).toBeVisible();
+    expect(screen.queryByText("无法打开本地端口")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("确认 127.0.0.1:19099 未被其他程序占用"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "检查端口占用进程" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("强制终止占用进程")).not.toBeInTheDocument();
+  });
+
+  it("keeps address-in-use listen failures on the occupied-port guide", async () => {
+    const api = createMockApi({
+      getRouterStatus: vi.fn().mockResolvedValue({
+        state: "start_failed",
+        last_error:
+          "stage=process_launch code=ROUTER_START_FAILED os_error=10048",
+        recent_logs: ["reason=listen_failed listen_refusal=address_in_use"],
+      }),
+    });
+
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "无法打开本地端口" }),
+    ).toBeVisible();
+    expect(screen.getByText(/未被其他程序占用/)).toBeVisible();
+    expect(screen.queryByText("本地端口被系统保留")).not.toBeInTheDocument();
+  });
+
   it.each([
     ["log_directory", "无法准备运行日志"],
     ["process_launch", "系统未能启动路由组件"],

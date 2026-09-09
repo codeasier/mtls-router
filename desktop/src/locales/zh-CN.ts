@@ -134,6 +134,11 @@ export const zhCN = {
     "路由未能监听本地地址，Agent 请求目前无法进入路由。",
   "router.failureGuide.local-port.action":
     "确认 127.0.0.1:19099 未被其他程序占用后重试；必要时重新启动桌面应用。",
+  "router.failureGuide.local-port-reserved.title": "本地端口被系统保留",
+  "router.failureGuide.local-port-reserved.detail":
+    "Windows 拒绝监听 127.0.0.1:19099。这通常是 WSL 或 Hyper-V 保留了该端口，而不是其他程序正在占用。没有可终止的占用进程。",
+  "router.failureGuide.local-port-reserved.action":
+    "在管理员 PowerShell 中运行 netsh interface ipv4 show excludedportrange protocol=tcp。若 19099 落在保留段内，请执行 wsl --shutdown 或重启 Windows 后再试。监听地址保持 127.0.0.1:19099，不要强制终止不存在的占用者。",
   "router.failureGuide.process-launch.title": "系统未能启动路由组件",
   "router.failureGuide.process-launch.detail":
     "桌面应用已验证组件，但操作系统没有成功创建路由进程。",
