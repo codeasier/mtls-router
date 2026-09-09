@@ -16,6 +16,10 @@ This release adds a local Chat images workbench: conversations stay on the devic
 
 - The workbench never asks for a gateway URL or API key. Rust holds the key on the already-authenticated loopback connection; the webview receives bounded metadata and `image-asset` URLs, not key material or unrestricted filesystem access. Session files are unencrypted under the application data directory and are removed only when the user deletes a conversation or uninstalls the app.
 
+### Fixed
+
+- Windows router start now keeps the numeric bind `os_error` and a closed `listen_refusal` token. A Hyper-V/WinNAT reserved port (`WSAEACCES` / `access_denied`) shows reserved-range guidance instead of “another program is using the port”, and does not offer force-terminate. The listen address stays `127.0.0.1:19099`.
+
 ---
 
 ## v0.5.1 - 2026-09-07

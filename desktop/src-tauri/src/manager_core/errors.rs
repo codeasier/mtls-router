@@ -315,9 +315,17 @@ pub fn lifecycle_error_from_supervisor(error: SupervisorError) -> LifecycleError
         SupervisorError::Failure(failure) => LifecycleError::new(failure.code),
         SupervisorError::Startup(startup) => {
             let reason = startup.reason();
-            let mut mapped = LifecycleError::new(supervisor_startup_code(reason))
-                .with_output(format!("reason={}", reason.as_str()));
+            let mut output = format!("reason={}", reason.as_str());
+            if let Some(refusal) = startup.listen_refusal() {
+                output.push_str(" listen_refusal=");
+                output.push_str(refusal.as_str());
+            }
+            let mut mapped =
+                LifecycleError::new(supervisor_startup_code(reason)).with_output(output);
             mapped.stage = Some(supervisor_startup_stage(reason));
+            if let Some(code) = startup.os_error() {
+                mapped = mapped.with_os_error(code);
+            }
             mapped
         }
     }
@@ -351,6 +359,7 @@ fn supervisor_startup_stage(reason: StartupReason) -> StartupStage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::router_core::StartupError;
 
     #[test]
     fn lifecycle_messages_are_closed_and_stable() {
@@ -438,5 +447,43 @@ mod tests {
             startup_diagnostic(&unknown),
             "stage=unknown code=ROUTER_START_FAILED"
         );
+    }
+
+    #[test]
+    fn listen_failure_preserves_os_error_and_closed_refusal() {
+        let reserved = lifecycle_error_from_supervisor(SupervisorError::Startup(
+            StartupError::new(StartupReason::ListenFailed).with_os_error(10013),
+        ));
+        assert_eq!(reserved.code, ErrorCode::RouterStartFailed);
+        assert_eq!(reserved.stage, Some(StartupStage::ProcessLaunch));
+        assert_eq!(reserved.os_error_code, Some(10013));
+        assert_eq!(
+            reserved.recent_output,
+            "reason=listen_failed listen_refusal=access_denied"
+        );
+        assert_eq!(
+            startup_diagnostic(&reserved),
+            "stage=process_launch code=ROUTER_START_FAILED os_error=10013"
+        );
+        assert!(!reserved.recent_output.contains("127.0.0.1"));
+        assert!(!reserved.recent_output.contains("WSA"));
+
+        let in_use = lifecycle_error_from_supervisor(SupervisorError::Startup(
+            StartupError::new(StartupReason::ListenFailed).with_os_error(10048),
+        ));
+        assert_eq!(
+            in_use.recent_output,
+            "reason=listen_failed listen_refusal=address_in_use"
+        );
+        assert_eq!(in_use.os_error_code, Some(10048));
+
+        let unknown = lifecycle_error_from_supervisor(SupervisorError::Startup(StartupError::new(
+            StartupReason::ListenFailed,
+        )));
+        assert_eq!(
+            unknown.recent_output,
+            "reason=listen_failed listen_refusal=failed"
+        );
+        assert_eq!(unknown.os_error_code, None);
     }
 }

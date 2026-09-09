@@ -146,6 +146,12 @@ export const en: Record<TranslationKey, string> = {
     "The router could not listen on its local address, so Agent requests cannot reach it.",
   "router.failureGuide.local-port.action":
     "Confirm that 127.0.0.1:19099 is not used by another program and retry. Restart the desktop application if needed.",
+  "router.failureGuide.local-port-reserved.title":
+    "Local port is reserved by Windows",
+  "router.failureGuide.local-port-reserved.detail":
+    "Windows refused to listen on 127.0.0.1:19099. This usually means WSL or Hyper-V reserved the port, not that another program is using it. There is no occupant to terminate.",
+  "router.failureGuide.local-port-reserved.action":
+    "In Administrator PowerShell, run netsh interface ipv4 show excludedportrange protocol=tcp. If 19099 is inside a reserved range, run wsl --shutdown or restart Windows, then retry. The listen address stays 127.0.0.1:19099. Do not force-terminate a process that is not there.",
   "router.failureGuide.process-launch.title":
     "The system could not start the router component",
   "router.failureGuide.process-launch.detail":

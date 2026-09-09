@@ -545,7 +545,7 @@ async fn start_router(
     };
     let bound = match TcpListener::bind(prepared.config().listen_addr()).await {
         Ok(bound) => bound,
-        Err(_) => {
+        Err(error) => {
             shared.set_phase(
                 RuntimePhase::Failed,
                 None,
@@ -553,14 +553,17 @@ async fn start_router(
                 Some(contained(ContainedFailureKind::ListenFailed)),
                 Some(StartupReason::ListenFailed),
             );
-            return Err(SupervisorError::Startup(StartupError::new(
+            return Err(SupervisorError::Startup(StartupError::from_io(
                 StartupReason::ListenFailed,
+                &error,
             )));
         }
     };
     let addr = bound
         .local_addr()
-        .map_err(|_| SupervisorError::Startup(StartupError::new(StartupReason::ListenFailed)))?
+        .map_err(|error| {
+            SupervisorError::Startup(StartupError::from_io(StartupReason::ListenFailed, &error))
+        })?
         .to_string();
     *serving = Some(serving_from_prepared(prepared, config)?);
     *listener = Some(bound);
@@ -835,6 +838,15 @@ mod tests {
         let error = supervisor.start().await.unwrap_err();
         assert_eq!(error.as_str(), "listen_failed");
         assert_eq!(error.code(), ErrorCode::RouterStartFailed);
+        let SupervisorError::Startup(startup) = &error else {
+            panic!("expected startup listen failure, got {error:?}");
+        };
+        assert_eq!(startup.reason(), StartupReason::ListenFailed);
+        assert_eq!(
+            startup.listen_refusal(),
+            Some(crate::router_core::ListenRefusal::AddressInUse)
+        );
+        assert!(startup.os_error().is_some());
         assert!(!supervisor.status().bound);
         drop(occupied);
         supervisor.shutdown().await.ok();

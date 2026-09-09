@@ -16,6 +16,10 @@
 
 - 工作台从不询问网关 URL 或 API key。Rust 在已通过身份校验的 loopback 连接上持有密钥；webview 只收到有界元数据与 `image-asset` URL，不接触密钥明文或不受限的文件系统。会话文件未加密存放在应用数据目录，仅在用户删除会话或卸载应用时清除。
 
+### 修复
+
+- Windows 启动路由时保留 bind 的数值 `os_error` 与封闭 `listen_refusal`。Hyper-V/WinNAT 保留端口（`WSAEACCES` / `access_denied`）显示保留段引导，而不再说「其他程序占用」，也不提供强制终止。监听地址仍为 `127.0.0.1:19099`。
+
 ---
 
 ## v0.5.1 - 2026-09-07

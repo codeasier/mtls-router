@@ -66,6 +66,7 @@ type FailureKind =
   | "configuration"
   | "log-storage"
   | "local-port"
+  | "local-port-reserved"
   | "process-launch"
   | "process-identity"
   | "readiness"
@@ -135,6 +136,13 @@ function failureKind(diagnostics: FailureDiagnostics): FailureKind {
   const lines = [diagnostics.lastError, ...diagnostics.recentLogs].filter(
     Boolean,
   );
+  const listenRefusalKind = knownDiagnosticKind(
+    lines,
+    /(?:^|\s)listen_refusal=([a-z_]+)(?=\s|$)/,
+    { access_denied: "local-port-reserved" },
+  );
+  if (listenRefusalKind) return listenRefusalKind;
+
   const reasonKind = knownDiagnosticKind(
     lines,
     /(?:^|\s)reason=([a-z_]+)(?=\s|$)/,
