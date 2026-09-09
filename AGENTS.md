@@ -81,6 +81,7 @@ bash tests/index_docs_test.sh          # 仅跑 INDEX 覆盖与链接校验
 ```bash
 cd desktop && npm ci
 npm run dev:mock                       # 仅 Vite + 浏览器 mock DesktopApi（无 Go/Cargo/Tauri）
+npm run dev:mock:live                  # 同上，但对话生图经 Vite 代理打本机 127.0.0.1:19099
 npm run dev:tauri:reuse                # tauri dev，内嵌 router/manager，无需前置准备
 npm run dev:agent                      # 隔离 Agent/桌面数据目录后走 reuse
 npm run static:check                   # eslint + prettier
@@ -94,7 +95,7 @@ make desktop-verify                    # 同上，仓库根目录入口
 - 分层开发命令与边界见 [desktop/INDEX.md](desktop/INDEX.md) 与 [docs/BUILD.md](docs/BUILD.md)。
 - 不要为加速本地调试而绕过 manager 握手、preview/revision 或事务写入保护。
 - 不要给桌面重新引入 Go 子进程：`bundle.externalBin` 保持为空，Rust 不依赖 shell 插件，`lib.rs` 与 `tests/desktop_workflow_test.sh` 会检查这一点。
-- `dev:mock` 仅允许 `import.meta.env.DEV && VITE_MOCK=true`；生产构建必须仍绑定真实 Tauri API。
+- `dev:mock` 仅允许 `import.meta.env.DEV && VITE_MOCK=true`；`dev:mock:live` 另需 `VITE_WORKBENCH_LIVE=true`。生产构建必须仍绑定真实 Tauri API，不得把 live 代理或浏览器持 Key 带进包内。
 
 ### 桌面 Rust（desktop/src-tauri/）
 

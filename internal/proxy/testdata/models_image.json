@@ -1,0 +1,10 @@
+{
+  "object": "list",
+  "data": [
+    { "id": "ag/gemini-3.1-flash-image", "object": "model" },
+    { "id": "ag/gemini-3.0-pro-image", "object": "model" },
+    { "id": "cx/gpt-5.5-image", "object": "model" },
+    { "id": "cx/gpt-5.6-image", "object": "model" },
+    { "id": "step-plan/step-image-edit-2", "object": "model" }
+  ]
+}

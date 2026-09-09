@@ -2,6 +2,20 @@
 
 [English](../CHANGELOG.md)
 
+## 未发布
+
+### 新增
+
+- 桌面「对话生图」工作台：闲聊编排后再出图（不是纯 prompt 出图）。Rust 持 API key，在不可重拨的 loopback 连接上先校验 `/version`、进程身份与 `/health`。会话与图片未加密存放在 `{data_dir}/image-workbench/`。快照带 `version` / `min_reader_version`，后续加字段旧构建仍可读，破坏性新档不会被自动清空。WebView 仍为 `core:default`，图片经 `image-asset` scheme 展示。
+- 对话模型来自 `GET /v1/models`（丢掉含 `/` 的 ID）。生图模型由独立的 `GET /v1/models/image` 解析并按上游原样呈现，不做别名映射、过滤或白名单。默认 ID 不在目录中时禁用提交，不写死 fallback。
+- Router 仍是透明代理。新增契约 fixture 锁定聊天 SSE、生图二进制 / `b64_json`、带 `/` 的图片 ID 与访问日志闭合。supervisor `request_timeout` 仍只卡到响应头。
+
+### 说明
+
+- 这是显式的产品数据面，不是路由生命周期的附属功能；也不是未发布的「禁止闲聊、仅 prompt 出图」路径 A。
+
+---
+
 ## v0.5.1 - 2026-09-07
 
 本次补丁发布修复桌面应用包验证，使 Intel（`x86_64`）macOS 构建能够正常验证与发布。

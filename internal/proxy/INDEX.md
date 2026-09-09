@@ -28,5 +28,7 @@
 ## 测试
 
 - `service_contract_test.go` —— 端到端代理契约断言
+- `workbench_contract_test.go` / `testdata_test.go` —— 对话生图路径透明转发：带 `/` 的图片模型 ID、聊天 SSE 不缓冲、生图二进制 / `b64_json` 原样、访问日志不含 prompt/key/图片
+- `testdata/` —— 冻结 9Router `v0.5.45`（`6fcd27337a7893642c7fe630840d0a641743f28f`）目录与生图 fixture
 - `bodyerror_policy_test.go` —— 客户端 body 错误 → 400 分类
 - `transport_test.go` —— mTLS transport 构造与 TLS 最低版本强制

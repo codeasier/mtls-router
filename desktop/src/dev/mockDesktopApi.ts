@@ -8,6 +8,15 @@ import type {
   RouterStatus,
 } from "../ipc";
 import {
+  createWorkbenchLiveHandlers,
+  setLiveWorkbenchSessionKey,
+} from "./workbenchLive";
+import { createWorkbenchMockHandlers } from "./workbenchMock";
+import {
+  desktopApiEnvFromImportMeta,
+  shouldUseLiveWorkbench,
+} from "./resolveDesktopApi";
+import {
   discoveryFor,
   cleanupPreviewFor,
   fixtureAbsentStatus,
@@ -66,8 +75,9 @@ export function createMockDesktopApi(
   let status: RouterStatus = structuredClone(
     options.initialStatus ?? initialStatusForMockScenario(scenario),
   );
+  const liveWorkbench = shouldUseLiveWorkbench(desktopApiEnvFromImportMeta());
   let credential = structuredClone(
-    options.credentialPresent === false
+    liveWorkbench || options.credentialPresent === false
       ? fixtureCredentialAbsent
       : fixtureCredentialPresent,
   );
@@ -76,6 +86,15 @@ export function createMockDesktopApi(
   let flowCounter = 0;
   const pollListeners = new Set<PollListener>();
   const activeFlows = new Set<string>();
+  const workbench = liveWorkbench
+    ? createWorkbenchLiveHandlers()
+    : createWorkbenchMockHandlers({
+        readiness: {
+          has_credential: credential.present,
+          router_trusted: status.state === "desktop_owned",
+          health_ok: status.state === "desktop_owned",
+        },
+      });
 
   function currentScenario(): MockScenario {
     if (typeof window !== "undefined") {
@@ -282,20 +301,38 @@ export function createMockDesktopApi(
     },
     exportAgentModelConfig: async (modelConfig) =>
       JSON.stringify(modelConfig, null, 2),
-    getCredential: async () => structuredClone(credential),
+    getCredential: async () => {
+      if (liveWorkbench) {
+        const ready = await workbench.getReadiness();
+        return {
+          present: ready.has_credential,
+          fingerprint: ready.has_credential ? "LIVE" : "",
+          saved_at: ready.has_credential ? new Date().toISOString() : null,
+        };
+      }
+      return structuredClone(credential);
+    },
     saveCredential: async (apiKey) => {
       if (!apiKey.trim()) {
         throw mockCommandError("CREDENTIAL_INVALID");
       }
+      if (liveWorkbench) setLiveWorkbenchSessionKey(apiKey);
       credential = {
         present: true,
         fingerprint: "MOCK",
         saved_at: new Date().toISOString(),
       };
+      if (liveWorkbench) {
+        await workbench.refreshCatalogs();
+      }
       return structuredClone(credential);
     },
     deleteCredential: async () => {
+      if (liveWorkbench) setLiveWorkbenchSessionKey("");
       credential = structuredClone(fixtureCredentialAbsent);
+      if (liveWorkbench) {
+        await workbench.refreshCatalogs();
+      }
       return structuredClone(credential);
     },
     getAPIKeyUsage: async (period) => {
@@ -315,6 +352,25 @@ export function createMockDesktopApi(
     setNativeLanguage: async () => undefined,
     getDesktopPaths: async () => structuredClone(fixtureDesktopPaths),
     prepareForUninstall: async () => undefined,
+    getWorkbenchReadiness: workbench.getReadiness,
+    refreshWorkbenchCatalogs: workbench.refreshCatalogs,
+    listWorkbench: workbench.list,
+    createWorkbenchConversation: workbench.create,
+    selectWorkbenchConversation: workbench.select,
+    deleteWorkbenchConversation: workbench.remove,
+    setWorkbenchOptions: workbench.setOptions,
+    pickWorkbenchReference: workbench.pickReference,
+    importWorkbenchBytes: workbench.importBytes,
+    quoteWorkbenchAsset: workbench.quoteAsset,
+    sendWorkbench: workbench.send,
+    regenerateWorkbench: workbench.regenerate,
+    cancelWorkbench: workbench.cancel,
+    saveWorkbenchAsset: workbench.saveAsset,
+    rebuildWorkbench: workbench.rebuild,
+    subscribeWorkbenchChatDelta: workbench.subscribeChatDelta,
+    subscribeWorkbenchPhase: workbench.subscribePhase,
+    subscribeWorkbenchImageStatus: workbench.subscribeImageStatus,
+    subscribeWorkbenchOperationDone: workbench.subscribeDone,
   };
 }
 

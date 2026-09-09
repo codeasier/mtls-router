@@ -174,6 +174,7 @@ manager 以由 Rust target triple 派生的操作系统/架构标签报告其目
 | 改动类型 | 命令 | 说明 |
 | --- | --- | --- |
 | 仅 React/UI | `cd desktop && npm run dev:mock` | 只跑 Vite + HMR。通过现有 `App` 边界注入内存 `DesktopApi`。绝不读写真实凭据或 Agent 配置。可选场景：`?mockScenario=success\|protocol-error\|preview-stale\|write-fail`（或 `window.__MTLS_MOCK_SCENARIO__`）。生产构建无法启用 mock（仅 `DEV && VITE_MOCK=true`）。 |
+| React UI + 本机 19099 | `cd desktop && npm run dev:mock:live` | 同一套 mock 壳，但对话生图经 Vite 代理打到已在监听的 `127.0.0.1:19099`。需先自行启动 router。打开 `http://localhost:1420/`（不要用 `127.0.0.1:1420`，Vite 默认只绑 localhost）。密钥由 Vite 从桌面 `credentials.json` 或 `WORKBENCH_API_KEY` 注入，也可在密钥页再贴。不走 Tauri 可信通道，生产构建不含这条路径。 |
 | Rust/Tauri | `cd desktop && npm run dev:tauri:reuse` | 以内嵌 router 与 manager 启动 `tauri dev`，并固定 `VITE_MOCK=false` 与开发身份。无需任何前置准备。 |
 | 真实 Agent 链路（隔离路径） | `cd desktop && npm run dev:agent` | 显式覆盖 `MTLS_ROUTER_DESKTOP_DATA_DIR`、`CLAUDE_CONFIG_DIR`、`OPENCODE_CONFIG`、`CODEX_HOME` 到可丢弃根目录（或 `MTLS_ROUTER_DEV_AGENT_ROOT`），再包装 reuse。**不**隔离固定 router 端口 `127.0.0.1:19099`；请避免与日常 router 实例并行。 |
 | router 凭据、上游、preset 或策略 | 设置上表中的构建输入，然后 `npm run tauri -- dev` | `secrets/` 文件或上述环境变量变化时 `build.rs` 会重新运行并重新内嵌。 |

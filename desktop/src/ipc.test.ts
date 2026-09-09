@@ -656,6 +656,25 @@ describe("typed desktop API", () => {
     expect(invoke).toHaveBeenNthCalledWith(5, COMMANDS.prepareForUninstall);
   });
 
+  it("forwards workbench commands without key or path fields", async () => {
+    const invoke = vi.fn().mockResolvedValue({});
+    const api = createDesktopApi(invoke as InvokeFn);
+    await api.getWorkbenchReadiness();
+    await api.sendWorkbench("c-1", "画一只猫", true, null);
+    await api.importWorkbenchBytes(new Uint8Array([1, 2, 3]));
+    expect(invoke).toHaveBeenNthCalledWith(1, COMMANDS.workbenchReadiness);
+    expect(invoke).toHaveBeenNthCalledWith(2, COMMANDS.workbenchSend, {
+      request: {
+        conversation_id: "c-1",
+        text: "画一只猫",
+        force_image: true,
+        reference_asset_id: null,
+      },
+    });
+    expect(JSON.stringify(invoke.mock.calls)).not.toMatch(/sk-/);
+    expect(JSON.stringify(invoke.mock.calls)).not.toMatch(/\/Users\//);
+  });
+
   it("caps the backend log request and response at the frontend boundary", async () => {
     const invoke = vi.fn().mockResolvedValue({
       lines: Array.from(

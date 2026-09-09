@@ -30,6 +30,8 @@ const DEFAULT_COMMAND_QUEUE: usize = 8;
 pub const DEFAULT_MAX_CONCURRENT: u32 = 32;
 /// Isolation deadline for proxied connect + send + response headers.
 /// Independent of the probe-only [`super::DEFAULT_TIMEOUT`] (Go `-timeout` / `MTLS_TIMEOUT`).
+/// Known isolation: an upstream that never writes headers is answered with 504;
+/// a long body or SSE after headers is not cut by this budget.
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// In-process isolation limits. These are not the frozen Go HTTP contract:
@@ -707,7 +709,7 @@ fn timeout_response() -> Response<BoxBody<Bytes, Infallible>> {
 mod tests {
     use super::*;
     use crate::router_core::test_support::{
-        boxed_bytes, start_mtls_handler, start_mtls_server, MtlsServerOptions,
+        boxed_bytes, boxed_channel, start_mtls_handler, start_mtls_server, MtlsServerOptions,
     };
     use crate::router_core::{DEFAULT_TIMEOUT, HEALTH_PATH, VERSION_PATH};
     use http_body_util::Empty;
@@ -1046,6 +1048,64 @@ mod tests {
         assert_eq!(error.as_str(), "shutdown_timeout");
         assert!(!supervisor.status().bound);
         let _ = pending.await;
+        supervisor.shutdown().await.ok();
+    }
+
+    #[tokio::test]
+    async fn request_timeout_cuts_slow_headers_but_not_a_long_body_after_headers() {
+        let upstream = start_mtls_handler(move |request| {
+            let path = request.uri().path().to_owned();
+            async move {
+                if path == "/v1/slow-headers" {
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    return Response::builder()
+                        .status(StatusCode::NO_CONTENT)
+                        .body(boxed_bytes(Bytes::new()))
+                        .expect("slow headers");
+                }
+                if path == "/v1/slow-body" {
+                    let (tx, rx) = mpsc::channel(1);
+                    tokio::spawn(async move {
+                        tokio::time::sleep(Duration::from_millis(200)).await;
+                        let _ = tx
+                            .send(Bytes::from_static(b"data: after-headers\n\n"))
+                            .await;
+                    });
+                    return Response::builder()
+                        .status(StatusCode::OK)
+                        .header(header::CONTENT_TYPE, "text/event-stream")
+                        .body(boxed_channel(rx))
+                        .expect("slow body");
+                }
+                Response::builder()
+                    .status(StatusCode::NO_CONTENT)
+                    .body(boxed_bytes(Bytes::new()))
+                    .expect("probe")
+            }
+        })
+        .await;
+        let mut config = config_for(&upstream.url, "127.0.0.1:0", upstream.certs.materials());
+        config.limits.command_timeout = Duration::from_secs(2);
+        config.limits.request_timeout = Duration::from_millis(60);
+        let supervisor = RouterSupervisor::spawn(config);
+        let addr = supervisor.start().await.expect("start");
+
+        let late_headers = http1_get(&format!("http://{addr}"), "/v1/slow-headers").await;
+        assert_eq!(
+            late_headers.status(),
+            StatusCode::GATEWAY_TIMEOUT,
+            "upstream that delays headers is a known 504 isolation"
+        );
+
+        let streamed = http1_get(&format!("http://{addr}"), "/v1/slow-body").await;
+        assert_eq!(streamed.status(), StatusCode::OK);
+        let body = streamed
+            .into_body()
+            .collect()
+            .await
+            .expect("collect")
+            .to_bytes();
+        assert_eq!(&body[..], b"data: after-headers\n\n");
         supervisor.shutdown().await.ok();
     }
 }

@@ -1,8 +1,10 @@
 import { vi } from "vitest";
 
+import { createWorkbenchMockHandlers } from "../dev/workbenchMock";
 import type { AgentId, DesktopApi, PollSnapshot } from "../ipc";
 
 export function createMockApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
+  const workbench = createWorkbenchMockHandlers();
   const api: DesktopApi = {
     getPollSnapshot: vi.fn(),
     subscribePollSnapshots: vi.fn().mockResolvedValue(() => undefined),
@@ -166,6 +168,25 @@ export function createMockApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
       can_prepare_for_uninstall: true,
     }),
     prepareForUninstall: vi.fn().mockResolvedValue(undefined),
+    getWorkbenchReadiness: vi.fn(workbench.getReadiness),
+    refreshWorkbenchCatalogs: vi.fn(workbench.refreshCatalogs),
+    listWorkbench: vi.fn(workbench.list),
+    createWorkbenchConversation: vi.fn(workbench.create),
+    selectWorkbenchConversation: vi.fn(workbench.select),
+    deleteWorkbenchConversation: vi.fn(workbench.remove),
+    setWorkbenchOptions: vi.fn(workbench.setOptions),
+    pickWorkbenchReference: vi.fn(workbench.pickReference),
+    importWorkbenchBytes: vi.fn(workbench.importBytes),
+    quoteWorkbenchAsset: vi.fn(workbench.quoteAsset),
+    sendWorkbench: vi.fn(workbench.send),
+    regenerateWorkbench: vi.fn(workbench.regenerate),
+    cancelWorkbench: vi.fn(workbench.cancel),
+    saveWorkbenchAsset: vi.fn(workbench.saveAsset),
+    rebuildWorkbench: vi.fn(workbench.rebuild),
+    subscribeWorkbenchChatDelta: vi.fn(workbench.subscribeChatDelta),
+    subscribeWorkbenchPhase: vi.fn(workbench.subscribePhase),
+    subscribeWorkbenchImageStatus: vi.fn(workbench.subscribeImageStatus),
+    subscribeWorkbenchOperationDone: vi.fn(workbench.subscribeDone),
     ...overrides,
   };
 

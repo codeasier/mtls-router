@@ -77,7 +77,10 @@ export function UsagePage({
   }, [api, clearUsage, loadUsage]);
 
   return (
-    <section className="apikey-panel" aria-label={t("section.usage.title")}>
+    <section
+      className="apikey-panel usage-panel"
+      aria-label={t("section.usage.title")}
+    >
       <ApiKeyUsageCard
         present={Boolean(present)}
         period={period}

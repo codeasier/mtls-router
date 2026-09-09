@@ -1,0 +1,5 @@
+data: {"id":"chatcmpl-fixture","choices":[{"index":0,"delta":{"role":"assistant","content":"好的，这就出图。\n"}}]}
+
+data: {"id":"chatcmpl-fixture","choices":[{"index":0,"delta":{"content":"```image\n{\"action\":\"generate\",\"prompt\":\"a red cube on a wooden table, soft daylight\",\"size\":\"1024x1024\"}\n```"}}]}
+
+data: [DONE]
