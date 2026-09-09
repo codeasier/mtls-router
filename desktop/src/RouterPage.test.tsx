@@ -719,6 +719,13 @@ describe("RouterPage states", () => {
       screen.queryByRole("heading", { name: "检查端口占用进程" }),
     ).not.toBeInTheDocument();
     expect(screen.queryByText("强制终止占用进程")).not.toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "改用其他本地端口" }),
+    ).toBeVisible();
+    expect(screen.getByLabelText("端口")).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "使用此端口并重启" }),
+    ).toBeVisible();
   });
 
   it("keeps address-in-use listen failures on the occupied-port guide", async () => {
@@ -744,6 +751,207 @@ describe("RouterPage states", () => {
     ).toBeVisible();
     expect(screen.getByText(/未被其他程序占用/)).toBeVisible();
     expect(screen.queryByText("本地端口被系统保留")).not.toBeInTheDocument();
+    expect(screen.queryByText("改用其他本地端口")).not.toBeInTheDocument();
+  });
+
+  it("applies a reserved-port loopback override and rejects invalid ports", async () => {
+    const setListenOverride = vi.fn().mockResolvedValue({
+      listen_addr: "127.0.0.1:19100",
+      factory_default: "127.0.0.1:19099",
+      overridden: true,
+    });
+    const api = createMockApi({
+      getRouterStatus: vi.fn().mockResolvedValue({
+        state: "start_failed",
+        last_error:
+          "stage=process_launch code=ROUTER_START_FAILED os_error=10013",
+        recent_logs: ["reason=listen_failed listen_refusal=access_denied"],
+      }),
+      setListenOverride,
+    });
+
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
+
+    await screen.findByRole("heading", { name: "改用其他本地端口" });
+    fireEvent.click(screen.getByRole("button", { name: "使用此端口并重启" }));
+    expect(
+      await screen.findByText(/请输入 1–65535 的端口/),
+    ).toBeInTheDocument();
+    expect(setListenOverride).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("端口"), {
+      target: { value: "0x4A74" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "使用此端口并重启" }));
+    expect(screen.getByText(/请输入 1–65535 的端口/)).toBeInTheDocument();
+    expect(setListenOverride).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("端口"), {
+      target: { value: "1e3" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "使用此端口并重启" }));
+    expect(setListenOverride).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("端口"), {
+      target: { value: "19100" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "使用此端口并重启" }));
+    await waitFor(() => expect(setListenOverride).toHaveBeenCalledWith(19100));
+    expect(await screen.findByText(/正在重启桌面应用/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "启动路由" })).toBeDisabled();
+  });
+
+  it("explains a blocked listen-override restart without claiming the file was saved", async () => {
+    const setListenOverride = vi.fn().mockRejectedValue({
+      code: "LISTEN_OVERRIDE_RESTART_BLOCKED",
+      message: "restart is blocked",
+    });
+    const api = createMockApi({
+      getRouterStatus: vi.fn().mockResolvedValue({
+        state: "start_failed",
+        last_error:
+          "stage=process_launch code=ROUTER_START_FAILED os_error=10013",
+        recent_logs: ["reason=listen_failed listen_refusal=access_denied"],
+      }),
+      setListenOverride,
+    });
+
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
+
+    await screen.findByRole("heading", { name: "改用其他本地端口" });
+    fireEvent.change(screen.getByLabelText("端口"), {
+      target: { value: "19100" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "使用此端口并重启" }));
+    expect(await screen.findByText(/监听覆盖尚未保存/)).toBeInTheDocument();
+  });
+
+  it("does not offer a listen override for occupied or generic listen failures", async () => {
+    const occupied = createMockApi({
+      getRouterStatus: vi.fn().mockResolvedValue({
+        state: "unknown_occupant",
+        listen_addr: "127.0.0.1:19099",
+      }),
+    });
+    const { unmount } = renderWithI18n(
+      <RouterPage
+        api={occupied}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
+    expect(
+      await screen.findByRole("heading", { name: "检查端口占用进程" }),
+    ).toBeVisible();
+    expect(screen.queryByText("改用其他本地端口")).not.toBeInTheDocument();
+    unmount();
+
+    const generic = createMockApi({
+      getRouterStatus: vi.fn().mockResolvedValue({
+        state: "start_failed",
+        last_error: "stage=process_exit code=ROUTER_START_FAILED",
+        recent_logs: ["reason=listen_failed"],
+      }),
+    });
+    renderWithI18n(
+      <RouterPage
+        api={generic}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
+    expect(
+      await screen.findByRole("heading", { name: "无法打开本地端口" }),
+    ).toBeVisible();
+    expect(screen.queryByText("改用其他本地端口")).not.toBeInTheDocument();
+  });
+
+  it("shows the configured listener and an explicit reset when overridden", async () => {
+    const clearListenOverride = vi.fn().mockResolvedValue({
+      listen_addr: "127.0.0.1:19099",
+      factory_default: "127.0.0.1:19099",
+      overridden: false,
+    });
+    const api = createMockApi({
+      getRouterStatus: vi.fn().mockResolvedValue({
+        state: "desktop_owned",
+        owner: "desktop",
+        listen_addr: "http://127.0.0.1:19100",
+      }),
+      getListenConfig: vi.fn().mockResolvedValue({
+        listen_addr: "127.0.0.1:19100",
+        factory_default: "127.0.0.1:19099",
+        overridden: true,
+      }),
+      clearListenOverride,
+    });
+
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByText("127.0.0.1:19100")).toBeVisible();
+    expect(screen.queryByText("改用其他本地端口")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/会立即重启、丢弃未保存的 Agent 草稿/),
+    ).toBeVisible();
+    fireEvent.click(
+      screen.getByRole("button", { name: "恢复为 127.0.0.1:19099" }),
+    );
+    await waitFor(() => expect(clearListenOverride).toHaveBeenCalledOnce());
+  });
+
+  it("offers reset when listen-override.json is invalid and status is unavailable", async () => {
+    const clearListenOverride = vi.fn().mockResolvedValue({
+      listen_addr: "127.0.0.1:19099",
+      factory_default: "127.0.0.1:19099",
+      overridden: false,
+    });
+    const api = createMockApi({
+      getPollSnapshot: vi.fn().mockResolvedValue({
+        revision: 1,
+        status_error: { code: "LISTEN_OVERRIDE_INVALID" },
+      }),
+      getListenConfig: vi.fn().mockRejectedValue({
+        code: "LISTEN_OVERRIDE_INVALID",
+        message: "desktop listen override is corrupt",
+      }),
+      clearListenOverride,
+    });
+
+    renderWithI18n(
+      <RouterPage
+        api={api}
+        onNavigateToAgents={vi.fn()}
+        onNavigateToLogs={vi.fn()}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "路由状态暂时不可用" }),
+    ).toBeVisible();
+    expect(await screen.findByText(/监听覆盖文件已损坏或不兼容/)).toBeVisible();
+    fireEvent.click(
+      screen.getByRole("button", { name: "恢复为 127.0.0.1:19099" }),
+    );
+    await waitFor(() => expect(clearListenOverride).toHaveBeenCalledOnce());
+    expect(await screen.findByText(/正在重启桌面应用/)).toBeInTheDocument();
   });
 
   it.each([

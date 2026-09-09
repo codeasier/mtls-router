@@ -28,7 +28,7 @@ The desktop never downloads or replaces components independently. If reinstallin
 
 ## Port 19099 is occupied
 
-The desktop uses exactly `127.0.0.1:19099`. It never selects an alternate port or terminates an occupant automatically. The regular Stop action, Quit, launch-at-login, and tray actions do not terminate unknown occupants.
+The desktop uses one configured loopback listener (factory default `127.0.0.1:19099`). It never selects an alternate port automatically or terminates an occupant automatically. The regular Stop action, Quit, launch-at-login, and tray actions do not terminate unknown occupants.
 
 1. Check whether a CLI-managed router is running with `./setup.sh router status` or `.\setup.ps1 router status` from a verified setup package.
 2. If the desktop reports an external compatible router, reuse is intentional; the desktop will not own or stop it.
@@ -46,12 +46,14 @@ A manually started router is intentionally unknown unless complete CLI setup sta
 
 ## Local port reserved on Windows (WSL / Hyper-V)
 
-If the Router page shows start failed / cannot open the local port and there is **no occupant-recovery panel**, Windows may have reserved `127.0.0.1:19099` through WinNAT or Hyper-V. This is common after WSL2 is installed. Nothing is listening, so force-terminate cannot help. The listen address stays `127.0.0.1:19099`.
+If the Router page shows start failed / cannot open the local port and there is **no occupant-recovery panel**, Windows may have reserved the configured loopback port (factory default `127.0.0.1:19099`) through WinNAT or Hyper-V. This is common after WSL2 is installed. Nothing is listening, so force-terminate cannot help.
 
 1. Copy the diagnostic snapshot. `listen_refusal=access_denied` with `os_error=10013` (WSAEACCES) is the reserved-range signal. `os_error=10048` / `listen_refusal=address_in_use` is a real listener conflict — follow [Port 19099 is occupied](#port-19099-is-occupied).
-2. In Administrator PowerShell run `netsh interface ipv4 show excludedportrange protocol=tcp`. If `19099` falls inside a range, `netstat` / the TCP owner table will show no listener.
+2. In Administrator PowerShell run `netsh interface ipv4 show excludedportrange protocol=tcp`. If the configured port falls inside a range, `netstat` / the TCP owner table will show no listener.
 3. Run `wsl --shutdown` or restart Windows so excluded ranges can be redrawn, then retry from the Router page.
-4. Do not force-terminate a process that is not there, and do not change the listen address.
+4. If the reserved range cannot be cleared, use the Router page override: type a `127.0.0.1` port (`1–65535`). The application persists it as this installation’s only listener and restarts; it does not pick a port itself. Existing Agent files that still name the old URL need a new preview and write. Reset returns to `127.0.0.1:19099`.
+5. If the Router page is stuck on status unavailable after an override or a downgrade, `{data_dir}/listen-override.json` may be corrupt or schema-incompatible. Startup fails closed (`LISTEN_OVERRIDE_INVALID`) so the app does not silently bind `19099`. Use **Reset to 127.0.0.1:19099** on the Router page; that deletes the file and restarts even when the manager did not start. If the page has no reset control, delete `{data_dir}/listen-override.json` (Settings shows the data directory) and reopen the application.
+6. Do not force-terminate a process that is not there. Do not bind `0.0.0.0`, a LAN address, `localhost`, or `[::1]`.
 
 ## Stale router state
 

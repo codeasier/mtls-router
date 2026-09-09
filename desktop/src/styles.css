@@ -997,6 +997,68 @@ main[data-section="images"] {
   line-height: 1.6;
 }
 
+.listen-override {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 16px 18px;
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  background: var(--surface-raised);
+}
+
+.listen-override .overline {
+  margin: 0;
+}
+
+.listen-override h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.listen-override p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.listen-override__row {
+  display: grid;
+  grid-template-columns: auto auto minmax(4.5rem, 7rem) minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.listen-override__row label {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.listen-override__host {
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 13px;
+}
+
+.listen-override__row input {
+  width: 100%;
+  min-width: 0;
+  height: var(--control-height);
+  padding: 0 10px;
+  color: var(--ink);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  font-family: "SFMono-Regular", Consolas, monospace;
+}
+
+.listen-override--active {
+  background: var(--warning-soft);
+  border-color: color-mix(in srgb, var(--warning) 28%, transparent);
+}
+
 .failure-diagnostics {
   margin-top: 10px;
   color: var(--ink);
@@ -4612,8 +4674,17 @@ main[data-section="images"] {
   .primary-panel .inline-alert,
   .primary-panel .release-observation,
   .primary-panel .failure-guidance,
+  .primary-panel .listen-override,
   .primary-panel .occupant-panel {
     order: 2;
+  }
+
+  .listen-override__row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .listen-override__row button {
+    grid-column: 1 / -1;
   }
 
   .primary-panel .action-row {

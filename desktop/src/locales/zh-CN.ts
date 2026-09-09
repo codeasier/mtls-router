@@ -133,12 +133,32 @@ export const zhCN = {
   "router.failureGuide.local-port.detail":
     "路由未能监听本地地址，Agent 请求目前无法进入路由。",
   "router.failureGuide.local-port.action":
-    "确认 127.0.0.1:19099 未被其他程序占用后重试；必要时重新启动桌面应用。",
+    "确认 {listen} 未被其他程序占用后重试；必要时重新启动桌面应用。",
   "router.failureGuide.local-port-reserved.title": "本地端口被系统保留",
   "router.failureGuide.local-port-reserved.detail":
-    "Windows 拒绝监听 127.0.0.1:19099。这通常是 WSL 或 Hyper-V 保留了该端口，而不是其他程序正在占用。没有可终止的占用进程。",
+    "Windows 拒绝监听 {listen}。这通常是 WSL 或 Hyper-V 保留了该端口，而不是其他程序正在占用。没有可终止的占用进程。",
   "router.failureGuide.local-port-reserved.action":
-    "在管理员 PowerShell 中运行 netsh interface ipv4 show excludedportrange protocol=tcp。若 19099 落在保留段内，请执行 wsl --shutdown 或重启 Windows 后再试。监听地址保持 127.0.0.1:19099，不要强制终止不存在的占用者。",
+    "在管理员 PowerShell 中运行 netsh interface ipv4 show excludedportrange protocol=tcp。若该端口落在保留段内，请执行 wsl --shutdown 或重启 Windows 后再试。若保留段无法清除，请在下方输入另一个 127.0.0.1 端口；覆盖后将成为本安装的唯一监听地址。不要强制终止不存在的占用者。",
+  "router.listenOverride.overline": "回环覆盖",
+  "router.listenOverride.heading": "改用其他本地端口",
+  "router.listenOverride.detail":
+    "本安装将只监听 127.0.0.1 与你输入的端口，下次启动不会先尝试 19099。仍指向旧 URL 的 Claude / opencode / Codex 文件需要重新预览并写入；在写入成功前，不要把路由当作已对 Agent 就绪。",
+  "router.listenOverride.portLabel": "端口",
+  "router.listenOverride.hostPrefix": "127.0.0.1",
+  "router.listenOverride.apply": "使用此端口并重启",
+  "router.listenOverride.reset": "恢复为 127.0.0.1:19099",
+  "router.listenOverride.resetHint":
+    "本安装当前监听 {listen}，而不是出厂默认的 127.0.0.1:19099。重置会立即重启、丢弃未保存的 Agent 草稿，并且在你重新预览并写入之前，现有 Agent 文件仍指向覆盖地址。",
+  "router.listenOverride.invalidConfig":
+    "本安装的监听覆盖文件已损坏或不兼容，路由无法启动。重置会删除 listen-override.json 并重启。也可以在设置页显示的数据目录中删除该文件后重新打开应用。",
+  "router.listenOverride.invalidPort":
+    "请输入 1–65535 的端口。不接受 0、局域网地址、localhost 或 [::1]。",
+  "router.listenOverride.unavailable":
+    "仅在保留端口导致监听失败且没有占用者时，才能覆盖监听地址。",
+  "router.listenOverride.failed": "无法保存监听覆盖。",
+  "router.listenOverride.restarting": "已保存，正在重启桌面应用…",
+  "router.listenOverride.restartBlocked":
+    "现在无法重启，监听覆盖尚未保存。请在没有其他路由操作进行时重试。",
   "router.failureGuide.process-launch.title": "系统未能启动路由组件",
   "router.failureGuide.process-launch.detail":
     "桌面应用已验证组件，但操作系统没有成功创建路由进程。",

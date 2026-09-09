@@ -28,7 +28,7 @@ Workflow 会构建六个原生桌面包，并在匹配的目标 runner 上检查
 
 ## 端口 19099 被占用
 
-桌面应用固定使用 `127.0.0.1:19099`，绝不会选择其他端口或自动终止占用者。常规停止、退出、登录时启动和托盘操作都不会终止未知占用者。
+桌面应用使用本安装配置的唯一回环监听（出厂默认 `127.0.0.1:19099`），绝不会自动选择其他端口或自动终止占用者。常规停止、退出、登录时启动和托盘操作都不会终止未知占用者。
 
 1. 使用可信安装包中的 `./setup.sh router status` 或 `.\setup.ps1 router status` 检查是否有 CLI 管理的 router。
 2. 如果桌面应用报告兼容外部 router，复用属于预期行为；桌面应用不会拥有或停止它。
@@ -46,12 +46,14 @@ Workflow 会构建六个原生桌面包，并在匹配的目标 runner 上检查
 
 ## Windows 本地端口被系统保留（WSL / Hyper-V）
 
-若 Router 页显示启动失败 / 无法打开本地端口，且**没有占用恢复面板**，则 Windows 可能通过 WinNAT 或 Hyper-V 保留了 `127.0.0.1:19099`。安装 WSL2 后很常见。此时没有 listener，强制终止帮不上忙。监听地址仍为 `127.0.0.1:19099`。
+若 Router 页显示启动失败 / 无法打开本地端口，且**没有占用恢复面板**，则 Windows 可能通过 WinNAT 或 Hyper-V 保留了已配置的回环端口（出厂默认 `127.0.0.1:19099`）。安装 WSL2 后很常见。此时没有 listener，强制终止帮不上忙。
 
 1. 复制诊断快照。`listen_refusal=access_denied` 且 `os_error=10013`（WSAEACCES）表示保留段；`os_error=10048` / `listen_refusal=address_in_use` 才是真实占用，请按[端口 19099 被占用](#端口-19099-被占用)处理。
-2. 在管理员 PowerShell 中运行 `netsh interface ipv4 show excludedportrange protocol=tcp`。若 `19099` 落在某段内，`netstat` / TCP owner 表不会显示 listener。
+2. 在管理员 PowerShell 中运行 `netsh interface ipv4 show excludedportrange protocol=tcp`。若已配置端口落在某段内，`netstat` / TCP owner 表不会显示 listener。
 3. 执行 `wsl --shutdown` 或重启 Windows，让排除段重新划分，再从 Router 页重试。
-4. 不要强制终止不存在的占用者，也不要改监听地址。
+4. 若保留段无法清除，请在 Router 页输入另一个 `127.0.0.1` 端口（`1–65535`）。应用会把它持久化为本安装的唯一监听并重启，不会自行选端口。仍指向旧 URL 的 Agent 文件需要重新预览并写入。重置则回到 `127.0.0.1:19099`。
+5. 若覆盖或降级后 Router 页停在状态不可用，`{data_dir}/listen-override.json` 可能已损坏或 schema 不兼容。启动会 fail closed（`LISTEN_OVERRIDE_INVALID`），避免静默绑回 `19099`。请在 Router 页选择**恢复为 127.0.0.1:19099**：即使 manager 未启动也会删除该文件并重启。若页面没有重置控件，请删除 `{data_dir}/listen-override.json`（设置页会显示数据目录）后重新打开应用。
+6. 不要强制终止不存在的占用者。不要绑定 `0.0.0.0`、局域网地址、`localhost` 或 `[::1]`。
 
 ## Router 状态陈旧
 

@@ -145,13 +145,34 @@ export const en: Record<TranslationKey, string> = {
   "router.failureGuide.local-port.detail":
     "The router could not listen on its local address, so Agent requests cannot reach it.",
   "router.failureGuide.local-port.action":
-    "Confirm that 127.0.0.1:19099 is not used by another program and retry. Restart the desktop application if needed.",
+    "Confirm that {listen} is not used by another program and retry. Restart the desktop application if needed.",
   "router.failureGuide.local-port-reserved.title":
     "Local port is reserved by Windows",
   "router.failureGuide.local-port-reserved.detail":
-    "Windows refused to listen on 127.0.0.1:19099. This usually means WSL or Hyper-V reserved the port, not that another program is using it. There is no occupant to terminate.",
+    "Windows refused to listen on {listen}. This usually means WSL or Hyper-V reserved the port, not that another program is using it. There is no occupant to terminate.",
   "router.failureGuide.local-port-reserved.action":
-    "In Administrator PowerShell, run netsh interface ipv4 show excludedportrange protocol=tcp. If 19099 is inside a reserved range, run wsl --shutdown or restart Windows, then retry. The listen address stays 127.0.0.1:19099. Do not force-terminate a process that is not there.",
+    "In Administrator PowerShell, run netsh interface ipv4 show excludedportrange protocol=tcp. If this port is inside a reserved range, run wsl --shutdown or restart Windows, then retry. If the range cannot be cleared, enter another 127.0.0.1 port below. That override becomes this installation's only listener. Do not force-terminate a process that is not there.",
+  "router.listenOverride.overline": "Loopback override",
+  "router.listenOverride.heading": "Use another local port",
+  "router.listenOverride.detail":
+    "This installation will listen only on 127.0.0.1 and the port you enter. The next start will not try 19099 first. Existing Claude, opencode, or Codex files that still point at the old URL need a new preview and write; the router is not Agent-ready until that rewrite succeeds.",
+  "router.listenOverride.portLabel": "Port",
+  "router.listenOverride.hostPrefix": "127.0.0.1",
+  "router.listenOverride.apply": "Use this port and restart",
+  "router.listenOverride.reset": "Reset to 127.0.0.1:19099",
+  "router.listenOverride.resetHint":
+    "This installation currently listens on {listen} instead of the factory default 127.0.0.1:19099. Reset restarts immediately, discards an unsaved Agent draft, and leaves existing Agent files on the override URL until you preview and write again.",
+  "router.listenOverride.invalidConfig":
+    "This installation's listen override file is corrupt or incompatible, so the router cannot start. Reset deletes listen-override.json and restarts. You can also delete that file in the data directory shown in Settings, then reopen the app.",
+  "router.listenOverride.invalidPort":
+    "Enter a port from 1 to 65535. 0, LAN addresses, localhost, and [::1] are not accepted.",
+  "router.listenOverride.unavailable":
+    "A listen override is only available after a reserved-port listen failure with no occupant.",
+  "router.listenOverride.failed": "Unable to save the listen override.",
+  "router.listenOverride.restarting":
+    "Saved. Restarting the desktop application…",
+  "router.listenOverride.restartBlocked":
+    "Restart is blocked, so the listen override was not saved. Try again when no other Router action is in progress.",
   "router.failureGuide.process-launch.title":
     "The system could not start the router component",
   "router.failureGuide.process-launch.detail":
