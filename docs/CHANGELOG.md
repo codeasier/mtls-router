@@ -2,6 +2,22 @@
 
 [中文](zh-CN/CHANGELOG.md)
 
+## v0.5.3 - 2026-09-10
+
+This patch release lets a Windows install persist an operator-chosen loopback port when `19099` is reserved, and keeps Usage and Chat images from hiding the real failure.
+
+### Added
+
+- When Windows start fails with `listen_failed` / `listen_refusal=access_denied` and the configured loopback address has no occupant, the Router page accepts an explicit `127.0.0.1:<port>` override (`1–65535`). The application never picks a port itself. The saved override in `{data_dir}/listen-override.json` is this installation’s only listener on the next launch; it does not try `19099` first. Reset returns to `127.0.0.1:19099`. LAN binds, `0.0.0.0`, `localhost`, and `[::1]` are rejected. A corrupt or incompatible override file fails closed (`LISTEN_OVERRIDE_INVALID`); the Router page can delete it and restart even when the manager did not start. After an override, existing Agent files that still name the old URL are drift and need a new preview/write.
+
+### Fixed
+
+- Windows router start now keeps the numeric bind `os_error` and a closed `listen_refusal` token. A Hyper-V/WinNAT reserved port (`WSAEACCES` / `access_denied`) shows reserved-range guidance instead of “another program is using the port”, and does not offer force-terminate.
+- After a `0.5.1` → `0.5.2` online update, a failing credential read on the Usage page no longer clears into the “no API key saved” empty state; the error stays until a successful read.
+- Windows WebView2 Chat images model and size `<select>` popups stay readable: the overlay is hidden with opacity, and option colors use the system palette.
+
+---
+
 ## v0.5.2 - 2026-09-09
 
 This release adds a local Chat images workbench: conversations stay on the device, Rust talks to the trusted loopback router, and the webview never receives the API key. It is an explicit product surface, not a router-lifecycle extra, and not the unpublished prompt-only “image conversations” path.
@@ -15,10 +31,6 @@ This release adds a local Chat images workbench: conversations stay on the devic
 ### Security and recovery
 
 - The workbench never asks for a gateway URL or API key. Rust holds the key on the already-authenticated loopback connection; the webview receives bounded metadata and `image-asset` URLs, not key material or unrestricted filesystem access. Session files are unencrypted under the application data directory and are removed only when the user deletes a conversation or uninstalls the app.
-
-### Fixed
-
-- Windows router start now keeps the numeric bind `os_error` and a closed `listen_refusal` token. A Hyper-V/WinNAT reserved port (`WSAEACCES` / `access_denied`) shows reserved-range guidance instead of “another program is using the port”, and does not offer force-terminate. The listen address stays `127.0.0.1:19099`.
 
 ---
 
