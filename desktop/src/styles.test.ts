@@ -500,6 +500,17 @@ describe("appearance themes", () => {
       compact(findRuleDeclarations(css, ".images-dial select:focus-visible")),
     ).toMatch(/box-shadow:\s*none/);
   });
+
+  it("keeps images-dial native option text readable in Windows WebView2", () => {
+    const select = compact(findRuleDeclarations(css, ".images-dial select"));
+    expect(select).toMatch(/opacity:\s*0/);
+    expect(select).not.toMatch(/color:\s*transparent/);
+    expect(select).toMatch(/color:\s*CanvasText/);
+    expect(select).toMatch(/color-scheme:\s*light/);
+    const option = compact(findRuleDeclarations(css, ".images-dial option"));
+    expect(option).toMatch(/color:\s*CanvasText/);
+    expect(option).toMatch(/background-color:\s*Canvas/);
+  });
 });
 
 describe("narrow overview and compact nav", () => {
