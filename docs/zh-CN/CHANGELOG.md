@@ -2,6 +2,22 @@
 
 [English](../CHANGELOG.md)
 
+## v0.5.3 - 2026-09-10
+
+本次补丁发布让 Windows 安装在 `19099` 被系统保留时，可以持久化操作员指定的回环端口，并避免用量页与「对话生图」把真实失败藏起来。
+
+### 新增
+
+- 当 Windows 启动失败为 `listen_failed` / `listen_refusal=access_denied`，且已配置回环地址没有占用者时，Router 页接受显式的 `127.0.0.1:<port>` 覆盖（`1–65535`）。应用绝不会自行选端口。写入 `{data_dir}/listen-override.json` 后，该地址成为本安装下次启动的唯一监听，不会先试 `19099`。重置则回到 `127.0.0.1:19099`。拒绝局域网、`0.0.0.0`、`localhost` 和 `[::1]`。覆盖文件损坏或不兼容时 fail closed（`LISTEN_OVERRIDE_INVALID`）；即使 manager 未启动，Router 页也可删除该文件并重启。覆盖后仍指向旧 URL 的 Agent 文件视为 drift，需要重新预览并写入。
+
+### 修复
+
+- Windows 启动路由时保留 bind 的数值 `os_error` 与封闭 `listen_refusal`。Hyper-V/WinNAT 保留端口（`WSAEACCES` / `access_denied`）显示保留段引导，而不再说「其他程序占用」，也不提供强制终止。
+- `0.5.1` → `0.5.2` 在线更新后，用量页读取凭据失败不再被清成「未保存 API key」空状态；错误会保留到下次读取成功。
+- Windows WebView2 上「对话生图」的模型与尺寸 `<select>` 弹出层保持可读：遮罩用 opacity 隐藏，选项颜色使用系统调色板。
+
+---
+
 ## v0.5.2 - 2026-09-09
 
 本次发布新增本地「对话生图」工作台：会话留在本机，Rust 经可信 loopback router 通信，webview 从不接触 API key。这是显式的产品数据面，不是路由生命周期的附属功能，也不是未发布的「禁止闲聊、仅 prompt 出图」路径。
@@ -15,10 +31,6 @@
 ### 安全与恢复
 
 - 工作台从不询问网关 URL 或 API key。Rust 在已通过身份校验的 loopback 连接上持有密钥；webview 只收到有界元数据与 `image-asset` URL，不接触密钥明文或不受限的文件系统。会话文件未加密存放在应用数据目录，仅在用户删除会话或卸载应用时清除。
-
-### 修复
-
-- Windows 启动路由时保留 bind 的数值 `os_error` 与封闭 `listen_refusal`。Hyper-V/WinNAT 保留端口（`WSAEACCES` / `access_denied`）显示保留段引导，而不再说「其他程序占用」，也不提供强制终止。监听地址仍为 `127.0.0.1:19099`。
 
 ---
 
