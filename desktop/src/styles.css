@@ -5185,7 +5185,8 @@ main[data-section="images"] {
   width: 100%;
   height: 100%;
   opacity: 0;
-  color: transparent;
+  color: CanvasText;
+  color-scheme: light;
   padding: 0;
   margin: 0;
   border: 0;
@@ -5196,6 +5197,11 @@ main[data-section="images"] {
   background: transparent;
   cursor: pointer;
   z-index: 2;
+}
+
+.images-dial option {
+  color: CanvasText;
+  background-color: Canvas;
 }
 
 .images-dial select:focus,

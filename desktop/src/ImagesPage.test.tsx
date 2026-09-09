@@ -104,6 +104,11 @@ describe("ImagesPage", () => {
     expect(composer?.querySelector('[aria-label="对话模型"]')).toBeTruthy();
     expect(composer?.querySelector('[aria-label="生图模型"]')).toBeTruthy();
     expect(mast?.querySelector("select")).toBeNull();
+    for (const name of ["对话模型", "生图模型", "比例"]) {
+      const select = screen.getByLabelText(name);
+      expect(select.tagName).toBe("SELECT");
+      expect(select.closest(".images-dial")).not.toBeNull();
+    }
     expect(screen.getByText("建议")).toBeInTheDocument();
     expect(screen.getByLabelText("描述你想聊或想画的画面")).toHaveAttribute(
       "placeholder",
