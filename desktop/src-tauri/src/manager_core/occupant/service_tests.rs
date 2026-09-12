@@ -711,6 +711,7 @@ fn rejects_pid_only_without_explicit_support() {
     let target = pid_only_target();
     let mut deps = unknown_discover();
     deps.inspect = Some(Box::new(move |_, _| Ok(target.clone())));
+    deps.supports_pid_only = Some(Box::new(|| false));
     deps.random = Some(Box::new(|buffer| {
         fill_random_from_reader(&mut Cursor::new([0u8; 32]), buffer)
     }));

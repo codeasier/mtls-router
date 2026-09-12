@@ -222,18 +222,32 @@ pub async fn update_install(
         return output.value;
     }
     output.value?;
-    if !state.lifecycle.prepare_restart() {
+    let prepared = state.lifecycle.prepare_restart();
+    match complete_successful_install(cfg!(windows), prepared)? {
+        InstallCompletion::ExitProcess => std::process::exit(0),
+        InstallCompletion::RestartApp => app.restart(),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InstallCompletion {
+    ExitProcess,
+    RestartApp,
+}
+
+fn complete_successful_install(windows: bool, restart_prepared: bool) -> Result<InstallCompletion> {
+    if windows {
+        // ShellExecuteW success only means the installer launched. Staying
+        // alive races NSIS replacing in-use files, even if restart is blocked.
+        return Ok(InstallCompletion::ExitProcess);
+    }
+    if !restart_prepared {
         return Err(command_error(
             "UPDATE_RESTART_BLOCKED",
-            "the update was installed but restart is blocked",
+            "restart is blocked after the update was applied",
         ));
     }
-    // NSIS /R restarts only after a successful installation. Restarting here
-    // would race the installer and run the old application again.
-    #[cfg(windows)]
-    std::process::exit(0);
-    #[cfg(not(windows))]
-    app.restart();
+    Ok(InstallCompletion::RestartApp)
 }
 
 #[cfg(any(windows, test))]
@@ -300,6 +314,21 @@ mod tests {
         }
         assert!(installer_launch_succeeded(33));
         assert!(installer_launch_succeeded(1024));
+    }
+
+    #[test]
+    fn launched_windows_installer_exits_even_when_restart_is_blocked() {
+        assert_eq!(
+            complete_successful_install(true, false).unwrap(),
+            InstallCompletion::ExitProcess
+        );
+        assert_eq!(
+            complete_successful_install(false, true).unwrap(),
+            InstallCompletion::RestartApp
+        );
+        let error = complete_successful_install(false, false).unwrap_err();
+        assert_eq!(error.code, "UPDATE_RESTART_BLOCKED");
+        assert!(!error.message.contains("installed"));
     }
 
     #[test]

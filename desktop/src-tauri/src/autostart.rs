@@ -127,11 +127,28 @@ pub fn autostart_set_immediate(app: AppHandle, enabled: bool) -> Result<bool, St
     if actual != enabled {
         return Err("current-user autostart state did not change".to_string());
     }
-    write_marker(&marker_path(&app)?)?;
-    if let Some(diagnostic) = app.try_state::<InitializationDiagnostic>() {
-        *diagnostic.0.lock().unwrap() = None;
-    }
-    Ok(actual)
+    Ok(commit_autostart_change(
+        || match marker_path(&app) {
+            Ok(path) => write_marker(&path),
+            Err(error) => Err(error),
+        },
+        || {
+            if let Some(diagnostic) = app.try_state::<InitializationDiagnostic>() {
+                *diagnostic.0.lock().unwrap() = None;
+            }
+        },
+        actual,
+    ))
+}
+
+fn commit_autostart_change(
+    persist_marker: impl FnOnce() -> Result<(), String>,
+    clear_diagnostic: impl FnOnce(),
+    actual: bool,
+) -> bool {
+    let _ = persist_marker();
+    clear_diagnostic();
+    actual
 }
 
 fn prepare_uninstall_sequence(
@@ -226,6 +243,17 @@ mod tests {
                 diagnostic: Some("refresh failed".into()),
             }
         );
+    }
+
+    #[test]
+    fn marker_write_failure_does_not_hide_a_successful_autostart_change() {
+        let cleared = std::cell::Cell::new(false);
+        assert!(commit_autostart_change(
+            || Err("could not persist autostart initialization".into()),
+            || cleared.set(true),
+            true,
+        ));
+        assert!(cleared.get());
     }
 
     #[test]
