@@ -200,6 +200,8 @@ fn write_atomic_with(
         #[cfg(unix)]
         options.mode(0o600);
         let mut file = options.open(&temporary)?;
+        #[cfg(windows)]
+        crate::windows_security::restrict_private(&temporary, false)?;
         file.write_all(content)?;
         file.sync_all()?;
         #[cfg(unix)]
@@ -270,6 +272,20 @@ fn sync_parent(_path: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_credential_replacement_remains_private() {
+        let directory =
+            std::env::temp_dir().join(format!("mtls-credential-dacl-{}", uuid::Uuid::new_v4()));
+        let path = directory.join("credentials.json");
+        for value in [b"first".as_slice(), b"second".as_slice()] {
+            write_atomic(&path, value).unwrap();
+            assert!(crate::windows_security::private_permissions_ok(&path));
+            assert_eq!(fs::read(&path).unwrap(), value);
+        }
+        fs::remove_dir_all(directory).unwrap();
+    }
     use std::sync::Arc;
 
     struct TempDir(PathBuf);

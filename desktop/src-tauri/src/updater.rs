@@ -173,7 +173,16 @@ async fn download_and_install(app: &AppHandle, state: &AppState, update: Update)
     install_after_router_preflight_with(
         || state.manager.call("router.status", json!({})),
         || crate::orchestration::stop(&state.manager, &state.scheduler),
-        || update.install(bytes).is_ok(),
+        || {
+            #[cfg(windows)]
+            {
+                install_windows_verified(&bytes).is_ok()
+            }
+            #[cfg(not(windows))]
+            {
+                update.install(bytes).is_ok()
+            }
+        },
         || async {
             let _ = crate::orchestration::start(&state.manager, &state.scheduler).await;
         },
@@ -213,18 +222,114 @@ pub async fn update_install(
         return output.value;
     }
     output.value?;
-    if !state.lifecycle.prepare_restart() {
+    let prepared = state.lifecycle.prepare_restart();
+    match complete_successful_install(cfg!(windows), prepared)? {
+        InstallCompletion::ExitProcess => std::process::exit(0),
+        InstallCompletion::RestartApp => app.restart(),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InstallCompletion {
+    ExitProcess,
+    RestartApp,
+}
+
+fn complete_successful_install(windows: bool, restart_prepared: bool) -> Result<InstallCompletion> {
+    if windows {
+        // ShellExecuteW success only means the installer launched. Staying
+        // alive races NSIS replacing in-use files, even if restart is blocked.
+        return Ok(InstallCompletion::ExitProcess);
+    }
+    if !restart_prepared {
         return Err(command_error(
             "UPDATE_RESTART_BLOCKED",
-            "the update was installed but restart is blocked",
+            "restart is blocked after the update was applied",
         ));
     }
-    app.restart();
+    Ok(InstallCompletion::RestartApp)
+}
+
+#[cfg(any(windows, test))]
+fn installer_launch_succeeded(result: isize) -> bool {
+    result > 32
+}
+
+#[cfg(windows)]
+fn install_windows_verified(bytes: &[u8]) -> std::io::Result<()> {
+    use std::{fs, io::Write, os::windows::ffi::OsStrExt};
+    use windows_sys::Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOW};
+
+    // This accepts only the signature-verified bytes returned by Update::download.
+    // Release packaging publishes raw NSIS executables, never MSI or ZIP here.
+    if !bytes.starts_with(b"MZ") {
+        return Err(std::io::Error::from(std::io::ErrorKind::InvalidData));
+    }
+    let directory = std::env::temp_dir().join(format!("codeasier-update-{}", uuid::Uuid::new_v4()));
+    fs::create_dir(&directory)?;
+    let installer = directory.join("CodeasierRouter-update.exe");
+    let result = (|| {
+        crate::windows_security::restrict_private(&directory, true)?;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&installer)?;
+        crate::windows_security::restrict_private(&installer, false)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        let path: Vec<_> = installer.as_os_str().encode_wide().chain(Some(0)).collect();
+        let launched = unsafe {
+            ShellExecuteW(
+                std::ptr::null_mut(),
+                windows_sys::w!("open"),
+                path.as_ptr(),
+                windows_sys::w!("/P /R /UPDATE"),
+                std::ptr::null(),
+                SW_SHOW,
+            )
+        };
+        if !installer_launch_succeeded(launched as isize) {
+            return Err(std::io::Error::other("update installer launch failed"));
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&installer);
+        let _ = fs::remove_dir(&directory);
+    }
+    // On success the external installer still needs this file. Its temporary
+    // directory is left to OS temp cleanup, as in the upstream updater.
+    result
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn windows_shell_launch_errors_are_not_install_success() {
+        for code in 0..=32 {
+            assert!(!installer_launch_succeeded(code));
+        }
+        assert!(installer_launch_succeeded(33));
+        assert!(installer_launch_succeeded(1024));
+    }
+
+    #[test]
+    fn launched_windows_installer_exits_even_when_restart_is_blocked() {
+        assert_eq!(
+            complete_successful_install(true, false).unwrap(),
+            InstallCompletion::ExitProcess
+        );
+        assert_eq!(
+            complete_successful_install(false, true).unwrap(),
+            InstallCompletion::RestartApp
+        );
+        let error = complete_successful_install(false, false).unwrap_err();
+        assert_eq!(error.code, "UPDATE_RESTART_BLOCKED");
+        assert!(!error.message.contains("installed"));
+    }
 
     #[test]
     fn expected_update_version_must_be_stable_semver() {

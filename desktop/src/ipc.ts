@@ -542,6 +542,11 @@ export interface DesktopPaths {
   can_prepare_for_uninstall: boolean;
 }
 
+export interface AutostartState {
+  enabled: boolean;
+  diagnostic?: string | null;
+}
+
 export interface CredentialSummary {
   present: boolean;
   fingerprint: string;
@@ -1021,7 +1026,7 @@ export interface DesktopApi {
   saveCredential(apiKey: string): Promise<CredentialSummary>;
   deleteCredential(): Promise<CredentialSummary>;
   getAPIKeyUsage(period: APIKeyUsagePeriod): Promise<APIKeyUsage>;
-  getAutostart(): Promise<boolean>;
+  getAutostart(): Promise<AutostartState>;
   setAutostart(enabled: boolean): Promise<boolean>;
   setNativeLanguage(language: NativeLanguage): Promise<void>;
   getDesktopPaths(): Promise<DesktopPaths>;

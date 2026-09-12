@@ -55,6 +55,7 @@ export function SettingsPage({
     | ""
     | "settings.error.load"
     | "settings.error.autostart"
+    | "settings.error.autostartInit"
     | "settings.error.uninstall"
     | "settings.autostartChanged"
   >("");
@@ -67,8 +68,14 @@ export function SettingsPage({
       api.getDesktopPaths(),
     ]).then(([autostartResult, versionsResult, pathsResult]) => {
       if (!current) return;
+      const autostartFailed =
+        autostartResult.status === "rejected" ||
+        (autostartResult.status === "fulfilled" &&
+          Boolean(autostartResult.value.diagnostic));
       if (autostartResult.status === "fulfilled") {
-        setAutostart(autostartResult.value);
+        setAutostart(autostartResult.value.enabled);
+      } else {
+        setAutostart(false);
       }
       if (versionsResult.status === "fulfilled") {
         setVersions(versionsResult.value);
@@ -76,8 +83,9 @@ export function SettingsPage({
       if (pathsResult.status === "fulfilled") {
         setPaths(pathsResult.value);
       }
-      if (
-        autostartResult.status === "rejected" ||
+      if (autostartFailed) {
+        setMessage("settings.error.autostartInit");
+      } else if (
         versionsResult.status === "rejected" ||
         pathsResult.status === "rejected"
       ) {

@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use crate::protocol::ErrorCode;
 
-use super::files::{private_permissions_ok, restrict_private};
+use super::files::{ensure_private_permissions, restrict_private};
 use super::recovery::is_final_component_link;
 use super::types::OperationError;
 
@@ -59,7 +59,7 @@ pub fn acquire_existing_transaction_lock(
     let dir_info = std::fs::symlink_metadata(state_dir).map_err(|_| invalid_dir())?;
     if is_final_component_link(state_dir, &dir_info)
         || !dir_info.is_dir()
-        || !private_permissions_ok(state_dir, true, unix_mode(&dir_info))
+        || !ensure_private_permissions(state_dir, true, unix_mode(&dir_info))
     {
         return Err(invalid_dir());
     }
@@ -67,7 +67,7 @@ pub fn acquire_existing_transaction_lock(
     let path_info = std::fs::symlink_metadata(&path).map_err(|_| invalid_lock())?;
     if is_final_component_link(&path, &path_info)
         || !path_info.is_file()
-        || !private_permissions_ok(&path, false, unix_mode(&path_info))
+        || !ensure_private_permissions(&path, false, unix_mode(&path_info))
     {
         return Err(invalid_lock());
     }
@@ -83,7 +83,7 @@ pub fn acquire_existing_transaction_lock(
     let path_after = std::fs::symlink_metadata(&path).map_err(|_| path_changed())?;
     if is_final_component_link(&path, &path_after)
         || !same_inode(&opened, &path_after)
-        || !private_permissions_ok(&path, false, unix_mode(&path_after))
+        || !ensure_private_permissions(&path, false, unix_mode(&path_after))
     {
         return Err(path_changed());
     }

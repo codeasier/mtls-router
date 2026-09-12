@@ -334,6 +334,7 @@ export const zhCN = {
   "logs.boundary": "仅显示有界尾部日志，不读取完整文件。",
   "settings.error.load": "部分设置无法读取，请稍后重试。",
   "settings.error.autostart": "无法更改当前用户的开机启动设置。",
+  "settings.error.autostartInit": "开机启动初始化未完成，可在此重试开关。",
   "settings.error.uninstall": "无法准备卸载，开机启动设置未更改。",
   "settings.autostartChanged": "开机启动设置已更新。",
   "settings.on": "开启",

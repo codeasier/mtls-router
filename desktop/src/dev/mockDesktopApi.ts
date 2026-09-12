@@ -374,7 +374,7 @@ export function createMockDesktopApi(
       }
       return fixtureUsageFor(period);
     },
-    getAutostart: async () => autostart,
+    getAutostart: async () => ({ enabled: autostart }),
     setAutostart: async (enabled) => {
       autostart = enabled;
       return enabled;

@@ -22,6 +22,16 @@ React UI ──Tauri invoke──▶ Rust commands.rs ──ManagerClient (proto
 - **桌面整包更新**：仅精确 stable `vX.Y.Z` release 配置 `https://release.codeasier.top/latest.json` 与 updater 公钥；非 stable 构建保留可反序列化但无 endpoint 的禁用配置。启动时静默检查一次，Settings 可手动复查。用户确认后 `updater.rs` 重新检查精确 stable SemVer、下载并强制校验 Tauri 签名，停止经验证的 desktop-owned router（内嵌 supervisor），安装完整桌面包并重启；关联 `legacy_managed` router 需先经 `router.migrate_legacy` 一次性接管，`router.stop` 对非本进程记录返回 `ROUTER_NOT_OWNED`；关联状态为 `start_failed`、stale、unknown、未知枚举或 owner/state 组合不可验证时拒绝安装。不停止 external router。CLI 已冻结，没有更新路径。
 - **安装所有权与启动诊断**：`installation.json` 由 Rust 桌面端单独维护，保存稳定 installation ID 与 package generation；内嵌运行时为 generation `2`（sidecar 时代为 `1`），因此同安装 generation 1 的桌面记录是迁移候选而非可 reclaim 对象。旧版本写入的 sidecar 哈希字段读取后清空，不再写出。会话 ID 只作 epoch。`ManagerClient` 的诊断环沿用 `sidecar_resolution` / `spawn` / `handshake` / `protocol_parse` / `watchdog_timeout` / `unexpected_exit` 阶段名（前端文案已改为拓扑中立），in-process session 只产生 `Stdout` 事件，其余传输事件保留给恢复契约测试。
 
+## Windows 原生边界
+
+- `src-tauri/src/windows_security.rs`：共享进程 TokenUser SID 与私有文件 DACL；新凭据、事务材料和敏感备份仅授权当前用户，DACL 禁止继承；Agent 替换保留原目标非空 DACL 并保护它免受父目录继承影响。读取既有签名材料、事务 lock 与 sidecar 时，若对象仍是旧版默认继承 ACL，先收紧再严格校验；NULL DACL 目标继续 fail-closed。
+- `manager_core/occupant/inspect_windows.rs`：分页查询 SCM、读取进程 SID 和 session；服务及 session 0 保持阻断，同用户普通进程走完整身份验证。`has_inspect_pid_owner` / `has_signal_pid` 按对应注入字段或 Windows 原生默认判断，不因仅注入 `inspect` 而关闭仅 PID 准入。
+- `autostart.rs`：启动期错误保存为设置页可恢复诊断，`autostart_get` 同时返回当前开关状态与诊断；Windows 注册刷新不先删除。开关已成功变更后，初始化标记写入失败不回滚真实状态，仍清除诊断。
+- `manager_core/legacy/stop.rs`：Windows 控制台信号不可用时，仅在再次验证完整身份后进入 Kill；继续使用原迁移日志与代际一次性保护。
+- `updater.rs`：Windows 使用 `Update::download` 强制签名验证后的原始 NSIS EXE，私有临时目录中启动 `/P /R /UPDATE`，检查 `ShellExecuteW > 32` 后进程必须退出，即使 lifecycle restart 被拒绝，以免与 NSIS 并发。启动失败沿用 router 恢复；进程外安装失败需重新打开或重装，成功重启由 NSIS 负责。
+- `windows/uninstall-hooks.nsh`：只在非更新且用户明确勾选删除数据时清理 `$APPDATA\com.codeasier.mtls-router`；外部 Agent 配置与相邻备份保留。
+- PR Rust matrix 包含 Windows x64 与 ARM64；原生 DACL、SCM/SID 测试不能由 macOS 分类测试代替，真实安装、更新、卸载仍需 Windows 端到端证据。
+
 ## 前端（src/）
 
 | 文件                                                      | 职责                                                                                                                                                                                                              |

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use super::detect::strip_jsonc;
-use super::files::private_permissions_ok;
+use super::files::ensure_private_permissions;
 use super::modelconfig::{
     canonical_value, config_to_value, decode_value, Agent, Config, JsonNumber, JsonValue,
     TokenSigner,
@@ -71,7 +71,7 @@ pub fn read_sidecar(
         return Ok((empty_sidecar(generation), revision, Vec::new(), 0o600));
     }
     let info = std::fs::metadata(&path).map_err(|_| sidecar_invalid())?;
-    if !private_permissions_ok(&path, false, unix_mode(&info))
+    if !ensure_private_permissions(&path, false, unix_mode(&info))
         || content.is_empty()
         || content.len() > MAX_SIDECAR_SIZE
     {

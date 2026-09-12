@@ -176,7 +176,7 @@ export function createMockApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
         },
       ],
     }),
-    getAutostart: vi.fn().mockResolvedValue(true),
+    getAutostart: vi.fn().mockResolvedValue({ enabled: true }),
     setAutostart: vi
       .fn()
       .mockImplementation(async (enabled: boolean) => enabled),

@@ -23,6 +23,8 @@ mod support_bundle;
 mod tray;
 mod types;
 mod updater;
+#[cfg(windows)]
+mod windows_security;
 
 use commands::AppState;
 use credential::{CredentialError, CredentialStore};
@@ -147,7 +149,7 @@ fn build_app() -> tauri::Result<tauri::App<tauri::Wry>> {
                 let _ = observer_app.emit(POLL_SNAPSHOT_EVENT, snapshot);
             });
             let lifecycle = Arc::new(lifecycle::LifecycleState::default());
-            autostart::initialize_default(app)?;
+            autostart::initialize_default(app);
             tray::setup(
                 app,
                 manager.clone(),

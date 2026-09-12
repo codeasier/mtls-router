@@ -28,12 +28,8 @@ pub fn sync_directory(_path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-pub fn restrict_private(path: &Path, _directory: bool) -> io::Result<()> {
-    // Full DACL restriction is applied by the Go manager on Windows. Until the
-    // ACL helpers are ported, keep the replacement private via the default
-    // inherited ACL and fail closed if the path cannot be written.
-    let _ = fs::metadata(path)?;
-    Ok(())
+pub fn restrict_private(path: &Path, directory: bool) -> io::Result<()> {
+    crate::windows_security::restrict_private(path, directory)
 }
 
 pub fn apply_private_mode(path: &Path, _source_mode: u32) -> io::Result<()> {
@@ -44,15 +40,15 @@ pub fn apply_target_permissions(path: &Path, target: &Path, mode: u32) -> io::Re
     if let Err(error) = fs::metadata(target) {
         if error.kind() == io::ErrorKind::NotFound {
             let _ = mode;
-            return Ok(());
+            return restrict_private(path, false);
         }
         return Err(error);
     }
-    restrict_private(path, false)
+    crate::windows_security::copy_dacl(path, target)
 }
 
 pub fn private_permissions_ok(path: &Path, _directory: bool, _mode: u32) -> bool {
-    fs::metadata(path).is_ok()
+    crate::windows_security::private_permissions_ok(path)
 }
 
 fn wide(path: &Path) -> Vec<u16> {

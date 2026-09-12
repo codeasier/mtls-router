@@ -18,6 +18,18 @@ pub use platform::{
     restrict_private, sync_directory,
 };
 
+/// Accept an already-private object, or tighten a current-user inherited ACL
+/// left by older Windows builds whose restrict helper was a no-op.
+pub fn ensure_private_permissions(path: &Path, directory: bool, mode: u32) -> bool {
+    if private_permissions_ok(path, directory, mode) {
+        return true;
+    }
+    if !cfg!(windows) {
+        return false;
+    }
+    restrict_private(path, directory).is_ok() && private_permissions_ok(path, directory, mode)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BackupStage {
     Permission,
