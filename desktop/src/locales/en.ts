@@ -360,6 +360,8 @@ export const en: Record<TranslationKey, string> = {
     "Only the bounded log tail is shown; the full file is not read.",
   "settings.error.load": "Some settings could not be loaded. Try again later.",
   "settings.error.autostart": "Unable to change current-user startup settings.",
+  "settings.error.autostartInit":
+    "Startup registration did not finish. You can retry the switch here.",
   "settings.error.uninstall":
     "Unable to prepare for uninstall. Startup settings were not changed.",
   "settings.autostartChanged": "Startup setting updated.",

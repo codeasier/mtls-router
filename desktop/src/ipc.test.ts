@@ -672,7 +672,7 @@ describe("typed desktop API", () => {
   it("uses only narrow settings and uninstall commands", async () => {
     const invoke = vi
       .fn()
-      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce({ enabled: true })
       .mockResolvedValueOnce(false)
       .mockResolvedValueOnce({
         data_dir: "/safe/app-data",

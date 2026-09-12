@@ -7,7 +7,7 @@ use base64::Engine;
 use serde::Deserialize;
 use uuid::Uuid;
 
-use super::files::{private_permissions_ok, restrict_private, sync_directory, write_atomic};
+use super::files::{ensure_private_permissions, restrict_private, sync_directory, write_atomic};
 use super::modelconfig::TokenSigner;
 use super::types::OperationError;
 use crate::protocol::ErrorCode;
@@ -87,7 +87,7 @@ pub fn load_or_create_signing_key(
 pub fn load_signing_key(path: &Path) -> io::Result<SigningKeyFile> {
     let info = fs::metadata(path)?;
     if !info.is_file()
-        || !private_permissions_ok(path, false, unix_mode(&info))
+        || !ensure_private_permissions(path, false, unix_mode(&info))
         || info.len() == 0
         || info.len() > MAX_SIGNING_KEY_SIZE
     {
@@ -183,5 +183,31 @@ mod tests {
         assert_eq!(loaded.generation, key.generation);
         assert!(signer_from_key(&loaded).is_ok());
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn inherited_acl_signing_key_is_repaired_on_load() {
+        let dir =
+            std::env::temp_dir().join(format!("mtls-agent-trust-{}", Uuid::new_v4().simple()));
+        let inherited_dir = std::env::temp_dir().join(format!(
+            "mtls-agent-trust-inherit-{}",
+            Uuid::new_v4().simple()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        fs::create_dir_all(&inherited_dir).unwrap();
+        let created = load_or_create_signing_key(&dir, false, false).unwrap();
+        let inherited = inherited_dir.join(SIGNING_KEY_FILE_NAME);
+        fs::write(
+            &inherited,
+            fs::read(dir.join(SIGNING_KEY_FILE_NAME)).unwrap(),
+        )
+        .unwrap();
+        assert!(!crate::windows_security::private_permissions_ok(&inherited));
+        let loaded = load_signing_key(&inherited).unwrap();
+        assert_eq!(loaded.generation, created.generation);
+        assert!(crate::windows_security::private_permissions_ok(&inherited));
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&inherited_dir);
     }
 }

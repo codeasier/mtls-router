@@ -24,9 +24,9 @@ React UI ──Tauri invoke──▶ Rust commands.rs ──ManagerClient (proto
 
 ## Windows 原生边界
 
-- `src-tauri/src/windows_security.rs`：共享进程 TokenUser SID 与私有文件 DACL；新凭据、事务材料和敏感备份仅授权当前用户，DACL 禁止继承；Agent 替换保留原目标非空 DACL 并保护它免受父目录继承影响。
-- `manager_core/occupant/inspect_windows.rs`：分页查询 SCM、读取进程 SID 和 session；服务及 session 0 保持阻断，同用户普通进程走完整身份验证，原生依赖支持受保护的仅 PID 降级。
-- `autostart.rs`：启动期错误保存为设置页可恢复诊断；Windows 注册刷新不先删除，成功设置并持久化初始化标记后清除诊断。
+- `src-tauri/src/windows_security.rs`：共享进程 TokenUser SID 与私有文件 DACL；新凭据、事务材料和敏感备份仅授权当前用户，DACL 禁止继承；Agent 替换保留原目标非空 DACL 并保护它免受父目录继承影响。读取既有签名材料、事务 lock 与 sidecar 时，若对象仍是旧版默认继承 ACL，先收紧再严格校验；NULL DACL 目标继续 fail-closed。
+- `manager_core/occupant/inspect_windows.rs`：分页查询 SCM、读取进程 SID 和 session；服务及 session 0 保持阻断，同用户普通进程走完整身份验证。`has_inspect_pid_owner` / `has_signal_pid` 按对应注入字段或 Windows 原生默认判断，不因仅注入 `inspect` 而关闭仅 PID 准入。
+- `autostart.rs`：启动期错误保存为设置页可恢复诊断，`autostart_get` 同时返回当前开关状态与诊断；Windows 注册刷新不先删除，成功设置并持久化初始化标记后清除诊断。
 - `manager_core/legacy/stop.rs`：Windows 控制台信号不可用时，仅在再次验证完整身份后进入 Kill；继续使用原迁移日志与代际一次性保护。
 - `updater.rs`：Windows 使用 `Update::download` 强制签名验证后的原始 NSIS EXE，私有临时目录中启动 `/P /R /UPDATE`，检查 `ShellExecuteW > 32` 后才允许应用退出。启动失败沿用 router 恢复；进程外安装失败需重新打开或重装，成功重启由 NSIS 负责。
 - `windows/uninstall-hooks.nsh`：只在非更新且用户明确勾选删除数据时清理 `$APPDATA\com.codeasier.mtls-router`；外部 Agent 配置与相邻备份保留。

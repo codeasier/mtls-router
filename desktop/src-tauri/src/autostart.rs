@@ -4,8 +4,15 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use serde::Serialize;
 use tauri::{App, AppHandle, Manager, Runtime};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AutostartState {
+    pub enabled: bool,
+    pub diagnostic: Option<String>,
+}
 
 const INITIALIZED_MARKER: &str = "autostart-initialized";
 
@@ -87,15 +94,18 @@ fn initialize_sequence(
 }
 
 #[tauri::command]
-pub fn autostart_get(app: AppHandle) -> Result<bool, String> {
-    if let Some(diagnostic) = app.try_state::<InitializationDiagnostic>() {
-        if let Some(error) = diagnostic.0.lock().unwrap().as_ref() {
-            return Err(error.clone());
-        }
-    }
-    app.autolaunch()
+pub fn autostart_get(app: AppHandle) -> Result<AutostartState, String> {
+    let enabled = app
+        .autolaunch()
         .is_enabled()
-        .map_err(|_| "could not read current-user autostart state".to_string())
+        .map_err(|_| "could not read current-user autostart state".to_string())?;
+    let diagnostic = app
+        .try_state::<InitializationDiagnostic>()
+        .and_then(|state| state.0.lock().unwrap().clone());
+    Ok(AutostartState {
+        enabled,
+        diagnostic,
+    })
 }
 
 #[tauri::command(rename = "autostart_set")]
@@ -207,8 +217,14 @@ mod tests {
         );
         let diagnostic = InitializationDiagnostic(std::sync::Mutex::new(result.err()));
         assert_eq!(
-            diagnostic.0.lock().unwrap().as_deref(),
-            Some("refresh failed")
+            AutostartState {
+                enabled: true,
+                diagnostic: diagnostic.0.lock().unwrap().clone(),
+            },
+            AutostartState {
+                enabled: true,
+                diagnostic: Some("refresh failed".into()),
+            }
         );
     }
 

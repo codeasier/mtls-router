@@ -257,4 +257,24 @@ mod tests {
         assert!(!private_permissions_ok(&root.join("missing")));
         std::fs::remove_dir_all(root).unwrap();
     }
+
+    #[test]
+    fn inherited_acl_file_is_not_private_until_restricted() {
+        let root = std::env::temp_dir().join(format!("mtls-dacl-inherit-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        apply_sddl(
+            &root,
+            &format!(
+                "D:P(A;OICI;FA;;;{})(A;OICI;GR;;;WD)",
+                current_sid().unwrap()
+            ),
+        )
+        .unwrap();
+        let path = root.join("state.json");
+        std::fs::write(&path, b"state").unwrap();
+        assert!(!private_permissions_ok(&path));
+        restrict_private(&path, false).unwrap();
+        assert!(private_permissions_ok(&path));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

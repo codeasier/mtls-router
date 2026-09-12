@@ -554,6 +554,39 @@ fn changed_identity_consumes_token_without_signal() {
 }
 
 #[test]
+fn pid_only_admission_uses_pid_hooks_not_inspect_injection() {
+    let target = pid_only_target();
+    let mut deps = unknown_discover();
+    deps.inspect = Some(Box::new(move |_, _| Ok(target.clone())));
+    deps.supports_pid_only = Some(Box::new(|| true));
+    deps.random = Some(Box::new(|buffer| {
+        fill_random_from_reader(&mut Cursor::new([0u8; 32]), buffer)
+    }));
+    let service = OccupantService::new(
+        OccupantConfig {
+            listen_addr: "127.0.0.1:19099".into(),
+            ..OccupantConfig::default()
+        },
+        deps,
+    );
+    let inspection = service.inspect(&CallContext::unbounded()).unwrap();
+    if cfg!(windows) {
+        assert_eq!(
+            inspection.verification_mode,
+            Some(VerificationMode::WindowsPidOnly)
+        );
+        assert_eq!(inspection.recovery.action, RecoveryAction::ForceTerminate);
+        assert!(inspection.confirmation_token.is_some());
+    } else {
+        assert_eq!(
+            inspection.recovery.reason,
+            Some(RecoveryReason::IdentityUnavailable)
+        );
+        assert!(inspection.confirmation_token.is_none());
+    }
+}
+
+#[test]
 fn pid_only_force_terminate_and_replay() {
     let target = pid_only_target();
     let owners = Arc::new(Mutex::new(vec![Ok(4242), Err(OccupantError::NotFound)]));

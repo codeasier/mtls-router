@@ -72,7 +72,7 @@ describe("SettingsPage", () => {
   it("surfaces a safe load error when settings reads fail", async () => {
     await openSettings(
       createMockApi({
-        getAutostart: vi
+        getComponentVersions: vi
           .fn()
           .mockRejectedValue(new Error("secret path /tmp/settings")),
       }),
@@ -83,6 +83,49 @@ describe("SettingsPage", () => {
     ).toBeVisible();
     expect(document.body).not.toHaveTextContent("secret path");
     expect(document.body).not.toHaveTextContent("/tmp/settings");
+  });
+
+  it("keeps the autostart toggle usable after a rejected get", async () => {
+    const api = await openSettings(
+      createMockApi({
+        getAutostart: vi
+          .fn()
+          .mockRejectedValue(new Error("secret path /tmp/settings")),
+      }),
+    );
+
+    const toggle = await screen.findByRole("switch", { name: /开机时启动/ });
+    expect(
+      await screen.findByText("开机启动初始化未完成，可在此重试开关。"),
+    ).toBeVisible();
+    expect(toggle).toBeEnabled();
+    expect(document.body).not.toHaveTextContent("secret path");
+    expect(document.body).not.toHaveTextContent("/tmp/settings");
+
+    fireEvent.click(toggle);
+    await waitFor(() => expect(api.setAutostart).toHaveBeenCalledWith(true));
+  });
+
+  it("shows a recoverable diagnostic without disabling the autostart toggle", async () => {
+    const api = await openSettings(
+      createMockApi({
+        getAutostart: vi.fn().mockResolvedValue({
+          enabled: true,
+          diagnostic: "could not refresh current-user autostart",
+        }),
+      }),
+    );
+
+    const toggle = await screen.findByRole("switch", { name: /开机时启动/ });
+    expect(toggle).toBeChecked();
+    expect(toggle).toBeEnabled();
+    expect(
+      screen.getByText("开机启动初始化未完成，可在此重试开关。"),
+    ).toBeVisible();
+    expect(document.body).not.toHaveTextContent("could not refresh");
+
+    fireEvent.click(toggle);
+    await waitFor(() => expect(api.setAutostart).toHaveBeenCalledWith(false));
   });
 
   it("changes current-user autostart through the typed API", async () => {
