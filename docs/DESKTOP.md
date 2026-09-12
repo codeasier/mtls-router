@@ -32,6 +32,8 @@ On first launch the application:
 
 First launch never changes Claude Code, opencode, or Codex files. A second application launch activates the existing window instead of starting a second manager or router.
 
+Failure to register launch-at-login does not block manual startup or router use. Settings shows a recoverable autostart diagnostic; setting the preference successfully clears it. On Windows, refreshing an enabled registration updates it without deleting it first.
+
 If the embedded manager cannot be validated or the installation metadata is unreadable, startup fails closed and reports that reinstallation is required. The application never downloads or replaces an individual component. Reinstall the complete package from the trusted source, or use a valid whole-package desktop update when the installed application can still run it.
 
 ## Online updates
@@ -42,7 +44,9 @@ At startup the application silently checks `https://release.codeasier.top/latest
 
 The application never downloads or installs an update without confirmation. After you approve the displayed stable version, it downloads the platform package, reports progress, verifies the mandatory Tauri updater signature, stops a verified desktop-owned router or a correlated legacy desktop router, installs the complete package, and restarts the application. If a correlated legacy router cannot be stopped with complete process identity, or correlated state remains stale, unknown, or unverifiable, the update is rejected. A compatible external router is not stopped. If installation fails after stopping a desktop-owned router, the application attempts to start that router again.
 
-On every platform, online installation is supported only when the current package is running from an installation location and filesystem layout supported by that platform's Tauri updater. If the updater reports that the current location is unsupported or cannot replace the installed package, quit the application and manually install the complete new package from the trusted release channel.
+On Windows, the application checks that the signature-verified NSIS installer launches before exiting. A launch refusal leaves the application open and triggers recovery of a router stopped for the update. Once the installer has launched, installation and successful restart belong to NSIS; failures in that external stage cannot be recovered by the exited application. Reopen the installed application, or reinstall the complete package from the trusted release channel if necessary. Updates do not request elevation.
+
+On every platform, online installation requires the supported installation location and filesystem layout. If the updater cannot replace the installed package, quit the application and manually install the complete new package from the trusted release channel.
 
 ## Router ownership and state
 
@@ -148,4 +152,4 @@ The local listener is plain HTTP on trusted localhost. Do not expose the managem
 - Windows: quit the application, then uninstall it from Windows Settings. The production installer must remove the desktop application's current-user launch-at-login registration during uninstall.
 - macOS and Linux: open Settings, select **Prepare for uninstall**, and confirm. Wait for the application to remove current-user launch-at-login and exit. Only then delete the macOS application or Linux AppImage.
 
-No uninstall path restores, deletes, or rewrites Agent configurations, sensitive backups, router logs, application state, or diagnostic state. Remove any of those separately only after reviewing what must be retained for recovery or diagnosis.
+Ordinary uninstall retains application data. On Windows, explicitly selecting **Delete app data** removes the private business directory `%APPDATA%\com.codeasier.mtls-router`, including saved credentials, workbench sessions/images, manager state, and diagnostics, as well as Tauri's own data directories. Updates and unchecked or silent uninstalls retain these directories. External Agent configurations and their adjacent sensitive backups are always retained; uninstall does not restore or rewrite them. Review recovery and diagnostic needs before selecting deletion or separately removing retained files.

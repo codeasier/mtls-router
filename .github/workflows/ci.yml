@@ -131,6 +131,8 @@ jobs:
             runner: macos-15
           - os: Windows
             runner: windows-2025
+          - os: Windows ARM64
+            runner: windows-11-arm
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

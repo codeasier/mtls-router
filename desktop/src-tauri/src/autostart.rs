@@ -9,6 +9,9 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
 const INITIALIZED_MARKER: &str = "autostart-initialized";
 
+#[derive(Default)]
+struct InitializationDiagnostic(std::sync::Mutex<Option<String>>);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FirstLaunchAction {
     None,
@@ -30,35 +33,66 @@ pub fn plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
     tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None)
 }
 
-pub fn initialize_default(app: &App) -> Result<(), String> {
+pub fn initialize_default(app: &App) {
+    let error = try_initialize_default(app).err();
+    app.manage(InitializationDiagnostic(std::sync::Mutex::new(error)));
+}
+
+fn try_initialize_default(app: &App) -> Result<(), String> {
     let marker = marker_path(app.app_handle())?;
     let manager = app.autolaunch();
     let enabled = manager
         .is_enabled()
         .map_err(|_| "could not read current-user autostart state".to_string())?;
 
-    match first_launch_action(marker.exists(), enabled) {
-        FirstLaunchAction::None => Ok(()),
-        FirstLaunchAction::MarkInitialized => write_marker(&marker),
-        FirstLaunchAction::EnableAndMark => {
+    initialize_sequence(
+        marker.exists(),
+        enabled,
+        || {
             manager
                 .enable()
-                .map_err(|_| "could not enable current-user autostart".to_string())?;
-            write_marker(&marker)
-        }
-        FirstLaunchAction::RefreshEnabled => {
+                .map_err(|_| "could not enable current-user autostart".to_string())
+        },
+        || {
+            // Windows enable overwrites HKCU Run in place. Deleting it first
+            // loses a working registration when policy rejects the new write.
+            #[cfg(not(windows))]
             manager
                 .disable()
                 .map_err(|_| "could not refresh current-user autostart".to_string())?;
             manager
                 .enable()
                 .map_err(|_| "could not refresh current-user autostart".to_string())
+        },
+        || write_marker(&marker),
+    )
+}
+
+fn initialize_sequence(
+    marker_exists: bool,
+    enabled: bool,
+    enable: impl FnOnce() -> Result<(), String>,
+    refresh: impl FnOnce() -> Result<(), String>,
+    mark: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    match first_launch_action(marker_exists, enabled) {
+        FirstLaunchAction::None => Ok(()),
+        FirstLaunchAction::MarkInitialized => mark(),
+        FirstLaunchAction::EnableAndMark => {
+            enable()?;
+            mark()
         }
+        FirstLaunchAction::RefreshEnabled => refresh(),
     }
 }
 
 #[tauri::command]
 pub fn autostart_get(app: AppHandle) -> Result<bool, String> {
+    if let Some(diagnostic) = app.try_state::<InitializationDiagnostic>() {
+        if let Some(error) = diagnostic.0.lock().unwrap().as_ref() {
+            return Err(error.clone());
+        }
+    }
     app.autolaunch()
         .is_enabled()
         .map_err(|_| "could not read current-user autostart state".to_string())
@@ -82,6 +116,10 @@ pub fn autostart_set_immediate(app: AppHandle, enabled: bool) -> Result<bool, St
         .map_err(|_| "could not verify current-user autostart state".to_string())?;
     if actual != enabled {
         return Err("current-user autostart state did not change".to_string());
+    }
+    write_marker(&marker_path(&app)?)?;
+    if let Some(diagnostic) = app.try_state::<InitializationDiagnostic>() {
+        *diagnostic.0.lock().unwrap() = None;
     }
     Ok(actual)
 }
@@ -140,6 +178,39 @@ fn write_marker(path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_registration_never_marks_initialization_complete() {
+        let marked = std::cell::Cell::new(false);
+        let result = initialize_sequence(
+            false,
+            false,
+            || Err("denied".into()),
+            || panic!("not a refresh"),
+            || {
+                marked.set(true);
+                Ok(())
+            },
+        );
+        assert_eq!(result, Err("denied".into()));
+        assert!(!marked.get());
+    }
+
+    #[test]
+    fn refresh_failure_is_a_recoverable_diagnostic() {
+        let result = initialize_sequence(
+            true,
+            true,
+            || panic!("not first launch"),
+            || Err("refresh failed".into()),
+            || panic!("already initialized"),
+        );
+        let diagnostic = InitializationDiagnostic(std::sync::Mutex::new(result.err()));
+        assert_eq!(
+            diagnostic.0.lock().unwrap().as_deref(),
+            Some("refresh failed")
+        );
+    }
 
     #[test]
     fn first_launch_enables_autostart_before_marking_initialized() {

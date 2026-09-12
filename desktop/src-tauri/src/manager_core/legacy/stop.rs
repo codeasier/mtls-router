@@ -262,6 +262,17 @@ pub fn stop_verified(
     budget: &StopBudget,
     attempt: &mut MigrationRecord,
 ) -> Result<(), LifecycleError> {
+    stop_verified_with(value, state_path, host, budget, attempt, cfg!(windows))
+}
+
+fn stop_verified_with(
+    value: &RouterState,
+    state_path: &Path,
+    host: &dyn MigrationHost,
+    budget: &StopBudget,
+    attempt: &mut MigrationRecord,
+    allow_console_fallback: bool,
+) -> Result<(), LifecycleError> {
     let identity = router_identity(value);
     if !complete_process(&identity) || value.binary_path.is_empty() {
         attempt.outcome = MigrationOutcome::IdentityChanged;
@@ -274,19 +285,29 @@ pub fn stop_verified(
         attempt.outcome = MigrationOutcome::IdentityChanged;
         return Err(stale());
     }
-    match host.signal(&identity, &value.binary_path, SignalKind::Interrupt) {
-        Ok(()) => attempt.issued(SignalKind::Interrupt),
-        Err(ProcessError::NotFound) => {}
+    let interrupted = match host.signal(&identity, &value.binary_path, SignalKind::Interrupt) {
+        Ok(()) => {
+            attempt.issued(SignalKind::Interrupt);
+            true
+        }
+        Err(ProcessError::NotFound) => true,
+        // GUI Windows processes may have no shared console. The Kill path below
+        // revalidates the full identity, including inside the native signal call.
+        Err(ProcessError::Io | ProcessError::PermissionDenied) if allow_console_fallback => false,
         Err(_) => {
             attempt.outcome = MigrationOutcome::SignalRefused;
             return Err(stale());
         }
-    }
+    };
     let exited = wait_absent(
         &identity,
         &value.binary_path,
         host,
-        budget.stop_timeout,
+        if interrupted {
+            budget.stop_timeout
+        } else {
+            Duration::ZERO
+        },
         budget.poll_interval,
     )
     .map_err(|error| {
@@ -427,6 +448,7 @@ mod tests {
         port_open: Mutex<bool>,
         after_signal: Mutex<HashMap<(i32, SignalKind), Status>>,
         refuse: Mutex<Option<ProcessError>>,
+        interrupt_failure: Mutex<Option<(ProcessError, Status)>>,
     }
 
     impl TestHost {
@@ -438,6 +460,7 @@ mod tests {
                 port_open: Mutex::new(false),
                 after_signal: Mutex::new(HashMap::new()),
                 refuse: Mutex::new(None),
+                interrupt_failure: Mutex::new(None),
             }
         }
 
@@ -494,6 +517,12 @@ mod tests {
             binary: &str,
             kind: SignalKind,
         ) -> Result<(), ProcessError> {
+            if kind == SignalKind::Interrupt {
+                if let Some((error, next)) = self.interrupt_failure.lock().unwrap().clone() {
+                    self.set_status(identity.pid, next);
+                    return Err(error);
+                }
+            }
             if let Some(error) = self.refuse.lock().unwrap().clone() {
                 return Err(error);
             }
@@ -587,6 +616,43 @@ mod tests {
         record::read(&record_path(state_path))
             .expect("readable record")
             .expect("record present")
+    }
+
+    #[test]
+    fn windows_console_failure_falls_back_only_while_identity_remains_genuine() {
+        for next in [Status::Genuine, Status::Stale, Status::Absent] {
+            let value = load_release("desktop-state-v0.2.0.json");
+            let path = temp_state("console-fallback", &value);
+            let host = TestHost::new();
+            host.set_status(value.pid, Status::Genuine);
+            *host.interrupt_failure.lock().unwrap() = Some((ProcessError::Io, next));
+            host.set_after_signal(value.pid, SignalKind::Kill, Status::Absent);
+            let mut attempt = MigrationRecord::default();
+            let result = stop_verified_with(
+                &value,
+                &path,
+                &host,
+                &StopBudget::default(),
+                &mut attempt,
+                true,
+            );
+            if next == Status::Genuine {
+                result.unwrap();
+                assert_eq!(host.signals(), vec![(value.pid, SignalKind::Kill)]);
+                assert_eq!(attempt.signals, vec![SignalKind::Kill.into()]);
+                assert_eq!(attempt.outcome, MigrationOutcome::Stopped);
+                assert!(!path.exists());
+            } else if next == Status::Absent {
+                result.unwrap();
+                assert!(host.signals().is_empty());
+                assert!(!path.exists());
+            } else {
+                assert!(result.is_err());
+                assert!(host.signals().is_empty());
+                assert!(path.exists());
+            }
+            fs::remove_dir_all(path.parent().unwrap()).unwrap();
+        }
     }
 
     #[test]

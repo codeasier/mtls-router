@@ -626,7 +626,8 @@ assert_exact_lines 'Rust matrix rows (os|runner)' \
   "$(matrix_rows "$ci_rust_block" os runner)" \
   'Linux|ubuntu-24.04' \
   'macOS|macos-15' \
-  'Windows|windows-2025'
+  'Windows|windows-2025' \
+  'Windows ARM64|windows-11-arm'
 
 native_occupant_block="$(workflow_step "$CI" 'Run native occupant tests')"
 [[ "$native_occupant_block" == *'run: go test ./internal/manager/occupant -count=1'* ]] || \
@@ -743,9 +744,14 @@ contains "$CONFIG" '"installMode": "currentUser"'
 contains "$CONFIG" '"installerHooks": "./windows/uninstall-hooks.nsh"'
 contains "$HOOKS" 'DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "mtls-router-desktop"'
 contains "$HOOKS" 'DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run" "mtls-router-desktop"'
-if grep -Eqi 'agent|backup|logs?|state' "$HOOKS"; then
-  fail 'Windows uninstall hook must not touch retained user data'
-fi
+node - "$HOOKS" <<'NODE' || fail 'Windows uninstall cleanup must require explicit consent and retain external data'
+const fs = require('fs');
+const hooks = fs.readFileSync(process.argv[2], 'utf8');
+const body = hooks.match(/!macro NSIS_HOOK_POSTUNINSTALL([\s\S]*?)!macroend/)?.[1];
+if (!body || !/\$DeleteAppDataCheckboxState = 1\s+\$\{AndIf\} \$UpdateMode <> 1\s+SetShellVarContext current\s+RMDir \/r "\$APPDATA\\com\.codeasier\.mtls-router"\s+\$\{EndIf\}/.test(body)) process.exit(1);
+const removals = hooks.split('\n').filter(line => /^\s*(?:RMDir|Delete)\s/i.test(line));
+if (removals.length !== 1 || removals[0].trim() !== 'RMDir /r "$APPDATA\\com.codeasier.mtls-router"') process.exit(1);
+NODE
 
 contains "$RELEASE" 'Create signed macOS package'
 contains "$RELEASE" 'Build signed Windows package'

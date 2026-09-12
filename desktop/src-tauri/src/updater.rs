@@ -173,7 +173,16 @@ async fn download_and_install(app: &AppHandle, state: &AppState, update: Update)
     install_after_router_preflight_with(
         || state.manager.call("router.status", json!({})),
         || crate::orchestration::stop(&state.manager, &state.scheduler),
-        || update.install(bytes).is_ok(),
+        || {
+            #[cfg(windows)]
+            {
+                install_windows_verified(&bytes).is_ok()
+            }
+            #[cfg(not(windows))]
+            {
+                update.install(bytes).is_ok()
+            }
+        },
         || async {
             let _ = crate::orchestration::start(&state.manager, &state.scheduler).await;
         },
@@ -219,12 +228,79 @@ pub async fn update_install(
             "the update was installed but restart is blocked",
         ));
     }
+    // NSIS /R restarts only after a successful installation. Restarting here
+    // would race the installer and run the old application again.
+    #[cfg(windows)]
+    std::process::exit(0);
+    #[cfg(not(windows))]
     app.restart();
+}
+
+#[cfg(any(windows, test))]
+fn installer_launch_succeeded(result: isize) -> bool {
+    result > 32
+}
+
+#[cfg(windows)]
+fn install_windows_verified(bytes: &[u8]) -> std::io::Result<()> {
+    use std::{fs, io::Write, os::windows::ffi::OsStrExt};
+    use windows_sys::Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOW};
+
+    // This accepts only the signature-verified bytes returned by Update::download.
+    // Release packaging publishes raw NSIS executables, never MSI or ZIP here.
+    if !bytes.starts_with(b"MZ") {
+        return Err(std::io::Error::from(std::io::ErrorKind::InvalidData));
+    }
+    let directory = std::env::temp_dir().join(format!("codeasier-update-{}", uuid::Uuid::new_v4()));
+    fs::create_dir(&directory)?;
+    let installer = directory.join("CodeasierRouter-update.exe");
+    let result = (|| {
+        crate::windows_security::restrict_private(&directory, true)?;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&installer)?;
+        crate::windows_security::restrict_private(&installer, false)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        let path: Vec<_> = installer.as_os_str().encode_wide().chain(Some(0)).collect();
+        let launched = unsafe {
+            ShellExecuteW(
+                std::ptr::null_mut(),
+                windows_sys::w!("open"),
+                path.as_ptr(),
+                windows_sys::w!("/P /R /UPDATE"),
+                std::ptr::null(),
+                SW_SHOW,
+            )
+        };
+        if !installer_launch_succeeded(launched as isize) {
+            return Err(std::io::Error::other("update installer launch failed"));
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&installer);
+        let _ = fs::remove_dir(&directory);
+    }
+    // On success the external installer still needs this file. Its temporary
+    // directory is left to OS temp cleanup, as in the upstream updater.
+    result
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn windows_shell_launch_errors_are_not_install_success() {
+        for code in 0..=32 {
+            assert!(!installer_launch_succeeded(code));
+        }
+        assert!(installer_launch_succeeded(33));
+        assert!(installer_launch_succeeded(1024));
+    }
 
     #[test]
     fn expected_update_version_must_be_stable_semver() {

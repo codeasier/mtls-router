@@ -656,6 +656,7 @@ impl OccupantService {
 }
 
 fn resolve_dependencies(deps: OccupantDependencies) -> ResolvedDependencies {
+    let native_windows = cfg!(windows) && deps.inspect.is_none();
     ResolvedDependencies {
         discover: deps.discover,
         inspect: deps
@@ -664,11 +665,11 @@ fn resolve_dependencies(deps: OccupantDependencies) -> ResolvedDependencies {
         supports_pid_only: deps
             .supports_pid_only
             .unwrap_or_else(|| Box::new(supports_pid_only_native)),
-        has_inspect_pid_owner: deps.inspect_pid_owner.is_some(),
+        has_inspect_pid_owner: deps.inspect_pid_owner.is_some() || native_windows,
         inspect_pid_owner: deps.inspect_pid_owner.unwrap_or_else(|| {
             Box::new(|ctx, addr| super::inspect::inspect_pid_owner_native(ctx, addr))
         }),
-        has_signal_pid: deps.signal_pid.is_some(),
+        has_signal_pid: deps.signal_pid.is_some() || native_windows,
         signal_pid: deps
             .signal_pid
             .unwrap_or_else(|| Box::new(super::inspect::signal_pid_native)),
