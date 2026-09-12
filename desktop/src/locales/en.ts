@@ -411,7 +411,7 @@ export const en: Record<TranslationKey, string> = {
   "update.restarting": "Update installed. Restarting...",
   "update.error.check": "Unable to check for updates. Try again later.",
   "update.error.install":
-    "Unable to download or install the update. The current version was not changed; try again.",
+    "Unable to download or install the update ({code}). The current version was not changed; try again.",
   "settings.prepareTitle": "Prepare for uninstall",
   "settings.prepareDescription":
     "Remove current-user autostart and exit the application. Delete the application only after it exits. Agent configurations, backups, logs, and diagnostic state are not changed.",

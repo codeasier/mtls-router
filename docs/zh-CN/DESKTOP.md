@@ -40,7 +40,7 @@ Stable 桌面 release 在 Windows x86_64/arm64、macOS Intel/Apple Silicon 和 L
 
 应用每次启动会静默检查一次 `https://release.codeasier.top/latest.json`；检查失败不会阻断启动。设置页面会显示当前和最新桌面版本、release 提供的更新说明，以及手动**检查更新**操作。由于 manager 与 router 已编译进桌面二进制，设置页面只列出一个应用版本；只有在复用历史 CLI 安装的兼容外部 router 时才会单独列出其版本。应用只接受更高版本的 stable SemVer release；不会提供 prerelease 或含 build metadata 的版本，validation/非 stable 构建也不会发布到桌面更新 channel。
 
-应用绝不会在未经确认时下载或安装更新。你确认界面显示的 stable 版本后，应用才会下载平台包、报告进度、校验强制的 Tauri updater 签名、停止经过验证的桌面所属 router 或关联的历史桌面 router、安装完整包并重启应用。若关联的历史 router 无法通过完整进程身份停止，或关联状态仍为 stale、unknown 或无法验证，更新会被拒绝。兼容的外部 router 不会被停止。如果停止桌面端所属 router 后安装失败，应用会尝试重新启动该 router。
+应用绝不会在未经确认时下载或安装更新。你确认界面显示的 stable 版本后，应用才会下载平台包、报告进度、校验强制的 Tauri updater 签名、停止经过验证的桌面所属 router 或关联的历史桌面 router、安装完整包并重启应用。已锁存且 `owner=desktop` 的 `start_failed` 不阻断整包替换：更新替换的是桌面进程，不要求 router 先处于可监听状态。若关联的历史 router 无法通过完整进程身份停止，或关联状态仍为 stale、unknown 或无法验证，更新会被拒绝。兼容的外部 router 不会被停止。如果停止桌面端所属 router 后安装失败，应用会尝试重新启动该 router。下载或安装失败时，设置页会展示稳定命令错误码。
 
 在每个平台上，只有当前包运行在对应平台 Tauri updater 支持的安装位置和文件系统布局中时，才能执行在线安装。如果 updater 报告当前位置不受支持或无法替换已安装包，请退出应用，再从可信 release 渠道手工安装完整新包。
 
