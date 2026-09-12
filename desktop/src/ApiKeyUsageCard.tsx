@@ -75,10 +75,27 @@ function formatCost(language: string, value: number) {
   }).format(value);
 }
 
+function formatQuotaCost(language: string, value: number) {
+  return new Intl.NumberFormat(language, {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
 function formatQuotaAmount(language: string, value: number, unit: string) {
   return unit === "usd"
-    ? formatCost(language, value)
+    ? formatQuotaCost(language, value)
     : formatCount(language, value);
+}
+
+function formatQuotaPercent(language: string, percent: number) {
+  return new Intl.NumberFormat(language, {
+    style: "percent",
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 1,
+  }).format(percent / 100);
 }
 
 function formatBeijingDateTime(language: string, value: string) {
@@ -124,7 +141,53 @@ function providerQuotaLabel(
   t: (key: TranslationKey) => string,
 ) {
   const remaining = Math.max(0, quota.limit - quota.used);
-  return `${formatCost(language, quota.used)} / ${formatCost(language, quota.limit)} · ${t("apikey.usage.quota.remaining")} ${formatCost(language, remaining)}`;
+  return `${formatQuotaCost(language, quota.used)} / ${formatQuotaCost(language, quota.limit)} · ${t("apikey.usage.quota.remaining")} ${formatQuotaCost(language, remaining)}`;
+}
+
+function QuotaMeter({
+  title,
+  amounts,
+  percent,
+  resetsAt,
+}: {
+  title: string;
+  amounts: string;
+  percent: number | null;
+  resetsAt: string;
+}) {
+  const { language, t } = useI18n();
+  const percentLabel =
+    percent == null ? "" : formatQuotaPercent(language, percent);
+  return (
+    <article className="apikey-usage__quota">
+      <header>
+        <div className="apikey-usage__quota-meta">
+          <strong>{title}</strong>
+          <span>{amounts}</span>
+        </div>
+        {percentLabel ? (
+          <span className="apikey-usage__quota-percent">{percentLabel}</span>
+        ) : null}
+      </header>
+      {percent != null && (
+        <div
+          className="apikey-usage__bar"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(percent)}
+          aria-valuetext={percentLabel}
+        >
+          <span style={{ width: `${percent}%` }} />
+        </div>
+      )}
+      {resetsAt ? (
+        <p>
+          {t("apikey.usage.quota.resets")}: {resetsAt}
+        </p>
+      ) : null}
+    </article>
+  );
 }
 
 function modelTokens(row: APIKeyUsageModel) {
@@ -318,68 +381,27 @@ export function ApiKeyUsageCard({
             </div>
           </dl>
           {usage.quota && (
-            <section className="apikey-usage__quota">
-              <header>
-                <strong>{t("apikey.usage.quota.heading")}</strong>
-                <span>{quotaLabel(language, usage.quota, t)}</span>
-              </header>
-              {quotaPercent(usage.quota) != null && (
-                <div
-                  className="apikey-usage__bar"
-                  role="progressbar"
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={Math.round(quotaPercent(usage.quota) ?? 0)}
-                >
-                  <span
-                    style={{ width: `${quotaPercent(usage.quota) ?? 0}%` }}
-                  />
-                </div>
-              )}
-              {resetsAt && (
-                <p>
-                  {t("apikey.usage.quota.resets")}: {resetsAt}
-                </p>
-              )}
-            </section>
+            <QuotaMeter
+              title={t("apikey.usage.quota.heading")}
+              amounts={quotaLabel(language, usage.quota, t)}
+              percent={quotaPercent(usage.quota)}
+              resetsAt={resetsAt}
+            />
           )}
           {providerQuotas.length > 0 && (
             <section className="apikey-usage__quotas">
               <strong className="apikey-usage__quotas-heading">
                 {t("apikey.usage.quotas.heading")}
               </strong>
-              {providerQuotas.map((quota, index) => {
-                const percent = quotaPercent(quota);
-                const reset = formatBeijingDateTime(language, quota.resets_at);
-                return (
-                  <article
-                    key={`${quota.provider}:${quota.period}:${quota.resets_at}:${index}`}
-                    className="apikey-usage__quota"
-                  >
-                    <header>
-                      <strong>
-                        {providerLabel(quota.provider, t)} ·{" "}
-                        {budgetPeriodLabel(quota.period, t)}
-                      </strong>
-                      <span>{providerQuotaLabel(language, quota, t)}</span>
-                    </header>
-                    {percent != null && (
-                      <div
-                        className="apikey-usage__bar"
-                        role="progressbar"
-                        aria-valuemin={0}
-                        aria-valuemax={100}
-                        aria-valuenow={Math.round(percent)}
-                      >
-                        <span style={{ width: `${percent}%` }} />
-                      </div>
-                    )}
-                    <p>
-                      {t("apikey.usage.quota.resets")}: {reset}
-                    </p>
-                  </article>
-                );
-              })}
+              {providerQuotas.map((quota, index) => (
+                <QuotaMeter
+                  key={`${quota.provider}:${quota.period}:${quota.resets_at}:${index}`}
+                  title={`${providerLabel(quota.provider, t)} · ${budgetPeriodLabel(quota.period, t)}`}
+                  amounts={providerQuotaLabel(language, quota, t)}
+                  percent={quotaPercent(quota)}
+                  resetsAt={formatBeijingDateTime(language, quota.resets_at)}
+                />
+              ))}
             </section>
           )}
           {empty ? (

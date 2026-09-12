@@ -355,10 +355,52 @@ describe("UsagePage", () => {
     expect(screen.getByText("供应商限额")).toBeInTheDocument();
     expect(screen.getByText("全部供应商 · 每周")).toBeInTheDocument();
     expect(screen.getByText("codex · 每日")).toBeInTheDocument();
+    expect(
+      screen.getByText("US$1.25 / US$10.00 · 剩余 US$8.75"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("12.5%")).toBeInTheDocument();
+    expect(
+      screen.getByText("US$0.40 / US$2.00 · 剩余 US$1.60"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("20%")).toBeInTheDocument();
     expect(screen.getAllByText(/重置时间（北京时间）/).length).toBeGreaterThan(
       0,
     );
     expect(screen.getAllByText(/08:00/).length).toBeGreaterThan(0);
+  });
+
+  it("rounds quota amounts to two decimals and shows usage percent", async () => {
+    renderPage(
+      createMockApi({
+        getAPIKeyUsage: vi.fn().mockResolvedValue({
+          period: "7d",
+          summary: multiModelUsage.summary,
+          quotas: [
+            {
+              provider: "codexex",
+              period: "week",
+              used: 200.26667,
+              limit: 350,
+              unit: "usd",
+              resets_at: "2026-09-14T00:00:00Z",
+            },
+          ],
+          by_model: multiModelUsage.by_model,
+        }),
+      }),
+    );
+    await screen.findAllByText("claude-sonnet");
+
+    expect(screen.getByText("codexex · 每周")).toBeInTheDocument();
+    expect(
+      screen.getByText("US$200.27 / US$350.00 · 剩余 US$149.73"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/200\.26667/)).not.toBeInTheDocument();
+    expect(screen.getByText("57.2%")).toBeInTheDocument();
+    expect(screen.getByRole("progressbar")).toHaveAttribute(
+      "aria-valuetext",
+      "57.2%",
+    );
   });
 
   it("keeps the provider list when a rolling period omits the overview quota", async () => {

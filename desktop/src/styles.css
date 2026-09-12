@@ -2579,7 +2579,7 @@ main[data-section="images"] {
 
 .apikey-usage__quotas {
   display: grid;
-  gap: 12px;
+  gap: 16px;
 }
 
 .apikey-usage__quotas-heading {
@@ -2588,26 +2588,51 @@ main[data-section="images"] {
 
 .apikey-usage__quota {
   display: grid;
-  gap: 8px;
+  gap: 10px;
 }
 
 .apikey-usage__quota header {
   display: flex;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: 16px;
   font-size: 12px;
 }
 
+.apikey-usage__quota-meta {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.apikey-usage__quota-meta span {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.apikey-usage__quota-percent {
+  flex-shrink: 0;
+  color: var(--ink);
+  font-size: clamp(20px, 2.2vw, 28px);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
 .apikey-usage__bar {
-  height: 8px;
+  width: 100%;
+  height: 12px;
   overflow: hidden;
   border-radius: 999px;
-  background: var(--paper-deep);
+  background: color-mix(in srgb, var(--ink) 20%, var(--paper));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 14%, transparent);
 }
 
 .apikey-usage__bar span {
   display: block;
   height: 100%;
+  border-radius: inherit;
   background: var(--signal);
 }
 
@@ -5783,18 +5808,18 @@ main[data-section="images"] {
 }
 
 .apikey-usage__quotas {
-  grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
-  align-items: start;
-}
-
-.apikey-usage__quotas-heading {
-  grid-column: 1 / -1;
+  align-items: stretch;
 }
 
 .apikey-usage__quotas .apikey-usage__quota {
   padding: 0;
   border: 0;
   background: transparent;
+}
+
+.apikey-usage__quotas .apikey-usage__quota + .apikey-usage__quota {
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
 }
 
 .images-stage.is-landing .images-composer {
@@ -5869,14 +5894,6 @@ main[data-section="images"] {
 
   .apikey-usage__period-groups {
     flex-wrap: wrap;
-  }
-
-  .apikey-usage__quotas {
-    grid-template-columns: 1fr;
-  }
-
-  .apikey-usage__quotas-heading {
-    grid-column: auto;
   }
 
   .images-stage.is-landing .images-suggest ul {
