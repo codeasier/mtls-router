@@ -256,6 +256,35 @@ describe("SettingsPage", () => {
     );
   });
 
+  it("explains that the update is installed when restart is blocked", async () => {
+    await openSettings(
+      createMockApi({
+        checkForUpdate: vi.fn().mockResolvedValue({
+          available: true,
+          current_version: "1.0.0",
+          update: { version: "1.1.0" },
+        }),
+        installUpdate: vi.fn().mockRejectedValue({
+          code: "UPDATE_RESTART_BLOCKED",
+          message: "the update was installed but restart is blocked",
+        }),
+      }),
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "安装并重启" }));
+    fireEvent.click(
+      within(await screen.findByRole("dialog", { name: "安装更新" })).getByRole(
+        "button",
+        { name: "继续安装" },
+      ),
+    );
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("更新已安装，请手动重启应用以完成升级。");
+    expect(alert).not.toHaveTextContent("当前版本未更改");
+    expect(alert).not.toHaveTextContent("UPDATE_RESTART_BLOCKED");
+  });
+
   it("defaults to Chinese, switches to English, and stores only language", async () => {
     const api = await openSettings();
     const setItem = vi.spyOn(localStorage, "setItem");

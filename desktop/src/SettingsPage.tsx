@@ -408,9 +408,11 @@ export function SettingsPage({
 
               {installState === "error" && (
                 <p className="settings-block__update-error" role="alert">
-                  {t("update.error.install", {
-                    code: installErrorCode || "UNKNOWN",
-                  })}
+                  {installErrorCode === "UPDATE_RESTART_BLOCKED"
+                    ? t("update.error.restartBlocked")
+                    : t("update.error.install", {
+                        code: installErrorCode || "UNKNOWN",
+                      })}
                 </p>
               )}
               {installState === "restarting" && (
