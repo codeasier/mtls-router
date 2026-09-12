@@ -259,6 +259,99 @@ describe("SettingsPage", () => {
     ).toBeVisible();
   });
 
+  it.each([
+    "UPDATE_BLOCKED_ROUTER_STATE",
+    "UPDATE_DOWNLOAD_FAILED",
+    "UPDATE_BUSY",
+    "UPDATE_INSTALL_FAILED",
+    "UPDATE_NOT_AVAILABLE",
+    "UPDATE_CHANGED",
+  ])("surfaces the stable install error code %s", async (code) => {
+    const api = await openSettings(
+      createMockApi({
+        checkForUpdate: vi.fn().mockResolvedValue({
+          available: true,
+          current_version: "1.0.0",
+          update: { version: "1.1.0" },
+        }),
+        installUpdate: vi.fn().mockRejectedValue({
+          code,
+          message: "secret path /tmp/update-cache",
+        }),
+      }),
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "安装并重启" }));
+    fireEvent.click(
+      within(await screen.findByRole("dialog", { name: "安装更新" })).getByRole(
+        "button",
+        { name: "继续安装" },
+      ),
+    );
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(`无法下载或安装更新（${code}）`);
+    expect(alert).toHaveTextContent("当前版本未更改，请重试。");
+    expect(document.body).not.toHaveTextContent("secret path");
+    expect(document.body).not.toHaveTextContent("/tmp/update-cache");
+    expect(api.installUpdate).toHaveBeenCalledWith("1.1.0");
+    expect(screen.getByRole("button", { name: "安装并重启" })).toBeEnabled();
+  });
+
+  it("uses UNKNOWN when install fails without a command code", async () => {
+    await openSettings(
+      createMockApi({
+        checkForUpdate: vi.fn().mockResolvedValue({
+          available: true,
+          current_version: "1.0.0",
+          update: { version: "1.1.0" },
+        }),
+        installUpdate: vi.fn().mockRejectedValue(new Error("network")),
+      }),
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "安装并重启" }));
+    fireEvent.click(
+      within(await screen.findByRole("dialog", { name: "安装更新" })).getByRole(
+        "button",
+        { name: "继续安装" },
+      ),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "无法下载或安装更新（UNKNOWN）",
+    );
+  });
+
+  it("explains that the update is installed when restart is blocked", async () => {
+    await openSettings(
+      createMockApi({
+        checkForUpdate: vi.fn().mockResolvedValue({
+          available: true,
+          current_version: "1.0.0",
+          update: { version: "1.1.0" },
+        }),
+        installUpdate: vi.fn().mockRejectedValue({
+          code: "UPDATE_RESTART_BLOCKED",
+          message: "the update was installed but restart is blocked",
+        }),
+      }),
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "安装并重启" }));
+    fireEvent.click(
+      within(await screen.findByRole("dialog", { name: "安装更新" })).getByRole(
+        "button",
+        { name: "继续安装" },
+      ),
+    );
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("更新已安装，请手动重启应用以完成升级。");
+    expect(alert).not.toHaveTextContent("当前版本未更改");
+    expect(alert).not.toHaveTextContent("UPDATE_RESTART_BLOCKED");
+  });
+
   it("defaults to Chinese, switches to English, and stores only language", async () => {
     const api = await openSettings();
     const setItem = vi.spyOn(localStorage, "setItem");

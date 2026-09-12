@@ -381,7 +381,9 @@ export const zhCN = {
   "update.progressUnknown": "已下载 {downloaded} 字节",
   "update.restarting": "更新已安装，正在重启...",
   "update.error.check": "无法检查更新，请稍后重试。",
-  "update.error.install": "无法下载或安装更新。当前版本未更改，请重试。",
+  "update.error.install":
+    "无法下载或安装更新（{code}）。当前版本未更改，请重试。",
+  "update.error.restartBlocked": "更新已安装，请手动重启应用以完成升级。",
   "settings.prepareTitle": "准备卸载",
   "settings.prepareDescription":
     "移除当前用户的开机启动项并退出应用。退出后再删除应用。不会更改 Agent 配置、备份、日志或诊断状态。",

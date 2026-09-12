@@ -2,15 +2,23 @@ import { useEffect, useRef, useState } from "react";
 
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useI18n } from "./i18n";
-import type {
-  ComponentVersions,
-  DesktopApi,
-  DesktopPaths,
-  UpdateCheckResult,
-  UpdateProgress,
+import {
+  sanitizeSensitiveText,
+  type ComponentVersions,
+  type DesktopApi,
+  type DesktopPaths,
+  type UpdateCheckResult,
+  type UpdateProgress,
 } from "./ipc";
 import type { TranslationKey } from "./locales/zh-CN";
 import { THEMES, useTheme, type ThemeId } from "./theme";
+
+function commandErrorCode(error: unknown): string {
+  if (typeof error !== "object" || error === null || !("code" in error)) {
+    return "";
+  }
+  return typeof error.code === "string" ? error.code : "";
+}
 
 const themeKeys: Record<ThemeId, TranslationKey> = {
   warm: "settings.theme.warm",
@@ -43,6 +51,7 @@ export function SettingsPage({
   const [installState, setInstallState] = useState<
     "idle" | "downloading" | "restarting" | "error"
   >("idle");
+  const [installErrorCode, setInstallErrorCode] = useState("");
   const [updateProgress, setUpdateProgress] = useState<UpdateProgress | null>(
     null,
   );
@@ -159,6 +168,7 @@ export function SettingsPage({
     }
 
     setInstallState("downloading");
+    setInstallErrorCode("");
     setUpdateProgress({ downloaded: 0 });
     try {
       const stop = await api.subscribeUpdateProgress((progress) => {
@@ -167,7 +177,9 @@ export function SettingsPage({
       stopUpdateProgressRef.current = stop;
       await api.installUpdate(update.version);
       setInstallState("restarting");
-    } catch {
+    } catch (error) {
+      const code = sanitizeSensitiveText(commandErrorCode(error) || "UNKNOWN");
+      setInstallErrorCode(code);
       setInstallState("error");
     } finally {
       stopUpdateProgressRef.current?.();
@@ -404,7 +416,11 @@ export function SettingsPage({
 
               {installState === "error" && (
                 <p className="settings-block__update-error" role="alert">
-                  {t("update.error.install")}
+                  {installErrorCode === "UPDATE_RESTART_BLOCKED"
+                    ? t("update.error.restartBlocked")
+                    : t("update.error.install", {
+                        code: installErrorCode || "UNKNOWN",
+                      })}
                 </p>
               )}
               {installState === "restarting" && (

@@ -79,9 +79,10 @@ enum UpdateRouterPreflight {
 
 fn update_router_preflight(status: &RouterStatus) -> Result<UpdateRouterPreflight> {
     match (status.state.as_str(), status.owner.as_deref()) {
-        ("absent", None) | ("external_compatible", Some("cli")) | ("degraded", Some("cli")) => {
-            Ok(UpdateRouterPreflight::Proceed)
-        }
+        ("absent", None)
+        | ("start_failed", Some("desktop"))
+        | ("external_compatible", Some("cli"))
+        | ("degraded", Some("cli")) => Ok(UpdateRouterPreflight::Proceed),
         ("desktop_owned", Some("desktop"))
         | ("degraded", Some("desktop"))
         | ("legacy_managed", Some("desktop")) => Ok(UpdateRouterPreflight::Stop),
@@ -423,11 +424,53 @@ mod tests {
     }
 
     #[test]
+    fn start_failed_desktop_owned_proceeds_without_stop() {
+        use std::sync::{Arc, Mutex};
+
+        runtime().block_on(async {
+            let events = Arc::new(Mutex::new(Vec::new()));
+            let result = install_after_router_preflight_with(
+                {
+                    let events = events.clone();
+                    move || {
+                        events.lock().unwrap().push("status");
+                        async { Ok(status("start_failed", Some("desktop"))) }
+                    }
+                },
+                {
+                    let events = events.clone();
+                    move || {
+                        events.lock().unwrap().push("stop");
+                        async { Ok(status("absent", None)) }
+                    }
+                },
+                {
+                    let events = events.clone();
+                    move || {
+                        events.lock().unwrap().push("install");
+                        true
+                    }
+                },
+                {
+                    let events = events.clone();
+                    move || async move {
+                        events.lock().unwrap().push("restart");
+                    }
+                },
+            )
+            .await;
+
+            assert!(result.is_ok());
+            assert_eq!(&*events.lock().unwrap(), &["status", "install"]);
+        });
+    }
+
+    #[test]
     fn stale_and_unknown_router_states_block_before_stop_or_install() {
         use std::sync::{Arc, Mutex};
 
         runtime().block_on(async {
-            for blocked in ["stale", "unknown_occupant", "start_failed", "future_state"] {
+            for blocked in ["stale", "unknown_occupant", "future_state"] {
                 let events = Arc::new(Mutex::new(Vec::new()));
                 let result = install_after_router_preflight_with(
                     {
@@ -533,7 +576,6 @@ mod tests {
                 "desktop_owned",
                 "stale",
                 "unknown_occupant",
-                "start_failed",
                 "future_state",
             ] {
                 let events = Arc::new(Mutex::new(Vec::new()));
@@ -655,6 +697,11 @@ mod tests {
                     VecDeque::from([Ok(status("absent", None))]),
                     vec!["status", "install"],
                 ),
+                (
+                    "start_failed",
+                    VecDeque::from([Ok(status("start_failed", Some("desktop")))]),
+                    vec!["status", "install"],
+                ),
             ] {
                 let events = Arc::new(Mutex::new(Vec::new()));
                 let statuses = Arc::new(Mutex::new(statuses));
@@ -707,6 +754,7 @@ mod tests {
         };
         for (state, owner) in [
             ("absent", None),
+            ("start_failed", Some("desktop")),
             ("external_compatible", Some("cli")),
             ("degraded", Some("cli")),
         ] {
@@ -728,7 +776,7 @@ mod tests {
             );
         }
         for (state, owner) in [
-            ("start_failed", Some("desktop")),
+            ("start_failed", None),
             ("stale", Some("desktop")),
             ("unknown_occupant", None),
             ("future_state", None),
