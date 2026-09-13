@@ -154,12 +154,12 @@ npm run rust:test
 
 `RELEASE_BUILD=1` 会在版本或 deployment ID 为默认值、凭据将是占位值、或上游 URL 不是 HTTPS 时让构建失败；release workflow 在每个桌面 job 上都设置它。不完整的凭据集合、文件与环境变量混用，以及无效 `SIMPLIFY` 值会让所有构建失败。
 
-manager 以由 Rust target triple 派生的操作系统/架构标签报告其目标：
+manager 以由 Rust target triple 派生的操作系统/架构标签报告其目标。`desktop/scripts/verify-package.sh` 仍接受 Windows arm64 triple 供本地交叉构建使用；该目标不会发布。
 
-| Release 目标 | Rust/Tauri target triple | manager 目标标签 |
+| 目标 | Rust/Tauri target triple | manager 目标标签 |
 |---|---|---|
 | Windows x86_64 | `x86_64-pc-windows-msvc` | `windows/amd64` |
-| Windows arm64 | `aarch64-pc-windows-msvc` | `windows/arm64` |
+| Windows arm64（仅本地交叉构建，非发布目标） | `aarch64-pc-windows-msvc` | `windows/arm64` |
 | macOS Intel | `x86_64-apple-darwin` | `darwin/amd64` |
 | macOS Apple Silicon | `aarch64-apple-darwin` | `darwin/arm64` |
 | Linux x86_64 | `x86_64-unknown-linux-gnu` | `linux/amd64` |

@@ -169,12 +169,12 @@ The desktop executable contains the mTLS router (`desktop/src-tauri/src/router_c
 
 `RELEASE_BUILD=1` makes the build fail when the version or deployment ID is a default value, when the credentials would be placeholders, or when the upstream URL is not HTTPS. The release workflow sets it on every desktop job. Partial credential sets, mixed file/environment sources, and an invalid `SIMPLIFY` value fail every build.
 
-The manager reports its target as an OS/architecture label derived from the Rust target triple:
+The manager reports its target as an OS/architecture label derived from the Rust target triple. `desktop/scripts/verify-package.sh` still accepts the Windows arm64 triple for local cross-builds; that target is not published.
 
-| Release target | Rust/Tauri target triple | Manager target label |
+| Target | Rust/Tauri target triple | Manager target label |
 |---|---|---|
 | Windows x86_64 | `x86_64-pc-windows-msvc` | `windows/amd64` |
-| Windows arm64 | `aarch64-pc-windows-msvc` | `windows/arm64` |
+| Windows arm64 (local cross-build only; not published) | `aarch64-pc-windows-msvc` | `windows/arm64` |
 | macOS Intel | `x86_64-apple-darwin` | `darwin/amd64` |
 | macOS Apple Silicon | `aarch64-apple-darwin` | `darwin/arm64` |
 | Linux x86_64 | `x86_64-unknown-linux-gnu` | `linux/amd64` |

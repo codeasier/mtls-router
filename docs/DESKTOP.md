@@ -12,13 +12,13 @@ The Tauri desktop application is a current-user control panel for the fixed-serv
 
 Obtain the package for the operating system and CPU architecture from the trusted internal release channel. The package contains a single desktop executable with the router and manager embedded; there is no separate component to move, replace, or run.
 
-- Windows: run the current-user installer matching x86_64 or arm64. Administrator elevation is not required by the application design.
+- Windows: run the current-user x86_64 installer. Administrator elevation is not required by the application design.
 - macOS: open the DMG matching Intel or Apple Silicon, then drag `CodeasierRouter.app` onto the Applications shortcut.
 - Linux: make the matching x86_64 or arm64 AppImage executable and launch it as the current user.
 
 If the operating system reports that the package is unsigned, unnotarized, damaged, or from an unknown publisher, stop and verify the release status with the distributor. Do not bypass platform security based only on the package filename.
 
-The release asset set contains a `.sha256` file and a `signing-status-<os>-<arch>.txt` file for each desktop package. These prove the recorded checksum and signing/notarization result, not successful installation or launch. Obtain the separate target-platform launch evidence required by [Package verification](BUILD.md#package-verification).
+The release asset set includes `SHA256SUMS` covering every published package, plus a `signing-status-<os>-<arch>.txt` file for each desktop package. GitHub assets also expose a digest. These prove the recorded checksum and signing/notarization result, not successful installation or launch. Obtain the separate target-platform launch evidence required by [Package verification](BUILD.md#package-verification).
 
 ## First launch
 
@@ -38,7 +38,7 @@ If the embedded manager cannot be validated or the installation metadata is unre
 
 ## Online updates
 
-Stable desktop releases support whole-package online updates on Windows x86_64/arm64, macOS Intel/Apple Silicon, and Linux x86_64/arm64. The update replaces the complete desktop application, which carries the embedded manager and router. This capability belongs only to the desktop application; the frozen CLI binaries and setup scripts have no updater.
+Stable desktop releases support whole-package online updates on Windows x86_64, macOS Intel/Apple Silicon, and Linux x86_64/arm64. The update replaces the complete desktop application, which carries the embedded manager and router. This capability belongs only to the desktop application; the frozen CLI binaries and setup scripts have no updater.
 
 At startup the application silently checks `https://release.codeasier.top/latest.json` once. A failed check does not block startup. Settings shows the current and latest desktop versions, release notes when supplied, and a manual **Check for updates** action. Because the manager and router are compiled into the desktop binary, Settings lists a single application version; a separate router version appears only while a compatible external router from a historical CLI installation is being reused. Only a newer stable SemVer release is accepted; prerelease and build-metadata versions are not offered, and validation/non-stable builds are not published to the desktop update channel.
 
