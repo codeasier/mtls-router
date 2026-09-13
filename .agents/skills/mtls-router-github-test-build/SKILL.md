@@ -62,7 +62,6 @@ Known artifact names:
 
 - `CodeasierRouter-desktop-darwin-arm64`
 - `CodeasierRouter-desktop-darwin-amd64`
-- `CodeasierRouter-desktop-windows-arm64`
 - `CodeasierRouter-desktop-windows-amd64`
 - `CodeasierRouter-desktop-linux-arm64`
 - `CodeasierRouter-desktop-linux-amd64`

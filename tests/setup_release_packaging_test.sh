@@ -41,15 +41,18 @@ package_contains 'test "$(find release -maxdepth 1 -type f -name '\''mtls-router
 contains 'test -n "$CLIENT_CERT_PEM" && test -n "$CLIENT_KEY_PEM" && test -n "$UPSTREAM_CA_PEM"'
 contains 'case "${UPSTREAM_URL:-}" in https://*)'
 contains "RELEASE_BUILD: '1'"
-contains 'files: release/*'
+contains 'files: github-release/*'
 contains 'SOURCE: release/'
 contains 'TARGET: /home/codeasier/downloads/${{ github.event.repository.name }}/${{ github.ref_name }}/'
 contains 'ARGS: -avz --delete'
-package_contains 'expected_desktop_assets=12'
-package_contains 'if [[ "$online_update" == true ]]; then expected_desktop_assets=20; fi'
-package_contains 'test "$(find release -maxdepth 1 -type f -name '\''signing-status-*'\'' | wc -l)" -eq 6'
+package_contains 'expected_desktop_assets=5'
+package_contains 'if [[ "$online_update" == true ]]; then expected_desktop_assets=12; fi'
+package_contains 'test "$(find release -maxdepth 1 -type f -name '\''signing-status-*'\'' | wc -l)" -eq 5'
+package_contains 'expected_release_files=11'
 package_contains 'expected_release_files=19'
-package_contains 'expected_release_files=28'
+package_contains 'expected_github_files=11'
+package_contains 'expected_github_files=15'
+package_contains 'Windows arm64 artifacts are not published'
 contains './scripts/package-release.sh'
 package_contains './scripts/check-release-protocol.sh protocol-metadata'
 [[ -x "$PROTOCOL_CHECK" ]] || fail 'release protocol preflight is missing or not executable'
@@ -78,7 +81,7 @@ jq -e '
 
 protocol_tmp="$(mktemp -d)"
 trap 'rm -rf "$protocol_tmp"' EXIT
-for os_arch in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64 windows-arm64; do
+for os_arch in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64; do
   printf '{"schema_version":1,"producer":"desktop-%s","management_protocol_version":"4"}\n' "$os_arch" >"$protocol_tmp/release-metadata-desktop-$os_arch.json"
 done
 "$PROTOCOL_CHECK" "$protocol_tmp" || fail 'matching desktop protocol-v4 metadata was rejected'
@@ -97,10 +100,10 @@ rm "$protocol_tmp/release-metadata-cli-linux-amd64.json"
 package_tmp="$protocol_tmp/package-fixture"
 mkdir -p "$package_tmp/scripts" "$package_tmp/desktop-packages" "$package_tmp/protocol-metadata"
 cp "$PACKAGE_SCRIPT" "$PROTOCOL_CHECK" "$package_tmp/scripts/"
-for os_arch in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64 windows-arm64; do
+for os_arch in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64; do
   printf '{"schema_version":1,"producer":"desktop-%s","management_protocol_version":"4"}\n' "$os_arch" >"$package_tmp/protocol-metadata/release-metadata-desktop-$os_arch.json"
 done
-for os_arch in linux-amd64 linux-arm64 windows-amd64 windows-arm64 darwin-amd64 darwin-arm64; do
+for os_arch in linux-amd64 linux-arm64 windows-amd64 darwin-amd64 darwin-arm64; do
   os=${os_arch%-*}
   arch=${os_arch#*-}
   case "$os" in darwin) suffix=dmg ;; linux) suffix=AppImage ;; windows) suffix=exe ;; esac
@@ -118,15 +121,24 @@ for os_arch in linux-amd64 linux-arm64 windows-amd64 windows-arm64 darwin-amd64 
 done
 (cd "$package_tmp" && RELEASE_TAG=v1.2.3 DESKTOP_DOWNLOAD_BASE_URL=https://release.codeasier.top/mtls-router/v1.2.3 SOURCE_DATE_EPOCH=0 ./scripts/package-release.sh) || \
   fail 'stable updater release fixture failed to package'
-[[ "$(find "$package_tmp/release" -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 28 ]] || \
+[[ "$(find "$package_tmp/release" -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 19 ]] || \
   fail 'stable updater release fixture has the wrong exact asset count'
+[[ "$(find "$package_tmp/github-release" -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 15 ]] || \
+  fail 'stable GitHub subset has the wrong exact asset count'
+[[ "$(find "$package_tmp/release" -maxdepth 1 -type f -name 'CodeasierRouter-*.sha256' | wc -l | tr -d ' ')" -eq 0 ]] || \
+  fail 'stable release fixture published sidecar checksum files'
+[[ "$(find "$package_tmp/github-release" -maxdepth 1 -type f -name 'CodeasierRouter-darwin-*.app.tar.gz' | wc -l | tr -d ' ')" -eq 0 ]] || \
+  fail 'GitHub subset published a macOS updater archive'
+[[ "$(find "$package_tmp/release" -maxdepth 1 -type f -name 'CodeasierRouter-darwin-*.app.tar.gz' | wc -l | tr -d ' ')" -eq 2 ]] || \
+  fail 'mirror set is missing macOS updater archives'
 [[ "$(find "$package_tmp/release" -maxdepth 1 -type f -name 'mtls-router*' | wc -l | tr -d ' ')" -eq 0 ]] || \
   fail 'stable release fixture published a CLI artifact'
 [[ ! -e "$package_tmp/release/setup.sh" && ! -e "$package_tmp/release/setup.ps1" ]] || \
   fail 'stable release fixture published setup scripts'
 jq -e '
   .version == "1.2.3" and
-  (.platforms | length) == 6 and
+  (.platforms | length) == 5 and
+  (.platforms | has("windows-aarch64") | not) and
   .platforms["darwin-aarch64"].url == "https://release.codeasier.top/mtls-router/v1.2.3/CodeasierRouter-darwin-arm64.app.tar.gz" and
   .platforms["linux-x86_64"].url == "https://release.codeasier.top/mtls-router/v1.2.3/CodeasierRouter-linux-amd64.AppImage" and
   .platforms["windows-x86_64"].url == "https://release.codeasier.top/mtls-router/v1.2.3/CodeasierRouter-windows-amd64.exe"
@@ -151,8 +163,20 @@ cp -R "$package_tmp/scripts" "$package_tmp/desktop-packages" "$package_tmp/proto
 rm -f "$prerelease_tmp"/desktop-packages/*.sig "$prerelease_tmp"/desktop-packages/*.app.tar.gz
 (cd "$prerelease_tmp" && RELEASE_TAG=v1.2.3-rc.1 SOURCE_DATE_EPOCH=0 ./scripts/package-release.sh) || \
   fail 'pre-release fixture failed to package without updater artifacts'
-[[ "$(find "$prerelease_tmp/release" -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 19 ]] || \
+[[ "$(find "$prerelease_tmp/release" -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 11 ]] || \
   fail 'pre-release fixture has the wrong exact asset count'
+[[ "$(find "$prerelease_tmp/github-release" -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 11 ]] || \
+  fail 'pre-release GitHub subset has the wrong exact asset count'
+
+windows_arm_tmp="$protocol_tmp/windows-arm64"
+mkdir -p "$windows_arm_tmp"
+cp -R "$package_tmp/scripts" "$package_tmp/desktop-packages" "$package_tmp/protocol-metadata" "$windows_arm_tmp/"
+rm -rf "$windows_arm_tmp/release" "$windows_arm_tmp/github-release"
+printf 'retired windows arm64\n' >"$windows_arm_tmp/desktop-packages/CodeasierRouter-windows-arm64.exe"
+(cd "$windows_arm_tmp/desktop-packages" && sha256sum CodeasierRouter-windows-arm64.exe >CodeasierRouter-windows-arm64.sha256)
+if (cd "$windows_arm_tmp" && RELEASE_TAG=v1.2.3 DESKTOP_DOWNLOAD_BASE_URL=https://release.codeasier.top/mtls-router/v1.2.3 SOURCE_DATE_EPOCH=0 ./scripts/package-release.sh >/dev/null 2>&1); then
+  fail 'package script published a retired Windows arm64 artifact'
+fi
 
 [[ "$(grep -Fc 'version="${GITHUB_REF_NAME#v}"' "$WORKFLOW")" -eq 1 ]] || \
   fail 'the desktop job must derive tag versions without the v prefix'
@@ -189,7 +213,7 @@ desktop_download_glob="$(awk '
 [[ "$desktop_download_glob" == 'CodeasierRouter-desktop-*' ]] || \
   fail "desktop aggregation glob is not CodeasierRouter-desktop-*: $desktop_download_glob"
 
-for os_arch in windows-amd64 windows-arm64 darwin-amd64 darwin-arm64 linux-amd64 linux-arm64; do
+for os_arch in windows-amd64 darwin-amd64 darwin-arm64 linux-amd64 linux-arm64; do
   os=${os_arch%-*}
   arch=${os_arch#*-}
   grep -Fq "{\"name\":\"$os_arch\"" "$WORKFLOW" || fail "release matrix is missing target: $os_arch"
@@ -253,6 +277,8 @@ for value in \
   'test "$release_is_draft" = false' \
   'RELEASE_ID: ${{ steps.prepare-release.outputs.release_id }}' \
   'SOURCE: release/' \
+  's#^github-release/##' \
+  'for asset in github-release/*; do' \
   'Validate recovered updater assets' \
   '(cd release && sha256sum -c SHA256SUMS)' \
   'Update latest symlink' \
@@ -295,9 +321,12 @@ recovery_symlink_line="$(grep -nF '      - name: Update latest symlink' "$RECOVE
 recovery_feed_line="$(grep -nF '      - name: Verify public updater feed' "$RECOVERY" | cut -d: -f1)"
 [[ -n "$recovery_symlink_line" && -n "$recovery_feed_line" && "$recovery_symlink_line" -lt "$recovery_feed_line" ]] || \
   fail 'recovery workflow must verify the public updater feed after advancing the mirror latest symlink'
-for target in linux-x86_64 linux-aarch64 windows-x86_64 windows-aarch64 darwin-x86_64 darwin-aarch64; do
+for target in linux-x86_64 linux-aarch64 windows-x86_64 darwin-x86_64 darwin-aarch64; do
   grep -Fq -- "\"$target\"" "$PACKAGE_SCRIPT" || fail "latest feed is missing target $target"
 done
+if grep -Fq -- '"windows-aarch64"' "$PACKAGE_SCRIPT" "$WORKFLOW" "$RECOVERY"; then
+  fail 'new releases must not publish Windows arm64 updater or desktop targets'
+fi
 contains 'DESKTOP_DOWNLOAD_BASE_URL: https://release.codeasier.top/${{ github.event.repository.name }}/${{ github.ref_name }}'
 package_contains 'DESKTOP_DOWNLOAD_BASE_URL:?DESKTOP_DOWNLOAD_BASE_URL is required for stable releases'
 package_contains 'DESKTOP_DOWNLOAD_BASE_URL="$DESKTOP_DOWNLOAD_BASE_URL"'

@@ -6,7 +6,7 @@ Tauri 桌面应用是固定服务 `mtls-router` 的当前用户控制面板，�
 
 > **CLI 停止维护。** v0.4.1 之后的版本只发布桌面应用。独立的 CLI router/manager 二进制、`setup.sh` / `setup.ps1` 以及 systemd/Docker/NSSM 服务包装都冻结在各自的历史 release tag 上，仍可从那里下载，但不再有新构建。桌面升级会识别早期 CLI 或 sidecar 时代桌面安装遗留的 router，并且只在完整进程身份校验通过后一次性接管，而不会下载或启动新的 CLI。
 
-> 当前仓库中的 CI 和 release workflow 会构建六个原生桌面包：Windows x86_64/arm64 NSIS 安装器、macOS Intel/Apple Silicon DMG，以及 Linux x86_64/arm64 AppImage。每个 package job 都在匹配的目标 runner 上执行检查和只覆盖初始化的启动 smoke test。Release 签名取决于平台凭据，macOS notarization/stapling 还需要完整的 Apple notarization 凭据；每个目标的状态文件会记录结果。包检查不会安装或正常启动应用，因此仍需单独提供目标 runner 上成功启动的证据。详见[构建与发布](BUILD.md)。
+> 当前仓库中的 release workflow 会构建五个原生桌面包：Windows x86_64 NSIS 安装器、macOS Intel/Apple Silicon DMG，以及 Linux x86_64/arm64 AppImage。CI 抽检未签名的 Windows x86_64 与 Linux arm64 包。每个 package job 都在匹配的目标 runner 上执行检查和只覆盖初始化的启动 smoke test。Release 签名取决于平台凭据，macOS notarization/stapling 还需要完整的 Apple notarization 凭据；每个目标的状态文件会记录结果。包检查不会安装或正常启动应用，因此仍需单独提供目标 runner 上成功启动的证据。详见[构建与发布](BUILD.md)。
 
 ## 安装
 

@@ -150,7 +150,7 @@ Rust 侧绝不向 webview 暴露 shell/fs/http 权限（由 `lib.rs` 中的测�
 ## 辅助参考
 
 - `scripts/build.sh` 在 `secrets/` 下生成占位 PEM 供本地构建；真实发布密钥来自 GitHub secrets/vars。
-- `desktop/scripts/prepare-updater-config.sh` 为 stable tag 生成私有 Tauri updater overlay 并校验固定公钥指纹；`desktop/scripts/updater-public-key-fingerprint.mjs` 生成该指纹；`desktop/scripts/create-macos-updater.sh` 从最终 macOS app 生成签名 `.app.tar.gz`；`desktop/scripts/verify-package.sh` 收集六平台 updater 产物及 `.sig` 并验证签名与公钥匹配。
-- `scripts/package-release.sh` 对精确 stable tag 汇总六平台 updater artifact/signature、生成 `latest.json`（平台 URL 指向 `release.codeasier.top`）并纳入 `SHA256SUMS`；release/recovery workflow 另将 tag 目录镜像至 `downloads.codeasier.top` 并单调、原子推进其 `latest` symlink 作为二级分发点，而 updater feed 与产物下载均以 `release.codeasier.top` 为准。Updater 签名密钥与 Windows/macOS 平台签名凭据属于独立信任链。
+- `desktop/scripts/prepare-updater-config.sh` 为 stable tag 生成私有 Tauri updater overlay 并校验固定公钥指纹；`desktop/scripts/updater-public-key-fingerprint.mjs` 生成该指纹；`desktop/scripts/create-macos-updater.sh` 从最终 macOS app 生成签名 `.app.tar.gz`；`desktop/scripts/verify-package.sh` 收集五平台 updater 产物及 `.sig` 并验证签名与公钥匹配。
+- `scripts/package-release.sh` 对精确 stable tag 汇总五平台 updater artifact/signature、生成 `latest.json`（平台 URL 指向 `release.codeasier.top`，darwin 仍指向 `.app.tar.gz`）并纳入 `SHA256SUMS`；GitHub Release 只挂安装包（macOS 仅 DMG）与清单/状态文件，macOS updater 归档只镜像到 `release.codeasier.top`。release/recovery workflow 另将完整 tag 目录镜像至 `downloads.codeasier.top` 并单调、原子推进其 `latest` symlink 作为二级分发点，而 updater feed 与产物下载均以 `release.codeasier.top` 为准。Updater 签名密钥与 Windows/macOS 平台签名凭据属于独立信任链。不发布 sidecar `*.sha256`。
 - `.worktrees/` 目录含 git worktree 产物，已在 `.gitignore` 中忽略；分析产品代码时忽略。
 - 管理协议当前版本为 `4`；router、manager、setup receipt、release metadata 与桌面端必须同版本，桌面端在启动握手时校验并拒绝混合代。

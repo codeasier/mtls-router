@@ -5,6 +5,11 @@
 # binaries, setup scripts, and service wrappers are frozen at their historical
 # tags and must never re-enter a new release; any file outside the allowlist
 # fails packaging.
+#
+# release/ is the complete mirror set, including macOS updater archives.
+# github-release/ is the user-facing GitHub subset: installers only for macOS
+# (DMG), with sidecar *.sha256 omitted because GitHub assets already expose
+# SHA-256 digests.
 set -euo pipefail
 
 release_tag="${RELEASE_TAG:-}"
@@ -17,14 +22,14 @@ fi
 
 ./scripts/check-release-protocol.sh protocol-metadata
 
-# Every published file must match exactly one allowlisted shape.
+# Every file copied into release/ must match exactly one allowlisted shape.
+# Sidecar *.sha256 files stay in desktop-packages for producer preflight only.
 allowed_asset() {
   case "$1" in
     CodeasierRouter-darwin-amd64.dmg|CodeasierRouter-darwin-arm64.dmg) return 0 ;;
     CodeasierRouter-linux-amd64.AppImage|CodeasierRouter-linux-arm64.AppImage) return 0 ;;
-    CodeasierRouter-windows-amd64.exe|CodeasierRouter-windows-arm64.exe) return 0 ;;
+    CodeasierRouter-windows-amd64.exe) return 0 ;;
     CodeasierRouter-darwin-amd64.app.tar.gz|CodeasierRouter-darwin-arm64.app.tar.gz) return 0 ;;
-    CodeasierRouter-*-*.sha256) return 0 ;;
     CodeasierRouter-*.sig) return 0 ;;
     signing-status-*-*.txt) return 0 ;;
     SHA256SUMS|latest.json) return 0 ;;
@@ -39,10 +44,32 @@ forbidden_asset() {
   esac
 }
 
+retired_windows_arm64() {
+  case "$1" in
+    CodeasierRouter-windows-arm64.*|signing-status-windows-arm64.txt) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+github_facing_asset() {
+  case "$1" in
+    CodeasierRouter-darwin-*.app.tar.gz|CodeasierRouter-darwin-*.app.tar.gz.sig) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+rm -rf release github-release
 mkdir -p release
 (cd desktop-packages && sha256sum -c CodeasierRouter-*.sha256)
 while IFS= read -r -d '' path; do
   name="$(basename "$path")"
+  case "$name" in
+    CodeasierRouter-*-*.sha256) continue ;;
+  esac
+  if retired_windows_arm64 "$name"; then
+    printf 'Windows arm64 artifacts are not published: %s\n' "$name" >&2
+    exit 1
+  fi
   if forbidden_asset "$name" && [[ "$name" != CodeasierRouter-darwin-*.app.tar.gz ]]; then
     printf 'CLI lifecycle artifact must not be published: %s\n' "$name" >&2
     exit 1
@@ -51,14 +78,16 @@ while IFS= read -r -d '' path; do
   cp "$path" release/
 done < <(find desktop-packages -maxdepth 1 -type f ! -name 'release-metadata-*.json' -print0)
 
-expected_desktop_assets=12
-if [[ "$online_update" == true ]]; then expected_desktop_assets=20; fi
+expected_desktop_assets=5
+if [[ "$online_update" == true ]]; then expected_desktop_assets=12; fi
 test "$(find release -maxdepth 1 -type f -name 'CodeasierRouter-*' | wc -l)" -eq "$expected_desktop_assets"
-test "$(find release -maxdepth 1 -type f -name 'signing-status-*' | wc -l)" -eq 6
+test "$(find release -maxdepth 1 -type f -name 'signing-status-*' | wc -l)" -eq 5
 test "$(find release -maxdepth 1 -type f -name 'mtls-router*' | wc -l)" -eq 0
+test "$(find release -maxdepth 1 -type f -name 'CodeasierRouter-*.sha256' | wc -l)" -eq 0
+test "$(find release -maxdepth 1 -type f -name 'CodeasierRouter-windows-arm64.*' | wc -l)" -eq 0
 
 if [[ "$online_update" == true ]]; then
-  test "$(find release -maxdepth 1 -type f -name 'CodeasierRouter-*.sig' | wc -l)" -eq 6
+  test "$(find release -maxdepth 1 -type f -name 'CodeasierRouter-*.sig' | wc -l)" -eq 5
   test "$(find release -maxdepth 1 -type f -name 'CodeasierRouter-darwin-*.app.tar.gz' | wc -l)" -eq 2
   RELEASE_TAG="$release_tag" DESKTOP_DOWNLOAD_BASE_URL="$DESKTOP_DOWNLOAD_BASE_URL" python3 - <<'PY'
 import json
@@ -73,7 +102,6 @@ targets = {
     "linux-x86_64": "CodeasierRouter-linux-amd64.AppImage",
     "linux-aarch64": "CodeasierRouter-linux-arm64.AppImage",
     "windows-x86_64": "CodeasierRouter-windows-amd64.exe",
-    "windows-aarch64": "CodeasierRouter-windows-arm64.exe",
     "darwin-x86_64": "CodeasierRouter-darwin-amd64.app.tar.gz",
     "darwin-aarch64": "CodeasierRouter-darwin-arm64.app.tar.gz",
 }
@@ -98,21 +126,34 @@ PY
     .version == $version and
     (.platforms | keys | sort) == ([
       "darwin-aarch64", "darwin-x86_64", "linux-aarch64",
-      "linux-x86_64", "windows-aarch64", "windows-x86_64"
+      "linux-x86_64", "windows-x86_64"
     ] | sort) and
     ([.platforms[] | select((.signature | length) == 0 or (.url | startswith("https://") | not))] | length) == 0
   ' release/latest.json >/dev/null
 fi
 
 find release -maxdepth 1 -type f ! -name SHA256SUMS ! -name 'signing-status-*' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sed 's#  release/#  #' >release/SHA256SUMS
-expected_checksums=12
-expected_release_files=19
+expected_checksums=5
+expected_release_files=11
+expected_github_files=11
 if [[ "$online_update" == true ]]; then
-  expected_checksums=21
-  expected_release_files=28
+  expected_checksums=13
+  expected_release_files=19
+  expected_github_files=15
 fi
 test "$(awk '$1 ~ /^[0-9a-f]{64}$/ { print $2 }' release/SHA256SUMS | sort -u | wc -l)" -eq "$expected_checksums"
 test "$(find release -maxdepth 1 -type f | wc -l)" -eq "$expected_release_files"
 while IFS= read -r -d '' path; do
   allowed_asset "$(basename "$path")" || { printf 'unexpected release file: %s\n' "$path" >&2; exit 1; }
 done < <(find release -maxdepth 1 -type f -print0)
+
+mkdir -p github-release
+while IFS= read -r -d '' path; do
+  name="$(basename "$path")"
+  github_facing_asset "$name" || continue
+  cp "$path" github-release/
+done < <(find release -maxdepth 1 -type f -print0)
+test "$(find github-release -maxdepth 1 -type f | wc -l)" -eq "$expected_github_files"
+test "$(find github-release -maxdepth 1 -type f -name 'CodeasierRouter-darwin-*.app.tar.gz' | wc -l)" -eq 0
+test "$(find github-release -maxdepth 1 -type f -name 'CodeasierRouter-darwin-*.app.tar.gz.sig' | wc -l)" -eq 0
+test "$(find github-release -maxdepth 1 -type f -name 'CodeasierRouter-*.sha256' | wc -l)" -eq 0

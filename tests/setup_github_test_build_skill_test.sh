@@ -29,7 +29,7 @@ set -e
   fail 'wrapper must reject linker-unsafe upstreams before GitHub access'
 
 for value in \
-  'all|windows-amd64|windows-arm64|darwin-amd64|darwin-arm64|linux-amd64|linux-arm64' \
+  'all|windows-amd64|darwin-amd64|darwin-arm64|linux-amd64|linux-arm64' \
   "'target:' 'upstream_url:'" \
   '-f "inputs[target]=$target"' \
   'dispatch_args+=(-f "inputs[upstream_url]=$upstream")'; do

@@ -2,6 +2,12 @@
 
 [中文](zh-CN/CHANGELOG.md)
 
+## Unreleased
+
+### Changed
+
+- New desktop releases publish five installers (Windows x86_64, macOS Intel/Apple Silicon DMG, Linux x86_64/arm64). Windows arm64 packages are no longer built or shipped. Sidecar `*.sha256` files stay in the workflow as aggregation preflight and are not attached to GitHub Releases. macOS `.app.tar.gz` updater archives remain on `release.codeasier.top` for in-app updates and are not listed as GitHub download assets.
+
 ## v0.5.3 - 2026-09-10
 
 This patch release lets a Windows install persist an operator-chosen loopback port when `19099` is reserved, and keeps Usage and Chat images from hiding the real failure.
