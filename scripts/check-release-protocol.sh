@@ -4,7 +4,7 @@ set -euo pipefail
 metadata_dir="${1:?metadata directory is required}"
 expected_protocol="${EXPECTED_MANAGEMENT_PROTOCOL_VERSION:-4}"
 # One producer per desktop target; new releases carry no CLI producers.
-expected_count="${EXPECTED_RELEASE_PRODUCERS:-6}"
+expected_count="${EXPECTED_RELEASE_PRODUCERS:-5}"
 
 metadata_count="$(find "$metadata_dir" -maxdepth 1 -type f -name 'release-metadata-*.json' | wc -l | tr -d ' ')"
 [[ "$metadata_count" -eq "$expected_count" ]] || {

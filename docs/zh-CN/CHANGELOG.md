@@ -2,6 +2,12 @@
 
 [English](../CHANGELOG.md)
 
+## Unreleased
+
+### Changed
+
+- 新的桌面 release 只发布五个安装包（Windows x86_64、macOS Intel/Apple Silicon DMG、Linux x86_64/arm64），不再构建或分发 Windows arm64。sidecar `*.sha256` 仍用于聚合预检，但不再挂到 GitHub Release。macOS `.app.tar.gz` updater 归档继续放到 `release.codeasier.top` 供应用内更新，不作为 GitHub 下载项列出。GitHub 的 `SHA256SUMS` 只列已挂文件，完整校验清单留在镜像。
+
 ## v0.5.3 - 2026-09-10
 
 本次补丁发布让 Windows 安装在 `19099` 被系统保留时，可以持久化操作员指定的回环端口，并避免用量页与「对话生图」把真实失败藏起来。

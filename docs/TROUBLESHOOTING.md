@@ -6,10 +6,10 @@ Use the Router, Logs, and Settings pages before deleting state. Diagnostic summa
 
 ## Package is blocked or release status is unclear
 
-The workflows build six native desktop packages and inspect each one on a matching target runner, including an initialization-only startup smoke test, but signing is conditional and package inspection does not install or normally launch the application.
+The release workflow builds five native desktop packages and inspects each one on a matching target runner, including an initialization-only startup smoke test, but signing is conditional and package inspection does not install or normally launch the application.
 
-1. Match the package to the operating system and architecture: Windows x86_64/arm64 NSIS, macOS Intel/Apple Silicon DMG, or Linux x86_64/arm64 AppImage.
-2. Verify the package with its `.sha256` file.
+1. Match the package to the operating system and architecture: Windows x86_64 NSIS, macOS Intel/Apple Silicon DMG, or Linux x86_64/arm64 AppImage.
+2. Verify the package against its `SHA256SUMS` entry. For GitHub assets, the release digest may be used as a second check.
 3. Read the matching `signing-status-<os>-<arch>.txt`. Windows and macOS may be unsigned when signing credentials were unavailable; macOS may be signed but not notarized when notarization credentials were unavailable. Linux status explicitly reports that package signing is not configured.
 4. Ask the distributor for separate successful install/launch evidence from the matching target runner. A successful package-inspection job or status file is not launch evidence.
 

@@ -6,10 +6,10 @@
 
 ## 包被阻止或 release 状态不明确
 
-Workflow 会构建六个原生桌面包，并在匹配的目标 runner 上检查每个包，包括只覆盖初始化的启动 smoke test，但签名是有条件的，而且包检查不会安装或正常启动应用。
+Release workflow 会构建五个原生桌面包，并在匹配的目标 runner 上检查每个包，包括只覆盖初始化的启动 smoke test，但签名是有条件的，而且包检查不会安装或正常启动应用。
 
-1. 确认包与操作系统和架构匹配：Windows x86_64/arm64 NSIS、macOS Intel/Apple Silicon DMG，或 Linux x86_64/arm64 AppImage。
-2. 使用配套 `.sha256` 文件验证包。
+1. 确认包与操作系统和架构匹配：Windows x86_64 NSIS、macOS Intel/Apple Silicon DMG，或 Linux x86_64/arm64 AppImage。
+2. 用 `SHA256SUMS` 中的条目验证包。GitHub asset 可用 release digest 作为第二校验。
 3. 阅读匹配的 `signing-status-<os>-<arch>.txt`。签名凭据不可用时，Windows 和 macOS 包可能未签名；notarization 凭据不可用时，macOS 包可能已签名但未 notarize。Linux 状态会明确报告未配置包签名。
 4. 向分发方索取匹配目标 runner 上成功安装/启动的独立证据。成功的包检查 job 或状态文件不属于启动证据。
 

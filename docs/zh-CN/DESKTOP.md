@@ -6,19 +6,19 @@ Tauri 桌面应用是固定服务 `mtls-router` 的当前用户控制面板，�
 
 > **CLI 停止维护。** v0.4.1 之后的版本只发布桌面应用。独立的 CLI router/manager 二进制、`setup.sh` / `setup.ps1` 以及 systemd/Docker/NSSM 服务包装都冻结在各自的历史 release tag 上，仍可从那里下载，但不再有新构建。桌面升级会识别早期 CLI 或 sidecar 时代桌面安装遗留的 router，并且只在完整进程身份校验通过后一次性接管，而不会下载或启动新的 CLI。
 
-> 当前仓库中的 CI 和 release workflow 会构建六个原生桌面包：Windows x86_64/arm64 NSIS 安装器、macOS Intel/Apple Silicon DMG，以及 Linux x86_64/arm64 AppImage。每个 package job 都在匹配的目标 runner 上执行检查和只覆盖初始化的启动 smoke test。Release 签名取决于平台凭据，macOS notarization/stapling 还需要完整的 Apple notarization 凭据；每个目标的状态文件会记录结果。包检查不会安装或正常启动应用，因此仍需单独提供目标 runner 上成功启动的证据。详见[构建与发布](BUILD.md)。
+> 当前仓库中的 release workflow 会构建五个原生桌面包：Windows x86_64 NSIS 安装器、macOS Intel/Apple Silicon DMG，以及 Linux x86_64/arm64 AppImage。CI 抽检未签名的 Windows x86_64 与 Linux arm64 包。每个 package job 都在匹配的目标 runner 上执行检查和只覆盖初始化的启动 smoke test。Release 签名取决于平台凭据，macOS notarization/stapling 还需要完整的 Apple notarization 凭据；每个目标的状态文件会记录结果。包检查不会安装或正常启动应用，因此仍需单独提供目标 runner 上成功启动的证据。详见[构建与发布](BUILD.md)。
 
 ## 安装
 
 从可信的内部分发渠道获取与操作系统及 CPU 架构匹配的包。包内只有一个内嵌了 router 与 manager 的桌面可执行文件，没有可以移出、替换或单独运行的组件。
 
-- Windows：运行与 x86_64 或 arm64 匹配的当前用户安装器。应用设计不要求管理员提权。
+- Windows：运行当前用户 x86_64 安装器。应用设计不要求管理员提权。
 - macOS：打开与 Intel 或 Apple Silicon 匹配的 DMG，然后把 `CodeasierRouter.app` 拖到 Applications 快捷方式上。
 - Linux：给与 x86_64 或 arm64 匹配的 AppImage 添加执行权限，再以当前用户启动。
 
 如果操作系统提示包未签名、未 notarize、已损坏或发布者未知，请停止安装并向分发方核实 release 状态。不要只根据包文件名绕过平台安全检查。
 
-Release asset 集中每个桌面包都有一个 `.sha256` 文件和一个 `signing-status-<os>-<arch>.txt` 文件。它们证明记录的 checksum 和签名/notarization 结果，不证明安装或启动成功。还必须取得[包验证](BUILD.md#包验证)要求的独立目标平台启动证据。
+Release asset 集包含覆盖全部已发布包的 `SHA256SUMS`，以及每个桌面包对应的 `signing-status-<os>-<arch>.txt` 文件。GitHub asset 另外提供 digest。它们证明记录的 checksum 和签名/notarization 结果，不证明安装或启动成功。还必须取得[包验证](BUILD.md#包验证)要求的独立目标平台启动证据。
 
 ## 首次启动
 
@@ -38,7 +38,7 @@ Release asset 集中每个桌面包都有一个 `.sha256` 文件和一个 `signi
 
 ## 在线更新
 
-Stable 桌面 release 在 Windows x86_64/arm64、macOS Intel/Apple Silicon 和 Linux x86_64/arm64 上支持整包在线更新。更新会替换完整的桌面应用，其中已包含内嵌的 manager 和 router。该能力仅属于桌面应用；已冻结的 CLI 二进制与安装脚本没有更新器。
+Stable 桌面 release 在 Windows x86_64、macOS Intel/Apple Silicon 和 Linux x86_64/arm64 上支持整包在线更新。更新会替换完整的桌面应用，其中已包含内嵌的 manager 和 router。该能力仅属于桌面应用；已冻结的 CLI 二进制与安装脚本没有更新器。
 
 应用每次启动会静默检查一次 `https://release.codeasier.top/latest.json`；检查失败不会阻断启动。设置页面会显示当前和最新桌面版本、release 提供的更新说明，以及手动**检查更新**操作。由于 manager 与 router 已编译进桌面二进制，设置页面只列出一个应用版本；只有在复用历史 CLI 安装的兼容外部 router 时才会单独列出其版本。应用只接受更高版本的 stable SemVer release；不会提供 prerelease 或含 build metadata 的版本，validation/非 stable 构建也不会发布到桌面更新 channel。
 

@@ -18,7 +18,6 @@ on:
         options:
           - all
           - windows-amd64
-          - windows-arm64
           - darwin-amd64
           - darwin-arm64
           - linux-amd64
@@ -81,7 +80,6 @@ jobs:
           fi
           desktop='[
             {"name":"windows-amd64","runner":"windows-2025","target":"x86_64-pc-windows-msvc","os":"windows","arch":"amd64","bundles":"nsis"},
-            {"name":"windows-arm64","runner":"windows-11-arm","target":"aarch64-pc-windows-msvc","os":"windows","arch":"arm64","bundles":"nsis"},
             {"name":"darwin-amd64","runner":"macos-15-intel","target":"x86_64-apple-darwin","os":"darwin","arch":"amd64","bundles":"dmg"},
             {"name":"darwin-arm64","runner":"macos-15","target":"aarch64-apple-darwin","os":"darwin","arch":"arm64","bundles":"dmg"},
             {"name":"linux-amd64","runner":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu","os":"linux","arch":"amd64","bundles":"appimage"},
@@ -409,7 +407,9 @@ jobs:
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          files: release/*
+          # Installers plus checksums/status/feed. macOS .app.tar.gz updater
+          # archives stay in release/ for the mirror only.
+          files: github-release/*
           prerelease: ${{ needs.prepare.outputs.online-update != 'true' }}
           make_latest: ${{ needs.prepare.outputs.online-update == 'true' }}
       - name: Ensure remote release directory

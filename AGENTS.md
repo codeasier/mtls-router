@@ -128,12 +128,12 @@ make desktop-package-current           # tauri build → package:verify（build.
 
 `v0.4.1` 之后的 release 只包含桌面应用；`scripts/package-release.sh` 以 allowlist 拒绝任何 `mtls-router*` 二进制、setup 脚本、CLI 归档或服务包装。历史 CLI 产物（`mtls-router-${GOOS}-${GOARCH}[.exe]`、`mtls-router-manager-*`、`.tar.gz`/`.zip` 归档）冻结在 `v0.4.1` 及更早的 tag 上，不得覆盖。
 
-桌面应用包：
-- macOS：`CodeasierRouter-darwin-${arch}.dmg`（stable 另有 `CodeasierRouter-darwin-${arch}.app.tar.gz` updater 归档）
-- Windows：`CodeasierRouter-windows-${arch}.exe`（NSIS installer）
-- Linux：`CodeasierRouter-linux-${arch}.AppImage`
+桌面应用包（GitHub Release 用户可见）：
+- macOS：`CodeasierRouter-darwin-amd64.dmg`、`CodeasierRouter-darwin-arm64.dmg`
+- Windows：`CodeasierRouter-windows-amd64.exe`（NSIS installer；不再发布 Windows arm64）
+- Linux：`CodeasierRouter-linux-amd64.AppImage`、`CodeasierRouter-linux-arm64.AppImage`
 
-附属：`CodeasierRouter-${os}-${arch}.sha256`（6 个）、stable 的 `.sig` 与 `latest.json`、`SHA256SUMS`（不含 signing-status 文件）+ `signing-status-${os}-${arch}.txt`（6 个）。
+附属：stable 的 updater `.sig`、`latest.json`、`SHA256SUMS`（不含 signing-status 文件）+ `signing-status-${os}-${arch}.txt`（5 个）。不要再发布 sidecar `*.sha256`（GitHub asset digest 已覆盖；流水线仍用它们做聚合预检）。macOS `CodeasierRouter-darwin-${arch}.app.tar.gz` 及其 `.sig` 只进入 `release.codeasier.top` 镜像，供 Tauri updater 使用，不挂到 GitHub Release。
 
 桌面包内只有 `mtls-router-desktop[.exe]` 一个可执行文件；router 凭据、upstream URL、版本/deployment/协议、preset 与 simplify 由 `desktop/src-tauri/build.rs` 编译进去（`RELEASE_BUILD=1` 拒绝占位值与默认身份）。
 `setup.ps1` 必须保留 UTF-8 BOM 以兼容 Windows PowerShell 5.1；`main_test.go` 会断言这一点（冻结实现仍受测试）。
