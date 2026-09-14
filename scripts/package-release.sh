@@ -9,7 +9,8 @@
 # release/ is the complete mirror set, including macOS updater archives.
 # github-release/ is the user-facing GitHub subset: installers only for macOS
 # (DMG), with sidecar *.sha256 omitted because GitHub assets already expose
-# SHA-256 digests.
+# SHA-256 digests. Its SHA256SUMS lists only attached files; the complete
+# mirror inventory stays in release/SHA256SUMS.
 set -euo pipefail
 
 release_tag="${RELEASE_TAG:-}"
@@ -134,10 +135,12 @@ fi
 
 find release -maxdepth 1 -type f ! -name SHA256SUMS ! -name 'signing-status-*' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sed 's#  release/#  #' >release/SHA256SUMS
 expected_checksums=5
+expected_github_checksums=5
 expected_release_files=11
 expected_github_files=11
 if [[ "$online_update" == true ]]; then
   expected_checksums=13
+  expected_github_checksums=9
   expected_release_files=19
   expected_github_files=15
 fi
@@ -153,6 +156,10 @@ while IFS= read -r -d '' path; do
   github_facing_asset "$name" || continue
   cp "$path" github-release/
 done < <(find release -maxdepth 1 -type f -print0)
+awk '!/\.app\.tar\.gz/' release/SHA256SUMS >github-release/SHA256SUMS
+test "$(awk '$1 ~ /^[0-9a-f]{64}$/ { print $2 }' github-release/SHA256SUMS | sort -u | wc -l)" -eq "$expected_github_checksums"
+test "$(grep -c '\.app\.tar\.gz' github-release/SHA256SUMS || true)" -eq 0
+(cd github-release && sha256sum -c SHA256SUMS >/dev/null)
 test "$(find github-release -maxdepth 1 -type f | wc -l)" -eq "$expected_github_files"
 test "$(find github-release -maxdepth 1 -type f -name 'CodeasierRouter-darwin-*.app.tar.gz' | wc -l)" -eq 0
 test "$(find github-release -maxdepth 1 -type f -name 'CodeasierRouter-darwin-*.app.tar.gz.sig' | wc -l)" -eq 0

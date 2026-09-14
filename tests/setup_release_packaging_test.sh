@@ -52,6 +52,9 @@ package_contains 'expected_release_files=11'
 package_contains 'expected_release_files=19'
 package_contains 'expected_github_files=11'
 package_contains 'expected_github_files=15'
+package_contains 'expected_github_checksums=5'
+package_contains 'expected_github_checksums=9'
+package_contains $'awk \'!/\\.app\\.tar\\.gz/\' release/SHA256SUMS >github-release/SHA256SUMS'
 package_contains 'Windows arm64 artifacts are not published'
 contains './scripts/package-release.sh'
 package_contains './scripts/check-release-protocol.sh protocol-metadata'
@@ -144,6 +147,18 @@ jq -e '
   .platforms["windows-x86_64"].url == "https://release.codeasier.top/mtls-router/v1.2.3/CodeasierRouter-windows-amd64.exe"
 ' "$package_tmp/release/latest.json" >/dev/null || fail 'stable updater latest.json is invalid'
 (cd "$package_tmp/release" && sha256sum -c SHA256SUMS >/dev/null) || fail 'stable updater release checksums are invalid'
+(cd "$package_tmp/github-release" && sha256sum -c SHA256SUMS >/dev/null) || \
+  fail 'stable GitHub SHA256SUMS does not match attached files'
+[[ "$(awk '$1 ~ /^[0-9a-f]{64}$/ { print $2 }' "$package_tmp/release/SHA256SUMS" | sort -u | wc -l | tr -d ' ')" -eq 13 ]] || \
+  fail 'stable mirror SHA256SUMS has the wrong entry count'
+[[ "$(awk '$1 ~ /^[0-9a-f]{64}$/ { print $2 }' "$package_tmp/github-release/SHA256SUMS" | sort -u | wc -l | tr -d ' ')" -eq 9 ]] || \
+  fail 'stable GitHub SHA256SUMS has the wrong entry count'
+! grep -q '\.app\.tar\.gz' "$package_tmp/github-release/SHA256SUMS" || \
+  fail 'GitHub SHA256SUMS lists a mirror-only macOS updater file'
+mirror_linux_hash="$(awk '$2 == "CodeasierRouter-linux-amd64.AppImage" { print $1 }' "$package_tmp/release/SHA256SUMS")"
+github_linux_hash="$(awk '$2 == "CodeasierRouter-linux-amd64.AppImage" { print $1 }' "$package_tmp/github-release/SHA256SUMS")"
+[[ -n "$mirror_linux_hash" && "$mirror_linux_hash" == "$github_linux_hash" ]] || \
+  fail 'GitHub SHA256SUMS must reuse the mirror checksum for attached files'
 
 # A stray CLI binary or setup script among the desktop artifacts must fail
 # packaging instead of being published alongside the desktop.
@@ -279,6 +294,10 @@ for value in \
   'SOURCE: release/' \
   's#^github-release/##' \
   'for asset in github-release/*; do' \
+  'name: recovered-release-${{ inputs.release_tag }}' \
+  $'path: |\n            release\n            github-release' \
+  '      - name: Download assembled release' \
+  '          path: .' \
   'Validate recovered updater assets' \
   '(cd release && sha256sum -c SHA256SUMS)' \
   'Update latest symlink' \
