@@ -57,12 +57,13 @@ If the Router page shows start failed / cannot open the local port and there is 
 
 ## Stale router state
 
-Stale means recorded PID, process start identity, or executable identity no longer matches. The manager retains state for diagnosis and sends no signal.
+Stale means recorded PID, process start identity, or executable identity no longer matches. The manager sends no signal. A leftover desktop record is removed automatically only when the configured listen port is idle and the OS proves the recorded PID now belongs to a different complete live process (distinct start identity). Unreadable or still-associated records stay fail-closed.
 
-1. Inspect the reported PID and executable independently.
-2. If a real router is still running, stop it using the tool that owns it or stop it manually only after confirming its identity.
-3. Preserve state and logs when the cause is unclear; do not edit a PID to make the state look current.
-4. Restart the desktop after the verified process is gone. Contact the maintainer if stale state persists.
+1. Copy the diagnostic snapshot or export the support bundle. A latched start failure should include `stage=`/`code=` (for example `state_reconcile` / `ROUTER_STATE_STALE`) and may include a redacted recorded PID and executable basename — not the raw state file.
+2. Inspect the reported PID and executable independently.
+3. If a real router is still running, stop it using the tool that owns it or stop it manually only after confirming its identity.
+4. Preserve state and logs when the cause is unclear; do not edit a PID to make the state look current.
+5. Restart the desktop after the verified process is gone. Contact the maintainer if stale state persists.
 
 ## Running with unavailable upstream
 

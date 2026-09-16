@@ -241,6 +241,13 @@ mod tests {
             health_error_code: None,
             manager_stage: None,
             manager_code: None,
+            last_error: None,
+            os_error: None,
+            listen_refusal: None,
+            recorded_state: None,
+            recorded_pid: None,
+            recorded_started_at: None,
+            recorded_executable: None,
         }
     }
 
@@ -302,6 +309,49 @@ mod tests {
             assert_eq!(parsed.classification, "healthy");
         }
 
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn zip_keeps_latched_state_reconcile_and_redacted_recorded_identity() {
+        let root = std::env::temp_dir().join(format!(
+            "mtls-router-support-bundle-reconcile-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let dest = root.join("out.zip");
+        let mut snapshot = minimal_snapshot();
+        snapshot.classification = "start_failed".into();
+        snapshot.router_state = Some("start_failed".into());
+        snapshot.owner = Some("desktop".into());
+        snapshot.manager_stage = Some("state_reconcile".into());
+        snapshot.manager_code = Some("ROUTER_STATE_STALE".into());
+        snapshot.last_error = Some("stage=state_reconcile code=ROUTER_STATE_STALE".into());
+        snapshot.recorded_state = Some("readable".into());
+        snapshot.recorded_pid = Some(42018);
+        snapshot.recorded_started_at = Some("2026-09-14T08:59:00.000000000Z".into());
+        snapshot.recorded_executable = Some("mtls-router-desktop".into());
+        write_support_bundle(&snapshot, &root.join("no-logs"), &dest).unwrap();
+
+        let bytes = fs::read(&dest).unwrap();
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let mut file = archive.by_name("last-diagnostics.json").unwrap();
+        let mut body = String::new();
+        file.read_to_string(&mut body).unwrap();
+        let parsed: DiagnosticSnapshot = serde_json::from_str(&body).unwrap();
+        assert_eq!(parsed.manager_stage.as_deref(), Some("state_reconcile"));
+        assert_eq!(parsed.manager_code.as_deref(), Some("ROUTER_STATE_STALE"));
+        assert_eq!(
+            parsed.last_error.as_deref(),
+            Some("stage=state_reconcile code=ROUTER_STATE_STALE")
+        );
+        assert_eq!(parsed.recorded_pid, Some(42018));
+        assert_eq!(
+            parsed.recorded_executable.as_deref(),
+            Some("mtls-router-desktop")
+        );
+        assert!(!body.contains("Users"));
+        assert!(!body.contains("Library"));
         let _ = fs::remove_dir_all(root);
     }
 

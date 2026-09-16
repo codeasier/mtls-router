@@ -61,12 +61,12 @@ Rust 桌面运行时是 `installation.json` 的唯一所有者。稳定 installa
 - **受 supervisor 管理或被阻断的占用者：**可靠识别的 Windows Service 或 Linux systemd 用户/系统 service 绝不会被强制终止。页面会显示有界且经过验证的 service/unit 标识，以及 `services.msc` / `sc.exe stop`、`systemctl --user stop` 或 `sudo systemctl stop` 固定示例。复制的 Windows `sc.exe` 命令经过安全引用，但仅适用于管理员 **PowerShell** 会话，不是 `cmd.exe` 命令。所有示例都只供人工参考：应用既不执行命令，也不请求 administrator/root 权限。权限不足和其他用户进程同样必须在正确身份或权限上下文中人工处理；不要提升桌面应用权限。macOS manager 不猜测 launchd label，因此经过验证的普通同用户进程仍可能允许强制终止；随后重新占用时只提供通用活动监视器/`launchctl` 引导。
 - **终止与观察：**在完整身份模式下，manager 成功证明已确认的进程身份变为不存在且端口曾被观察到释放。在 Windows 仅 PID 模式下，成功只证明终止请求成功，并且原 listener PID 已从该精确端口消失；它不独立证明进程已完全结束。两种模式都不启动 router，也不承诺持续释放。桌面端随后在约 10 秒内定期采样状态。**端口保持释放**表示采样检查发现端口已释放且未检测到重新占用；采样发现新占用者时会显示**服务或守护程序重新占用端口**并触发新检查。两次检查之间的重新占用可能无法检测。主动启动 router 会取消观察，避免把桌面自有 router 误报为重新占用。
 - **人工恢复与错误：**如果恢复不可用、你不接受引导或终止失败，请使用操作系统工具识别并停止或重新配置 listener，然后重试。确认阶段权限丢失、终止请求失败和未能及时证明端口释放会分别报告 `OCCUPANT_PERMISSION_DENIED`、`OCCUPANT_TERMINATION_FAILED` 和 `PORT_RELEASE_TIMEOUT`；这些错误都不表示向替代进程发送过信号。
-- **陈旧状态：**PID 或可执行文件不匹配会报告 stale，且不会发送信号。人工清理前先核实进程和状态。
+- **陈旧状态：**PID 或可执行文件不匹配会报告 stale，且不会发送信号。若能证明记录的 PID 已被复用（OS 返回完整活进程身份且启动标识明确不同），并且已配置监听端口空闲，则会删除残留的 `desktop-state.json`，以便新的 router 绑定。不可读、不完整或仍关联的记录继续 fail closed；人工清理前先核实进程和状态。
 - **降级或陈旧健康：**router 进程可能仍接受本地连接。当前检查失败显示为降级 / 上游不可用；当前 unknown 检查显示为等待结果；超过 30 秒的结果显示为 stale / 已过期。请重试健康检查并查看日志；不要把 stale 或尚未返回的健康结果当作健康，也不要把当前上游失败写成仅仅过期。
 
 桌面端管理的每次启动都会分别写入应用数据目录下的 `mtls-router-logs/YYYY-MM-DD/HH-MM-SS.log`。日志页面跟随当前或最近一次启动；**打开日志位置**则可用于人工查看按会话分组的历史记录。
 
-每次 poll 时，桌面端会用当前内存中的诊断快照覆盖写入 `{data_dir}/last-diagnostics.json`。Router 与日志页可不经 manager 复制该快照。**导出支持包**会写入用户选定的 zip，内含 `last-diagnostics.json` 以及 `mtls-router-logs/` 下的全部文件；不包含凭据、Agent 配置或备份。原始会话日志仅供维护者使用。对应 Tauri 命令为 `diagnostics_snapshot` 与 `export_support_bundle`。
+每次 poll 时，桌面端会用当前内存中的诊断快照覆盖写入 `{data_dir}/last-diagnostics.json`。已锁存的 `start_failed` 会把脱敏后的 `last_error` 写成封闭 `stage`/`code` 以及可选 `os_error`/`listen_refusal`；成功解析的 `desktop-state.json` 只可附加 PID、启动标识和可执行文件 basename。Router 与日志页可不经 manager 复制该快照。**导出支持包**会写入用户选定的 zip，内含 `last-diagnostics.json` 以及 `mtls-router-logs/` 下的全部文件；不包含凭据、Agent 配置或备份。原始会话日志仅供维护者使用。对应 Tauri 命令为 `diagnostics_snapshot` 与 `export_support_bundle`。
 
 恢复步骤见[故障排查](TROUBLESHOOTING.md)。
 

@@ -532,6 +532,13 @@ export interface DiagnosticSnapshot {
   health_error_code?: string;
   manager_stage?: string;
   manager_code?: string;
+  last_error?: string;
+  os_error?: number;
+  listen_refusal?: string;
+  recorded_state?: string;
+  recorded_pid?: number;
+  recorded_started_at?: string;
+  recorded_executable?: string;
   summary: string;
 }
 

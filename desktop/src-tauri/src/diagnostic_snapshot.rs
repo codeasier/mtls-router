@@ -1,11 +1,12 @@
-use crate::types::{PollSnapshot, RouterHealth};
+use crate::redaction::sanitize_text;
+use crate::types::{PollSnapshot, RouterHealth, RouterStatus};
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::{
     fs::{self, OpenOptions},
-    io::Write,
+    io::{self, Write},
     path::{Path, PathBuf},
     sync::{
         mpsc::{self, Receiver, Sender},
@@ -17,6 +18,22 @@ use uuid::Uuid;
 
 pub const SCHEMA_VERSION: u32 = 1;
 pub const MAX_SUMMARY_BYTES: usize = 16 * 1024;
+const MAX_LAST_ERROR_BYTES: usize = 512;
+
+const CLOSED_STARTUP_STAGES: &[&str] = &[
+    "log_directory",
+    "log_open",
+    "process_launch",
+    "process_inspect",
+    "readiness",
+    "identity_validate",
+    "state_reconcile",
+    "state_persist",
+    "process_exit",
+    "unknown",
+];
+
+const CLOSED_LISTEN_REFUSALS: &[&str] = &["access_denied", "address_in_use", "failed"];
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiagnosticSnapshot {
@@ -51,6 +68,20 @@ pub struct DiagnosticSnapshot {
     pub manager_stage: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub manager_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub os_error: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listen_refusal: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recorded_state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recorded_pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recorded_started_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recorded_executable: Option<String>,
 }
 
 pub fn classify(snapshot: &PollSnapshot, now: DateTime<Utc>) -> &'static str {
@@ -115,16 +146,25 @@ pub fn from_poll(
         .map(|health| health_is_stale_at(health, now))
         .unwrap_or(true);
 
-    let (manager_stage, manager_code) = snapshot
+    let (status_stage, status_code) = snapshot
         .status
         .as_ref()
         .map(|status| (status.manager_stage.clone(), status.manager_code.clone()))
         .unwrap_or((None, None));
+    let latched = snapshot
+        .status
+        .as_ref()
+        .map(parse_latched)
+        .unwrap_or_default();
     let ring = (snapshot.status_error.is_some() || snapshot.health_error.is_some())
         .then_some(manager)
         .flatten();
-    let manager_stage = manager_stage.or_else(|| ring.map(|(stage, _)| stage.to_owned()));
-    let manager_code = manager_code.or_else(|| ring.map(|(_, code)| code.to_owned()));
+    let manager_stage = status_stage
+        .or(latched.stage)
+        .or_else(|| ring.map(|(stage, _)| stage.to_owned()));
+    let manager_code = status_code
+        .or(latched.code)
+        .or_else(|| ring.map(|(_, code)| code.to_owned()));
 
     DiagnosticSnapshot {
         schema_version: SCHEMA_VERSION,
@@ -165,6 +205,13 @@ pub fn from_poll(
             .map(|error| error.code.clone()),
         manager_stage,
         manager_code,
+        last_error: latched.last_error,
+        os_error: latched.os_error,
+        listen_refusal: latched.listen_refusal,
+        recorded_state: None,
+        recorded_pid: None,
+        recorded_started_at: None,
+        recorded_executable: None,
     }
 }
 
@@ -217,6 +264,25 @@ impl DiagnosticSnapshot {
         );
         push_optional_line(&mut lines, "manager_stage", self.manager_stage.as_deref());
         push_optional_line(&mut lines, "manager_code", self.manager_code.as_deref());
+        push_optional_line(&mut lines, "last_error", self.last_error.as_deref());
+        if let Some(os_error) = self.os_error {
+            push_line(&mut lines, "os_error", os_error.to_string());
+        }
+        push_optional_line(&mut lines, "listen_refusal", self.listen_refusal.as_deref());
+        push_optional_line(&mut lines, "recorded_state", self.recorded_state.as_deref());
+        if let Some(pid) = self.recorded_pid {
+            push_line(&mut lines, "recorded_pid", pid.to_string());
+        }
+        push_optional_line(
+            &mut lines,
+            "recorded_started_at",
+            self.recorded_started_at.as_deref(),
+        );
+        push_optional_line(
+            &mut lines,
+            "recorded_executable",
+            self.recorded_executable.as_deref(),
+        );
 
         let mut summary = lines.join("\n");
         if summary.len() > MAX_SUMMARY_BYTES {
@@ -265,6 +331,160 @@ impl DiagnosticSnapshot {
         let bytes = fs::read(path).ok()?;
         serde_json::from_slice(&bytes).ok()
     }
+
+    fn attach_recorded_state(&mut self, path: &Path) {
+        match read_recorded_identity(path) {
+            Err(RecordedStateRead::Absent) => {}
+            Err(kind) => {
+                self.recorded_state = Some(kind.as_str().to_owned());
+                self.recorded_pid = None;
+                self.recorded_started_at = None;
+                self.recorded_executable = None;
+            }
+            Ok(identity) => {
+                self.recorded_state = Some("readable".to_owned());
+                if identity.pid > 0 {
+                    self.recorded_pid = u32::try_from(identity.pid).ok();
+                }
+                if !identity.process_started_at.is_empty() {
+                    self.recorded_started_at = Some(sanitize_text(&identity.process_started_at));
+                }
+                if let Some(name) = executable_basename(&identity.process_executable) {
+                    self.recorded_executable = Some(name);
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct LatchedDiagnostic {
+    last_error: Option<String>,
+    stage: Option<String>,
+    code: Option<String>,
+    os_error: Option<u64>,
+    listen_refusal: Option<String>,
+}
+
+fn parse_latched(status: &RouterStatus) -> LatchedDiagnostic {
+    let mut text = String::new();
+    if let Some(error) = status.last_error.as_deref() {
+        text.push_str(error);
+        text.push(' ');
+    }
+    if let Some(logs) = status.recent_logs.as_ref() {
+        for line in logs {
+            text.push_str(line);
+            text.push(' ');
+        }
+    }
+    let last_error = status
+        .last_error
+        .as_deref()
+        .map(sanitize_text)
+        .map(|value| bound_last_error(&value))
+        .filter(|value| !value.is_empty());
+    LatchedDiagnostic {
+        last_error,
+        stage: token_value(&text, "stage")
+            .filter(|value| CLOSED_STARTUP_STAGES.contains(value))
+            .map(str::to_owned),
+        code: token_value(&text, "code")
+            .filter(|value| closed_error_code(value))
+            .map(str::to_owned),
+        os_error: token_value(&text, "os_error")
+            .and_then(|value| value.parse().ok())
+            .filter(|value| *value != 0),
+        listen_refusal: token_value(&text, "listen_refusal")
+            .filter(|value| CLOSED_LISTEN_REFUSALS.contains(value))
+            .map(str::to_owned),
+    }
+}
+
+fn token_value<'a>(text: &'a str, key: &str) -> Option<&'a str> {
+    text.split_whitespace().find_map(|token| {
+        token
+            .strip_prefix(key)
+            .and_then(|rest| rest.strip_prefix('='))
+            .filter(|value| !value.is_empty())
+    })
+}
+
+fn closed_error_code(code: &str) -> bool {
+    code.len() <= 64
+        && code
+            .bytes()
+            .all(|value| value.is_ascii_uppercase() || value.is_ascii_digit() || value == b'_')
+}
+
+fn bound_last_error(value: &str) -> String {
+    if value.len() <= MAX_LAST_ERROR_BYTES {
+        return value.to_owned();
+    }
+    let mut end = MAX_LAST_ERROR_BYTES;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    let mut truncated = value[..end].to_owned();
+    truncated.push_str("[truncated]");
+    truncated
+}
+
+#[derive(Deserialize)]
+struct RecordedIdentity {
+    #[serde(default)]
+    pid: i32,
+    #[serde(default)]
+    process_started_at: String,
+    #[serde(default)]
+    process_executable: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RecordedStateRead {
+    Absent,
+    Corrupt,
+    PermissionDenied,
+    Unreadable,
+}
+
+impl RecordedStateRead {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Absent => "absent",
+            Self::Corrupt => "corrupt",
+            Self::PermissionDenied => "permission_denied",
+            Self::Unreadable => "unreadable",
+        }
+    }
+}
+
+fn read_recorded_identity(path: &Path) -> Result<RecordedIdentity, RecordedStateRead> {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Err(RecordedStateRead::Absent)
+        }
+        Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+            return Err(RecordedStateRead::PermissionDenied)
+        }
+        Err(_) => return Err(RecordedStateRead::Unreadable),
+    };
+    let bytes = bytes
+        .strip_prefix(&[0xef, 0xbb, 0xbf])
+        .unwrap_or(bytes.as_slice());
+    let mut de = serde_json::Deserializer::from_slice(bytes);
+    let value = RecordedIdentity::deserialize(&mut de).map_err(|_| RecordedStateRead::Corrupt)?;
+    de.end().map_err(|_| RecordedStateRead::Corrupt)?;
+    Ok(value)
+}
+
+fn executable_basename(path: &str) -> Option<String> {
+    let name = path.rsplit(['/', '\\']).next().unwrap_or(path).trim();
+    if name.is_empty() || name == "." || name == ".." {
+        return None;
+    }
+    Some(sanitize_text(name))
 }
 
 fn push_line(lines: &mut Vec<String>, key: &str, value: String) {
@@ -281,11 +501,16 @@ fn push_optional_line(lines: &mut Vec<String>, key: &str, value: Option<&str>) {
 pub struct DiagnosticStore {
     inner: Arc<Mutex<Option<DiagnosticSnapshot>>>,
     path: PathBuf,
+    recorded_state_path: Option<PathBuf>,
     persist: Sender<DiagnosticSnapshot>,
 }
 
 impl DiagnosticStore {
     pub fn new(path: PathBuf) -> Self {
+        Self::with_recorded_state(path, None)
+    }
+
+    pub fn with_recorded_state(path: PathBuf, recorded_state_path: Option<PathBuf>) -> Self {
         let (persist, persist_rx) = mpsc::channel();
         let writer_path = path.clone();
         let _ = thread::Builder::new()
@@ -294,6 +519,7 @@ impl DiagnosticStore {
         Self {
             inner: Arc::new(Mutex::new(None)),
             path,
+            recorded_state_path,
             persist,
         }
     }
@@ -303,7 +529,10 @@ impl DiagnosticStore {
     }
 
     pub fn capture_and_persist(&self, snapshot: &PollSnapshot, manager: Option<(&str, &str)>) {
-        let diagnostic = from_poll(snapshot, manager, Utc::now());
+        let mut diagnostic = from_poll(snapshot, manager, Utc::now());
+        if let Some(path) = &self.recorded_state_path {
+            diagnostic.attach_recorded_state(path);
+        }
         if let Ok(mut current) = self.inner.lock() {
             *current = Some(diagnostic.clone());
         }
@@ -778,6 +1007,156 @@ mod tests {
         );
         assert_eq!(diagnostic.manager_stage, None);
         assert_eq!(diagnostic.manager_code, None);
+    }
+
+    #[test]
+    fn from_poll_reads_latched_start_failed_last_error() {
+        let diagnostic = from_poll(
+            &poll_snapshot(Some(RouterStatus {
+                state: "start_failed".into(),
+                owner: Some("desktop".into()),
+                last_error: Some("stage=state_reconcile code=ROUTER_STATE_STALE os_error=5".into()),
+                recent_logs: Some(vec![
+                    "reason=listen_failed listen_refusal=access_denied".into()
+                ]),
+                ..RouterStatus::default()
+            })),
+            Some(("watchdog_timeout", "OPERATION_TIMEOUT")),
+            now(),
+        );
+        assert_eq!(diagnostic.classification, "start_failed");
+        assert_eq!(diagnostic.manager_stage.as_deref(), Some("state_reconcile"));
+        assert_eq!(
+            diagnostic.manager_code.as_deref(),
+            Some("ROUTER_STATE_STALE")
+        );
+        assert_eq!(
+            diagnostic.last_error.as_deref(),
+            Some("stage=state_reconcile code=ROUTER_STATE_STALE os_error=5")
+        );
+        assert_eq!(diagnostic.os_error, Some(5));
+        assert_eq!(diagnostic.listen_refusal.as_deref(), Some("access_denied"));
+        assert!(diagnostic
+            .summary()
+            .contains("manager_stage=state_reconcile"));
+        assert!(diagnostic
+            .summary()
+            .contains("manager_code=ROUTER_STATE_STALE"));
+        assert!(diagnostic
+            .summary()
+            .contains("last_error=stage=state_reconcile"));
+        assert!(!diagnostic.summary().contains("watchdog_timeout"));
+    }
+
+    #[test]
+    fn from_poll_redacts_last_error_and_ignores_unknown_tokens() {
+        let diagnostic = from_poll(
+            &poll_snapshot(Some(RouterStatus {
+                state: "start_failed".into(),
+                last_error: Some(
+                    "stage=not_a_stage code=bad-code os_error=0 api_key=sk-secret-token-12345678"
+                        .into(),
+                ),
+                recent_logs: Some(vec!["listen_refusal=other".into()]),
+                ..RouterStatus::default()
+            })),
+            None,
+            now(),
+        );
+        assert_eq!(diagnostic.manager_stage, None);
+        assert_eq!(diagnostic.manager_code, None);
+        assert_eq!(diagnostic.os_error, None);
+        assert_eq!(diagnostic.listen_refusal, None);
+        let last_error = diagnostic.last_error.as_deref().expect("last_error");
+        assert!(!last_error.contains("sk-secret"));
+        assert!(last_error.contains("[REDACTED"));
+        assert!(!diagnostic.summary().contains("sk-secret"));
+    }
+
+    #[test]
+    fn attach_recorded_state_keeps_basename_and_closed_corrupt_result() {
+        let directory =
+            std::env::temp_dir().join(format!("mtls-router-diagnostic-state-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let readable = directory.join("desktop-state.json");
+        std::fs::write(
+            &readable,
+            br#"{"pid":42018,"process_started_at":"2026-09-14T08:59:00.000000000Z","process_executable":"C:\\Users\\fixture\\CodeasierRouter.exe","listen_addr":"http://127.0.0.1:19099"}"#,
+        )
+        .unwrap();
+        let mut snapshot = from_poll(
+            &poll_snapshot(Some(RouterStatus {
+                state: "start_failed".into(),
+                last_error: Some("stage=state_reconcile code=ROUTER_STATE_STALE".into()),
+                ..RouterStatus::default()
+            })),
+            None,
+            now(),
+        );
+        snapshot.attach_recorded_state(&readable);
+        assert_eq!(snapshot.recorded_state.as_deref(), Some("readable"));
+        assert_eq!(snapshot.recorded_pid, Some(42018));
+        assert_eq!(
+            snapshot.recorded_started_at.as_deref(),
+            Some("2026-09-14T08:59:00.000000000Z")
+        );
+        assert_eq!(
+            snapshot.recorded_executable.as_deref(),
+            Some("CodeasierRouter.exe")
+        );
+        assert!(!snapshot.summary().contains("Users"));
+        assert!(!snapshot.summary().contains("127.0.0.1"));
+
+        let corrupt = directory.join("corrupt-state.json");
+        std::fs::write(&corrupt, b"{not-json sk-secret-token-12345678").unwrap();
+        snapshot.attach_recorded_state(&corrupt);
+        assert_eq!(snapshot.recorded_state.as_deref(), Some("corrupt"));
+        assert_eq!(snapshot.recorded_pid, None);
+        assert_eq!(snapshot.recorded_started_at, None);
+        assert_eq!(snapshot.recorded_executable, None);
+        let encoded = serde_json::to_string(&snapshot).unwrap();
+        assert!(!encoded.contains("sk-secret"));
+        assert!(!encoded.contains("{not-json"));
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn capture_and_persist_attaches_recorded_state_identity() {
+        let directory = std::env::temp_dir().join(format!(
+            "mtls-router-diagnostic-capture-state-{}",
+            Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let state_path = directory.join("desktop-state.json");
+        std::fs::write(
+            &state_path,
+            br#"{"pid":77,"process_started_at":"2026-09-14T08:59:00.000000000Z","process_executable":"/Applications/CodeasierRouter.app/Contents/MacOS/mtls-router-desktop"}"#,
+        )
+        .unwrap();
+        let store = DiagnosticStore::with_recorded_state(
+            directory.join("last-diagnostics.json"),
+            Some(state_path),
+        );
+        store.capture_and_persist(
+            &poll_snapshot(Some(RouterStatus {
+                state: "start_failed".into(),
+                last_error: Some("stage=state_reconcile code=ROUTER_ALREADY_RUNNING".into()),
+                ..RouterStatus::default()
+            })),
+            None,
+        );
+        let current = store.current();
+        assert_eq!(current.manager_stage.as_deref(), Some("state_reconcile"));
+        assert_eq!(
+            current.manager_code.as_deref(),
+            Some("ROUTER_ALREADY_RUNNING")
+        );
+        assert_eq!(current.recorded_pid, Some(77));
+        assert_eq!(
+            current.recorded_executable.as_deref(),
+            Some("mtls-router-desktop")
+        );
+        let _ = std::fs::remove_dir_all(directory);
     }
 
     #[test]
