@@ -66,3 +66,7 @@ fn home() -> Result<PathBuf> {
 pub fn last_diagnostics_path(data_dir: &str) -> PathBuf {
     PathBuf::from(data_dir).join("last-diagnostics.json")
 }
+
+pub fn desktop_state_path(data_dir: &str) -> PathBuf {
+    PathBuf::from(data_dir).join("desktop-state.json")
+}

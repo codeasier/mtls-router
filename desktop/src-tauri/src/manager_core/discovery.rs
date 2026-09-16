@@ -74,6 +74,8 @@ pub trait DiscoveryHost: Send + Sync {
     /// Bounded loopback GET; `None` for any transport, status, or decode
     /// failure. Errors never carry endpoint details.
     fn get_json(&self, authority: &str, path: &str, timeout: Duration) -> Option<Value>;
+    /// Embedded start never signals; tests record attempts that must stay zero.
+    fn note_signal(&self, _pid: i32) {}
 }
 
 #[derive(Clone, Copy, Debug, Default)]

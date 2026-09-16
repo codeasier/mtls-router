@@ -177,6 +177,32 @@ pub fn recorded_process_absent(
     matches!(host.inspect(value.pid), Err(ProcessError::NotFound))
 }
 
+/// True when a fully parsed desktop record names a PID that now belongs to a
+/// different complete live process and the configured listen port is idle.
+/// That is positive proof the original process ended. Callers must delete
+/// the record without signaling the reused PID. Generic `Status::Stale`, an
+/// executable-only mismatch, incomplete identity, or inspect failure stay
+/// fail closed.
+pub fn recorded_pid_reused(
+    value: &RouterState,
+    status: Status,
+    host: &dyn MigrationHost,
+    port_idle: bool,
+) -> bool {
+    if status != Status::Stale
+        || !port_idle
+        || value.pid <= 0
+        || value.process_started_at.is_empty()
+    {
+        return false;
+    }
+    let Ok(live) = host.inspect(value.pid) else {
+        return false;
+    };
+    complete_process(&live)
+        && process::start_identities_distinct(&value.process_started_at, &live.started_at)
+}
+
 /// Prepare a recorded legacy router for replacement: verify identity, stop it,
 /// wait for exit, and resample the listen port. Missing state is a no-op so
 /// the caller may start. Never uses a PID-only signal, and never signals a
@@ -477,6 +503,10 @@ mod tests {
 
         fn signals(&self) -> Vec<(i32, SignalKind)> {
             self.signals.lock().unwrap().clone()
+        }
+
+        fn set_inspect(&self, pid: i32, result: Result<ProcessIdentity, ProcessError>) {
+            self.inspect.lock().unwrap().insert(pid, result);
         }
     }
 
@@ -1131,5 +1161,53 @@ mod tests {
         assert!(!summary.contains("Program Files"), "{summary}");
         assert!(diagnostics["result"].get("manager_failure").is_none());
         let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn recorded_pid_reused_requires_idle_port_complete_live_identity_and_distinct_start() {
+        let host = TestHost::new();
+        let recorded_start = "2026-09-14T08:59:00.000000000Z";
+        let live_start = "2026-09-15T02:00:00.000000000Z";
+        let value = RouterState {
+            pid: 4242,
+            process_started_at: recorded_start.into(),
+            process_executable: "/old/router".into(),
+            binary_path: "/old/router".into(),
+            owner: "desktop".into(),
+            ..RouterState::default()
+        };
+        let live = ProcessIdentity {
+            pid: 4242,
+            started_at: live_start.into(),
+            executable: "/other/bin".into(),
+        };
+        host.set_inspect(4242, Ok(live.clone()));
+
+        assert!(recorded_pid_reused(&value, Status::Stale, &host, true));
+        assert!(host.signals().is_empty());
+
+        assert!(!recorded_pid_reused(&value, Status::Stale, &host, false));
+        assert!(!recorded_pid_reused(&value, Status::Genuine, &host, true));
+        assert!(!recorded_pid_reused(&value, Status::Absent, &host, true));
+
+        let same_start = ProcessIdentity {
+            started_at: recorded_start.into(),
+            executable: "/other/bin".into(),
+            ..live.clone()
+        };
+        host.set_inspect(4242, Ok(same_start));
+        assert!(!recorded_pid_reused(&value, Status::Stale, &host, true));
+
+        let incomplete = ProcessIdentity {
+            started_at: live_start.into(),
+            executable: String::new(),
+            ..live
+        };
+        host.set_inspect(4242, Ok(incomplete));
+        assert!(!recorded_pid_reused(&value, Status::Stale, &host, true));
+
+        host.set_inspect(4242, Err(ProcessError::Io));
+        assert!(!recorded_pid_reused(&value, Status::Stale, &host, true));
+        assert!(host.signals().is_empty());
     }
 }

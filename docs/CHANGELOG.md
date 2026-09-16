@@ -8,6 +8,11 @@
 
 - New desktop releases publish five installers (Windows x86_64, macOS Intel/Apple Silicon DMG, Linux x86_64/arm64). Windows arm64 packages are no longer built or shipped. Sidecar `*.sha256` files stay in the workflow as aggregation preflight and are not attached to GitHub Releases. macOS `.app.tar.gz` updater archives remain on `release.codeasier.top` for in-app updates and are not listed as GitHub download assets. The GitHub `SHA256SUMS` lists only attached files; the complete checksum inventory stays on the mirror.
 
+### Fixed
+
+- Diagnostic snapshots and support bundles now keep the latched startup `last_error` as closed `stage`/`code` plus optional `os_error`/`listen_refusal`, and may include a redacted recorded-state identity (PID, start identity, executable basename) from a successfully parsed `desktop-state.json`.
+- A leftover desktop state file whose PID now belongs to a different complete live process is removed without signaling when the configured listen port is idle, so a later start can bind. Unreadable, incomplete, still-associated, or generic stale records still fail closed.
+
 ## v0.5.3 - 2026-09-10
 
 This patch release lets a Windows install persist an operator-chosen loopback port when `19099` is reserved, and keeps Usage and Chat images from hiding the real failure.
