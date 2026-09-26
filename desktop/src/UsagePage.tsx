@@ -47,7 +47,9 @@ export function UsagePage({
         .then((snapshot) => {
           if (generation !== usageGeneration.current) return;
           setUsage(snapshot);
-          setLimits(snapshot.quotas ?? []);
+          setLimits((previous) =>
+            snapshot.quotas?.length ? snapshot.quotas : previous,
+          );
           setUsageLoading(false);
         })
         .catch((loadError: unknown) => {
@@ -100,7 +102,7 @@ export function UsagePage({
       className="apikey-panel usage-panel"
       aria-label={t("section.usage.title")}
     >
-      {Boolean(present) && limits && limits.length > 0 ? (
+      {Boolean(present) && !usageError && limits && limits.length > 0 ? (
         <ProviderLimitsCard quotas={limits} />
       ) : Boolean(present) && usage?.quota ? (
         <OverviewQuotaCard quota={usage.quota} />

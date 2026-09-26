@@ -5834,6 +5834,7 @@ main[data-section="images"] {
 .apikey-usage__metrics dd {
   font-size: clamp(24px, 3vw, 34px);
   letter-spacing: -0.04em;
+  overflow-wrap: anywhere;
 }
 
 .apikey-usage__quota,

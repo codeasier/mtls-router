@@ -598,6 +598,37 @@ describe("UsagePage", () => {
     ).toBeInTheDocument();
   });
 
+  it("restarts on page one after sorting or refreshing the same model set", async () => {
+    const models = Array.from({ length: 12 }, (_, index) => ({
+      model: `model-${String(index + 1).padStart(2, "0")}`,
+      requests: index + 1,
+      prompt_tokens: index + 1,
+      completion_tokens: 0,
+      cost: index + 1,
+    }));
+    const getAPIKeyUsage = vi.fn().mockImplementation(() =>
+      Promise.resolve({
+        period: "7d",
+        summary: multiModelUsage.summary,
+        by_model: models.map((model) => ({ ...model })),
+      }),
+    );
+    renderPage(createMockApi({ getAPIKeyUsage }));
+    await screen.findByRole("table");
+
+    fireEvent.click(screen.getByRole("button", { name: "下一页" }));
+    expect(screen.getByText("第 2 / 2 页")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /请求/ }));
+    expect(screen.getByText("第 1 / 2 页")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "下一页" }));
+    fireEvent.click(screen.getByRole("button", { name: "刷新用量" }));
+    await waitFor(() => expect(getAPIKeyUsage).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(screen.getByText("第 1 / 2 页")).toBeInTheDocument(),
+    );
+  });
+
   it("shows token counts with a one-decimal million suffix", async () => {
     renderPage(
       createMockApi({
@@ -680,10 +711,42 @@ describe("UsagePage", () => {
     resolveNext({
       period: "1h",
       summary: multiModelUsage.summary,
-      quotas,
       by_model: multiModelUsage.by_model,
     });
-    expect(await screen.findByText("codex · 每周")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByText("正在读取用量")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByText("codex · 每周")).toBeInTheDocument();
+  });
+
+  it("hides retained provider limits when a subsequent usage request fails", async () => {
+    const api = createMockApi({
+      getAPIKeyUsage: vi
+        .fn()
+        .mockResolvedValueOnce({
+          ...multiModelUsage,
+          quotas: [
+            {
+              provider: "codex",
+              period: "week",
+              used: 1,
+              limit: 10,
+              unit: "usd",
+              resets_at: "2026-09-28T00:00:00Z",
+            },
+          ],
+        })
+        .mockRejectedValueOnce({ code: "USAGE_UNAVAILABLE" }),
+    });
+    renderPage(api);
+    await screen.findByText("codex · 每周");
+
+    fireEvent.click(screen.getByRole("tab", { name: "近 1 小时" }));
+
+    expect(
+      await screen.findByText("当前服务尚未提供用量数据。"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("供应商限额")).not.toBeInTheDocument();
   });
 
   it("colors quota bars by healthy, warning, and danger thresholds", async () => {

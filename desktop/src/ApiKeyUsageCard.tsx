@@ -272,20 +272,21 @@ export function ApiKeyUsageCard({
       const delta = sortValue(a, sortColumn) - sortValue(b, sortColumn);
       return sortDirection === "asc" ? delta : -delta;
     });
-  // Pagination is keyed to the visible row set so a new snapshot, a
-  // reordered table, or a different filter always restarts on page one;
+  // Pagination is keyed to the snapshot and visible row set so a refresh,
+  // a reordered table, or a different filter always restarts on page one;
   // the current page is clamped so it never points past the last page.
   const pageSignature = `${modelSignature}|${[...selectedSet].sort().join(",")}|${sortColumn}:${sortDirection}`;
   const [pagination, setPagination] = useState<{
+    snapshot: APIKeyUsage | null;
     signature: string;
     page: number;
-  }>({ signature: "", page: 1 });
+  }>({ snapshot: null, signature: "", page: 1 });
   const pageCount = Math.max(
     1,
     Math.ceil(visibleRows.length / MODEL_PAGE_SIZE),
   );
   const currentPage =
-    pagination.signature === pageSignature
+    pagination.snapshot === usage && pagination.signature === pageSignature
       ? Math.min(Math.max(1, pagination.page), pageCount)
       : 1;
   const pageRows = visibleRows.slice(
@@ -300,7 +301,7 @@ export function ApiKeyUsageCard({
       : MODEL_PAGE_SIZE - pageRows.length;
 
   function goToPage(next: number) {
-    setPagination({ signature: pageSignature, page: next });
+    setPagination({ snapshot: usage, signature: pageSignature, page: next });
   }
   const allSelected = selectedSet.size === modelNames.length;
   const filterSummary = allSelected
