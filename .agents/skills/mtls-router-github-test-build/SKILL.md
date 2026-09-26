@@ -25,7 +25,7 @@ credential-injected binary locally.
 1. Confirm `gh auth status` succeeds for the target repository.
 2. Choose an explicit test SemVer such as `0.1.0-feature-name.1`.
 3. Choose the exact branch, tag, or commit and desired artifact patterns.
-4. Choose `all` or one paired CLI/desktop OS-architecture target. Optionally
+4. Choose `all` or one desktop OS-architecture target. Optionally
    choose a non-sensitive HTTPS upstream override.
 5. Run `scripts/build-and-download.sh` from this Skill directory.
 6. Report the run URL, exact head SHA, downloaded paths, SHA-256 values, and
@@ -53,7 +53,7 @@ scripts/build-and-download.sh \
 Defaults:
 
 - repository: the current GitHub repository;
-- target: `all`; selecting one target builds its CLI and desktop artifacts;
+- target: `all`; selecting one target builds that desktop package;
 - upstream: the repository `UPSTREAM_URL` variable;
 - artifacts: all artifacts from the run;
 - output: `desktop/release-artifacts/run-<run-id>` in the repository root.
@@ -62,16 +62,9 @@ Known artifact names:
 
 - `CodeasierRouter-desktop-darwin-arm64`
 - `CodeasierRouter-desktop-darwin-amd64`
-- `CodeasierRouter-desktop-windows-arm64`
 - `CodeasierRouter-desktop-windows-amd64`
 - `CodeasierRouter-desktop-linux-arm64`
 - `CodeasierRouter-desktop-linux-amd64`
-- `mtls-router-cli-darwin-arm64`
-- `mtls-router-cli-darwin-amd64`
-- `mtls-router-cli-windows-arm64`
-- `mtls-router-cli-windows-amd64`
-- `mtls-router-cli-linux-arm64`
-- `mtls-router-cli-linux-amd64`
 
 ## Examples
 
@@ -93,7 +86,6 @@ Build Windows amd64 against a validation upstream:
   --version 0.2.0-windows-test.1 \
   --target windows-amd64 \
   --upstream https://router.example.com \
-  --artifact mtls-router-cli-windows-amd64 \
   --artifact CodeasierRouter-desktop-windows-amd64
 ```
 

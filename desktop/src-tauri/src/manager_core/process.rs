@@ -136,6 +136,18 @@ pub fn same_identity(left: &Identity, right: &Identity) -> Result<bool, ProcessE
         && same_executable(&left_executable, &right_executable))
 }
 
+/// Positive proof that two recorded start identities name different process
+/// starts. Empty or unparseable values are incomparable and return false.
+pub fn start_identities_distinct(expected: &str, live: &str) -> bool {
+    if expected.is_empty() || live.is_empty() {
+        return false;
+    }
+    if same_start_identity(expected, live) {
+        return false;
+    }
+    parses_as_start_identity(expected) && parses_as_start_identity(live)
+}
+
 pub fn signal_identity(expected: &Identity) -> Result<(), ProcessError> {
     signal(expected, &expected.executable, SignalKind::Kill)
 }
@@ -212,6 +224,11 @@ fn same_start_identity(expected: &str, live: &str) -> bool {
     expected == live
 }
 
+#[cfg(target_os = "linux")]
+fn parses_as_start_identity(value: &str) -> bool {
+    !value.is_empty()
+}
+
 #[cfg(target_os = "macos")]
 fn inspect_platform(pid: i32) -> Result<(String, String), ProcessError> {
     let info = proc_bsdinfo(pid)?;
@@ -239,6 +256,12 @@ fn same_start_identity(expected: &str, live: &str) -> bool {
         .ok()
         .and_then(|naive| naive.and_local_timezone(chrono::Local).single())
         .is_some_and(|legacy| legacy.timestamp() == live_time.timestamp())
+}
+
+#[cfg(target_os = "macos")]
+fn parses_as_start_identity(value: &str) -> bool {
+    chrono::DateTime::parse_from_rfc3339(value).is_ok()
+        || chrono::NaiveDateTime::parse_from_str(value, "%a %b %e %H:%M:%S %Y").is_ok()
 }
 
 #[cfg(target_os = "macos")]
@@ -381,6 +404,11 @@ fn same_start_identity(expected: &str, live: &str) -> bool {
         return false;
     };
     expected_time == live_time
+}
+
+#[cfg(windows)]
+fn parses_as_start_identity(value: &str) -> bool {
+    chrono::DateTime::parse_from_rfc3339(value).is_ok()
 }
 
 #[cfg(unix)]
@@ -569,6 +597,38 @@ mod tests {
         assert!(!same_start_identity(
             "2026-08-04T16:11:31.349861Z",
             "12345678"
+        ));
+        assert!(start_identities_distinct(
+            "2026-08-04T16:11:31.349861Z",
+            "2026-08-04T16:11:32.349861Z"
+        ));
+        assert!(!start_identities_distinct(
+            "2026-08-04T16:11:31.349861Z",
+            "2026-08-04T16:11:31.349861Z"
+        ));
+        assert!(!start_identities_distinct(
+            "2026-08-04T16:11:31.349861Z",
+            "not-a-start"
+        ));
+    }
+
+    #[test]
+    fn start_identities_distinct_requires_comparable_nonempty_values() {
+        assert!(start_identities_distinct(
+            "2026-09-14T08:59:00.000000000Z",
+            "2026-09-15T02:00:00.000000000Z"
+        ));
+        assert!(!start_identities_distinct(
+            "2026-09-14T08:59:00.000000000Z",
+            "2026-09-14T08:59:00.000000000Z"
+        ));
+        assert!(!start_identities_distinct(
+            "",
+            "2026-09-15T02:00:00.000000000Z"
+        ));
+        assert!(!start_identities_distinct(
+            "2026-09-14T08:59:00.000000000Z",
+            ""
         ));
     }
 

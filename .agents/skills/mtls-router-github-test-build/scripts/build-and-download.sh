@@ -126,7 +126,7 @@ case "$version" in
 esac
 printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$' || die "invalid validation version: $version"
 case "$target" in
-  all|windows-amd64|windows-arm64|darwin-amd64|darwin-arm64|linux-amd64|linux-arm64) ;;
+  all|windows-amd64|darwin-amd64|darwin-arm64|linux-amd64|linux-arm64) ;;
   *) die "invalid validation target: $target" ;;
 esac
 case "$upstream" in

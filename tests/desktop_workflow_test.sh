@@ -655,13 +655,15 @@ for input in \
   '        description: Optional HTTPS upstream override for this validation build'; do
   contains "$RELEASE" "$input"
 done
-for target in all windows-amd64 windows-arm64 darwin-amd64 darwin-arm64 linux-amd64 linux-arm64; do
+for target in all windows-amd64 darwin-amd64 darwin-arm64 linux-amd64 linux-arm64; do
   [[ "$(grep -Fxc "          - $target" "$RELEASE")" -eq 1 ]] || \
     fail "release dispatch choices must contain $target exactly once"
 done
+if grep -Fq 'windows-arm64' "$RELEASE"; then
+  fail 'release workflow must not build or dispatch Windows arm64 desktop packages'
+fi
 for row in \
   '{"name":"windows-amd64","runner":"windows-2025","target":"x86_64-pc-windows-msvc","os":"windows","arch":"amd64","bundles":"nsis"}' \
-  '{"name":"windows-arm64","runner":"windows-11-arm","target":"aarch64-pc-windows-msvc","os":"windows","arch":"arm64","bundles":"nsis"}' \
   '{"name":"darwin-amd64","runner":"macos-15-intel","target":"x86_64-apple-darwin","os":"darwin","arch":"amd64","bundles":"dmg"}' \
   '{"name":"darwin-arm64","runner":"macos-15","target":"aarch64-apple-darwin","os":"darwin","arch":"arm64","bundles":"dmg"}' \
   '{"name":"linux-amd64","runner":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu","os":"linux","arch":"amd64","bundles":"appimage"}' \
@@ -811,7 +813,6 @@ contains "$RELEASE" 'if: needs.prepare.outputs.online-update == '\''true'\'''
 contains "$RELEASE_PACKAGE" '"linux-x86_64": "CodeasierRouter-linux-amd64.AppImage"'
 contains "$RELEASE_PACKAGE" '"linux-aarch64": "CodeasierRouter-linux-arm64.AppImage"'
 contains "$RELEASE_PACKAGE" '"windows-x86_64": "CodeasierRouter-windows-amd64.exe"'
-contains "$RELEASE_PACKAGE" '"windows-aarch64": "CodeasierRouter-windows-arm64.exe"'
 contains "$RELEASE_PACKAGE" '"darwin-x86_64": "CodeasierRouter-darwin-amd64.app.tar.gz"'
 contains "$RELEASE_PACKAGE" '"darwin-aarch64": "CodeasierRouter-darwin-arm64.app.tar.gz"'
 contains "$RELEASE_PACKAGE" '(release / "latest.json").write_text'

@@ -73,13 +73,12 @@ jobs:
           expected_jobs=(
             'Prepare build matrices'
             'Desktop x86_64-pc-windows-msvc'
-            'Desktop aarch64-pc-windows-msvc'
             'Desktop x86_64-apple-darwin'
             'Desktop aarch64-apple-darwin'
             'Desktop x86_64-unknown-linux-gnu'
             'Desktop aarch64-unknown-linux-gnu'
           )
-          test "$(printf '%s\n' "$jobs" | wc -l)" -eq 8
+          test "$(printf '%s\n' "$jobs" | wc -l)" -eq 7
           for name in "${expected_jobs[@]}"; do
             test "$(printf '%s\n' "$jobs" | awk -F '\t' -v name="$name" '$1 == name && $2 == "success" { count++ } END { print count+0 }')" -eq 1
           done
@@ -88,13 +87,12 @@ jobs:
           artifacts="$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$source_run_id/artifacts?per_page=100" --jq '.artifacts[] | [.name,.expired] | @tsv')"
           expected_artifacts=(
             CodeasierRouter-desktop-windows-amd64
-            CodeasierRouter-desktop-windows-arm64
             CodeasierRouter-desktop-darwin-amd64
             CodeasierRouter-desktop-darwin-arm64
             CodeasierRouter-desktop-linux-amd64
             CodeasierRouter-desktop-linux-arm64
           )
-          test "$(printf '%s\n' "$artifacts" | wc -l)" -eq 6
+          test "$(printf '%s\n' "$artifacts" | wc -l)" -eq 5
           for name in "${expected_artifacts[@]}"; do
             test "$(printf '%s\n' "$artifacts" | awk -F '\t' -v name="$name" '$1 == name && $2 == "false" { count++ } END { print count+0 }')" -eq 1
           done
@@ -133,7 +131,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: recovered-release-${{ inputs.release_tag }}
-          path: release/*
+          path: |
+            release
+            github-release
           if-no-files-found: error
 
   publish:
@@ -147,7 +147,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: recovered-release-${{ inputs.release_tag }}
-          path: release
+          path: .
       - name: Validate recovered updater assets
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
@@ -159,7 +159,7 @@ jobs:
             .version == $version and
             (.platforms | keys | sort) == ([
               "darwin-aarch64", "darwin-x86_64", "linux-aarch64",
-              "linux-x86_64", "windows-aarch64", "windows-x86_64"
+              "linux-x86_64", "windows-x86_64"
             ] | sort) and
             ([.platforms[] | select((.signature | length) == 0 or (.url | startswith($base) | not))] | length) == 0
           ' release/latest.json >/dev/null
@@ -172,7 +172,6 @@ jobs:
           linux-x86_64 CodeasierRouter-linux-amd64.AppImage
           linux-aarch64 CodeasierRouter-linux-arm64.AppImage
           windows-x86_64 CodeasierRouter-windows-amd64.exe
-          windows-aarch64 CodeasierRouter-windows-arm64.exe
           darwin-x86_64 CodeasierRouter-darwin-amd64.app.tar.gz
           darwin-aarch64 CodeasierRouter-darwin-arm64.app.tar.gz
           TARGETS
@@ -216,12 +215,12 @@ jobs:
           fi
           IFS=$'\t' read -r release_id release_is_draft <<<"$release_record"
           test -n "$release_id"
-          printf '%s\n' release/* | sed 's#^release/##' | LC_ALL=C sort >expected-assets.txt
+          printf '%s\n' github-release/* | sed 's#^github-release/##' | LC_ALL=C sort >expected-assets.txt
           if [[ "$release_is_draft" == true ]]; then
             gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" --jq '.[].id' | while read -r asset_id; do
               gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
             done
-            for asset in release/*; do
+            for asset in github-release/*; do
               gh api --method POST \
                 -H 'Content-Type: application/octet-stream' \
                 "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$release_id/assets?name=$(basename "$asset")" \

@@ -29,7 +29,8 @@ use super::errors::{
 };
 use super::legacy::{
     complete_desktop_state, installation_matches, manager_identity, manager_matches,
-    recorded_process_absent, router_identity, verified_migratable, CurrentLineage, MigrationHost,
+    recorded_pid_reused, recorded_process_absent, router_identity, verified_migratable,
+    CurrentLineage, MigrationHost,
 };
 use super::lifecycle::Backend;
 use super::process::{Identity as ProcessIdentity, ProcessError, SignalKind, Status};
@@ -247,7 +248,10 @@ impl EmbeddedBackend {
 
     /// Go `startDesktop` desktop-state branch: a genuine recorded router is
     /// either an explicit-migration candidate or already running; a provably
-    /// absent one is cleaned up; anything else stays fail closed.
+    /// absent one is cleaned up; a stale PID that inspects as a different
+    /// complete live process is cleaned up only when the configured port is
+    /// idle. Anything else stays fail closed. The recorded PID is never
+    /// signaled.
     fn reconcile_recorded_state(&self) -> Result<(), LifecycleError> {
         let value = match self.host.read_state(&self.config.desktop_state_path) {
             Ok(value) => value,
@@ -274,14 +278,27 @@ impl EmbeddedBackend {
             }
             return Err(staged(ErrorCode::RouterAlreadyRunning));
         }
-        if recorded_process_absent(&value, status, &predicates) {
-            return match fs::remove_file(&self.config.desktop_state_path) {
-                Ok(()) => Ok(()),
-                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-                Err(_) => Err(staged(ErrorCode::RouterStateStale)),
-            };
+        if recorded_process_absent(&value, status, &predicates)
+            || recorded_pid_reused(
+                &value,
+                status,
+                &predicates,
+                !self
+                    .host
+                    .port_open(&self.config.listener.authority, self.discovery.port_timeout),
+            )
+        {
+            return self.remove_recorded_state();
         }
         Ok(())
+    }
+
+    fn remove_recorded_state(&self) -> Result<(), LifecycleError> {
+        match fs::remove_file(&self.config.desktop_state_path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(_) => Err(staged(ErrorCode::RouterStateStale)),
+        }
     }
 
     /// Go `startDesktop` discovery branch. `Ok(Some)` reuses a compatible
@@ -355,10 +372,11 @@ impl MigrationHost for PredicateHost<'_> {
 
     fn signal(
         &self,
-        _identity: &ProcessIdentity,
+        identity: &ProcessIdentity,
         _binary: &str,
         _kind: SignalKind,
     ) -> Result<(), ProcessError> {
+        self.0.note_signal(identity.pid);
         Err(ProcessError::IdentityMismatch)
     }
 
@@ -698,6 +716,8 @@ mod tests {
     struct FakeHost {
         states: Mutex<HashMap<PathBuf, Result<RouterState, StateError>>>,
         statuses: Mutex<HashMap<i32, Status>>,
+        inspects: Mutex<HashMap<i32, Result<ProcessIdentity, ProcessError>>>,
+        signals: Mutex<Vec<i32>>,
         default_status: Status,
         port_open: Mutex<bool>,
         version: Mutex<Option<Value>>,
@@ -708,6 +728,8 @@ mod tests {
             Self {
                 states: Mutex::new(HashMap::new()),
                 statuses: Mutex::new(HashMap::new()),
+                inspects: Mutex::new(HashMap::new()),
+                signals: Mutex::new(Vec::new()),
                 default_status: Status::Absent,
                 port_open: Mutex::new(false),
                 version: Mutex::new(None),
@@ -728,6 +750,14 @@ mod tests {
             self.statuses.lock().unwrap().insert(pid, status);
         }
 
+        fn inspect_result(&self, pid: i32, result: Result<ProcessIdentity, ProcessError>) {
+            self.inspects.lock().unwrap().insert(pid, result);
+        }
+
+        fn signals(&self) -> Vec<i32> {
+            self.signals.lock().unwrap().clone()
+        }
+
         fn state(&self, path: &Path, value: RouterState) {
             self.states
                 .lock()
@@ -744,8 +774,17 @@ mod tests {
             state::read(path)
         }
 
-        fn inspect(&self, _pid: i32) -> Result<ProcessIdentity, ProcessError> {
-            Err(ProcessError::NotFound)
+        fn inspect(&self, pid: i32) -> Result<ProcessIdentity, ProcessError> {
+            self.inspects
+                .lock()
+                .unwrap()
+                .get(&pid)
+                .cloned()
+                .unwrap_or(Err(ProcessError::NotFound))
+        }
+
+        fn note_signal(&self, pid: i32) {
+            self.signals.lock().unwrap().push(pid);
         }
 
         fn validate(
@@ -1117,6 +1156,162 @@ mod tests {
         let recorded = state::read(&fixture.config.desktop_state_path).unwrap();
         assert_eq!(recorded.pid, own.pid);
         backend.stop().await.unwrap();
+    }
+
+    fn reused_desktop_record(listen_addr: &str) -> RouterState {
+        let mut value = release_state("desktop-state-v0.2.0.json");
+        value.installation_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee".into();
+        value.package_generation = 2;
+        value.deployment_id = "deploy-test".into();
+        value.management_protocol_version = "4".into();
+        value.listen_addr = listen_addr.into();
+        value
+    }
+
+    fn live_reused_identity(pid: i32, started_at: &str) -> ProcessIdentity {
+        ProcessIdentity {
+            pid,
+            started_at: started_at.into(),
+            executable: "/usr/bin/unrelated".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn pid_reuse_with_idle_port_cleans_state_without_signaling_then_binds() {
+        let fixture = fixture(true).await;
+        let own = own_identity();
+        let recorded = reused_desktop_record(&fixture.config.listener.router_base_url);
+        state::write(&fixture.config.desktop_state_path, &recorded).unwrap();
+        let host = Arc::new(FakeHost::new());
+        host.status(recorded.pid, Status::Stale);
+        host.inspect_result(
+            recorded.pid,
+            Ok(live_reused_identity(
+                recorded.pid,
+                "2026-09-15T02:00:00.000000000Z",
+            )),
+        );
+        let backend = fixture.backend(host.clone());
+        let started = backend.start(RouterOwner::Desktop).await.expect("start");
+        assert_eq!(started.pid, u32::try_from(own.pid).ok());
+        assert!(host.signals().is_empty());
+        let written = state::read(&fixture.config.desktop_state_path).unwrap();
+        assert_eq!(written.pid, own.pid);
+        assert_ne!(written.process_started_at, recorded.process_started_at);
+        backend.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn corrupt_recorded_state_fails_closed_before_binding() {
+        let fixture = fixture(false).await;
+        fs::write(&fixture.config.desktop_state_path, b"{not-json").unwrap();
+        let host = Arc::new(FakeHost::new());
+        let backend = fixture.backend(host.clone());
+        let error = backend.start(RouterOwner::Desktop).await.unwrap_err();
+        assert_eq!(error.code, ErrorCode::RouterStateStale);
+        assert_eq!(error.stage, Some(StartupStage::StateReconcile));
+        assert!(!backend.supervisor().status().bound);
+        assert!(host.signals().is_empty());
+        assert_eq!(
+            fs::read(&fixture.config.desktop_state_path).unwrap(),
+            b"{not-json"
+        );
+    }
+
+    #[tokio::test]
+    async fn unreadable_recorded_pid_identity_fails_closed_without_signaling() {
+        let fixture = fixture(false).await;
+        let recorded = reused_desktop_record(&fixture.config.listener.router_base_url);
+        state::write(&fixture.config.desktop_state_path, &recorded).unwrap();
+        let host = Arc::new(FakeHost::new());
+        host.status(recorded.pid, Status::Stale);
+        host.inspect_result(recorded.pid, Err(ProcessError::Io));
+        let backend = fixture.backend(host.clone());
+        let error = backend.start(RouterOwner::Desktop).await.unwrap_err();
+        assert_eq!(error.code, ErrorCode::RouterStateStale);
+        assert_eq!(error.stage, Some(StartupStage::StateReconcile));
+        assert!(!backend.supervisor().status().bound);
+        assert!(host.signals().is_empty());
+        assert_eq!(
+            state::read(&fixture.config.desktop_state_path).unwrap().pid,
+            recorded.pid
+        );
+    }
+
+    #[tokio::test]
+    async fn executable_mismatch_with_same_start_identity_stays_fail_closed() {
+        let fixture = fixture(false).await;
+        let recorded = reused_desktop_record(&fixture.config.listener.router_base_url);
+        state::write(&fixture.config.desktop_state_path, &recorded).unwrap();
+        let host = Arc::new(FakeHost::new());
+        host.status(recorded.pid, Status::Stale);
+        host.inspect_result(
+            recorded.pid,
+            Ok(ProcessIdentity {
+                pid: recorded.pid,
+                started_at: recorded.process_started_at.clone(),
+                executable: "/usr/bin/unrelated".into(),
+            }),
+        );
+        let backend = fixture.backend(host.clone());
+        let error = backend.start(RouterOwner::Desktop).await.unwrap_err();
+        assert_eq!(error.code, ErrorCode::RouterStateStale);
+        assert_eq!(error.stage, Some(StartupStage::StateReconcile));
+        assert!(host.signals().is_empty());
+        assert_eq!(
+            state::read(&fixture.config.desktop_state_path).unwrap().pid,
+            recorded.pid
+        );
+    }
+
+    #[tokio::test]
+    async fn incomplete_live_identity_on_reused_pid_stays_fail_closed() {
+        let fixture = fixture(false).await;
+        let recorded = reused_desktop_record(&fixture.config.listener.router_base_url);
+        state::write(&fixture.config.desktop_state_path, &recorded).unwrap();
+        let host = Arc::new(FakeHost::new());
+        host.status(recorded.pid, Status::Stale);
+        host.inspect_result(
+            recorded.pid,
+            Ok(ProcessIdentity {
+                pid: recorded.pid,
+                started_at: "2026-09-15T02:00:00.000000000Z".into(),
+                executable: String::new(),
+            }),
+        );
+        let backend = fixture.backend(host.clone());
+        let error = backend.start(RouterOwner::Desktop).await.unwrap_err();
+        assert_eq!(error.code, ErrorCode::RouterStateStale);
+        assert!(host.signals().is_empty());
+        assert_eq!(
+            state::read(&fixture.config.desktop_state_path).unwrap().pid,
+            recorded.pid
+        );
+    }
+
+    #[tokio::test]
+    async fn pid_reuse_does_not_delete_state_when_configured_port_is_busy() {
+        let fixture = fixture(false).await;
+        let recorded = reused_desktop_record(&fixture.config.listener.router_base_url);
+        state::write(&fixture.config.desktop_state_path, &recorded).unwrap();
+        let host = Arc::new(FakeHost::new());
+        host.status(recorded.pid, Status::Stale);
+        host.inspect_result(
+            recorded.pid,
+            Ok(live_reused_identity(
+                recorded.pid,
+                "2026-09-15T02:00:00.000000000Z",
+            )),
+        );
+        host.serve(99, "other-deploy", "4");
+        let backend = fixture.backend(host.clone());
+        let error = backend.start(RouterOwner::Desktop).await.unwrap_err();
+        assert_eq!(error.code, ErrorCode::PortOccupied);
+        assert!(host.signals().is_empty());
+        assert_eq!(
+            state::read(&fixture.config.desktop_state_path).unwrap().pid,
+            recorded.pid
+        );
     }
 
     #[tokio::test]

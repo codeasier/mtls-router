@@ -6,10 +6,10 @@ Use the Router, Logs, and Settings pages before deleting state. Diagnostic summa
 
 ## Package is blocked or release status is unclear
 
-The workflows build six native desktop packages and inspect each one on a matching target runner, including an initialization-only startup smoke test, but signing is conditional and package inspection does not install or normally launch the application.
+The release workflow builds five native desktop packages and inspects each one on a matching target runner, including an initialization-only startup smoke test, but signing is conditional and package inspection does not install or normally launch the application.
 
-1. Match the package to the operating system and architecture: Windows x86_64/arm64 NSIS, macOS Intel/Apple Silicon DMG, or Linux x86_64/arm64 AppImage.
-2. Verify the package with its `.sha256` file.
+1. Match the package to the operating system and architecture: Windows x86_64 NSIS, macOS Intel/Apple Silicon DMG, or Linux x86_64/arm64 AppImage.
+2. Verify the package against its `SHA256SUMS` entry. For GitHub assets, the release digest may be used as a second check.
 3. Read the matching `signing-status-<os>-<arch>.txt`. Windows and macOS may be unsigned when signing credentials were unavailable; macOS may be signed but not notarized when notarization credentials were unavailable. Linux status explicitly reports that package signing is not configured.
 4. Ask the distributor for separate successful install/launch evidence from the matching target runner. A successful package-inspection job or status file is not launch evidence.
 
@@ -57,12 +57,13 @@ If the Router page shows start failed / cannot open the local port and there is 
 
 ## Stale router state
 
-Stale means recorded PID, process start identity, or executable identity no longer matches. The manager retains state for diagnosis and sends no signal.
+Stale means recorded PID, process start identity, or executable identity no longer matches. The manager sends no signal. A leftover desktop record is removed automatically only when the configured listen port is idle and the OS proves the recorded PID now belongs to a different complete live process (distinct start identity). Unreadable or still-associated records stay fail-closed.
 
-1. Inspect the reported PID and executable independently.
-2. If a real router is still running, stop it using the tool that owns it or stop it manually only after confirming its identity.
-3. Preserve state and logs when the cause is unclear; do not edit a PID to make the state look current.
-4. Restart the desktop after the verified process is gone. Contact the maintainer if stale state persists.
+1. Copy the diagnostic snapshot or export the support bundle. A latched start failure should include `stage=`/`code=` (for example `state_reconcile` / `ROUTER_STATE_STALE`) and may include a redacted recorded PID and executable basename — not the raw state file.
+2. Inspect the reported PID and executable independently.
+3. If a real router is still running, stop it using the tool that owns it or stop it manually only after confirming its identity.
+4. Preserve state and logs when the cause is unclear; do not edit a PID to make the state look current.
+5. Restart the desktop after the verified process is gone. Contact the maintainer if stale state persists.
 
 ## Running with unavailable upstream
 
