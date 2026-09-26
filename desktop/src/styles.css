@@ -47,6 +47,9 @@
   --disabled-ink: #8c8177;
   --disabled-fill: #e8dfd5;
   --good-hover: #3f5630;
+  --meter-good: #536d3b;
+  --meter-warning: #8b5b17;
+  --meter-danger: #963c2f;
   --shadow-card: 0 12px 30px rgba(76, 57, 43, 0.08);
   --shadow-lifted: 0 16px 36px rgba(76, 57, 43, 0.13);
   --shadow-subtle: 0 4px 14px rgba(76, 57, 43, 0.06);
@@ -97,6 +100,9 @@
   --disabled-ink: #8e8e93;
   --disabled-fill: #f0f0f0;
   --good-hover: #1d4ed8;
+  --meter-good: #1a7f3c;
+  --meter-warning: #9a6200;
+  --meter-danger: #c0362c;
   --shadow-card: 0 8px 20px rgba(0, 0, 0, 0.04);
   --shadow-lifted: 0 12px 24px rgba(0, 0, 0, 0.06);
   --shadow-subtle: 0 1px 4px rgba(0, 0, 0, 0.04);
@@ -147,6 +153,9 @@
   --disabled-ink: #8a7f74;
   --disabled-fill: #2a2520;
   --good-hover: #b3c894;
+  --meter-good: #9bb87a;
+  --meter-warning: #e0b05a;
+  --meter-danger: #e08a7a;
   --shadow-card: 0 12px 30px rgba(0, 0, 0, 0.28);
   --shadow-lifted: 0 16px 36px rgba(0, 0, 0, 0.36);
   --shadow-subtle: 0 4px 14px rgba(0, 0, 0, 0.22);
@@ -2636,6 +2645,18 @@ main[data-section="images"] {
   background: var(--signal);
 }
 
+.apikey-usage__bar[data-tone="healthy"] span {
+  background: var(--meter-good);
+}
+
+.apikey-usage__bar[data-tone="warning"] span {
+  background: var(--meter-warning);
+}
+
+.apikey-usage__bar[data-tone="danger"] span {
+  background: var(--meter-danger);
+}
+
 .apikey-usage__models {
   width: 100%;
   border-collapse: collapse;
@@ -2754,6 +2775,23 @@ main[data-section="images"] {
   font-weight: 800;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+
+.apikey-usage__models thead th {
+  height: 30px;
+}
+
+.apikey-usage__models tbody th,
+.apikey-usage__models tbody td {
+  height: 34px;
+}
+
+.apikey-usage__table-scroll {
+  overflow-x: auto;
+}
+
+.apikey-usage__models-filler td {
+  border-bottom: 0;
 }
 
 @media (max-width: 720px) {
@@ -5740,7 +5778,6 @@ main[data-section="images"] {
   gap: 22px;
   margin-top: 4px;
   padding: 28px 32px 32px;
-  overflow-x: auto;
 }
 
 .apikey-usage__header {
@@ -5820,6 +5857,107 @@ main[data-section="images"] {
 .apikey-usage__quotas .apikey-usage__quota + .apikey-usage__quota {
   padding-top: 16px;
   border-top: 1px solid var(--line);
+}
+
+.main-scroll:has(.usage-panel) {
+  display: flex;
+  flex-direction: column;
+}
+
+.main-scroll:has(.usage-panel) .usage-panel {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.main-scroll:has(.usage-panel)
+  .usage-panel
+  > .apikey-usage:not(.apikey-usage--limits) {
+  display: flex;
+  flex-direction: column;
+  flex: 1 0 auto;
+  min-height: 0;
+}
+
+.main-scroll:has(.usage-panel) .apikey-usage--limits {
+  flex: 0 0 auto;
+  width: 100%;
+}
+
+.main-scroll:has(.usage-panel) .apikey-usage__asof {
+  margin-top: auto;
+}
+
+.main-scroll:has(.usage-panel) .apikey-usage__models-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.apikey-usage__models-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.apikey-usage__models-body {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  min-height: calc(30px + 10 * 34px + 2px);
+}
+
+.apikey-usage__limits-head {
+  display: grid;
+  gap: 6px;
+}
+
+.apikey-usage__quotas-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.apikey-usage__pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.apikey-usage__page {
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-raised);
+  color: var(--ink);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.apikey-usage__page:not(:disabled):hover {
+  border-color: var(--line-strong);
+}
+
+.apikey-usage__page:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.apikey-usage__page-state {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
 .images-stage.is-landing .images-composer {

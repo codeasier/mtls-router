@@ -1,8 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { ApiKeyUsageCard, usageErrorTranslation } from "./ApiKeyUsageCard";
+import {
+  ApiKeyUsageCard,
+  OverviewQuotaCard,
+  ProviderLimitsCard,
+  usageErrorTranslation,
+} from "./ApiKeyUsageCard";
 import { useI18n } from "./i18n";
-import type { APIKeyUsage, APIKeyUsagePeriod, DesktopApi } from "./ipc";
+import type {
+  APIKeyUsage,
+  APIKeyUsagePeriod,
+  APIKeyUsageProviderQuota,
+  DesktopApi,
+} from "./ipc";
 import type { TranslationKey } from "./locales/zh-CN";
 
 export function UsagePage({
@@ -18,6 +28,10 @@ export function UsagePage({
   const [usage, setUsage] = useState<APIKeyUsage | null>(null);
   const [usageLoading, setUsageLoading] = useState(false);
   const [usageError, setUsageError] = useState<TranslationKey | "">("");
+  // Provider limits follow each provider's own budget window and do not
+  // change with the usage period, so the independent limits card keeps the
+  // latest known quotas instead of blanking on every period switch.
+  const [limits, setLimits] = useState<APIKeyUsageProviderQuota[] | null>(null);
   const usageGeneration = useRef(0);
 
   const loadUsage = useCallback(
@@ -33,6 +47,7 @@ export function UsagePage({
         .then((snapshot) => {
           if (generation !== usageGeneration.current) return;
           setUsage(snapshot);
+          setLimits(snapshot.quotas ?? []);
           setUsageLoading(false);
         })
         .catch((loadError: unknown) => {
@@ -48,6 +63,7 @@ export function UsagePage({
   const clearUsage = useCallback(() => {
     usageGeneration.current += 1;
     setUsage(null);
+    setLimits(null);
     setUsageError("");
     setUsageLoading(false);
   }, []);
@@ -84,6 +100,11 @@ export function UsagePage({
       className="apikey-panel usage-panel"
       aria-label={t("section.usage.title")}
     >
+      {Boolean(present) && limits && limits.length > 0 ? (
+        <ProviderLimitsCard quotas={limits} />
+      ) : Boolean(present) && usage?.quota ? (
+        <OverviewQuotaCard quota={usage.quota} />
+      ) : null}
       <ApiKeyUsageCard
         present={Boolean(present)}
         period={period}

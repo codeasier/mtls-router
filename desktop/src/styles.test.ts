@@ -543,6 +543,112 @@ describe("narrow overview and compact nav", () => {
   });
 });
 
+describe("usage page layout", () => {
+  it("stretches the usage panel vertically", () => {
+    const scroller = compact(
+      findRuleDeclarations(css, ".main-scroll:has(.usage-panel)"),
+    );
+    const panel = compact(
+      findRuleDeclarations(css, ".main-scroll:has(.usage-panel) .usage-panel"),
+    );
+    const card = compact(
+      findRuleDeclarations(
+        css,
+        ".main-scroll:has(.usage-panel) .usage-panel > .apikey-usage:not(.apikey-usage--limits)",
+      ),
+    );
+
+    expect(scroller).toMatch(/display:\s*flex;/);
+    expect(scroller).toMatch(/flex-direction:\s*column;/);
+    expect(panel).toMatch(/flex:\s*1\s+1\s+auto;/);
+    expect(panel).toMatch(/flex-direction:\s*column;/);
+    expect(card).toMatch(/display:\s*flex;/);
+    expect(card).toMatch(/flex-direction:\s*column;/);
+  });
+
+  it("keeps the top provider limits card full-width above the usage card", () => {
+    const panel = compact(
+      findRuleDeclarations(css, ".main-scroll:has(.usage-panel) .usage-panel"),
+    );
+    const limits = compact(
+      findRuleDeclarations(
+        css,
+        ".main-scroll:has(.usage-panel) .apikey-usage--limits",
+      ),
+    );
+
+    expect(panel).toMatch(/display:\s*flex;/);
+    expect(panel).toMatch(/flex-direction:\s*column;/);
+    expect(limits).toMatch(/flex:\s*0\s+0\s+auto;/);
+    expect(limits).toMatch(/width:\s*100%;/);
+  });
+
+  it("keeps the model table at a fixed row height with pagination pinned", () => {
+    expect(
+      compact(findRuleDeclarations(css, ".apikey-usage__models thead th")),
+    ).toMatch(/height:\s*30px;/);
+    const bodyCells = compact(
+      findRuleDeclarations(css, ".apikey-usage__models tbody td"),
+    );
+    expect(bodyCells).toMatch(/height:\s*34px;/);
+    expect(
+      compact(findRuleDeclarations(css, ".apikey-usage__models-body")),
+    ).toMatch(/min-height:\s*calc\(30px \+ 10 \* 34px \+ 2px\);/);
+    expect(
+      compact(findRuleDeclarations(css, ".apikey-usage__table-scroll")),
+    ).toMatch(/overflow-x:\s*auto;/);
+    expect(
+      compact(findRuleDeclarations(css, ".apikey-usage__pagination")),
+    ).toMatch(/justify-content:\s*flex-end;/);
+    expect(
+      compact(findRuleDeclarations(css, ".apikey-usage__page:disabled")),
+    ).toMatch(/cursor:\s*not-allowed;/);
+  });
+
+  it("paints quota progress bars by healthy, warning, and danger levels", () => {
+    for (const theme of ["warm", "light", "dark"]) {
+      const block = compact(
+        extractBlock(
+          css,
+          new RegExp(
+            theme === "warm"
+              ? ':root,\\s*\\[data-theme="warm"\\]\\s*\\{'
+              : `\\[data-theme="${theme}"\\]\\s*\\{`,
+          ),
+          `${theme} theme tokens`,
+        ),
+      );
+      expect(block).toMatch(/--meter-good:/);
+      expect(block).toMatch(/--meter-warning:/);
+      expect(block).toMatch(/--meter-danger:/);
+    }
+    expect(
+      compact(
+        findRuleDeclarations(
+          css,
+          '.apikey-usage__bar[data-tone="healthy"] span',
+        ),
+      ),
+    ).toMatch(/background:\s*var\(--meter-good\);/);
+    expect(
+      compact(
+        findRuleDeclarations(
+          css,
+          '.apikey-usage__bar[data-tone="warning"] span',
+        ),
+      ),
+    ).toMatch(/background:\s*var\(--meter-warning\);/);
+    expect(
+      compact(
+        findRuleDeclarations(
+          css,
+          '.apikey-usage__bar[data-tone="danger"] span',
+        ),
+      ),
+    ).toMatch(/background:\s*var\(--meter-danger\);/);
+  });
+});
+
 describe("responsive Agent cleanup", () => {
   it("stacks card actions below 900px", () => {
     const medium = compact(extractMediaBlock(css, 900));

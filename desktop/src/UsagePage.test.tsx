@@ -321,6 +321,16 @@ describe("UsagePage", () => {
     expect(screen.queryByText("供应商限额")).not.toBeInTheDocument();
   });
 
+  it("shows an overview quota at the top when there are no provider limits", async () => {
+    renderPage();
+    const quota = await screen.findByRole("region", { name: "配额" });
+    expect(document.querySelector(".usage-panel")?.firstElementChild).toBe(
+      quota,
+    );
+    expect(screen.getAllByRole("progressbar")).toHaveLength(1);
+    expect(screen.queryByText("供应商限额")).not.toBeInTheDocument();
+  });
+
   it("renders provider limits without an overview bar when only quotas are present", async () => {
     renderPage(
       createMockApi({
@@ -403,7 +413,7 @@ describe("UsagePage", () => {
     );
   });
 
-  it("keeps the provider list when a rolling period omits the overview quota", async () => {
+  it("shows provider limits only when both quota formats are returned", async () => {
     const api = createMockApi({
       getAPIKeyUsage: vi.fn().mockImplementation((period: string) => {
         if (period === "1h") {
@@ -447,8 +457,14 @@ describe("UsagePage", () => {
       }),
     });
     renderPage(api);
-    await screen.findByText("配额");
-    expect(screen.getByText("供应商限额")).toBeInTheDocument();
+    const limits = await screen.findByRole("region", {
+      name: "供应商限额",
+    });
+    expect(document.querySelector(".usage-panel")?.firstElementChild).toBe(
+      limits,
+    );
+    expect(screen.queryByText("配额")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("progressbar")).toHaveLength(1);
 
     fireEvent.click(screen.getByRole("tab", { name: "近 1 小时" }));
 
@@ -456,5 +472,262 @@ describe("UsagePage", () => {
     expect(await screen.findByText("供应商限额")).toBeInTheDocument();
     expect(screen.queryByText("配额")).not.toBeInTheDocument();
     expect(screen.getByText("全部供应商 · 每周")).toBeInTheDocument();
+    expect(screen.getAllByRole("progressbar")).toHaveLength(1);
+  });
+
+  it("paginates the model table at ten rows and keeps the table frame fixed", async () => {
+    const models = Array.from({ length: 12 }, (_, index) => ({
+      model: `model-${String(index + 1).padStart(2, "0")}`,
+      requests: index + 1,
+      prompt_tokens: (index + 1) * 100,
+      completion_tokens: 0,
+      cost: (index + 1) * 0.1,
+    }));
+    const api = createMockApi({
+      getAPIKeyUsage: vi.fn().mockResolvedValue({
+        period: "7d",
+        summary: multiModelUsage.summary,
+        quotas: [],
+        by_model: models,
+      }),
+    });
+    renderPage(api);
+    const table = await screen.findByRole("table");
+    expect(
+      within(table).getByRole("rowheader", { name: "model-12" }),
+    ).toBeInTheDocument();
+    expect(within(table).getAllByRole("rowheader")).toHaveLength(10);
+    expect(table.querySelectorAll("tbody tr")).toHaveLength(10);
+    expect(screen.getByText("第 1 / 2 页")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "上一页" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "下一页" })).not.toBeDisabled();
+    expect(
+      within(table).queryByRole("rowheader", { name: "model-01" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "下一页" }));
+
+    expect(screen.getByText("第 2 / 2 页")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "下一页" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "上一页" })).not.toBeDisabled();
+    expect(
+      within(table).getByRole("rowheader", { name: "model-02" }),
+    ).toBeInTheDocument();
+    expect(
+      within(table).getByRole("rowheader", { name: "model-01" }),
+    ).toBeInTheDocument();
+    expect(table.querySelectorAll("tbody tr")).toHaveLength(10);
+
+    fireEvent.click(screen.getByRole("button", { name: "上一页" }));
+    expect(screen.getByText("第 1 / 2 页")).toBeInTheDocument();
+    expect(
+      within(table).getByRole("rowheader", { name: "model-12" }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the table frame fixed when the filter narrows to a few rows", async () => {
+    const models = Array.from({ length: 12 }, (_, index) => ({
+      model: `model-${String(index + 1).padStart(2, "0")}`,
+      requests: index + 1,
+      prompt_tokens: (index + 1) * 100,
+      completion_tokens: 0,
+      cost: (index + 1) * 0.1,
+    }));
+    renderPage(
+      createMockApi({
+        getAPIKeyUsage: vi.fn().mockResolvedValue({
+          period: "7d",
+          summary: multiModelUsage.summary,
+          quotas: [],
+          by_model: models,
+        }),
+      }),
+    );
+    await screen.findByRole("table");
+
+    for (const name of [
+      "model-01",
+      "model-02",
+      "model-03",
+      "model-04",
+      "model-05",
+      "model-06",
+      "model-07",
+      "model-08",
+      "model-09",
+      "model-10",
+      "model-11",
+    ]) {
+      fireEvent.click(screen.getByRole("checkbox", { name }));
+    }
+
+    const table = screen.getByRole("table");
+    expect(within(table).getAllByRole("rowheader")).toHaveLength(1);
+    expect(table.querySelectorAll("tbody tr")).toHaveLength(10);
+    expect(screen.getByText("第 1 / 1 页")).toBeInTheDocument();
+  });
+
+  it("restarts on page one when the filter changes the row set", async () => {
+    const models = Array.from({ length: 12 }, (_, index) => ({
+      model: `model-${String(index + 1).padStart(2, "0")}`,
+      requests: index + 1,
+      prompt_tokens: (index + 1) * 100,
+      completion_tokens: 0,
+      cost: (index + 1) * 0.1,
+    }));
+    renderPage(
+      createMockApi({
+        getAPIKeyUsage: vi.fn().mockResolvedValue({
+          period: "7d",
+          summary: multiModelUsage.summary,
+          quotas: [],
+          by_model: models,
+        }),
+      }),
+    );
+    await screen.findByRole("table");
+
+    fireEvent.click(screen.getByRole("button", { name: "下一页" }));
+    expect(screen.getByText("第 2 / 2 页")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "model-12" }));
+    const table = screen.getByRole("table");
+    expect(screen.getByText("第 1 / 2 页")).toBeInTheDocument();
+    expect(
+      within(table).getByRole("rowheader", { name: "model-11" }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows token counts with a one-decimal million suffix", async () => {
+    renderPage(
+      createMockApi({
+        getAPIKeyUsage: vi.fn().mockResolvedValue({
+          period: "7d",
+          summary: {
+            requests: 1,
+            prompt_tokens: 380_084_323,
+            completion_tokens: 2_491_384,
+            cost: 1,
+          },
+          quotas: [],
+          by_model: [
+            {
+              model: "gpt-5",
+              requests: 1,
+              prompt_tokens: 100,
+              completion_tokens: 50,
+              cost: 1,
+            },
+          ],
+        }),
+      }),
+    );
+
+    expect(await screen.findByText("382,575,707(382.6M)")).toBeInTheDocument();
+    expect(screen.getByText(/380,084,323\(380\.1M\)/)).toBeInTheDocument();
+    expect(screen.getByText(/2,491,384\(2\.5M\)/)).toBeInTheDocument();
+    expect(screen.getByText("150")).toBeInTheDocument();
+  });
+
+  it("renders provider limits as an independent card that survives period reloads", async () => {
+    let resolveNext: (value: APIKeyUsage) => void = () => {};
+    const quotas = [
+      {
+        provider: "codex",
+        period: "week" as const,
+        used: 217.4,
+        limit: 500,
+        unit: "usd" as const,
+        resets_at: "2026-09-28T00:00:00Z",
+      },
+    ];
+    const api = createMockApi({
+      getAPIKeyUsage: vi.fn().mockImplementation((period: string) => {
+        if (period === "1h") {
+          return new Promise<APIKeyUsage>((resolve) => {
+            resolveNext = resolve;
+          });
+        }
+        return Promise.resolve({
+          period: "7d",
+          summary: multiModelUsage.summary,
+          quotas,
+          by_model: multiModelUsage.by_model,
+        });
+      }),
+    });
+    renderPage(api);
+    await screen.findByText("codex · 每周");
+
+    const limitsCard = document.querySelector(".apikey-usage--limits");
+    expect(limitsCard).not.toBeNull();
+    const panel = document.querySelector(".usage-panel");
+    expect(panel?.firstElementChild).toBe(limitsCard);
+    expect(panel?.lastElementChild).toHaveClass("apikey-usage");
+    expect(panel?.lastElementChild).not.toHaveClass("apikey-usage--limits");
+    expect(limitsCard).toHaveTextContent("供应商限额");
+    expect(limitsCard).toHaveTextContent(
+      "供应商限额按各自窗口重置，不随用量周期切换。",
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "近 1 小时" }));
+
+    await waitFor(() => expect(api.getAPIKeyUsage).toHaveBeenCalledWith("1h"));
+    expect(screen.getByText("正在读取用量")).toBeInTheDocument();
+    expect(screen.getByText("供应商限额")).toBeInTheDocument();
+    expect(screen.getByText("codex · 每周")).toBeInTheDocument();
+
+    resolveNext({
+      period: "1h",
+      summary: multiModelUsage.summary,
+      quotas,
+      by_model: multiModelUsage.by_model,
+    });
+    expect(await screen.findByText("codex · 每周")).toBeInTheDocument();
+  });
+
+  it("colors quota bars by healthy, warning, and danger thresholds", async () => {
+    renderPage(
+      createMockApi({
+        getAPIKeyUsage: vi.fn().mockResolvedValue({
+          period: "7d",
+          summary: multiModelUsage.summary,
+          quotas: [
+            {
+              provider: "low",
+              period: "day",
+              used: 1.25,
+              limit: 10,
+              unit: "usd",
+              resets_at: "2026-09-14T00:00:00Z",
+            },
+            {
+              provider: "mid",
+              period: "week",
+              used: 4.35,
+              limit: 10,
+              unit: "usd",
+              resets_at: "2026-09-14T00:00:00Z",
+            },
+            {
+              provider: "high",
+              period: "month",
+              used: 8.5,
+              limit: 10,
+              unit: "usd",
+              resets_at: "2026-09-14T00:00:00Z",
+            },
+          ],
+          by_model: multiModelUsage.by_model,
+        }),
+      }),
+    );
+    await screen.findByText("供应商限额");
+
+    const bars = screen.getAllByRole("progressbar");
+    expect(bars).toHaveLength(3);
+    expect(bars[0]).toHaveAttribute("data-tone", "healthy");
+    expect(bars[1]).toHaveAttribute("data-tone", "warning");
+    expect(bars[2]).toHaveAttribute("data-tone", "danger");
   });
 });
