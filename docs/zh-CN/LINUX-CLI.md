@@ -6,15 +6,17 @@
 
 ## 下载与验签
 
-选择已发布版本和架构。每架构只发布 `CodeasierRouter-cli-linux-<arch>.tar.gz`、`.sha256` 及 `.tar.gz.sigstore.json` provenance bundle；归档内只有 `codeasier-router`。CLI 使用 GitHub OIDC/Sigstore，桌面继续使用独立的 Tauri updater 签名与六平台 feed。
+选择已发布版本和架构。每架构只发布 `CodeasierRouter-cli-linux-<arch>.tar.gz` 及 `.tar.gz.sigstore.json` provenance bundle，均纳入 `SHA256SUMS`；producer `.sha256` 只作预检，不对外发布。归档内只有 `codeasier-router`。CLI 使用 GitHub OIDC/Sigstore，桌面继续使用独立的 Tauri updater 签名与五平台 feed。
 
 在下载目录使用较新的 GitHub CLI：
 
 ```sh
 version=vX.Y.Z
 arch=amd64
-gh release download "$version" --repo codeasier/mtls-router --pattern "CodeasierRouter-cli-linux-$arch.*"
-sha256sum -c "CodeasierRouter-cli-linux-$arch.sha256"
+gh release download "$version" --repo codeasier/mtls-router --pattern "CodeasierRouter-cli-linux-$arch.*" --pattern SHA256SUMS
+awk -v name="CodeasierRouter-cli-linux-$arch.tar.gz" '$2 == name || $2 == name ".sigstore.json" { print }' SHA256SUMS >cli-checksums.txt
+test "$(wc -l <cli-checksums.txt)" -eq 2
+sha256sum -c cli-checksums.txt
 sha=$(gh api "repos/codeasier/mtls-router/commits/$version" --jq .sha)
 gh attestation verify "CodeasierRouter-cli-linux-$arch.tar.gz" --repo codeasier/mtls-router --signer-workflow codeasier/mtls-router/.github/workflows/release.yml --source-ref "refs/tags/$version" --source-digest "$sha" --bundle "CodeasierRouter-cli-linux-$arch.tar.gz.sigstore.json" --deny-self-hosted-runners
 tar -xzf "CodeasierRouter-cli-linux-$arch.tar.gz"

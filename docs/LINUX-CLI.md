@@ -11,18 +11,21 @@ archives are not replacements for this client.
 ## Download and verify
 
 Choose a published version and architecture. The release supplies exactly one
-`CodeasierRouter-cli-linux-<arch>.tar.gz`, its `.sha256` sidecar and a
-`.tar.gz.sigstore.json` provenance bundle per architecture. The archive contains
+`CodeasierRouter-cli-linux-<arch>.tar.gz` and a `.tar.gz.sigstore.json`
+provenance bundle per architecture, covered by `SHA256SUMS`. Producer `.sha256`
+sidecars are preflight-only and are not published. The archive contains
 only `codeasier-router`. CLI provenance uses GitHub OIDC/Sigstore; the desktop
-retains its separate Tauri updater signature and six-platform feed.
+retains its separate Tauri updater signature and five-platform feed.
 
 In a download directory, using a recent GitHub CLI:
 
 ```sh
 version=vX.Y.Z
 arch=amd64
-gh release download "$version" --repo codeasier/mtls-router --pattern "CodeasierRouter-cli-linux-$arch.*"
-sha256sum -c "CodeasierRouter-cli-linux-$arch.sha256"
+gh release download "$version" --repo codeasier/mtls-router --pattern "CodeasierRouter-cli-linux-$arch.*" --pattern SHA256SUMS
+awk -v name="CodeasierRouter-cli-linux-$arch.tar.gz" '$2 == name || $2 == name ".sigstore.json" { print }' SHA256SUMS >cli-checksums.txt
+test "$(wc -l <cli-checksums.txt)" -eq 2
+sha256sum -c cli-checksums.txt
 sha=$(gh api "repos/codeasier/mtls-router/commits/$version" --jq .sha)
 gh attestation verify "CodeasierRouter-cli-linux-$arch.tar.gz" --repo codeasier/mtls-router --signer-workflow codeasier/mtls-router/.github/workflows/release.yml --source-ref "refs/tags/$version" --source-digest "$sha" --bundle "CodeasierRouter-cli-linux-$arch.tar.gz.sigstore.json" --deny-self-hosted-runners
 tar -xzf "CodeasierRouter-cli-linux-$arch.tar.gz"

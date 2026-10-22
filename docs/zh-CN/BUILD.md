@@ -2,7 +2,7 @@
 
 [English](../BUILD.md)
 
-本文涵盖 Tauri 桌面、共享 Rust/无 GUI CLI 与冻结 Go 兼容测试。工作流配置六个原生桌面目标及 Linux amd64/arm64 CLI producer。Stable `vX.Y.Z` 保留六平台签名桌面 updater feed，CLI provenance/下载独立；平台签名、只覆盖初始化的包检查与真实目标安装/启动/更新证据仍须分别确认。
+本文涵盖 Tauri 桌面、共享 Rust/无 GUI CLI 与冻结 Go 兼容测试。工作流配置五个原生桌面目标（Windows x86_64、macOS Intel/Apple Silicon、Linux x86_64/arm64）及两个原生 Linux CLI producer；CI 抽检 Windows x86_64 NSIS 与 Linux arm64 AppImage。Stable `vX.Y.Z` 保留五平台签名桌面 updater feed，CLI provenance/下载独立；平台签名、只覆盖初始化的包检查与真实目标安装/启动/更新证据仍须分别确认。
 
 > **历史 Go CLI 冻结。** 新 release 仍拒绝旧 `mtls-router*`、manager/setup/服务包装，不覆盖旧 tag；仅把精确命名的两个 `CodeasierRouter-cli-linux-<arch>.tar.gz` Rust 归档及校验/provenance 加入桌面资产之外，见 [Linux CLI](LINUX-CLI.md)。
 
@@ -154,12 +154,12 @@ npm run rust:test
 
 `scripts/public-trust.rs` 与 CLI 共用，解析 CA、去除非证书文本、拒绝 private-key block；release 拒绝缺失/过期/占位公有信任和默认 deployment，不读取 client cert/key 或 `secrets/`。公有输入不完整、同项来源重叠、origin override 或桌面 `SIMPLIFY` 非法均闭合失败；运行时 `identity/` 私有且排除于支持包。
 
-manager 以由 Rust target triple 派生的操作系统/架构标签报告其目标：
+manager 以由 Rust target triple 派生的操作系统/架构标签报告其目标。`desktop/scripts/verify-package.sh` 仍接受 Windows arm64 triple 供本地交叉构建使用；该目标不会发布。
 
-| Release 目标 | Rust/Tauri target triple | manager 目标标签 |
+| 目标 | Rust/Tauri target triple | manager 目标标签 |
 |---|---|---|
 | Windows x86_64 | `x86_64-pc-windows-msvc` | `windows/amd64` |
-| Windows arm64 | `aarch64-pc-windows-msvc` | `windows/arm64` |
+| Windows arm64（仅本地交叉构建，非发布目标） | `aarch64-pc-windows-msvc` | `windows/arm64` |
 | macOS Intel | `x86_64-apple-darwin` | `darwin/amd64` |
 | macOS Apple Silicon | `aarch64-apple-darwin` | `darwin/arm64` |
 | Linux x86_64 | `x86_64-unknown-linux-gnu` | `linux/amd64` |
@@ -218,7 +218,7 @@ Tauri updater 签名与操作系统平台签名保护不同的信任边界，二
 - Tauri updater 签名证明在线更新产物由已安装应用内嵌公钥所对应的私钥签发。Windows、macOS 和 Linux 都必须先通过该签名校验才能安装更新。
 - Windows Authenticode 与 macOS code signing/notarization 为下载和安装的软件建立 publisher/platform 信任。即使 Tauri updater 签名有效，只要分发策略要求，它们仍然是必需的。Linux 当前没有配置平台包签名，但其在线更新产物仍强制要求 Tauri 签名。
 
-只有精确 stable `vX.Y.Z` tag 才会生成在线更新。Validation dispatch、prerelease tag 和其他 ref 都保持 `createUpdaterArtifacts` 关闭，也不会推进 channel。Stable 构建内嵌 endpoint `https://release.codeasier.top/latest.json`，且每次 release 生成的 `latest.json` 中各平台 URL 均指向 `https://release.codeasier.top/mtls-router/<tag>/`。Release 汇总会发布含六个平台的 `latest.json`、每个平台 updater 产物及 `.sig`，同时将 tag 目录镜像至 `downloads.codeasier.top` 并原子推进其 `latest` symlink 作为二级分发点；updater feed 与产物下载均由 `release.codeasier.top` 提供。Windows 和 Linux 直接复用最终 NSIS/AppImage 包作为 updater 产物；macOS 还会发布签名的 `CodeasierRouter-darwin-<arch>.app.tar.gz`。每个 updater 产物、签名和 `latest.json` 都由 `SHA256SUMS` 覆盖。
+只有精确 stable `vX.Y.Z` tag 才会生成在线更新。Validation dispatch、prerelease tag 和其他 ref 都保持 `createUpdaterArtifacts` 关闭，也不会推进 channel。Stable 构建内嵌 endpoint `https://release.codeasier.top/latest.json`，且每次 release 生成的 `latest.json` 中各平台 URL 均指向 `https://release.codeasier.top/mtls-router/<tag>/`。Release 汇总会发布含五个平台的 `latest.json`（不含 Windows arm64）、每个平台 updater 产物及 `.sig`，同时将完整 tag 目录镜像至 `downloads.codeasier.top` 并原子推进其 `latest` symlink 作为二级分发点；updater feed 与产物下载均由 `release.codeasier.top` 提供。Windows 和 Linux 直接复用最终 NSIS/AppImage 包作为 updater 产物；macOS 更新下载使用签名的 `CodeasierRouter-darwin-<arch>.app.tar.gz`，该归档只进入镜像、不挂到 GitHub Release（GitHub 只列出 DMG）。每个 updater 产物、签名和 `latest.json` 都由 `SHA256SUMS` 覆盖。sidecar `*.sha256` 只用于聚合预检，不再发布；GitHub 已为挂上的 asset 提供 digest。
 
 在可信且不被录屏/记录的 operator 工作站上，从 `desktop/` 目录一次性生成 updater keypair。下面的命令只包含输出路径，密码由交互提示读取，不包含任何 key 或密码值：
 
@@ -240,21 +240,21 @@ npm exec tauri -- signer generate -w /secure/offline/CodeasierRouter-updater.key
 
 ## 包验证
 
-两个 workflow 都会在原生匹配 runner 上对六个包逐一调用 `desktop/scripts/verify-package.sh`。该脚本会拒绝 host/target 不匹配；解包 NSIS、DMG 或 AppImage；检查包/版本身份；在包内存在 `mtls-router` 或 `mtls-router-manager` 可执行文件时失败；检查桌面可执行文件的格式及架构；检查 macOS/Linux 可执行权限；从包内 desktop executable 构造 Tauri 应用以初始化已注册插件但不进入事件循环；并执行内嵌 manager 握手，要求握手 stdout 中的编译时版本、deployment ID、protocol、manager target 与 rustc target triple 一致。无图形环境的 Linux 检查会在 Xvfb 下执行初始化 smoke test。Release workflow 还会在发布前验证每个生成的 `.sha256`。
+Release workflow 会在原生匹配 runner 上对五个包逐一调用 `desktop/scripts/verify-package.sh`；CI 对其抽检的 Windows x86_64 与 Linux arm64 包做同样检查。该脚本会拒绝 host/target 不匹配；解包 NSIS、DMG 或 AppImage；检查包/版本身份；在包内存在 `mtls-router` 或 `mtls-router-manager` 可执行文件时失败；检查桌面可执行文件的格式及架构；检查 macOS/Linux 可执行权限；从包内 desktop executable 构造 Tauri 应用以初始化已注册插件但不进入事件循环；并执行内嵌 manager 握手，要求握手 stdout 中的编译时版本、deployment ID、protocol、manager target 与 rustc target triple 一致。无图形环境的 Linux 检查会在 Xvfb 下执行初始化 smoke test。Release workflow 还会在聚合预检中验证每个生成的 `.sha256`；这些 sidecar 文件不会挂到 GitHub Release。
 
 这些自动包检查不会安装包，也不覆盖正常 GUI 启动、setup hook、事件循环、首次启动行为或 updater 网络路径。发布前，必须保留 workflow 检查输出，并从每个匹配目标 runner 保留完整 release checklist 的独立证据：
 
 1. 确认包和可执行文件架构与目标一致。
 2. 检查包内容，确保只有一个桌面可执行文件、没有任何 CLI router/manager 二进制，且不存在原始 PEM/key 文件。
 3. 确认 macOS/Linux 执行权限，并验证无需提权的当前用户安装/启动。
-4. 确认包在 `SHA256SUMS` 中的条目及其 `.sha256` 文件与下载得到的字节一致。
+4. 确认包在 `SHA256SUMS` 中的条目与下载得到的字节一致。GitHub asset 可用 release digest 作为第二校验。
 5. 通过桌面运行 `manager.info`，并向运行中的内嵌 router 请求 `/version`；要求 desktop、内嵌 manager、内嵌 router 和 release artifact metadata 的版本、非默认 deployment ID 及 management protocol `4` 一致。在任何 key-bearing Agent 请求前拒绝全部 protocol 混合组合。
 6. 使用平台原生工具验证 Windows 签名，或 macOS code signature、notarization 和 stapling；状态缺失时必须明确记录。
 7. 安装并启动，验证首次启动、第二实例激活、内嵌 manager 失败行为、托盘/关闭/退出、默认 autostart、外部复用、从 `v0.4.1` 桌面或 CLI 安装迁移历史 router、未知端口冲突、Agent 预览/写入/回滚、日志以及卸载准备/清理。
 8. 确认 Windows 卸载移除当前用户 autostart。确认 macOS/Linux **准备卸载**在删除前移除 autostart 并退出。
 9. 确认卸载不删除或重写 Agent 文件、敏感备份、日志或状态。
 10. 扫描源码、日志、诊断、router 之外的包内容和发布校验文件，排除意外 API key 或凭据文件。
-11. 在真实 Windows x86_64/arm64、macOS Intel/Apple Silicon 和 Linux x86_64/arm64 目标上，把上一 stable 包安装到受支持且可写的位置，再通过受控真实 feed 更新到候选版本。确认启动与手动检查、显式确认、签名校验、下载/安装/重启、候选 desktop/manager/router 版本、router 所有权行为，以及故意放在不受支持或不可写安装位置时的恢复。Mock UI、包检查和全新安装候选包都不能代替该上一版本到下一版本测试。
+11. 在真实 Windows x86_64、macOS Intel/Apple Silicon 和 Linux x86_64/arm64 目标上，把上一 stable 包安装到受支持且可写的位置，再通过受控真实 feed 更新到候选版本。确认启动与手动检查、显式确认、签名校验、下载/安装/重启、候选 desktop/manager/router 版本、router 所有权行为，以及故意放在不受支持或不可写安装位置时的恢复。Mock UI、包检查和全新安装候选包都不能代替该上一版本到下一版本测试。
 
 任何目标缺少包检查、签名状态、成功安装/启动证据或上一版本到下一版本的真实平台更新证据时，都不能推进 stable 更新 channel。Workflow 配置、已上传 artifact、本地 Tauri 构建、mock updater 行为和包检查本身都不属于运行时证据。
 
@@ -298,11 +298,11 @@ CI 和 release target runner 会在 Windows、macOS、Linux 上原生执行 `go 
 
 ## Release workflow
 
-`.github/workflows/release.yml` 配置六个原生桌面和两个原生 headless Linux CLI producer。Dispatch 可选桌面目标，并独立产生 CLI 归档；origin 固定，验证构建不推进更新频道。Stable 等待所有 producer，验证桌面 updater pair 和 CLI provenance 后组装/镜像；只把两个精确新 Rust CLI 归档/校验/Sigstore bundle 加入 allowlist，旧 Go、setup、服务资产仍禁止。`latest.json` 继续仅列六个桌面平台。
+`.github/workflows/release.yml` 配置五个原生桌面和两个原生 headless Linux CLI producer。Dispatch 可选桌面目标，并独立产生 CLI 归档；origin 固定，验证构建不推进更新频道。Stable 等待所有 producer，验证桌面 updater pair 和 CLI provenance，分别组装完整镜像与 GitHub 子集。GitHub 保留五个桌面安装包（macOS 仅 DMG）、两 CLI 归档/provenance、状态/feed 及适用 updater 签名；macOS `.app.tar.gz` updater 归档与签名只进入镜像。producer `.sha256` 仅作预检，公开校验用 `SHA256SUMS`，GitHub 的清单只列已挂文件。`latest.json` 继续仅列五个桌面平台；旧 Go/setup/服务资产与 Windows arm64 桌面包仍禁止，不覆盖历史 release。
 
 生产客户端需要公有 variables `CLIENT_AUTH_CA_PEM`、`UPSTREAM_CA_PEM`、非默认 `DEPLOYMENT_ID` 及 `RELEASE_BUILD=1`，不接收个人/共享 client key 或 issuing key。Stable 桌面保留 updater private key/password/public key 及固定指纹检查，平台签名独立；桌面专属 preset/SIMPLIFY 的无 key 校验与规范化不变。CLI 用 `actions/attest-build-provenance`，发布时校验归档内容/摘要，以及绑定 repo、Release workflow、source ref/SHA、hosted runner 的 Sigstore bundle；恢复发布使用已核验原 tag SHA/ref，而不是当前 main SHA。
 
-所有 producer 都生成 schema `1`、protocol `4` metadata；正常/恢复发布必须恰好六个桌面和两个精确枚举的 CLI producer，无重复/混代。桌面与 CLI 分别核对资产数量/来源，CLI 归档内只有可执行文件。
+所有 producer 都生成 schema `1`、protocol `4` metadata；正常/恢复发布必须恰好五个桌面和两个精确枚举的 CLI producer，无重复/混代。桌面与 CLI 分别核对资产数量/来源，CLI 归档内只有可执行文件。
 
 使用 `gh` 设置 release 输入：
 

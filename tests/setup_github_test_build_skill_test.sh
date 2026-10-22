@@ -29,7 +29,7 @@ set -e
   fail 'wrapper must not accept arbitrary upstream input'
 
 for value in \
-  'all|windows-amd64|windows-arm64|darwin-amd64|darwin-arm64|linux-amd64|linux-arm64' \
+  'all|windows-amd64|darwin-amd64|darwin-arm64|linux-amd64|linux-arm64' \
   "'vars.CLIENT_AUTH_CA_PEM'" \
   '-f "inputs[target]=$target"' \
   'gh attestation verify "$archive"'; do

@@ -136,8 +136,9 @@ fn build_app() -> tauri::Result<tauri::App<tauri::Wry>> {
                     identity.run_maintenance(stop).await;
                 });
             }
-            let diagnostics = diagnostic_snapshot::DiagnosticStore::new(
+            let diagnostics = diagnostic_snapshot::DiagnosticStore::with_recorded_state(
                 paths::last_diagnostics_path(&paths.data_dir),
+                Some(paths::desktop_state_path(&paths.data_dir)),
             );
             let observer_app = app.handle().clone();
             let observer_diagnostics = diagnostics.clone();

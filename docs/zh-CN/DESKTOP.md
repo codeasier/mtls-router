@@ -6,19 +6,19 @@ Tauri 桌面应用是固定服务 `mtls-router` 的当前用户控制面板，�
 
 > **CLI 停止维护。** v0.4.1 之后的版本只发布桌面应用。独立的 CLI router/manager 二进制、`setup.sh` / `setup.ps1` 以及 systemd/Docker/NSSM 服务包装都冻结在各自的历史 release tag 上，仍可从那里下载，但不再有新构建。桌面升级会识别早期 CLI 或 sidecar 时代桌面安装遗留的 router，并且只在完整进程身份校验通过后一次性接管，而不会下载或启动新的 CLI。
 
-> 当前仓库中的 CI 和 release workflow 会构建六个原生桌面包：Windows x86_64/arm64 NSIS 安装器、macOS Intel/Apple Silicon DMG，以及 Linux x86_64/arm64 AppImage。每个 package job 都在匹配的目标 runner 上执行检查和只覆盖初始化的启动 smoke test。Release 签名取决于平台凭据，macOS notarization/stapling 还需要完整的 Apple notarization 凭据；每个目标的状态文件会记录结果。包检查不会安装或正常启动应用，因此仍需单独提供目标 runner 上成功启动的证据。详见[构建与发布](BUILD.md)。
+> 当前仓库中的 release workflow 会构建五个原生桌面包：Windows x86_64 NSIS 安装器、macOS Intel/Apple Silicon DMG，以及 Linux x86_64/arm64 AppImage。CI 抽检未签名的 Windows x86_64 与 Linux arm64 包。每个 package job 都在匹配的目标 runner 上执行检查和只覆盖初始化的启动 smoke test。Release 签名取决于平台凭据，macOS notarization/stapling 还需要完整的 Apple notarization 凭据；每个目标的状态文件会记录结果。包检查不会安装或正常启动应用，因此仍需单独提供目标 runner 上成功启动的证据。详见[构建与发布](BUILD.md)。
 
 ## 安装
 
 从可信的内部分发渠道获取与操作系统及 CPU 架构匹配的包。包内只有一个内嵌了 router 与 manager 的桌面可执行文件，没有可以移出、替换或单独运行的组件。
 
-- Windows：运行与 x86_64 或 arm64 匹配的当前用户安装器。应用设计不要求管理员提权。
+- Windows：运行当前用户 x86_64 安装器。应用设计不要求管理员提权。
 - macOS：打开与 Intel 或 Apple Silicon 匹配的 DMG，然后把 `CodeasierRouter.app` 拖到 Applications 快捷方式上。
 - Linux：给与 x86_64 或 arm64 匹配的 AppImage 添加执行权限，再以当前用户启动。
 
 如果操作系统提示包未签名、未 notarize、已损坏或发布者未知，请停止安装并向分发方核实 release 状态。不要只根据包文件名绕过平台安全检查。
 
-Release asset 集中每个桌面包都有一个 `.sha256` 文件和一个 `signing-status-<os>-<arch>.txt` 文件。它们证明记录的 checksum 和签名/notarization 结果，不证明安装或启动成功。还必须取得[包验证](BUILD.md#包验证)要求的独立目标平台启动证据。
+Release asset 集包含覆盖全部已发布包的 `SHA256SUMS`，以及每个桌面包对应的 `signing-status-<os>-<arch>.txt` 文件。GitHub asset 另外提供 digest。它们证明记录的 checksum 和签名/notarization 结果，不证明安装或启动成功。还必须取得[包验证](BUILD.md#包验证)要求的独立目标平台启动证据。
 
 ## 首次启动
 
@@ -38,7 +38,7 @@ Release asset 集中每个桌面包都有一个 `.sha256` 文件和一个 `signi
 
 ## 在线更新
 
-Stable 桌面 release 在 Windows x86_64/arm64、macOS Intel/Apple Silicon 和 Linux x86_64/arm64 上支持整包在线更新。更新会替换完整的桌面应用，其中已包含内嵌的 manager 和 router。该能力仅属于桌面应用；已冻结的 CLI 二进制与安装脚本没有更新器。
+Stable 桌面 release 在 Windows x86_64、macOS Intel/Apple Silicon 和 Linux x86_64/arm64 上支持整包在线更新。更新会替换完整的桌面应用，其中已包含内嵌的 manager 和 router。该能力仅属于桌面应用；已冻结的 CLI 二进制与安装脚本没有更新器。
 
 应用每次启动会静默检查一次 `https://release.codeasier.top/latest.json`；检查失败不会阻断启动。设置页面会显示当前和最新桌面版本、release 提供的更新说明，以及手动**检查更新**操作。由于 manager 与 router 已编译进桌面二进制，设置页面只列出一个应用版本；只有在复用历史 CLI 安装的兼容外部 router 时才会单独列出其版本。应用只接受更高版本的 stable SemVer release；不会提供 prerelease 或含 build metadata 的版本，validation/非 stable 构建也不会发布到桌面更新 channel。
 
@@ -61,12 +61,12 @@ Rust 桌面运行时是 `installation.json` 的唯一所有者。稳定 installa
 - **受 supervisor 管理或被阻断的占用者：**可靠识别的 Windows Service 或 Linux systemd 用户/系统 service 绝不会被强制终止。页面会显示有界且经过验证的 service/unit 标识，以及 `services.msc` / `sc.exe stop`、`systemctl --user stop` 或 `sudo systemctl stop` 固定示例。复制的 Windows `sc.exe` 命令经过安全引用，但仅适用于管理员 **PowerShell** 会话，不是 `cmd.exe` 命令。所有示例都只供人工参考：应用既不执行命令，也不请求 administrator/root 权限。权限不足和其他用户进程同样必须在正确身份或权限上下文中人工处理；不要提升桌面应用权限。macOS manager 不猜测 launchd label，因此经过验证的普通同用户进程仍可能允许强制终止；随后重新占用时只提供通用活动监视器/`launchctl` 引导。
 - **终止与观察：**在完整身份模式下，manager 成功证明已确认的进程身份变为不存在且端口曾被观察到释放。在 Windows 仅 PID 模式下，成功只证明终止请求成功，并且原 listener PID 已从该精确端口消失；它不独立证明进程已完全结束。两种模式都不启动 router，也不承诺持续释放。桌面端随后在约 10 秒内定期采样状态。**端口保持释放**表示采样检查发现端口已释放且未检测到重新占用；采样发现新占用者时会显示**服务或守护程序重新占用端口**并触发新检查。两次检查之间的重新占用可能无法检测。主动启动 router 会取消观察，避免把桌面自有 router 误报为重新占用。
 - **人工恢复与错误：**如果恢复不可用、你不接受引导或终止失败，请使用操作系统工具识别并停止或重新配置 listener，然后重试。确认阶段权限丢失、终止请求失败和未能及时证明端口释放会分别报告 `OCCUPANT_PERMISSION_DENIED`、`OCCUPANT_TERMINATION_FAILED` 和 `PORT_RELEASE_TIMEOUT`；这些错误都不表示向替代进程发送过信号。
-- **陈旧状态：**PID 或可执行文件不匹配会报告 stale，且不会发送信号。人工清理前先核实进程和状态。
+- **陈旧状态：**PID 或可执行文件不匹配会报告 stale，且不会发送信号。若能证明记录的 PID 已被复用（OS 返回完整活进程身份且启动标识明确不同），并且已配置监听端口空闲，则会删除残留的 `desktop-state.json`，以便新的 router 绑定。不可读、不完整或仍关联的记录继续 fail closed；人工清理前先核实进程和状态。
 - **降级或陈旧健康：**router 进程可能仍接受本地连接。当前检查失败显示为降级 / 上游不可用；当前 unknown 检查显示为等待结果；超过 30 秒的结果显示为 stale / 已过期。请重试健康检查并查看日志；不要把 stale 或尚未返回的健康结果当作健康，也不要把当前上游失败写成仅仅过期。
 
 桌面端管理的每次启动都会分别写入应用数据目录下的 `mtls-router-logs/YYYY-MM-DD/HH-MM-SS.log`。日志页面跟随当前或最近一次启动；**打开日志位置**则可用于人工查看按会话分组的历史记录。
 
-每次 poll 时，桌面端会用当前内存中的诊断快照覆盖写入 `{data_dir}/last-diagnostics.json`。Router 与日志页可不经 manager 复制该快照。**导出支持包**会写入用户选定的 zip，内含 `last-diagnostics.json` 以及 `mtls-router-logs/` 下的全部文件；不包含凭据、Agent 配置或备份。原始会话日志仅供维护者使用。对应 Tauri 命令为 `diagnostics_snapshot` 与 `export_support_bundle`。
+每次 poll 时，桌面端会用当前内存中的诊断快照覆盖写入 `{data_dir}/last-diagnostics.json`。已锁存的 `start_failed` 会把脱敏后的 `last_error` 写成封闭 `stage`/`code` 以及可选 `os_error`/`listen_refusal`；成功解析的 `desktop-state.json` 只可附加 PID、启动标识和可执行文件 basename。Router 与日志页可不经 manager 复制该快照。**导出支持包**会写入用户选定的 zip，内含 `last-diagnostics.json` 以及 `mtls-router-logs/` 下的全部文件；不包含凭据、Agent 配置或备份。原始会话日志仅供维护者使用。对应 Tauri 命令为 `diagnostics_snapshot` 与 `export_support_bundle`。
 
 恢复步骤见[故障排查](TROUBLESHOOTING.md)。
 
@@ -119,7 +119,9 @@ Rebuild 输出有意只包含托管内容：Claude `settings.json` 只包含托�
 
 ## API key 边界和限制
 
-API 密钥页面会在桌面凭据存储中保存、替换或删除一个全局 API key；webview 只能读取摘要，绝不能回读明文。删除已保存密钥前会先要求确认。主导航中独立的「用量」页面展示当前密钥的用量窗口：周期选择按滚动（`1h` / `12h` / `24h` / `7d` / `30d`）与日历（`today` / `this_week` / `this_month`）分组，按模型明细表支持模型多选筛选，以及请求、Token、费用列排序。日历文案写明北京时间 08:00 起点（与上游 UTC 日 / ISO 周 / 月边界对齐）；桌面只转发 `period` token，不计算窗口，也不从 `quotas[]` 合成总览配额。Rust 一次性加载 key，manager 经可信本地路由查询 `GET /v1/usage`，webview 只收到有界的 per-key 快照（请求数、token、费用、可选总览配额、可选供应商 `quotas[]` 与按模型明细）。快照 `as_of` 与重置时间均按 `Asia/Shanghai` 格式化。若服务尚未提供该接口，窗口只报告用量不可用，不泄露 key 或上游细节。Agent 总览既不读取也不验证该 key。只有点击卡片操作后，Rust 才会按需为 `agent.models` 加载它，并在 `agent.write` 前再次加载当前保存值。桌面 `ModelFlow` 只包含 Agent、目录和预览模式状态，不包含 API key。Timeout、malformed response、manager restart 或 uncertain delivery 后，secret-bearing 调用绝不会自动 replay。除凭据存储以及 Agent 文件或已批准备份外，应用不会有意把 key 放入桌面或 manager 持久状态、进程参数、环境变量、日志、诊断、model config、catalog/revision token、预览响应或写入响应。
+API 密钥页面会在桌面凭据存储中保存、替换或删除一个全局 API key；webview 只能读取摘要，绝不能回读明文。删除已保存密钥前会先要求确认。主导航中独立的「用量」页面展示当前密钥的用量窗口：周期选择按滚动（`1h` / `12h` / `24h` / `7d` / `30d`）与日历（`today` / `this_week` / `this_month`）分组，按模型明细表支持模型多选筛选、固定每页 10 行的分页，以及请求、Token、费用列排序；筛选时表格整体高度保持固定，总 token 数与按模型 token 数在达到 100 万及以上时附带一位小数的 M 值（如 `1,000,000(1.0M)`）。供应商限额渲染为独立卡片并在用量周期切换时保留，各条限额标明自身的预算窗口（每日/每周/每月）与重置时间，进度条按健康（0–30%）、警告（30–70%）、危险（70% 以上）着色。日历文案写明北京时间 08:00 起点（与上游 UTC 日 / ISO 周 / 月边界对齐）；桌面只转发 `period` token，不计算窗口，也不从 `quotas[]` 合成总览配额。Rust 一次性加载 key，manager 经可信本地路由查询 `GET /v1/usage`，webview 只收到有界的 per-key 快照（请求数、token、费用、可选总览配额、可选供应商 `quotas[]` 与按模型明细）。快照 `as_of` 与重置时间均按 `Asia/Shanghai` 格式化。若服务尚未提供该接口，窗口只报告用量不可用，不泄露 key 或上游细节。Agent 总览既不读取也不验证该 key。只有点击卡片操作后，Rust 才会按需为 `agent.models` 加载它，并在 `agent.write` 前再次加载当前保存值。桌面 `ModelFlow` 只包含 Agent、目录和预览模式状态，不包含 API key。Timeout、malformed response、manager restart 或 uncertain delivery 后，secret-bearing 调用绝不会自动 replay。除凭据存储以及 Agent 文件或已批准备份外，应用不会有意把 key 放入桌面或 manager 持久状态、进程参数、环境变量、日志、诊断、model config、catalog/revision token、预览响应或写入响应。
+
+顶部限额卡在同时收到两种配额格式时优先展示供应商 `quotas[]`，不重复显示总览 `quota`；仅有总览配额时，该卡片改为展示总览配额。
 
 在清理该 Agent 前，目标 Agent 的配置文件仍需按该 Agent 的要求持久化 key。单 Agent 清理会删除 Agent 文件中的托管凭据，但有意保留桌面全局 key。用户批准的恢复与清理备份也可能持久化旧 key。Rust 每次按需使用 key 时都会把它保存在 zeroizing 内存中，但清除应用引用只是 best effort，不保证能从进程或操作系统内存中进行取证级擦除。
 

@@ -59,7 +59,7 @@ still dependent on jump**. It does not prove the site/WG migration is complete.
 
 ## Stage B: native package rollout and DNS
 
-Keep `release.codeasier.top`, its server certificate, six-platform feed and
+Keep `release.codeasier.top`, its server certificate, five-platform feed and
 original updater key available. Validate an old desktop can download/verify the
 whole new package, then perform one-click enrollment. Preserve API keys, Agent
 URLs/files and private identity through subsequent updates. New CLI packages are

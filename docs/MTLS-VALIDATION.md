@@ -55,6 +55,6 @@ sample result. Failure/over-budget cases retain the strict authentication and
 no-replay baseline; they do not justify disabling CRL or hostname checks.
 
 Native Linux amd64/arm64 no-GUI login/service replacement, native Windows DACL,
-six-platform package upgrade, actual GitHub provenance and real organization/
+five-platform package upgrade, actual GitHub provenance and real organization/
 DNS/WG acceptance require their own runs. Missing inputs/evidence stay open in
 the implementation task list; a configured workflow or fixture is not acceptance.

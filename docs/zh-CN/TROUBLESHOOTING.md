@@ -6,10 +6,10 @@
 
 ## 包被阻止或 release 状态不明确
 
-Workflow 会构建六个原生桌面包，并在匹配的目标 runner 上检查每个包，包括只覆盖初始化的启动 smoke test，但签名是有条件的，而且包检查不会安装或正常启动应用。
+Release workflow 会构建五个原生桌面包，并在匹配的目标 runner 上检查每个包，包括只覆盖初始化的启动 smoke test，但签名是有条件的，而且包检查不会安装或正常启动应用。
 
-1. 确认包与操作系统和架构匹配：Windows x86_64/arm64 NSIS、macOS Intel/Apple Silicon DMG，或 Linux x86_64/arm64 AppImage。
-2. 使用配套 `.sha256` 文件验证包。
+1. 确认包与操作系统和架构匹配：Windows x86_64 NSIS、macOS Intel/Apple Silicon DMG，或 Linux x86_64/arm64 AppImage。
+2. 用 `SHA256SUMS` 中的条目验证包。GitHub asset 可用 release digest 作为第二校验。
 3. 阅读匹配的 `signing-status-<os>-<arch>.txt`。签名凭据不可用时，Windows 和 macOS 包可能未签名；notarization 凭据不可用时，macOS 包可能已签名但未 notarize。Linux 状态会明确报告未配置包签名。
 4. 向分发方索取匹配目标 runner 上成功安装/启动的独立证据。成功的包检查 job 或状态文件不属于启动证据。
 
@@ -57,12 +57,13 @@ Workflow 会构建六个原生桌面包，并在匹配的目标 runner 上检查
 
 ## Router 状态陈旧
 
-Stale 表示记录的 PID、进程启动标识或可执行文件标识不再匹配。manager 会保留状态用于诊断，且不会发送信号。
+Stale 表示记录的 PID、进程启动标识或可执行文件标识不再匹配。manager 不会发送信号。只有已配置监听端口空闲，并且 OS 证明记录的 PID 现在属于另一个完整活进程（启动标识明确不同）时，才会自动删除残留的桌面记录。不可读或仍关联的记录继续 fail closed。
 
-1. 独立检查报告的 PID 和可执行文件。
-2. 如果真实 router 仍在运行，请使用拥有它的工具停止；只有确认身份后才能人工停止。
-3. 原因不清楚时保留状态和日志；不要通过修改 PID 让状态看似有效。
-4. 确认进程消失后重启桌面应用。如果 stale 持续出现，请联系维护者。
+1. 复制诊断快照或导出支持包。锁存的启动失败应包含 `stage=`/`code=`（例如 `state_reconcile` / `ROUTER_STATE_STALE`），并可能带上脱敏的记录 PID 与可执行文件 basename，而不是原始状态文件。
+2. 独立检查报告的 PID 和可执行文件。
+3. 如果真实 router 仍在运行，请使用拥有它的工具停止；只有确认身份后才能人工停止。
+4. 原因不清楚时保留状态和日志；不要通过修改 PID 让状态看似有效。
+5. 确认进程消失后重启桌面应用。如果 stale 持续出现，请联系维护者。
 
 ## 运行中但上游不可用
 

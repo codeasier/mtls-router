@@ -31,4 +31,4 @@ MTLS_TEST_GATEWAY_SAMPLES=200 go test ./internal/routerenroll -run TestRealNginx
 
 在等价于实际入口 CPU/内存/WG pool 的隔离环境，记录 worker、连接/读头预算、CA/CRL 大小、包 revision。以代表性上传和长 SSE 收集持续 CPU/RSS、新请求 QPS、排队、握手与真实首 token p95/p99，复测资格复核/续期峰值和 CRL reload，确认模型控制面查询仍为零。只以该机器/负载形成预算，不把笔记本样本按比例换算；超预算仍保持严格认证/不重放，不能关闭 CRL 或 hostname 检查。
 
-原生 Linux 双架构无 GUI 登录/服务替换、Windows DACL、六平台升级、实际 GitHub provenance、真实组织/DNS/WG 须分别留证。输入/证据缺失继续在任务表保持开放，工作流配置与 fixture 不等于验收。
+原生 Linux 双架构无 GUI 登录/服务替换、Windows DACL、五平台升级、实际 GitHub provenance、真实组织/DNS/WG 须分别留证。输入/证据缺失继续在任务表保持开放，工作流配置与 fixture 不等于验收。

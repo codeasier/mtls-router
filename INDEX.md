@@ -156,7 +156,7 @@ Rust 侧绝不向 webview 暴露 shell/fs/http 权限（由 `lib.rs` 中的测�
 
 根 `Cargo.toml` / `Cargo.lock` / `target/` 统一共享 crates、CLI、桌面。`scripts/public-trust.rs` 只读取 `trust/client-auth-ca.pem` / `trust/upstream-ca.pem` 或对应公有 vars；规范解析 CA 并去除非证书文本，release 拒绝缺失/过期/占位值。设备 key/CSR/证明在私有 `identity/`，与 API key 和 Agent 文件分开。
 
-桌面仍为六平台包、独立平台签名状态、stable Tauri `.sig` 与六平台 `latest.json`。另有两个精确 `CodeasierRouter-cli-linux-{amd64,arm64}.tar.gz`，各配 `.sha256` / `.tar.gz.sigstore.json`；CLI 通过固定 repo/workflow/source ref/SHA 验证 GitHub OIDC provenance，不进入 updater feed。正常/恢复组装核验六桌面加两 CLI 的 v4 metadata，旧 Go/setup/未知资产拒绝。
+桌面沿用五平台包、独立平台签名状态、stable Tauri `.sig` 与五平台 `latest.json`，不再发布 Windows arm64。另有两个精确 `CodeasierRouter-cli-linux-{amd64,arm64}.tar.gz` 及 `.tar.gz.sigstore.json`；CLI 通过固定 repo/workflow/source ref/SHA 验证 GitHub OIDC provenance，不进入 updater feed。正常/恢复组装核验五桌面加两 CLI 的 v4 metadata；producer sidecar `.sha256` 仅作预检，公开校验使用 `SHA256SUMS`，旧 Go/setup/未知资产拒绝。
 
 用户安装/连接见 [Linux CLI](docs/zh-CN/LINUX-CLI.md)；签发单主/日志/CRL 见[运维](docs/zh-CN/ENROLLMENT-OPERATIONS.md)；双节点 SAN/CRL/DNS、桥接与 WG 回程顺序见[迁移 runbook](docs/zh-CN/MTLS-MIGRATION.md)。模板/隔离验证不代表生产或原生验收已完成。
 
@@ -164,7 +164,7 @@ Rust 侧绝不向 webview 暴露 shell/fs/http 权限（由 `lib.rs` 中的测�
 
 - `scripts/build.sh` 在 `secrets/` 下生成占位 PEM 供本地构建；真实发布密钥来自 GitHub secrets/vars。
 - 新个人设备领证服务的独立持久日志、离线根/受限签发 CA、单主模板与备份恢复见 [运维手册](docs/zh-CN/ENROLLMENT-OPERATIONS.md)；当前实施状态见 OpenSpec 变更任务，模板不代表生产已上线。
-- `desktop/scripts/prepare-updater-config.sh` 为 stable tag 生成私有 Tauri updater overlay 并校验固定公钥指纹；`desktop/scripts/updater-public-key-fingerprint.mjs` 生成该指纹；`desktop/scripts/create-macos-updater.sh` 从最终 macOS app 生成签名 `.app.tar.gz`；`desktop/scripts/verify-package.sh` 收集六平台 updater 产物及 `.sig` 并验证签名与公钥匹配。
-- `scripts/package-release.sh` 对精确 stable tag 汇总六平台 updater artifact/signature、生成 `latest.json`（平台 URL 指向 `release.codeasier.top`）并纳入 `SHA256SUMS`；release/recovery workflow 另将 tag 目录镜像至 `downloads.codeasier.top` 并单调、原子推进其 `latest` symlink 作为二级分发点，而 updater feed 与产物下载均以 `release.codeasier.top` 为准。Updater 签名密钥与 Windows/macOS 平台签名凭据属于独立信任链。
+- `desktop/scripts/prepare-updater-config.sh` 为 stable tag 生成私有 Tauri updater overlay 并校验固定公钥指纹；`desktop/scripts/updater-public-key-fingerprint.mjs` 生成该指纹；`desktop/scripts/create-macos-updater.sh` 从最终 macOS app 生成签名 `.app.tar.gz`；`desktop/scripts/verify-package.sh` 收集五平台 updater 产物及 `.sig` 并验证签名与公钥匹配。
+- `scripts/package-release.sh` 对精确 stable tag 汇总五平台 updater artifact/signature 及两 CLI/provenance，生成 `latest.json`（平台 URL 指向 `release.codeasier.top`，darwin 仍指向 `.app.tar.gz`）并纳入镜像 `SHA256SUMS`；GitHub Release 挂五个桌面安装包（macOS 仅 DMG）、两 CLI/provenance、Windows/Linux updater `.sig`、`latest.json`、只含已挂文件的 `SHA256SUMS` 与五个 `signing-status`。macOS `.app.tar.gz` updater 归档及其 `.sig` 只进入镜像，完整校验清单也只在镜像 `SHA256SUMS`。release/recovery workflow 另将完整 tag 目录镜像至 `downloads.codeasier.top` 并单调、原子推进其 `latest` symlink；updater feed 与下载以 `release.codeasier.top` 为准。Updater、平台签名与 CLI provenance 为独立信任链，不发布 sidecar `*.sha256`。
 - `.worktrees/` 目录含 git worktree 产物，已在 `.gitignore` 中忽略；分析产品代码时忽略。
 - 管理协议当前版本为 `4`；router、manager、setup receipt、release metadata 与桌面端必须同版本，桌面端在启动握手时校验并拒绝混合代。

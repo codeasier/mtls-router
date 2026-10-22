@@ -523,6 +523,12 @@ export const en: Record<TranslationKey, string> = {
   "apikey.usage.quotas.period.month": "Monthly",
   "apikey.usage.models.heading": "By model",
   "apikey.usage.models.model": "Model",
+  "apikey.usage.pagination.label": "Model table pagination",
+  "apikey.usage.pagination.prev": "Previous page",
+  "apikey.usage.pagination.next": "Next page",
+  "apikey.usage.pagination.summary": "Page {page} of {total}",
+  "apikey.usage.quotas.note":
+    "Provider limits reset on each provider's own window and do not follow the usage period.",
   "apikey.usage.filter.label": "Filter models",
   "apikey.usage.filter.all": "All models",
   "apikey.usage.filter.summary": "{count} / {total} selected",

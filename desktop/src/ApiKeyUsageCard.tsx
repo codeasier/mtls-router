@@ -13,6 +13,16 @@ import type { TranslationKey } from "./locales/zh-CN";
 
 const BEIJING_TIME_ZONE = "Asia/Shanghai";
 
+const MODEL_PAGE_SIZE = 10;
+
+type QuotaTone = "healthy" | "warning" | "danger";
+
+function quotaTone(percent: number): QuotaTone {
+  if (percent > 70) return "danger";
+  if (percent > 30) return "warning";
+  return "healthy";
+}
+
 const PERIOD_GROUPS: {
   id: "rolling" | "calendar";
   periods: APIKeyUsagePeriod[];
@@ -64,6 +74,16 @@ export function usageErrorTranslation(error: unknown): TranslationKey {
 
 function formatCount(language: string, value: number) {
   return new Intl.NumberFormat(language).format(value);
+}
+
+function formatTokenAmount(language: string, value: number) {
+  const count = formatCount(language, value);
+  if (value < 1_000_000) return count;
+  const millions = new Intl.NumberFormat(language, {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  }).format(value / 1_000_000);
+  return `${count}(${millions}M)`;
 }
 
 function formatCost(language: string, value: number) {
@@ -158,6 +178,7 @@ function QuotaMeter({
   const { language, t } = useI18n();
   const percentLabel =
     percent == null ? "" : formatQuotaPercent(language, percent);
+  const tone = percent == null ? null : quotaTone(percent);
   return (
     <article className="apikey-usage__quota">
       <header>
@@ -177,6 +198,7 @@ function QuotaMeter({
           aria-valuemax={100}
           aria-valuenow={Math.round(percent)}
           aria-valuetext={percentLabel}
+          data-tone={tone ?? undefined}
         >
           <span style={{ width: `${percent}%` }} />
         </div>
@@ -250,6 +272,37 @@ export function ApiKeyUsageCard({
       const delta = sortValue(a, sortColumn) - sortValue(b, sortColumn);
       return sortDirection === "asc" ? delta : -delta;
     });
+  // Pagination is keyed to the snapshot and visible row set so a refresh,
+  // a reordered table, or a different filter always restarts on page one;
+  // the current page is clamped so it never points past the last page.
+  const pageSignature = `${modelSignature}|${[...selectedSet].sort().join(",")}|${sortColumn}:${sortDirection}`;
+  const [pagination, setPagination] = useState<{
+    snapshot: APIKeyUsage | null;
+    signature: string;
+    page: number;
+  }>({ snapshot: null, signature: "", page: 1 });
+  const pageCount = Math.max(
+    1,
+    Math.ceil(visibleRows.length / MODEL_PAGE_SIZE),
+  );
+  const currentPage =
+    pagination.snapshot === usage && pagination.signature === pageSignature
+      ? Math.min(Math.max(1, pagination.page), pageCount)
+      : 1;
+  const pageRows = visibleRows.slice(
+    (currentPage - 1) * MODEL_PAGE_SIZE,
+    currentPage * MODEL_PAGE_SIZE,
+  );
+  // Render a full page of slots so the table body keeps an identical
+  // height whether the filter matches ten rows, one row, or none.
+  const fillerCount =
+    visibleRows.length === 0
+      ? MODEL_PAGE_SIZE - 1
+      : MODEL_PAGE_SIZE - pageRows.length;
+
+  function goToPage(next: number) {
+    setPagination({ snapshot: usage, signature: pageSignature, page: next });
+  }
   const allSelected = selectedSet.size === modelNames.length;
   const filterSummary = allSelected
     ? t("apikey.usage.filter.all")
@@ -265,10 +318,6 @@ export function ApiKeyUsageCard({
     usage.summary.completion_tokens === 0 &&
     usage.by_model.length === 0;
   const asOf = usage?.as_of ? formatBeijingDateTime(language, usage.as_of) : "";
-  const resetsAt = usage?.quota?.resets_at
-    ? formatBeijingDateTime(language, usage.quota.resets_at)
-    : "";
-  const providerQuotas = usage?.quotas ?? [];
 
   function toggleSort(column: UsageSortColumn) {
     if (column === sortColumn) {
@@ -363,16 +412,16 @@ export function ApiKeyUsageCard({
             <div>
               <dt>{t("apikey.usage.metric.tokens")}</dt>
               <dd>
-                {formatCount(
+                {formatTokenAmount(
                   language,
                   usage.summary.prompt_tokens + usage.summary.completion_tokens,
                 )}
               </dd>
               <small>
                 {t("apikey.usage.metric.prompt")}{" "}
-                {formatCount(language, usage.summary.prompt_tokens)} ·{" "}
+                {formatTokenAmount(language, usage.summary.prompt_tokens)} ·{" "}
                 {t("apikey.usage.metric.completion")}{" "}
-                {formatCount(language, usage.summary.completion_tokens)}
+                {formatTokenAmount(language, usage.summary.completion_tokens)}
               </small>
             </div>
             <div>
@@ -380,36 +429,15 @@ export function ApiKeyUsageCard({
               <dd>{formatCost(language, usage.summary.cost)}</dd>
             </div>
           </dl>
-          {usage.quota && (
-            <QuotaMeter
-              title={t("apikey.usage.quota.heading")}
-              amounts={quotaLabel(language, usage.quota, t)}
-              percent={quotaPercent(usage.quota)}
-              resetsAt={resetsAt}
-            />
-          )}
-          {providerQuotas.length > 0 && (
-            <section className="apikey-usage__quotas">
-              <strong className="apikey-usage__quotas-heading">
-                {t("apikey.usage.quotas.heading")}
-              </strong>
-              {providerQuotas.map((quota, index) => (
-                <QuotaMeter
-                  key={`${quota.provider}:${quota.period}:${quota.resets_at}:${index}`}
-                  title={`${providerLabel(quota.provider, t)} · ${budgetPeriodLabel(quota.period, t)}`}
-                  amounts={providerQuotaLabel(language, quota, t)}
-                  percent={quotaPercent(quota)}
-                  resetsAt={formatBeijingDateTime(language, quota.resets_at)}
-                />
-              ))}
-            </section>
-          )}
           {empty ? (
             <p className="apikey-usage__placeholder">
               {t("apikey.usage.empty")}
             </p>
           ) : modelRows.length === 0 ? null : (
-            <>
+            <section
+              className="apikey-usage__models-block"
+              aria-label={t("apikey.usage.models.heading")}
+            >
               <div className="apikey-usage__tablebar">
                 <strong>{t("apikey.usage.models.heading")}</strong>
                 <details className="apikey-usage__filter">
@@ -451,56 +479,98 @@ export function ApiKeyUsageCard({
                   </div>
                 </details>
               </div>
-              {visibleRows.length === 0 ? (
-                <p className="apikey-usage__placeholder">
-                  {t("apikey.usage.filter.empty")}
-                </p>
-              ) : (
-                <table className="apikey-usage__models">
-                  <thead>
-                    <tr>
-                      <th scope="col">{t("apikey.usage.models.model")}</th>
-                      {SORT_COLUMNS.map((column) => (
-                        <th
-                          key={column.id}
-                          scope="col"
-                          aria-sort={
-                            sortColumn === column.id
-                              ? SORT_ARIA[sortDirection]
-                              : "none"
-                          }
-                        >
-                          <button
-                            type="button"
-                            className="apikey-usage__sort"
-                            onClick={() => toggleSort(column.id)}
+              <div className="apikey-usage__models-body">
+                {visibleRows.length === 0 ? (
+                  <p className="apikey-usage__placeholder">
+                    {t("apikey.usage.filter.empty")}
+                  </p>
+                ) : (
+                  <div className="apikey-usage__table-scroll">
+                    <table className="apikey-usage__models">
+                      <thead>
+                        <tr>
+                          <th scope="col">{t("apikey.usage.models.model")}</th>
+                          {SORT_COLUMNS.map((column) => (
+                            <th
+                              key={column.id}
+                              scope="col"
+                              aria-sort={
+                                sortColumn === column.id
+                                  ? SORT_ARIA[sortDirection]
+                                  : "none"
+                              }
+                            >
+                              <button
+                                type="button"
+                                className="apikey-usage__sort"
+                                onClick={() => toggleSort(column.id)}
+                              >
+                                {t(column.label)}
+                                <span aria-hidden="true">
+                                  {sortColumn === column.id
+                                    ? sortDirection === "desc"
+                                      ? "↓"
+                                      : "↑"
+                                    : "↕"}
+                                </span>
+                              </button>
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pageRows.map((row) => (
+                          <tr key={row.model}>
+                            <th scope="row">{row.model}</th>
+                            <td>{formatCount(language, row.requests)}</td>
+                            <td>
+                              {formatTokenAmount(language, modelTokens(row))}
+                            </td>
+                            <td>{formatCost(language, row.cost)}</td>
+                          </tr>
+                        ))}
+                        {Array.from({ length: fillerCount }, (_, index) => (
+                          <tr
+                            key={`filler-${pageRows.length + index}`}
+                            aria-hidden="true"
+                            className="apikey-usage__models-filler"
                           >
-                            {t(column.label)}
-                            <span aria-hidden="true">
-                              {sortColumn === column.id
-                                ? sortDirection === "desc"
-                                  ? "↓"
-                                  : "↑"
-                                : "↕"}
-                            </span>
-                          </button>
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {visibleRows.map((row) => (
-                      <tr key={row.model}>
-                        <th scope="row">{row.model}</th>
-                        <td>{formatCount(language, row.requests)}</td>
-                        <td>{formatCount(language, modelTokens(row))}</td>
-                        <td>{formatCost(language, row.cost)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </>
+                            <td colSpan={SORT_COLUMNS.length + 1}>&nbsp;</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+              <nav
+                className="apikey-usage__pagination"
+                aria-label={t("apikey.usage.pagination.label")}
+              >
+                <button
+                  type="button"
+                  className="apikey-usage__page"
+                  disabled={currentPage <= 1}
+                  onClick={() => goToPage(currentPage - 1)}
+                >
+                  {t("apikey.usage.pagination.prev")}
+                </button>
+                <span className="apikey-usage__page-state">
+                  {t("apikey.usage.pagination.summary", {
+                    page: currentPage,
+                    total: pageCount,
+                  })}
+                </span>
+                <button
+                  type="button"
+                  className="apikey-usage__page"
+                  disabled={currentPage >= pageCount}
+                  onClick={() => goToPage(currentPage + 1)}
+                >
+                  {t("apikey.usage.pagination.next")}
+                </button>
+              </nav>
+            </section>
           )}
           {asOf && (
             <p className="apikey-usage__asof">
@@ -509,6 +579,65 @@ export function ApiKeyUsageCard({
           )}
         </>
       )}
+    </section>
+  );
+}
+
+export function OverviewQuotaCard({ quota }: { quota: APIKeyUsageQuota }) {
+  const { language, t } = useI18n();
+  return (
+    <section
+      className="apikey-usage apikey-usage--limits"
+      aria-label={t("apikey.usage.quota.heading")}
+    >
+      <QuotaMeter
+        title={t("apikey.usage.quota.heading")}
+        amounts={quotaLabel(language, quota, t)}
+        percent={quotaPercent(quota)}
+        resetsAt={
+          quota.resets_at
+            ? formatBeijingDateTime(language, quota.resets_at)
+            : ""
+        }
+      />
+    </section>
+  );
+}
+
+// Provider limits follow each provider's own budget window instead of the
+// selected usage period, so they render as an independent card whose
+// content stays put while the usage window reloads.
+export function ProviderLimitsCard({
+  quotas,
+}: {
+  quotas: APIKeyUsageProviderQuota[];
+}) {
+  const { language, t } = useI18n();
+  if (quotas.length === 0) return null;
+  return (
+    <section
+      className="apikey-usage apikey-usage--limits"
+      aria-label={t("apikey.usage.quotas.heading")}
+    >
+      <div className="apikey-usage__limits-head">
+        <strong className="apikey-usage__quotas-heading">
+          {t("apikey.usage.quotas.heading")}
+        </strong>
+        <p className="apikey-usage__quotas-note">
+          {t("apikey.usage.quotas.note")}
+        </p>
+      </div>
+      <section className="apikey-usage__quotas">
+        {quotas.map((quota, index) => (
+          <QuotaMeter
+            key={`${quota.provider}:${quota.period}:${quota.resets_at}:${index}`}
+            title={`${providerLabel(quota.provider, t)} · ${budgetPeriodLabel(quota.period, t)}`}
+            amounts={providerQuotaLabel(language, quota, t)}
+            percent={quotaPercent(quota)}
+            resetsAt={formatBeijingDateTime(language, quota.resets_at)}
+          />
+        ))}
+      </section>
     </section>
   );
 }

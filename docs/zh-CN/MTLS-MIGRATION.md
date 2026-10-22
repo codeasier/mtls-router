@@ -37,7 +37,7 @@
 
 ## B：原生包灰度与 DNS
 
-保持 `release.codeasier.top` 的服务器证书、六平台 feed 和原 updater key 可用。验证旧桌面可下载/验签完整新版，再一键领证；后续更新保留 API key、Agent URL/文件及私有身份。新 CLI 独立验签，不覆盖历史 Go 资产。
+保持 `release.codeasier.top` 的服务器证书、五平台 feed 和原 updater key 可用。验证旧桌面可下载/验签完整新版，再一键领证；后续更新保留 API key、Agent URL/文件及私有身份。新 CLI 独立验签，不覆盖历史 Go 资产。
 
 仅在两节点等价且回程均正常后，以已观察的低 TTL 将 relay 从已验证旧节点移到 jump2；不增加未经测试的第二 A 记录。旧节点继续服务 DNS 缓存和已获准 SSE，以真实流量/连接排空记录判断退役，不能只等 TTL；已发送请求不因切换重放。
 

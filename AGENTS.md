@@ -129,12 +129,12 @@ make desktop-package-current           # tauri build → package:verify（仅内
 
 历史 Go `mtls-router*`、manager/setup/服务包装继续冻结，不重建、不覆盖旧 tag。新 Rust CLI 只允许精确 Linux amd64/arm64 命名及校验/provenance；不能扩大归档 allowlist，不能混入桌面包或 updater feed。具体资产与构建事实见 [INDEX.md](INDEX.md#发布与公有构建)。
 
-桌面应用包：
-- macOS：`CodeasierRouter-darwin-${arch}.dmg`（stable 另有 `CodeasierRouter-darwin-${arch}.app.tar.gz` updater 归档）
-- Windows：`CodeasierRouter-windows-${arch}.exe`（NSIS installer）
-- Linux：`CodeasierRouter-linux-${arch}.AppImage`
+桌面应用包（GitHub Release 用户可见）：
+- macOS：`CodeasierRouter-darwin-amd64.dmg`、`CodeasierRouter-darwin-arm64.dmg`
+- Windows：`CodeasierRouter-windows-amd64.exe`（NSIS installer；不再发布 Windows arm64）
+- Linux：`CodeasierRouter-linux-amd64.AppImage`、`CodeasierRouter-linux-arm64.AppImage`
 
-附属：`CodeasierRouter-${os}-${arch}.sha256`（6 个）、stable 的 `.sig` 与 `latest.json`、`SHA256SUMS`（不含 signing-status 文件）+ `signing-status-${os}-${arch}.txt`（6 个）。
+附属：stable 的 updater `.sig`、`latest.json`、`SHA256SUMS`（不含 signing-status 文件）+ `signing-status-${os}-${arch}.txt`（5 个）。不要再发布 sidecar `*.sha256`（GitHub asset digest 已覆盖；流水线仍用它们做聚合预检）。macOS `CodeasierRouter-darwin-${arch}.app.tar.gz` 及其 `.sig` 只进入 `release.codeasier.top` 镜像，供 Tauri updater 使用，不挂到 GitHub Release。
 
 客户端构建不得读入或编入个人/共享 client key、issuing key 或 OAuth secret。保留公有 CA、固定 origin、deployment/protocol、updater 与平台签名保护；release 不能通过占位身份蒙混。私有 key/待办只存用户身份目录，支持包必须排除。
 `setup.ps1` 必须保留 UTF-8 BOM 以兼容 Windows PowerShell 5.1；`main_test.go` 会断言这一点（冻结实现仍受测试）。
