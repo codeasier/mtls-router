@@ -48,7 +48,7 @@ fn genuine_process(
 }
 
 fn version_body() -> Vec<u8> {
-    br#"{"pid":91,"deployment_id":"prod-a","management_protocol_version":"4"}"#.to_vec()
+    br#"{"pid":91,"deployment_id":"prod-a","management_protocol_version":"4","upstream_auth":"per_user_mtls","auth_protocol_version":"1"}"#.to_vec()
 }
 
 fn listener_for(url: &str) -> super::Listener {
@@ -339,7 +339,7 @@ fn channel_rejects_version_identity_mismatch_before_key_transmission() {
         }
         TestResponse::json(
             200,
-            br#"{"pid":92,"deployment_id":"other","management_protocol_version":"1"}"#.to_vec(),
+            br#"{"pid":92,"deployment_id":"other","management_protocol_version":"1","upstream_auth":"per_user_mtls","auth_protocol_version":"1"}"#.to_vec(),
         )
     });
     let listener = listener_for(&server.url());
@@ -356,6 +356,42 @@ fn channel_rejects_version_identity_mismatch_before_key_transmission() {
     .expect_err("mismatch");
     assert_eq!(error.code, ErrorCode::ModelCatalogStale);
     assert_eq!(key_observed.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn v4_shared_or_unknown_auth_generation_never_receives_a_business_key() {
+    for profile in [
+        None,
+        Some(("shared_mtls", "1")),
+        Some(("per_user_mtls", "99")),
+    ] {
+        let observed = Arc::new(AtomicUsize::new(0));
+        let keys = observed.clone();
+        let server = TestServer::start(move |request: &TestRequest| {
+            if !request.authorization.is_empty() {
+                keys.fetch_add(1, Ordering::SeqCst);
+            }
+            let mut body = serde_json::json!({"pid":91,"deployment_id":"prod-a","management_protocol_version":"4"});
+            if let Some((kind, version)) = profile {
+                body["upstream_auth"] = kind.into();
+                body["auth_protocol_version"] = version.into();
+            }
+            TestResponse::json(200, serde_json::to_vec(&body).unwrap())
+        });
+        let listener = listener_for(&server.url());
+        let result = Channel {
+            validate_process: Some(Arc::new(genuine_process)),
+            ..Channel::default()
+        }
+        .fetch(
+            &listener,
+            &trusted_fixture(&listener),
+            CHANNEL_KEY,
+            Instant::now() + Duration::from_secs(5),
+        );
+        assert!(result.is_err());
+        assert_eq!(observed.load(Ordering::SeqCst), 0);
+    }
 }
 
 #[test]

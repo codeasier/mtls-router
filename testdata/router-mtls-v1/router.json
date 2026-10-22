@@ -1,0 +1,56 @@
+{
+  "version": {
+    "version": "fixture",
+    "commit": "fixture",
+    "build_date": "2026-10-21T00:00:00Z",
+    "deployment_id": "fixture-deployment",
+    "management_protocol_version": "4",
+    "upstream_auth": "per_user_mtls",
+    "auth_protocol_version": "1",
+    "pid": 12345,
+    "started_at": "2026-10-21T00:00:00Z"
+  },
+  "cli_state": {
+    "schema_version": 1,
+    "pid": 12345,
+    "listen_addr": "127.0.0.1:19099",
+    "process_started_at": "fixture-os-start-identity",
+    "process_executable": "/synthetic-fixture/codeasier-router",
+    "owner": "cli",
+    "router_version": "fixture",
+    "deployment_id": "fixture-deployment",
+    "management_protocol_version": "4",
+    "upstream_auth": "per_user_mtls",
+    "auth_protocol_version": "1"
+  },
+  "cli_state_location": "${XDG_STATE_HOME:-$HOME/.local/state}/codeasier-router/router-state.json",
+  "trust_requires": ["expected_state_location", "pid", "os_start_time", "os_executable", "deployment_id", "management_protocol_version", "upstream_auth", "auth_protocol_version"],
+  "untrusted_cases": ["old-shared-v4", "http-self-report-only", "caller-selected-state-path", "wrong-process-start", "wrong-executable", "wrong-deployment", "unknown-auth-generation"],
+  "management_routes": [
+    {"path": "/version", "management": true, "method": "GET", "proxy_limited": false},
+    {"path": "/health", "management": true, "method": "GET", "proxy_limited": false, "status": 200},
+    {"path": "/version/", "management": false},
+    {"path": "/version-extra", "management": false},
+    {"path": "/healthz", "management": false},
+    {"path": "/health/", "management": false}
+  ],
+  "http": {
+    "stream_request_body": true,
+    "stream_sse_response": true,
+    "propagate_cancellation": true,
+    "replay_sent_requests": false,
+    "preserve_business_statuses": [401, 403, 429, 500, 502, 503],
+    "preserve_business_credentials": ["Authorization", "x-api-key"],
+    "control_plane_model_calls": 0,
+    "missing_identity_business_error": "CLIENT_CERT_REQUIRED",
+    "missing_identity_local_management": true,
+    "missing_identity_updater": true
+  },
+  "intentional_legacy_differences": [
+    "per-device runtime identity replaces embedded shared identity",
+    "v4 alone does not establish compatible upstream authentication",
+    "missing/expired identity does not prevent local management or updates",
+    "transport generation changes affect only new requests",
+    "new public relay excludes old shared client CA"
+  ]
+}

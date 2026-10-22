@@ -75,7 +75,61 @@ impl StateError {
 /// Decodes one JSON object. Missing and permission errors stay distinguishable
 /// from trailing or malformed JSON (`Corrupt`).
 pub fn read(path: impl AsRef<Path>) -> Result<RouterState, StateError> {
-    read_json(path)
+    let path = path.as_ref();
+    let value: serde_json::Value = read_json(path)?;
+    if value["schema_version"] == 1 && value["owner"] == "cli" {
+        let parent = path.parent().ok_or(StateError::Corrupt)?;
+        let meta = fs::symlink_metadata(parent).map_err(|_| StateError::Corrupt)?;
+        if !meta.is_dir() {
+            return Err(StateError::Corrupt);
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{MetadataExt, PermissionsExt};
+            if meta.uid() != unsafe { libc::geteuid() }
+                || meta.permissions().mode() & 0o777 != 0o700
+            {
+                return Err(StateError::Corrupt);
+            }
+        }
+        #[cfg(windows)]
+        if !crate::windows_security::private_permissions_ok(parent) {
+            return Err(StateError::Corrupt);
+        }
+        let data = router_identity::private_files::read(path)
+            .map_err(|_| StateError::Corrupt)?
+            .ok_or(StateError::NotFound)?;
+        if data.len() > 16384 {
+            return Err(StateError::Corrupt);
+        }
+        let record: router_contract::cli_state::ProcessRecord =
+            serde_json::from_slice(&data).map_err(|_| StateError::Corrupt)?;
+        if record.schema_version != 1
+            || record.owner != "cli"
+            || record.upstream_auth != "per_user_mtls"
+            || record.auth_protocol_version != "1"
+            || record.pid <= 0
+            || record.process_started_at.is_empty()
+            || !Path::new(&record.process_executable).is_absolute()
+        {
+            return Err(StateError::Corrupt);
+        }
+        let address: std::net::SocketAddr = record
+            .listen_addr
+            .parse()
+            .map_err(|_| StateError::Corrupt)?;
+        if address.ip() != std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
+            || address.port() == 0
+        {
+            return Err(StateError::Corrupt);
+        }
+        let mut result: RouterState =
+            serde_json::from_slice(&data).map_err(|_| StateError::Corrupt)?;
+        result.listen_addr = format!("http://{}", record.listen_addr);
+        result.binary_path = record.process_executable;
+        return Ok(result);
+    }
+    serde_json::from_value(value).map_err(|_| StateError::Corrupt)
 }
 
 pub fn write(path: impl AsRef<Path>, value: &RouterState) -> Result<(), StateError> {

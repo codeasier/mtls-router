@@ -14,7 +14,7 @@ command -v hdiutil >/dev/null || {
   exit 1
 }
 
-bundle_root="$desktop_dir/src-tauri/target/$target/release/bundle"
+bundle_root="$desktop_dir/../target/$target/release/bundle"
 app="$bundle_root/macos/CodeasierRouter.app"
 dmg_dir="$bundle_root/dmg"
 dmg="$dmg_dir/CodeasierRouter_${version}.dmg"

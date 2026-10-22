@@ -1,0 +1,20 @@
+[package]
+name = "codeasier-router"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77.2"
+
+[dependencies]
+router-contract = { path = "../../crates/router-contract" }
+router-identity = { path = "../../crates/router-identity" }
+router-core = { path = "../../crates/router-core" }
+serde_json = "=1.0.149"
+tokio = { version = "=1.52.3", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+
+[build-dependencies]
+pem = "=3.0.6"
+x509-parser = "=0.18.1"
+rcgen = { version = "=0.13.2", default-features = false, features = ["crypto", "pem", "ring"] }
+
+[dev-dependencies]
+libc = "=0.2.186"

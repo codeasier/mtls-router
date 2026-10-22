@@ -1,10 +1,12 @@
 # mtls-router
 
-面向 AI 编程 Agent（Claude Code、Codex、opencode）的本地反向代理系统。本地客户端走明文 HTTP；上游流量走 HTTPS 并内嵌 mTLS 凭证。当前交付物是 **Tauri 桌面应用**（React + Rust）：Rust `router_core` 与 `manager_core` 在桌面进程内提供反向代理与 protocol v4 控制面。仓库仍保留三层历史实现作为冻结参考：
+面向 AI 编程 Agent 的本地反向代理。本地 HTTP 经个人设备 mTLS 与原 API key 访问固定 `relay.codeasier.top`，统一客户端包仅含公有信任。Tauri 桌面与无 GUI Linux Rust CLI 共用合同/身份/流式核心；私钥在设备运行时生成，一键 GitCode 领证走独立 `enroll.codeasier.top`，不进入模型路径。
 
 1. **mtls-router**（Go，冻结）— 单二进制反向代理，支持 SSE 流式、健康探测、后台模式
 2. **mtls-router-manager**（Go，冻结）— 基于 stdin/stdout JSON 协议的控制面，负责路由生命周期与 Agent 配置
-3. **Tauri 桌面应用** — 内嵌 Rust router 与 manager；`v0.4.1` 之后的 release 只发布桌面包
+3. **Tauri 桌面应用** — 进程内 manager 与共享 Rust router；无 Go sidecar
+4. **codeasier-router**（Rust CLI）— Linux amd64/arm64，无 GUI/密钥环；个人身份与代理核心同桌面
+5. **codeasier-router-enroll**（服务端 Go）— 单主领证/续期/CRL 控制面，不是客户端 sidecar
 
 > 工作流偏好（本地开发 / 测试 / 提交 / 发布 / 文档规范）见 [AGENTS.md](AGENTS.md)。本 INDEX.md 仅描述项目理解与架构。
 
@@ -15,11 +17,11 @@ Tauri UI (React) ──invoke──▶ Rust commands ──protocol v4 JSON 行�
                  ──invoke/event──▶ image_workbench（独立 loopback HTTP/1.1）──▶ 同一 router_core ──mTLS──▶ 上游聊天/生图
 ```
 
-桌面应用的**控制面**绝不直接与 router 通信：命令层只通过 `ManagerClient` 发 protocol v4 请求，由同进程的 `manager_core` session 线程处理；router 由 `router_core` supervisor 在独立 runtime 线程上运行。**对话生图工作台**是显式的本地数据面例外：WebView 只做 UI，Rust 持 Key，在不可重拨的 loopback 连接上先校验 `/version`、进程身份与 `/health`，再发 `POST /v1/chat/completions` 与 `POST /v1/images/generations`。工作台流量不走 manager protocol v4。正常路径不启动 Go 子进程。历史拓扑（Tauri 拉起 `mtls-router-manager serve` sidecar，再由其管理 `mtls-router` 子进程）对应 `v0.4.1` 及更早版本；桌面会识别该拓扑遗留的 router 并在完整身份校验后一次性迁移。
+桌面**路由生命周期控制面**只通过 `ManagerClient`/进程内 manager v4 管理独立 supervisor 线程。证书命令是窄原生控制面，调用 `router-identity`，不接受 WebView 提供 key/CSR/origin。工作台是本地数据面：Rust 在同一不可重拨连接上验证认证代际、OS 进程与 health 后发模型调用；WebView 不持 key。正常无 Go 子进程。历史同安装旧代只有完整身份证明后才能显式迁移，外部/未知进程不自动终止。
 
-## CLI 停止维护（`v0.4.1` 之后）
+## 历史 Go CLI 冻结
 
-新 release 不再构建或发布 `mtls-router`、`mtls-router-manager`、setup 脚本、CLI 归档与 systemd/Docker/NSSM 包装；`scripts/package-release.sh` 以 allowlist 拒绝它们。Go 源码、`scripts/build.sh`、`setup.*`、`systemd/`、`Dockerfile` 与全部 Go 测试保留在仓库中：它们是内嵌 Rust 实现的对照契约（HTTP 黑盒、protocol v4、状态文件、occupant、legacy 迁移 golden），CI 继续运行 `go test ./...` 与原生 occupant 测试。下文 Router / Manager / Setup 章节描述的是这份冻结实现及其不变量，Rust 实现按同一契约移植。
+`mtls-router`、旧 manager/setup/systemd/Docker/NSSM 不重发、不覆盖历史 tag。新 Rust CLI 独立精确命名，归档内仅一个 executable。冻结 Go 源码和测试继续作为历史 HTTP/v4/状态/occupant/legacy 对照；下文 Go Router/Manager/Setup 章节只描述冻结实现，个人身份/无证管理/热切换的有意差异由共享 fixture 与 Rust 测试覆盖。
 
 ## Router（`main.go` + `internal/`，冻结）
 
@@ -95,7 +97,7 @@ key 绝不出现于环境变量、CLI 参数、model config、日志或 journal 
 **后端**（Rust，Tauri 2）：
 
 - `src/lib.rs` — 应用入口：插件注册（无 shell 插件）、setup（`installation.json` → `runtime` → 进程内 `InProcessFactory`）、invoke handler 注册；`--verify-manager-handshake` 在临时目录构造内嵌 manager 校验身份，并由 CLI 打印 version、deployment ID、protocol、manager target 与 rustc target triple
-- `src/runtime.rs` — 生产运行时装配：内嵌凭据（`build.rs` 写入 `OUT_DIR`）、`SupervisorConfig`、`CurrentLineage`/`SessionConfig`、编译期 preset/simplify
+- `src/runtime.rs` — 公有信任、私有 identity snapshot、`SupervisorConfig`、安装 generation 3 与 manager session、preset/simplify 装配；不含共享 client key
 - `src/commands.rs` — Tauri 命令处理器，代理到 manager client；`AppState`、`ModelFlow`，以及不接收凭据/model flow 的 cleanup preview/write command
 - `src/manager.rs` — `ManagerClient` 与 `TransportFactory` trait：单请求在飞、watchdog、一次性恢复；生产 transport 为 `manager_core::InProcessFactory`；cleanup write 禁止不确定投递后的自动 replay
 - `src/manager_core/` — 内嵌 protocol v4 控制面：lifecycle、occupant、Agent、trusted-router、`discovery`（Go discovery 移植）、`embedded`（生产 `Backend`：状态调和 + 端口分类 + 会话日志 + `desktop-state.json` 自有记录）、`legacy`（一次性完整身份校验迁移与每代际终止闩）、`session`（生产装配）
@@ -141,15 +143,27 @@ Rust 侧绝不向 webview 暴露 shell/fs/http 权限（由 `lib.rs` 中的测�
 | `internal/health`     | [INDEX.md](internal/health/INDEX.md)     | upstream mTLS 可达性探针                                                                                                             |
 | `internal/routermeta` | [INDEX.md](internal/routermeta/INDEX.md) | `/version` 与 `/health` handler                                                                                                      |
 | `internal/certs`      | [INDEX.md](internal/certs/INDEX.md)      | PEM 解析为 client cert + CA pool                                                                                                     |
+| `internal/routerenroll` | [INDEX.md](internal/routerenroll/INDEX.md) | 个人设备自动领证合同、CSR/SPKI 绑定及独立证书控制面 |
 | `internal/version`    | [INDEX.md](internal/version/INDEX.md)    | 链接期构建元数据变量                                                                                                                 |
 | `internal/log`        | [INDEX.md](internal/log/INDEX.md)        | 访问日志响应记录器                                                                                                                   |
 | `internal/tlspolicy`  | [INDEX.md](internal/tlspolicy/INDEX.md)  | TLS 最低版本解析                                                                                                                     |
 | `internal/manager`    | [INDEX.md](internal/manager/INDEX.md)    | 控制面：19 个协议方法、生命周期、发现、Agent 配置与清理、API key 用量。其 15 个子包各有专属 INDEX，导航见 [子包表](internal/manager/INDEX.md#子包) |
 | `desktop`             | [INDEX.md](desktop/INDEX.md)             | Tauri 2 应用：React 前端 + Rust 后端，内嵌 router 与 manager                                                                          |
+| `crates` | [INDEX.md](crates/INDEX.md) | 无 GUI Rust 合同/身份/代理共享核心；根 workspace、锁文件与 target |
+| `cli/codeasier-router` | [INDEX.md](cli/codeasier-router/INDEX.md) | 新 Linux 前台客户端、个人领证、无秘密状态与生命周期 |
+
+## 发布与公有构建
+
+根 `Cargo.toml` / `Cargo.lock` / `target/` 统一共享 crates、CLI、桌面。`scripts/public-trust.rs` 只读取 `trust/client-auth-ca.pem` / `trust/upstream-ca.pem` 或对应公有 vars；规范解析 CA 并去除非证书文本，release 拒绝缺失/过期/占位值。设备 key/CSR/证明在私有 `identity/`，与 API key 和 Agent 文件分开。
+
+桌面仍为六平台包、独立平台签名状态、stable Tauri `.sig` 与六平台 `latest.json`。另有两个精确 `CodeasierRouter-cli-linux-{amd64,arm64}.tar.gz`，各配 `.sha256` / `.tar.gz.sigstore.json`；CLI 通过固定 repo/workflow/source ref/SHA 验证 GitHub OIDC provenance，不进入 updater feed。正常/恢复组装核验六桌面加两 CLI 的 v4 metadata，旧 Go/setup/未知资产拒绝。
+
+用户安装/连接见 [Linux CLI](docs/zh-CN/LINUX-CLI.md)；签发单主/日志/CRL 见[运维](docs/zh-CN/ENROLLMENT-OPERATIONS.md)；双节点 SAN/CRL/DNS、桥接与 WG 回程顺序见[迁移 runbook](docs/zh-CN/MTLS-MIGRATION.md)。模板/隔离验证不代表生产或原生验收已完成。
 
 ## 辅助参考
 
 - `scripts/build.sh` 在 `secrets/` 下生成占位 PEM 供本地构建；真实发布密钥来自 GitHub secrets/vars。
+- 新个人设备领证服务的独立持久日志、离线根/受限签发 CA、单主模板与备份恢复见 [运维手册](docs/zh-CN/ENROLLMENT-OPERATIONS.md)；当前实施状态见 OpenSpec 变更任务，模板不代表生产已上线。
 - `desktop/scripts/prepare-updater-config.sh` 为 stable tag 生成私有 Tauri updater overlay 并校验固定公钥指纹；`desktop/scripts/updater-public-key-fingerprint.mjs` 生成该指纹；`desktop/scripts/create-macos-updater.sh` 从最终 macOS app 生成签名 `.app.tar.gz`；`desktop/scripts/verify-package.sh` 收集六平台 updater 产物及 `.sig` 并验证签名与公钥匹配。
 - `scripts/package-release.sh` 对精确 stable tag 汇总六平台 updater artifact/signature、生成 `latest.json`（平台 URL 指向 `release.codeasier.top`）并纳入 `SHA256SUMS`；release/recovery workflow 另将 tag 目录镜像至 `downloads.codeasier.top` 并单调、原子推进其 `latest` symlink 作为二级分发点，而 updater feed 与产物下载均以 `release.codeasier.top` 为准。Updater 签名密钥与 Windows/macOS 平台签名凭据属于独立信任链。
 - `.worktrees/` 目录含 git worktree 产物，已在 `.gitignore` 中忽略；分析产品代码时忽略。

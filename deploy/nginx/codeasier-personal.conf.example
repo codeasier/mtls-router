@@ -1,0 +1,119 @@
+# Include in nginx's http{} after replacing server TLS paths and backend routing.
+# client root/issuer are NEW personal-device trust, never the old shared CA.
+log_format codeasier_safe '$request_method $uri $status $body_bytes_sent $request_time';
+upstream codeasier_enroll_gateway { server unix:/run/codeasier-router-enroll/gateway.sock; }
+upstream codeasier_model_pool { server REPLACE_WITH_VERIFIED_BACKEND:20128; }
+
+server {
+    listen 443 ssl;
+    server_name enroll.codeasier.top;
+    ssl_certificate /etc/nginx/tls/enroll-fullchain.pem;
+    ssl_certificate_key /etc/nginx/tls/enroll-key.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_verify_client off;
+    client_max_body_size 16k;
+    client_header_timeout 5s;
+    client_body_timeout 10s;
+    access_log off;
+    error_log /var/log/nginx/codeasier-enroll-error.log crit;
+    proxy_connect_timeout 2s;
+    proxy_read_timeout 20s;
+    proxy_send_timeout 10s;
+    proxy_set_header Host enroll.codeasier.top;
+    proxy_set_header Authorization "";
+    proxy_set_header X-Api-Key "";
+    proxy_set_header X-Codeasier-Client-Verify "";
+    proxy_set_header X-Codeasier-Client-Cert "";
+    proxy_set_header X-Codeasier-User "";
+    proxy_set_header X-Codeasier-Device "";
+    proxy_set_header X-Codeasier-Issuer "";
+    proxy_set_header X-Codeasier-Serial "";
+    proxy_set_header X-Codeasier-Session "";
+    location = /enroll/ready { proxy_pass http://127.0.0.1:19101; }
+    location = /enroll/native/start { proxy_pass http://127.0.0.1:19101; }
+    location = /enroll/native/verify { proxy_pass http://127.0.0.1:19101; }
+    location = /enroll/native/authorize { proxy_pass http://127.0.0.1:19101; }
+    location = /enroll/gitcode/callback { proxy_pass http://127.0.0.1:19101; }
+    location = /enroll/native/approve { proxy_pass http://127.0.0.1:19101; }
+    location = /enroll/native/poll { proxy_pass http://127.0.0.1:19101; }
+    location = /enroll/native/cancel { proxy_pass http://127.0.0.1:19101; }
+    location = /enroll/renew/recover { proxy_pass http://127.0.0.1:19101; }
+    location = /enroll/device/revoke { proxy_pass http://127.0.0.1:19101; }
+    location / { return 404; }
+}
+
+server {
+    listen 443 ssl;
+    server_name relay.codeasier.top;
+    ssl_certificate /etc/nginx/tls/relay-fullchain.pem;
+    ssl_certificate_key /etc/nginx/tls/relay-key.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_client_certificate /etc/codeasier-router-gateway/root-cert.pem;
+    ssl_verify_client on;
+    ssl_verify_depth 2;
+    error_page 495 496 = @codeasier_certificate_rejected;
+    ssl_crl /var/lib/codeasier-router-gateway/current-crl.pem;
+    ssl_session_cache off;
+    ssl_session_tickets off;
+    # Do not add http2/quic, keepalive or session resumption to this baseline.
+    keepalive_requests 1;
+    keepalive_timeout 0;
+    client_header_timeout 5s;
+    access_log /var/log/nginx/codeasier-model-access.log codeasier_safe;
+    error_log /var/log/nginx/codeasier-model-error.log crit;
+
+    location = /enroll/renew {
+        client_max_body_size 16k;
+        client_body_timeout 10s;
+        proxy_pass http://codeasier_enroll_gateway;
+        proxy_connect_timeout 2s;
+        proxy_read_timeout 20s;
+        proxy_set_header Host relay.codeasier.top;
+        proxy_set_header Authorization "";
+        proxy_set_header X-Api-Key "";
+        proxy_set_header X-Codeasier-Client-Verify $ssl_client_verify;
+        proxy_set_header X-Codeasier-Client-Cert $ssl_client_escaped_cert;
+        proxy_set_header X-Codeasier-User "";
+        proxy_set_header X-Codeasier-Device "";
+        proxy_set_header X-Codeasier-Issuer "";
+        proxy_set_header X-Codeasier-Serial "";
+        proxy_set_header X-Codeasier-Session "";
+    }
+    location = /version { return 404; }
+    location @codeasier_certificate_rejected {
+        default_type application/json;
+        add_header X-Codeasier-Certificate-Status rejected always;
+        return 403 '{"code":"CLIENT_CERT_REJECTED","error":"client certificate rejected"}';
+    }
+    location = /health { return 404; }
+    location /enroll/ { return 404; }
+    location / {
+        client_max_body_size 0;
+        proxy_pass http://codeasier_model_pool;
+        proxy_http_version 1.1;
+        proxy_set_header Connection close;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_intercept_errors off;
+        proxy_hide_header X-Codeasier-Certificate-Status;
+        proxy_set_header X-Codeasier-Certificate-Status "";
+        proxy_next_upstream off;
+        proxy_read_timeout 3600s;
+        proxy_set_header X-Codeasier-Client-Verify "";
+        proxy_set_header X-Codeasier-Client-Cert "";
+        proxy_set_header X-Codeasier-User "";
+        proxy_set_header X-Codeasier-Device "";
+        proxy_set_header X-Codeasier-Issuer "";
+        proxy_set_header X-Codeasier-Serial "";
+        proxy_set_header X-Codeasier-Session "";
+    }
+}
+
+# Local proof of loaded config generation, not an Internet management endpoint.
+server {
+    listen 127.0.0.1:19102;
+    server_name localhost;
+    access_log off;
+    include /var/lib/codeasier-router-gateway/loaded-marker.conf;
+    location / { return 404; }
+}

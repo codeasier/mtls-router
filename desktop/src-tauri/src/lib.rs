@@ -3,6 +3,7 @@ mod commands;
 mod credential;
 mod diagnostic_snapshot;
 mod error;
+mod identity_commands;
 mod image_workbench;
 mod installation;
 mod lifecycle;
@@ -129,6 +130,12 @@ fn build_app() -> tauri::Result<tauri::App<tauri::Wry>> {
             let paths = paths::resolve()?;
             let credentials = load_credentials(std::path::PathBuf::from(&paths.credentials_path));
             let manager = embedded_manager(&paths.data_dir);
+            if let Ok(identity) = runtime::identity_client(std::path::Path::new(&paths.data_dir)) {
+                tauri::async_runtime::spawn(async move {
+                    let (_hold, stop) = tokio::sync::watch::channel(false);
+                    identity.run_maintenance(stop).await;
+                });
+            }
             let diagnostics = diagnostic_snapshot::DiagnosticStore::new(
                 paths::last_diagnostics_path(&paths.data_dir),
             );
@@ -211,6 +218,10 @@ fn build_app() -> tauri::Result<tauri::App<tauri::Wry>> {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            identity_commands::identity_status,
+            identity_commands::identity_connect,
+            identity_commands::identity_renew,
+            identity_commands::identity_disconnect,
             commands::router_status,
             commands::router_listen_config,
             commands::router_set_listen_override,

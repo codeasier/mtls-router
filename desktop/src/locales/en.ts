@@ -1,6 +1,29 @@
 import type { TranslationKey } from "./zh-CN";
 
 export const en: Record<TranslationKey, string> = {
+  "identity.title": "Device certificate",
+  "identity.phase.disconnected": "Not connected",
+  "identity.phase.authorizing": "Waiting for browser approval and certificate",
+  "identity.phase.connected": "Connected",
+  "identity.phase.renewing": "Renewing automatically",
+  "identity.phase.expired": "Certificate expired; sign in again",
+  "identity.phase.reauth_required": "Sign-in required",
+  "identity.phase.rejected":
+    "Certificate not accepted remotely; retry or sign in again",
+  "identity.phase.revocation_pending": "Disabled locally",
+  "identity.keyIndependent":
+    "Get a personal certificate with GitCode. Model calls keep your existing API key and Agent configuration.",
+  "identity.account": "Account ID: {user}",
+  "identity.expires": "Certificate expires: {date}",
+  "identity.remotePending":
+    "Remote revocation is not yet confirmed. Late results cannot re-enable the disabled local identity.",
+  "identity.confirm":
+    "Approve this device in your browser and check code {code}. Connection completes automatically.",
+  "identity.failed":
+    "The certificate operation could not complete. Retry or sign in again.",
+  "identity.connect": "Connect GitCode account",
+  "identity.renew": "Check renewal",
+  "identity.disconnect": "Disable this device",
   "app.homeAria": "CodeasierRouter home",
   "app.navigationAria": "Main navigation",
   "app.localMode": "Local mode",

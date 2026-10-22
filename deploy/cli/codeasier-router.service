@@ -1,0 +1,16 @@
+[Unit]
+Description=CodeasierRouter personal mTLS user router
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+UMask=0077
+ExecStart=%h/.local/bin/codeasier-router --data-dir %h/.local/state/codeasier-router serve
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=10s
+LimitCORE=0
+
+[Install]
+WantedBy=default.target

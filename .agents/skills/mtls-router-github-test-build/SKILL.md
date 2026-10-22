@@ -5,8 +5,9 @@ description: Use when building mtls-router validation packages from a GitHub com
 
 # mtls-router GitHub Test Build
 
-Build credential-injected test packages only through the repository's GitHub
-`Release` workflow. Never request, copy, print, or pass secret values locally.
+Build unified personal-device test packages through GitHub `Release`. Client
+builds consume public CA trust only; updater/platform signing secrets stay on
+GitHub. Never request, copy, print or pass secret values locally.
 
 ## When To Use
 
@@ -25,8 +26,8 @@ credential-injected binary locally.
 1. Confirm `gh auth status` succeeds for the target repository.
 2. Choose an explicit test SemVer such as `0.1.0-feature-name.1`.
 3. Choose the exact branch, tag, or commit and desired artifact patterns.
-4. Choose `all` or one paired CLI/desktop OS-architecture target. Optionally
-   choose a non-sensitive HTTPS upstream override.
+4. Choose `all` or one desktop OS-architecture target. Both Linux CLI producers
+   are independent; public enrollment/model origins are fixed.
 5. Run `scripts/build-and-download.sh` from this Skill directory.
 6. Report the run URL, exact head SHA, downloaded paths, SHA-256 values, and
    signing status.
@@ -44,7 +45,6 @@ scripts/build-and-download.sh \
   --ref <branch-or-tag-or-commit> \
   --version <test-semver> \
   [--target <all-or-os-arch>] \
-  [--upstream <https-url>] \
   [--artifact <name-or-glob>]... \
   [--output <directory>] \
   [--repo <owner/name>]
@@ -53,8 +53,8 @@ scripts/build-and-download.sh \
 Defaults:
 
 - repository: the current GitHub repository;
-- target: `all`; selecting one target builds its CLI and desktop artifacts;
-- upstream: the repository `UPSTREAM_URL` variable;
+- target: `all`; selecting one target limits desktop artifacts, not the two Linux CLI producers;
+- origins: fixed `enroll.codeasier.top` / `relay.codeasier.top`, no override;
 - artifacts: all artifacts from the run;
 - output: `desktop/release-artifacts/run-<run-id>` in the repository root.
 
@@ -66,12 +66,8 @@ Known artifact names:
 - `CodeasierRouter-desktop-windows-amd64`
 - `CodeasierRouter-desktop-linux-arm64`
 - `CodeasierRouter-desktop-linux-amd64`
-- `mtls-router-cli-darwin-arm64`
-- `mtls-router-cli-darwin-amd64`
-- `mtls-router-cli-windows-arm64`
-- `mtls-router-cli-windows-amd64`
-- `mtls-router-cli-linux-arm64`
-- `mtls-router-cli-linux-amd64`
+- `CodeasierRouter-cli-linux-arm64`
+- `CodeasierRouter-cli-linux-amd64`
 
 ## Examples
 
@@ -85,15 +81,14 @@ Build macOS arm64 from a branch:
   --artifact CodeasierRouter-desktop-darwin-arm64
 ```
 
-Build Windows amd64 against a validation upstream:
+Build Windows amd64 and select a Linux CLI artifact too:
 
 ```bash
 .agents/skills/mtls-router-github-test-build/scripts/build-and-download.sh \
   --ref main \
   --version 0.2.0-windows-test.1 \
   --target windows-amd64 \
-  --upstream https://router.example.com \
-  --artifact mtls-router-cli-windows-amd64 \
+  --artifact CodeasierRouter-cli-linux-amd64 \
   --artifact CodeasierRouter-desktop-windows-amd64
 ```
 
@@ -118,15 +113,15 @@ Build desktop artifacts from a commit into a custom directory:
 ## Safety Rules
 
 - Never add secret flags or environment variables to the script invocation.
-- Treat `--upstream` as public workflow metadata. Never include credentials,
-  tokens, or sensitive query parameters in it. The upstream must accept the
-  client certificate and CA material held by the repository Secrets.
+- No origin override or personal/shared client-key build input is accepted.
 - Never read local `secrets/` files for this workflow.
 - Never dispatch an existing tag directly; doing so could publish a release.
 - Never infer success from dispatch alone. Verify the run's exact `headSha`,
   wait for all jobs, and require conclusion `success`.
 - Never overwrite an existing output directory.
-- Treat mTLS credential injection and package signing as separate results.
+- Verify CLI Sigstore bundles against the exact repo/workflow/source ref/SHA;
+  do not confuse desktop updater/platform signing with CLI provenance.
+- Treat personal identity enrollment and package signing as separate results.
   Report `unsigned` or `ad-hoc signed` status even when the build succeeds.
 - Do not commit downloaded artifacts. The default output is under the
   repository's ignored `desktop/release-artifacts/` path.

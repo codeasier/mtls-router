@@ -14,7 +14,6 @@ Required:
 
 Options:
   --target TARGET        all or one OS-architecture target (default: all)
-  --upstream URL         HTTPS upstream override for this validation build
   --artifact GLOB        Artifact name or shell glob; repeatable (default: all)
   --output DIRECTORY     Download destination (default: repository artifacts dir)
   --repo OWNER/NAME      GitHub repository (default: current repository)
@@ -37,7 +36,6 @@ need_value() {
 ref_input=""
 version=""
 target="all"
-upstream=""
 repo=""
 output=""
 artifact_patterns_file="$(mktemp "${TMPDIR:-/tmp}/mtls-router-artifacts.XXXXXX")"
@@ -89,11 +87,6 @@ while [ "$#" -gt 0 ]; do
       target=$2
       shift 2
       ;;
-    --upstream)
-      need_value "$@"
-      upstream=$2
-      shift 2
-      ;;
     --artifact)
       need_value "$@"
       printf '%s\n' "$2" >>"$artifact_patterns_file"
@@ -128,13 +121,6 @@ printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)
 case "$target" in
   all|windows-amd64|windows-arm64|darwin-amd64|darwin-arm64|linux-amd64|linux-arm64) ;;
   *) die "invalid validation target: $target" ;;
-esac
-case "$upstream" in
-  ""|https://*) ;;
-  *) die "validation upstream must use HTTPS" ;;
-esac
-case "$upstream" in
-  *[[:space:]\'\"]*) die "validation upstream must not contain whitespace or quotes" ;;
 esac
 if [ -n "$output" ]; then
   [ ! -e "$output" ] || die "output already exists: $output"
@@ -178,7 +164,7 @@ remote_workflow=$(gh api --method GET \
   -H 'Accept: application/vnd.github.raw+json' \
   "repos/$repo/contents/.github/workflows/release.yml" \
   -f ref="$target_sha") || die "target ref has no release workflow: $ref_input"
-for reference in 'workflow_dispatch' 'target:' 'upstream_url:' 'secrets.CLIENT_CERT_PEM' 'secrets.CLIENT_KEY_PEM' 'secrets.UPSTREAM_CA_PEM' 'vars.UPSTREAM_URL' 'vars.DEPLOYMENT_ID'; do
+for reference in 'workflow_dispatch' 'target:' 'vars.CLIENT_AUTH_CA_PEM' 'vars.UPSTREAM_CA_PEM' 'https://relay.codeasier.top' 'vars.DEPLOYMENT_ID' 'actions/attest-build-provenance'; do
   grep -Fq "$reference" <<<"$remote_workflow" || die "target release workflow is missing GitHub reference: $reference"
 done
 
@@ -190,9 +176,6 @@ dispatch_args=(
   -f "inputs[version]=$version"
   -f "inputs[target]=$target"
 )
-if [ -n "$upstream" ]; then
-  dispatch_args+=(-f "inputs[upstream_url]=$upstream")
-fi
 gh api "${dispatch_args[@]}" >/dev/null
 
 printf 'Dispatched validation build for %s at %s\n' "$ref_input" "$target_sha"
@@ -274,13 +257,21 @@ if [ "$checksum_count" -eq 0 ]; then
   printf 'warning: no checksum manifests were downloaded\n' >&2
 fi
 
+while IFS= read -r archive; do
+  case "${archive##*/}" in CodeasierRouter-cli-linux-amd64.tar.gz|CodeasierRouter-cli-linux-arm64.tar.gz) ;; *) die 'unexpected CLI archive name' ;; esac
+  [ -s "$archive.sigstore.json" ] && [ -s "${archive%.tar.gz}.sha256" ] || die 'CLI signature/checksum material is missing'
+  gh attestation verify "$archive" --repo "$repo" --bundle "$archive.sigstore.json" \
+    --signer-workflow "$repo/.github/workflows/release.yml" --source-digest "$target_sha" \
+    --source-ref "refs/heads/$dispatch_ref" --deny-self-hosted-runners >/dev/null
+done < <(find "$output" -type f -name 'CodeasierRouter-cli-linux-*.tar.gz' -print)
+
 printf '\nDownloaded artifacts:\n'
 while IFS= read -r artifact; do
   printf '  %s/%s\n' "$output" "$artifact"
 done <"$selected_artifacts_file"
 
 printf '\nPackage SHA-256:\n'
-find "$output" -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.AppImage' -o -name 'mtls-router-*' \) ! -name '*.sha256' -exec shasum -a 256 {} \;
+find "$output" -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.AppImage' -o -name 'CodeasierRouter-cli-linux-*.tar.gz' \) ! -name '*.sha256' -exec shasum -a 256 {} \;
 
 while IFS= read -r status_file; do
   status=$(tr '\n' ' ' <"$status_file")

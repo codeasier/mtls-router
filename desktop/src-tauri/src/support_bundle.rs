@@ -113,6 +113,14 @@ fn add_log_files(
 
     for entry in entries.flatten() {
         let path = entry.path();
+        let relative = path
+            .strip_prefix(canonical_root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if skip_packaged_log_name(&relative) {
+            continue;
+        }
         let metadata = match fs::symlink_metadata(&path) {
             Ok(metadata) => metadata,
             Err(_) => continue,
@@ -163,19 +171,38 @@ fn add_log_files(
             Err(_) => continue,
         };
         let name = format!("mtls-router-logs/{relative_unix}");
+        let Ok(text) = std::str::from_utf8(&body) else {
+            continue;
+        };
+        let sanitized = crate::redaction::sanitize_text(text);
         zip.start_file(name, options)?;
-        zip.write_all(&body)?;
+        zip.write_all(sanitized.as_bytes())?;
     }
     Ok(())
 }
 
 fn skip_packaged_log_name(relative_unix: &str) -> bool {
+    if relative_unix.split('/').any(|part| {
+        matches!(
+            part.to_ascii_lowercase().as_str(),
+            "identity" | "router-identity" | "enroll-state" | "journal"
+        )
+    }) {
+        return true;
+    }
     let name = relative_unix
         .rsplit('/')
         .next()
         .unwrap_or(relative_unix)
         .to_ascii_lowercase();
-    name.ends_with(".zip") || name.ends_with(".tmp")
+    name.starts_with(".identity-stage-")
+        || name == "credentials.json"
+        || [
+            ".zip", ".tmp", ".pem", ".key", ".csr", ".p8", ".p12", ".pfx", ".der", ".sqlite3",
+            ".bak",
+        ]
+        .iter()
+        .any(|suffix| name.ends_with(suffix))
 }
 
 pub fn export_support_bundle(
@@ -253,6 +280,33 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(err.code, "DIALOG_CANCELLED");
+    }
+
+    #[test]
+    fn identity_material_and_native_proofs_never_enter_support_archive() {
+        let root = std::env::temp_dir().join(format!("router-support-identity-{}", Uuid::new_v4()));
+        let logs = root.join("logs");
+        fs::create_dir_all(logs.join("identity")).unwrap();
+        fs::write(logs.join("identity/state.json"), b"private-state-canary").unwrap();
+        fs::write(logs.join("accidental.key"), b"private-key-canary").unwrap();
+        fs::write(
+            logs.join(".identity-stage-interrupted"),
+            b"private-stage-canary",
+        )
+        .unwrap();
+        fs::write(logs.join("session.log"),b"verifier=native-proof-canary oauth_code=oauth-code-canary token=oauth-token-canary api_key=business-key-canary\nsafe log\n").unwrap();
+        let dest = root.join("support.zip");
+        write_support_bundle(&minimal_snapshot(), &logs, &dest).unwrap();
+        let mut archive = ZipArchive::new(File::open(dest).unwrap()).unwrap();
+        for i in 0..archive.len() {
+            let mut file = archive.by_index(i).unwrap();
+            assert!(!file.name().contains("identity"));
+            assert!(!file.name().ends_with(".key"));
+            let mut body = String::new();
+            file.read_to_string(&mut body).unwrap();
+            assert!(!body.contains("canary"));
+        }
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

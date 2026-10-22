@@ -3,7 +3,7 @@ set -euo pipefail
 
 desktop_dir="$(cd "$(dirname "$0")/.." && pwd)"
 target="${1:?Tauri target is required}"
-bundle_root="$desktop_dir/src-tauri/target/$target/release/bundle"
+bundle_root="$desktop_dir/../target/$target/release/bundle"
 app="$bundle_root/macos/CodeasierRouter.app"
 archive="$bundle_root/macos/CodeasierRouter.app.tar.gz"
 

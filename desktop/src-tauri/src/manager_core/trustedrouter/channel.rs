@@ -110,6 +110,9 @@ impl Channel {
         }
         let remote: WireVersion =
             serde_json::from_slice(&response.body).map_err(|_| stale_catalog())?;
+        if remote.upstream_auth != "per_user_mtls" || remote.auth_protocol_version != "1" {
+            return Err(stale_catalog());
+        }
         if !version_matches(
             &RemoteVersion {
                 pid: remote.pid,
@@ -138,6 +141,10 @@ impl Channel {
 
 #[derive(Deserialize)]
 struct WireVersion {
+    #[serde(default)]
+    upstream_auth: String,
+    #[serde(default)]
+    auth_protocol_version: String,
     #[serde(default)]
     pid: i32,
     #[serde(default)]

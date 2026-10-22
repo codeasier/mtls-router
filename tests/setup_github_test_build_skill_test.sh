@@ -9,7 +9,7 @@ contains() { grep -Fq -- "$2" "$1" || fail "$(basename "$1") missing: $2"; }
 
 [[ -x "$SCRIPT" ]] || fail 'GitHub test-build wrapper is missing or not executable'
 help="$($SCRIPT --help)"
-for text in '--target TARGET' '--upstream URL' 'default: all'; do
+for text in '--target TARGET' 'default: all'; do
   [[ "$help" == *"$text"* ]] || fail "wrapper help missing: $text"
 done
 
@@ -23,16 +23,16 @@ unsafe_upstream_status=$?
 set -e
 [[ "$invalid_target_status" -ne 0 && "$invalid_target" == *'invalid validation target'* ]] || \
   fail 'wrapper must reject unknown targets before GitHub access'
-[[ "$invalid_upstream_status" -ne 0 && "$invalid_upstream" == *'validation upstream must use HTTPS'* ]] || \
-  fail 'wrapper must reject non-HTTPS upstreams before GitHub access'
-[[ "$unsafe_upstream_status" -ne 0 && "$unsafe_upstream" == *'must not contain whitespace or quotes'* ]] || \
-  fail 'wrapper must reject linker-unsafe upstreams before GitHub access'
+[[ "$invalid_upstream_status" -ne 0 && "$invalid_upstream" == *'unknown argument: --upstream'* ]] || \
+  fail 'wrapper must reject origin overrides before GitHub access'
+[[ "$unsafe_upstream_status" -ne 0 && "$unsafe_upstream" == *'unknown argument: --upstream'* ]] || \
+  fail 'wrapper must not accept arbitrary upstream input'
 
 for value in \
   'all|windows-amd64|windows-arm64|darwin-amd64|darwin-arm64|linux-amd64|linux-arm64' \
-  "'target:' 'upstream_url:'" \
+  "'vars.CLIENT_AUTH_CA_PEM'" \
   '-f "inputs[target]=$target"' \
-  'dispatch_args+=(-f "inputs[upstream_url]=$upstream")'; do
+  'gh attestation verify "$archive"'; do
   contains "$SCRIPT" "$value"
 done
 

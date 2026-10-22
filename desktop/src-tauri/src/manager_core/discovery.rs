@@ -279,9 +279,12 @@ fn classify(
     }
     // A live listener must always pass endpoint and process correlation; only
     // an unoccupied port lets desktop startup ignore another owner's stale state.
-    let Some(version) = host
-        .get_json(&config.authority, "/version", config.request_timeout)
-        .and_then(|value| serde_json::from_value::<RemoteVersion>(value).ok())
+    let raw_version = host.get_json(&config.authority, "/version", config.request_timeout);
+    let personal_auth = raw_version.as_ref().is_some_and(|v| {
+        v["upstream_auth"] == "per_user_mtls" && v["auth_protocol_version"] == "1"
+    });
+    let Some(version) =
+        raw_version.and_then(|value| serde_json::from_value::<RemoteVersion>(value).ok())
     else {
         return found;
     };
@@ -328,6 +331,9 @@ fn classify(
         }
         return found;
     };
+    if !personal_auth {
+        return found;
+    }
     found.state = Some(matched.clone());
     found.owner = owner.to_owned();
     if include_health {
@@ -595,6 +601,7 @@ mod tests {
                 "pid": pid,
                 "deployment_id": deployment,
                 "management_protocol_version": protocol,
+                "upstream_auth":"per_user_mtls","auth_protocol_version":"1",
             }));
             *self.health.lock().unwrap() = Some(json!({ "status": health }));
         }

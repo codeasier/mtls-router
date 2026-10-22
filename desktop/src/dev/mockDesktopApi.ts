@@ -4,6 +4,7 @@ import type {
   AgentId,
   DesktopApi,
   ListenConfig,
+  IdentitySummary,
   ModelConfig,
   PollSnapshot,
   RouterStatus,
@@ -89,6 +90,16 @@ export function createMockDesktopApi(
       : fixtureCredentialPresent,
   );
   let autostart = true;
+  let identity: IdentitySummary = {
+    generation: 0,
+    phase: "disconnected",
+    user_id: null,
+    device_id: null,
+    expires_at: null,
+    revocation_pending: false,
+    error_code: null,
+  };
+  let identityTicks = 0;
   let revision = 0;
   let flowCounter = 0;
   const pollListeners = new Set<PollListener>();
@@ -135,6 +146,47 @@ export function createMockDesktopApi(
   }
 
   return {
+    getIdentityStatus: async () => {
+      if (identity.phase === "authorizing" && ++identityTicks >= 2)
+        identity = {
+          ...identity,
+          phase: "connected",
+          user_id: "mock-member",
+          device_id: "b5c2fb58-d5e8-4dc2-9b04-38209df797d0",
+          expires_at: Math.floor(Date.now() / 1000) + 30 * 86400,
+        };
+      return structuredClone(identity);
+    },
+    connectIdentity: async () => {
+      identity = {
+        ...identity,
+        generation: identity.generation + 1,
+        phase: "authorizing",
+        user_id: null,
+        device_id: null,
+        expires_at: null,
+      };
+      identityTicks = 0;
+      return {
+        verification_uri:
+          "https://enroll.codeasier.top/enroll/native/verify?transaction=mock",
+        short_code: "ABCD-EFGH",
+        browser_opened: true,
+      };
+    },
+    renewIdentity: async () => structuredClone(identity),
+    disconnectIdentity: async () => {
+      identity = {
+        ...identity,
+        generation: identity.generation + 1,
+        phase: "revocation_pending",
+        user_id: null,
+        device_id: null,
+        expires_at: null,
+        revocation_pending: true,
+      };
+      return structuredClone(identity);
+    },
     getPollSnapshot: async () => {
       revision += 1;
       return snapshotForMockScenario(currentScenario(), status, revision);

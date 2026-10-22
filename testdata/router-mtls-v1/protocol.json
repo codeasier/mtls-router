@@ -1,0 +1,67 @@
+{
+  "version": "1",
+  "origins": {
+    "enroll": "https://enroll.codeasier.top",
+    "relay": "https://relay.codeasier.top"
+  },
+  "native": {
+    "ttl_seconds": 600,
+    "poll_seconds": 5,
+    "recovery_seconds": 86400,
+    "challenge_method": "S256",
+    "digest_encoding": "lowercase-hex-sha256",
+    "csr_digest_input": "PKCS10-DER",
+    "spki_digest_input": "SubjectPublicKeyInfo-DER",
+    "proof_bytes": 32,
+    "device_id": "b5c2fb58-d5e8-4dc2-9b04-38209df797d0",
+    "device_kinds": ["desktop", "linux_cli"],
+    "start_fields": ["version", "csr_pem", "device_id", "device_kind", "device_label", "challenge", "challenge_method"],
+    "browser_forbidden_fields": ["verifier", "csr_pem", "private_key", "api_key", "access_token", "refresh_token", "client_secret"],
+    "start_forbidden_fields": ["private_key", "api_key", "organization", "redirect_uri", "callback", "access_token", "refresh_token"],
+    "endpoints": [
+      ["POST", "/enroll/native/start"],
+      ["GET", "/enroll/native/verify"],
+      ["POST", "/enroll/native/authorize"],
+      ["GET", "/enroll/gitcode/callback"],
+      ["POST", "/enroll/native/approve"],
+      ["POST", "/enroll/native/poll"],
+      ["POST", "/enroll/native/cancel"],
+      ["GET", "/enroll/ready"]
+    ],
+    "digest_vector": {
+      "input_utf8": "abc",
+      "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+      "s256": "ungWv48Bz-pBQUDeXa4iI7ADYaOWF3qctBD_YfIAFa0"
+    }
+  },
+  "identity": {
+    "version": "1",
+    "organization_id": "org-fixture-7",
+    "policy_epoch": 3,
+    "user_id": "user-fixture-42",
+    "device_id": "b5c2fb58-d5e8-4dc2-9b04-38209df797d0"
+  },
+  "errors": [
+    {"code": "CLIENT_CERT_REQUIRED", "status": 401, "error": "client certificate required"},
+    {"code": "CLIENT_CERT_EXPIRED", "status": 401, "error": "client certificate expired"},
+    {"code": "CLIENT_CERT_REJECTED", "status": 403, "error": "client certificate rejected"},
+    {"code": "CERT_SERVICE_UNAVAILABLE", "status": 503, "error": "certificate service unavailable"},
+    {"code": "ORG_MEMBERSHIP_REQUIRED", "status": 403, "error": "organization membership required"},
+    {"code": "ENROLL_INVALID_REQUEST", "status": 400, "error": "invalid enrollment request"},
+    {"code": "ENROLL_INVALID_PROOF", "status": 400, "error": "invalid enrollment proof"},
+    {"code": "ENROLL_EXPIRED", "status": 410, "error": "enrollment expired"},
+    {"code": "ENROLL_CANCELLED", "status": 410, "error": "enrollment cancelled"},
+    {"code": "ENROLL_DENIED", "status": 403, "error": "enrollment denied"},
+    {"code": "ENROLL_SLOW_DOWN", "status": 429, "error": "polling too quickly"},
+    {"code": "ENROLL_CAPACITY_REACHED", "status": 429, "error": "enrollment capacity reached"},
+    {"code": "CERT_OPERATION_CONFLICT", "status": 409, "error": "certificate operation conflict"},
+    {"code": "CERT_REAUTH_REQUIRED", "status": 401, "error": "certificate login required"}
+  ],
+  "business": {
+    "preserved_headers": ["Authorization", "x-api-key"],
+    "reserved_headers": ["X-Codeasier-User", "X-Codeasier-Device", "X-Codeasier-Issuer", "X-Codeasier-Serial", "X-Codeasier-Session"],
+    "forbidden_material": ["private_key", "verifier", "oauth_code", "gitcode_access_token", "gitcode_refresh_token", "issuing_ca_key"],
+    "control_plane_requests_per_model_call": 0,
+    "automatic_request_replays": 0
+  }
+}

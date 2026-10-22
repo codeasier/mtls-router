@@ -1,0 +1,23 @@
+[Unit]
+Description=Authenticated forwarding to the single enrollment master
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=codeasier-enroll-forward
+Group=codeasier-enroll-gateway
+RuntimeDirectory=codeasier-router-enroll
+RuntimeDirectoryMode=0750
+UMask=0117
+ExecStart=/usr/bin/ssh -NT -oBatchMode=yes -oStrictHostKeyChecking=yes -oExitOnForwardFailure=yes -oServerAliveInterval=15 -oServerAliveCountMax=3 -oStreamLocalBindMask=0117 -oStreamLocalBindUnlink=no -L /run/codeasier-router-enroll/gateway.sock:/run/codeasier-router-enroll/gateway.sock -L 127.0.0.1:19101:127.0.0.1:19101 codeasier-enroll-forward@REPLACE_WITH_SINGLE_SIGNER_HOST
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=10s
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+LimitCORE=0
+
+[Install]
+WantedBy=multi-user.target

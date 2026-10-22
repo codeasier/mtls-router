@@ -59,14 +59,14 @@ impl Paths {
 }
 
 pub fn resolve_with(os: &str, home: &Path, getenv: impl Fn(&str) -> String) -> Paths {
-    let cli_dir =
-        nonempty(getenv("MTLS_ROUTER_STATE_DIR")).unwrap_or_else(|| home.join(".mtls-router"));
+    let xdg_state = getenv("XDG_STATE_HOME");
+    let cli_dir = router_contract::cli_state::default_directory(home, Some(&xdg_state));
     let cli_log =
         nonempty(getenv("MTLS_ROUTER_LOG_PATH")).unwrap_or_else(|| cli_dir.join("mtls-router.log"));
     let desktop_dir = nonempty(getenv("MTLS_ROUTER_DESKTOP_DATA_DIR"))
         .unwrap_or_else(|| desktop_data_dir(os, home, &getenv));
     Paths {
-        cli_state_file: cli_dir.join("setup-state.json"),
+        cli_state_file: cli_dir.join(router_contract::cli_state::STATE_FILE),
         cli_log_file: cli_log,
         desktop_state_file: desktop_dir.join("desktop-state.json"),
         desktop_log_file: desktop_dir.join("mtls-router.log"),
@@ -128,8 +128,8 @@ mod tests {
         assert_eq!(
             got.cli_state_file,
             Path::new("home")
-                .join(".mtls-router")
-                .join("setup-state.json"),
+                .join(".local/state/codeasier-router")
+                .join("router-state.json"),
             "{os}"
         );
         assert_eq!(got.desktop_data_dir, desktop, "{os}");
@@ -179,12 +179,15 @@ mod tests {
             "linux",
             Path::new("home"),
             env(&[
-                ("MTLS_ROUTER_STATE_DIR", "cli-state"),
+                ("XDG_STATE_HOME", "cli-state"),
                 ("MTLS_ROUTER_LOG_PATH", "cli.log"),
                 ("MTLS_ROUTER_DESKTOP_DATA_DIR", "desktop-data"),
             ]),
         );
-        assert_eq!(got.cli_state_dir, PathBuf::from("cli-state"));
+        assert_eq!(
+            got.cli_state_dir,
+            PathBuf::from("cli-state/codeasier-router")
+        );
         assert_eq!(got.cli_log_file, PathBuf::from("cli.log"));
         assert_eq!(got.desktop_data_dir, PathBuf::from("desktop-data"));
         assert_eq!(
