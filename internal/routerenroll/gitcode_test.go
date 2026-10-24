@@ -146,6 +146,18 @@ func TestFixedGitCodeExchangeAndLeastPrivilege(t *testing.T) {
 	if _, err := g.Exchange(context.Background(), "code-canary"); err == nil || err.Error() != "insufficient_scope" {
 		t.Fatal("scope not enforced", err)
 	}
+	g.client.Transport = providerTransport(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"access_token":"access-canary","expires_in":300,"scope":"all_user read_groups"}`)), Request: r}, nil
+	})
+	if _, err := g.Exchange(context.Background(), "code-canary"); err != nil {
+		t.Fatal("GitCode all_user scope rejected", err)
+	}
+	g.client.Transport = providerTransport(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"access_token":"access-canary","expires_in":300,"scope":"all_user read_groups read_key"}`)), Request: r}, nil
+	})
+	if _, err := g.Exchange(context.Background(), "code-canary"); err == nil || err.Error() != "scope_escalation" {
+		t.Fatal("extra scope not enforced", err)
+	}
 	for _, payload := range []struct {
 		status int
 		body   string

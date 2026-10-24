@@ -197,7 +197,7 @@ func (s *Service) authorizeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) callbackHTTP(w http.ResponseWriter, r *http.Request) {
 	query, err := url.ParseQuery(r.URL.RawQuery)
-	if err != nil || !strictValues(query, "state", "code", "error", "error_description") || !validProof(query.Get("state")) || len(query.Get("code")) > 4096 || len(query.Get("error")) > 128 || len(query.Get("error_description")) > 1024 {
+	if err != nil || !strictValues(query, "state", "code", "error", "error_description", "client_id", "scopes", "response_type") || !validProof(query.Get("state")) || len(query.Get("code")) > 4096 || len(query.Get("error")) > 128 || len(query.Get("error_description")) > 1024 || (query.Get("client_id") != "" && query.Get("client_id") != s.provider.clientID) || (query.Get("response_type") != "" && query.Get("response_type") != "code") {
 		WriteError(w, InvalidRequest)
 		return
 	}

@@ -19,7 +19,7 @@ const (
 	tokenURL          = "https://gitcode.com/oauth/token"
 	userURL           = "https://api.gitcode.com/api/v5/user"
 	membershipURL     = "https://api.gitcode.com/api/v5/user/memberships/orgs/"
-	gitcodeScope      = "read_user read_groups"
+	gitcodeScope      = "all_user read_groups"
 	providerBodyLimit = 64 * 1024
 )
 
@@ -114,8 +114,13 @@ func (g *GitCode) token(ctx context.Context, query url.Values, previousRefresh s
 	for _, scope := range strings.Fields(payload.Scope) {
 		scopes[scope] = true
 	}
-	if !scopes["read_user"] || !scopes["read_groups"] {
+	if (!scopes["all_user"] && !scopes["read_user"]) || !scopes["read_groups"] {
 		return GitCodeToken{}, providerError("insufficient_scope")
+	}
+	for scope := range scopes {
+		if scope != "all_user" && scope != "read_user" && scope != "read_groups" {
+			return GitCodeToken{}, providerError("scope_escalation")
+		}
 	}
 	if payload.Refresh == "" {
 		payload.Refresh = previousRefresh

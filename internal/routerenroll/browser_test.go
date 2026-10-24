@@ -133,7 +133,7 @@ func (f *browserFlow) authorize(t *testing.T) {
 	f.state = location.Query().Get("state")
 }
 func (f *browserFlow) callback() *httptest.ResponseRecorder {
-	return f.get("/enroll/gitcode/callback?"+url.Values{"state": {f.state}, "code": {"oauth-code-canary"}}.Encode(), f.cookie)
+	return f.get("/enroll/gitcode/callback?"+url.Values{"state": {f.state}, "code": {"oauth-code-canary"}, "client_id": {"fixture-app"}, "scopes": {"all_user,read_groups"}, "response_type": {"code"}}.Encode(), f.cookie)
 }
 
 func TestBrowserStateCookieCSRFAndFixedRedirect(t *testing.T) {
