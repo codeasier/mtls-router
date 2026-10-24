@@ -6,7 +6,10 @@ use std::future::Future;
 use tokio::time::timeout;
 
 use super::config::validate_upstream_url;
-use super::connect::{open_mtls_http1, origin_form_path, upstream_host_header, ConnectError};
+use super::connect::{
+    open_mtls_http1, origin_form_path, peer_certificate_rejected, upstream_host_header,
+    ConnectError,
+};
 use super::{MtlsTransport, RouterConfig, StartupError, StartupReason};
 
 #[derive(Clone)]
@@ -44,10 +47,15 @@ async fn probe_once(transport: &MtlsTransport, url: &Uri) -> Result<(), StartupE
         .await
         .map_err(ConnectError::into_startup)?;
     let request = probe_request(url)?;
-    let response = sender
-        .send_request(request)
-        .await
-        .map_err(|_| StartupError::new(StartupReason::UpstreamProbeFailed))?;
+    let response = match sender.send_request(request).await {
+        Ok(response) => response,
+        Err(error) => {
+            if peer_certificate_rejected(&error) {
+                transport.feedback(generation, true).await;
+            }
+            return Err(StartupError::new(StartupReason::UpstreamProbeFailed));
+        }
+    };
     let status = response.status();
     let rejected = response
         .headers()
