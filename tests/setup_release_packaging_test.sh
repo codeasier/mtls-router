@@ -89,7 +89,7 @@ mkdir -p "$protocol_tmp/bin"
 cat >"$protocol_tmp/bin/gh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "${FAKE_GH_ATTEST_FAILURE:-0}" != 1 ]]
+if [[ "${FAKE_GH_ATTEST_FAILURE:-0}" == 1 ]]; then exit 1; fi
 [[ "$1" == attestation && "$2" == verify ]]
 archive=$3; shift 3
 bundle=''
@@ -119,6 +119,10 @@ chmod +x "$protocol_tmp/bin/gh"
 export PATH="$protocol_tmp/bin:$PATH"
 export GITHUB_REPOSITORY=codeasier/mtls-router
 export CLI_SOURCE_SHA=1111111111111111111111111111111111111111
+# CI exports GITHUB_REF=refs/heads/main; package-release.sh would use it as the
+# CLI source ref. These fixtures emulate tag builds, and the gh stub only
+# accepts refs/tags/v1.2.3*, so let RELEASE_TAG pick the ref.
+unset GITHUB_REF
 for os_arch in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64; do
   printf '{"schema_version":1,"producer":"desktop-%s","management_protocol_version":"4"}\n' "$os_arch" >"$protocol_tmp/release-metadata-desktop-$os_arch.json"
 done
