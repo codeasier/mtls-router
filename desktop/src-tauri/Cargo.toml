@@ -11,10 +11,15 @@ name = "mtls_router_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
+pem = "=3.0.6"
+x509-parser = "=0.18.1"
 rcgen = { version = "=0.13.2", default-features = false, features = ["crypto", "pem", "ring"] }
 tauri-build = { version = "=2.6.3", features = [] }
 
 [dependencies]
+router-contract = { path = "../../crates/router-contract" }
+router-core = { path = "../../crates/router-core" }
+router-identity = { path = "../../crates/router-identity" }
 base64 = "=0.22.1"
 bytes = "=1.12.1"
 chrono = { version = "=0.4.44", default-features = false, features = ["clock", "std"] }
@@ -54,4 +59,5 @@ tauri-plugin-single-instance = "=2.4.2"
 windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_IO", "Win32_System_ProcessStatus", "Win32_System_RemoteDesktop", "Win32_System_Services", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 [dev-dependencies]
+router-core = { path = "../../crates/router-core", features = ["test-support"] }
 rcgen = { version = "=0.13.2", default-features = false, features = ["crypto", "pem", "ring"] }

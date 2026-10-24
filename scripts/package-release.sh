@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
-# Assembles the release directory for a new version. Only the desktop
-# application, its updater artifacts, per-target signing status, checksums,
-# and (for stable tags) the updater feed are published. CLI router/manager
-# binaries, setup scripts, and service wrappers are frozen at their historical
-# tags and must never re-enter a new release; any file outside the allowlist
-# fails packaging.
+# Assembles five desktop targets plus the two exact Rust Linux CLI archives
+# and their provenance. Historical Go router/manager binaries, setup scripts
+# and service wrappers remain frozen; anything outside the allowlist fails.
 #
 # release/ is the complete mirror set, including macOS updater archives.
 # github-release/ is the user-facing GitHub subset: installers only for macOS
@@ -31,6 +28,8 @@ allowed_asset() {
     CodeasierRouter-linux-amd64.AppImage|CodeasierRouter-linux-arm64.AppImage) return 0 ;;
     CodeasierRouter-windows-amd64.exe) return 0 ;;
     CodeasierRouter-darwin-amd64.app.tar.gz|CodeasierRouter-darwin-arm64.app.tar.gz) return 0 ;;
+    CodeasierRouter-cli-linux-amd64.tar.gz|CodeasierRouter-cli-linux-arm64.tar.gz) return 0 ;;
+    CodeasierRouter-cli-linux-amd64.tar.gz.sigstore.json|CodeasierRouter-cli-linux-arm64.tar.gz.sigstore.json) return 0 ;;
     CodeasierRouter-*.sig) return 0 ;;
     signing-status-*-*.txt) return 0 ;;
     SHA256SUMS|latest.json) return 0 ;;
@@ -40,6 +39,7 @@ allowed_asset() {
 
 forbidden_asset() {
   case "$1" in
+    CodeasierRouter-cli-linux-amd64.tar.gz|CodeasierRouter-cli-linux-arm64.tar.gz) return 1 ;;
     mtls-router*|setup.sh|setup.ps1|*.zip|*.tar.gz|*.service|Dockerfile|*.nsh) return 0 ;;
     *) return 1 ;;
   esac
@@ -64,6 +64,7 @@ mkdir -p release
 (cd desktop-packages && sha256sum -c CodeasierRouter-*.sha256)
 while IFS= read -r -d '' path; do
   name="$(basename "$path")"
+  case "$name" in CodeasierRouter-cli-*) printf 'CLI asset in desktop lane\n' >&2; exit 1 ;; esac
   case "$name" in
     CodeasierRouter-*-*.sha256) continue ;;
   esac
@@ -79,9 +80,43 @@ while IFS= read -r -d '' path; do
   cp "$path" release/
 done < <(find desktop-packages -maxdepth 1 -type f ! -name 'release-metadata-*.json' -print0)
 
+# CLI provenance is independent of the desktop updater feed/signing key.
+: "${GITHUB_REPOSITORY:?repository identity is required for CLI provenance}"
+: "${CLI_SOURCE_SHA:=${GITHUB_SHA:-}}"
+: "${CLI_SOURCE_REF:=${GITHUB_REF:-refs/tags/$release_tag}}"
+test -n "$CLI_SOURCE_SHA"
+test "$(find cli-packages -maxdepth 1 -type f | wc -l)" -eq 6
+for arch in amd64 arm64; do
+  archive="CodeasierRouter-cli-linux-$arch.tar.gz"
+  sidecar="CodeasierRouter-cli-linux-$arch.sha256"
+  bundle="$archive.sigstore.json"
+  read -r checksum filename <"cli-packages/$sidecar"
+  [[ "$checksum" =~ ^[0-9a-f]{64}$ && "$filename" == "$archive" ]]
+  test "$(wc -l <"cli-packages/$sidecar")" -eq 1
+  (cd cli-packages && sha256sum -c "$sidecar")
+  python3 - "cli-packages/$archive" <<'PY'
+import sys, tarfile
+from pathlib import Path
+path = Path(sys.argv[1])
+assert path.stat().st_size < 64 * 1024 * 1024
+with tarfile.open(path, "r:gz") as archive:
+    items = archive.getmembers()
+    assert len(items) == 1
+    item = items[0]
+    assert item.name == "codeasier-router" and item.isfile()
+    assert 0 < item.size < 128 * 1024 * 1024 and item.mode & 0o111
+PY
+  gh attestation verify "cli-packages/$archive" --repo "$GITHUB_REPOSITORY" \
+    --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+    --source-ref "$CLI_SOURCE_REF" --source-digest "$CLI_SOURCE_SHA" \
+    --bundle "cli-packages/$bundle" --deny-self-hosted-runners >/dev/null
+  cp "cli-packages/$archive" "cli-packages/$bundle" release/
+done
+
 expected_desktop_assets=5
 if [[ "$online_update" == true ]]; then expected_desktop_assets=12; fi
-test "$(find release -maxdepth 1 -type f -name 'CodeasierRouter-*' | wc -l)" -eq "$expected_desktop_assets"
+test "$(find release -maxdepth 1 -type f -name 'CodeasierRouter-*' ! -name 'CodeasierRouter-cli-*' | wc -l)" -eq "$expected_desktop_assets"
+test "$(find release -maxdepth 1 -type f -name 'CodeasierRouter-cli-*' | wc -l)" -eq 4
 test "$(find release -maxdepth 1 -type f -name 'signing-status-*' | wc -l)" -eq 5
 test "$(find release -maxdepth 1 -type f -name 'mtls-router*' | wc -l)" -eq 0
 test "$(find release -maxdepth 1 -type f -name 'CodeasierRouter-*.sha256' | wc -l)" -eq 0
@@ -134,15 +169,15 @@ PY
 fi
 
 find release -maxdepth 1 -type f ! -name SHA256SUMS ! -name 'signing-status-*' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sed 's#  release/#  #' >release/SHA256SUMS
-expected_checksums=5
-expected_github_checksums=5
-expected_release_files=11
-expected_github_files=11
+expected_checksums=9
+expected_github_checksums=9
+expected_release_files=15
+expected_github_files=15
 if [[ "$online_update" == true ]]; then
-  expected_checksums=13
-  expected_github_checksums=9
-  expected_release_files=19
-  expected_github_files=15
+  expected_checksums=17
+  expected_github_checksums=13
+  expected_release_files=23
+  expected_github_files=19
 fi
 test "$(awk '$1 ~ /^[0-9a-f]{64}$/ { print $2 }' release/SHA256SUMS | sort -u | wc -l)" -eq "$expected_checksums"
 test "$(find release -maxdepth 1 -type f | wc -l)" -eq "$expected_release_files"

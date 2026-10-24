@@ -2,18 +2,18 @@
 
 [English](../BUILD.md)
 
-本文档面向构建 Tauri 桌面应用并运行冻结 Go 兼容测试套件的维护者。桌面应用把 mTLS router 与管理控制面内嵌在自身进程内；当前仓库中的 release workflow 会构建五个原生桌面包目标（Windows x86_64、macOS Intel/Apple Silicon、Linux x86_64/arm64），并在匹配的 runner 上检查每个包。CI 抽检未签名的 Windows x86_64 NSIS 与 Linux arm64 AppImage。精确 stable `vX.Y.Z` tag release 只发布这些桌面安装包及其签名 updater 产物。Windows/macOS 签名和 macOS notarization/stapling 取决于完整平台凭据；Tauri updater 签名则是 stable release 的独立强制要求。包检查会执行只覆盖初始化的启动 smoke test，但不会安装、正常启动或更新应用；每个发布包都必须保留独立签名状态和目标 runner 上成功安装/启动/更新的证据。
+本文涵盖 Tauri 桌面、共享 Rust/无 GUI CLI 与冻结 Go 兼容测试。工作流配置五个原生桌面目标（Windows x86_64、macOS Intel/Apple Silicon、Linux x86_64/arm64）及两个原生 Linux CLI producer；CI 抽检 Windows x86_64 NSIS 与 Linux arm64 AppImage。Stable `vX.Y.Z` 保留五平台签名桌面 updater feed，CLI provenance/下载独立；平台签名、只覆盖初始化的包检查与真实目标安装/启动/更新证据仍须分别确认。
 
-> **CLI 停止维护。** `v0.4.1` 之后的 release 不包含 `mtls-router` 或 `mtls-router-manager` 二进制、安装脚本、CLI 归档或服务包装；`scripts/package-release.sh` 会拒绝任何此类文件。Go 源码、`scripts/build.sh` 与安装脚本作为冻结的参考实现保留在仓库中：它们的测试证明内嵌 Rust router 与 manager 保持了历史 HTTP、protocol v4 与状态文件契约，`internal/manager/testdata` 下的 release golden 则驱动历史 router 迁移测试。历史 CLI release 仍可从各自 tag 下载且不会被覆盖。
+> **历史 Go CLI 冻结。** 新 release 仍拒绝旧 `mtls-router*`、manager/setup/服务包装，不覆盖旧 tag；仅把精确命名的两个 `CodeasierRouter-cli-linux-<arch>.tar.gz` Rust 归档及校验/provenance 加入桌面资产之外，见 [Linux CLI](LINUX-CLI.md)。
 
 ## 工具链和 lockfile
 
 - Go：`go.mod` 要求 Go `1.26.2`。Go 用于冻结的兼容测试（`go test ./...`、禁用缓存的原生 occupant 测试）与历史 `scripts/build.sh`；桌面构建本身不调用 Go。
 - Node.js：`desktop/package.json` 要求 Node.js `>=22.12.0` 并声明 `npm@11.6.2`；必须结合 `desktop/package-lock.json` 使用 `npm ci`。
-- Rust：桌面 crate 声明 `rust-version = 1.77.2`；使用满足要求的 Rust toolchain，并通过 `--locked` 使用 `desktop/src-tauri/Cargo.lock` 构建。
+- Rust：CI 使用当前 stable；锁定的 `time` 至少要求 Rust 1.88，package metadata 仍保留较旧声明下限。使用根 `Cargo.lock` / `--locked` 与根 `target/`；默认成员是无 GUI 共享 crates，`cargo test --workspace --locked` 包含桌面与 CLI。
 - Tauri：JavaScript 和 Rust Tauri 依赖在 `desktop/package.json` 和 `desktop/src-tauri/Cargo.toml` 中精确锁定，并由各自 lockfile 解析。release 构建不得传入 `--ignore-version-mismatches`。
 
-平台构建还需要 Tauri 2 的操作系统前置条件：受支持 WebView 和原生打包工具、Rust target 以及标准压缩/校验工具。占位 router 凭据由 Rust 构建脚本生成，因此 `openssl` 不再是桌面构建的前置条件。桌面包应在目标操作系统上生成并启动验证，不能假设交叉编译出的 bundle 一定可安装。
+桌面包需要 Tauri 2 OS/WebView 及原生打包工具，headless CLI 不需要。开发构建只生成公有占位 CA，不内嵌 client key/pair；OpenSSL 不是客户端构建依赖。安装/启动证据必须来自原生目标 runner。
 
 ## Go 检查和构建（冻结的 CLI 参考实现）
 
@@ -112,7 +112,7 @@ go build -trimpath \
   -o mtls-router .
 ```
 
-内嵌客户端私钥是共享凭据，任何获得历史 router 二进制或桌面包的人都可以提取。只能发布给可信内部用户。轮换需要构建包含新凭据材料的替代 release，并在服务端吊销旧凭据；桌面应用没有运行时凭据导入或组件更新器。
+上述 Go linker 示例仅供历史参考，其共享私钥及旧共享凭据桌面包中的 key 可被提取，须随旧入口退役处理。当前客户端在运行时生成个人 key，构建使用下方公有信任，不再使用共享 linker/PEM 输入。
 
 ## 桌面检查
 
@@ -123,7 +123,7 @@ npm ci
 npm run verify
 ```
 
-不需要任何 sidecar 准备：当 `secrets/` 与凭据环境变量都不存在时，Rust 构建脚本会自动内嵌占位 router 凭据，因此全新 checkout 可以立即构建和测试。
+无需 sidecar 准备或个人秘密。全新开发 checkout 使用公有占位 CA 构建，默认没有活动客户端身份；真实领证需配置已核验公有信任。
 
 各项精确命令为：
 
@@ -146,13 +146,13 @@ npm run rust:test
 
 | 输入 | 来源 | 编译为 |
 |---|---|---|
-| 客户端证书、私钥、上游 CA | 仓库根目录 `secrets/` 下的三个文件，**或者** `CLIENT_CERT_PEM`、`CLIENT_KEY_PEM`、`UPSTREAM_CA_PEM` 三个变量；不得同时提供；都不存在时用 `rcgen` 生成有效期一天的占位证书对 | `$OUT_DIR/router-credentials/` 下的文件，由 `runtime.rs` 通过 `include_str!` 内嵌 |
-| 上游 URL | `UPSTREAM_URL`，默认 `https://upstream.placeholder.invalid` | `MTLS_UPSTREAM_URL` |
+| 公有 client-auth root 与模型服务器信任 | `trust/client-auth-ca.pem` / `trust/upstream-ca.pem`，或 `CLIENT_AUTH_CA_PEM` / `UPSTREAM_CA_PEM`；每项一个来源，两项同时提供 | `$OUT_DIR/router-trust/` 规范公有证书，不含客户端 key |
+| 模型 origin | 固定 `https://relay.codeasier.top`，显式 `UPSTREAM_URL` 必须相同 | `MTLS_UPSTREAM_URL` |
 | 版本、deployment ID、协议 | `VERSION`（默认 crate 版本）、`DEPLOYMENT_ID`（默认 `dev`）、`MANAGEMENT_PROTOCOL_VERSION`（必须为 `4`） | `MTLS_MANAGER_VERSION`、`MTLS_DEPLOYMENT_ID`、`MTLS_MANAGEMENT_PROTOCOL_VERSION` |
 | commit 与构建时间 | `COMMIT` / `BUILD_DATE`，否则取 `git rev-parse --short HEAD` 与当前 UTC 时间 | `MTLS_ROUTER_COMMIT`、`MTLS_ROUTER_BUILD_DATE` |
 | Agent model preset、目录策略 | `AGENT_MODEL_PRESET_BASE64`、`SIMPLIFY` | `MTLS_AGENT_MODEL_PRESET_BASE64`、`MTLS_SIMPLIFY` |
 
-`RELEASE_BUILD=1` 会在版本或 deployment ID 为默认值、凭据将是占位值、或上游 URL 不是 HTTPS 时让构建失败；release workflow 在每个桌面 job 上都设置它。不完整的凭据集合、文件与环境变量混用，以及无效 `SIMPLIFY` 值会让所有构建失败。
+`scripts/public-trust.rs` 与 CLI 共用，解析 CA、去除非证书文本、拒绝 private-key block；release 拒绝缺失/过期/占位公有信任和默认 deployment，不读取 client cert/key 或 `secrets/`。公有输入不完整、同项来源重叠、origin override 或桌面 `SIMPLIFY` 非法均闭合失败；运行时 `identity/` 私有且排除于支持包。
 
 manager 以由 Rust target triple 派生的操作系统/架构标签报告其目标。`desktop/scripts/verify-package.sh` 仍接受 Windows arm64 triple 供本地交叉构建使用；该目标不会发布。
 
@@ -177,7 +177,7 @@ manager 以由 Rust target triple 派生的操作系统/架构标签报告其目
 | React UI + 本机 19099 | `cd desktop && npm run dev:mock:live` | 同一套 mock 壳，但对话生图经 Vite 代理打到已在监听的 `127.0.0.1:19099`。需先自行启动 router。打开 `http://localhost:1420/`（不要用 `127.0.0.1:1420`，Vite 默认只绑 localhost）。密钥由 Vite 从桌面 `credentials.json` 或 `WORKBENCH_API_KEY` 注入，也可在密钥页再贴。不走 Tauri 可信通道，生产构建不含这条路径。 |
 | Rust/Tauri | `cd desktop && npm run dev:tauri:reuse` | 以内嵌 router 与 manager 启动 `tauri dev`，并固定 `VITE_MOCK=false` 与开发身份。无需任何前置准备。 |
 | 真实 Agent 链路（隔离路径） | `cd desktop && npm run dev:agent` | 显式覆盖 `MTLS_ROUTER_DESKTOP_DATA_DIR`、`CLAUDE_CONFIG_DIR`、`OPENCODE_CONFIG`、`CODEX_HOME` 到可丢弃根目录（或 `MTLS_ROUTER_DEV_AGENT_ROOT`），再包装 reuse。**不**隔离固定 router 端口 `127.0.0.1:19099`；请避免与日常 router 实例并行。 |
-| router 凭据、上游、preset 或策略 | 设置上表中的构建输入，然后 `npm run tauri -- dev` | `secrets/` 文件或上述环境变量变化时 `build.rs` 会重新运行并重新内嵌。 |
+| 公有信任、preset 或策略 | 设置上表公有输入，然后 `npm run tauri -- dev` | `trust/`、`scripts/public-trust.rs` 或声明环境输入变化会重建；设备身份仅在运行时保存。 |
 | 安装器 / 发布布局 | `make desktop-package-current` | 完整打包路径。 |
 
 带显式开发身份的完整本地启动：
@@ -298,19 +298,17 @@ CI 和 release target runner 会在 Windows、macOS、Linux 上原生执行 `go 
 
 ## Release workflow
 
-当前 `.github/workflows/release.yml` 由五个原生 runner 构建并检查 Windows x86_64 NSIS 安装器、macOS Intel/Apple Silicon DMG，以及 Linux x86_64/arm64 AppImage；不再有 CLI 构建 job，也不再发布 Windows arm64 包。手工 dispatch 只用于验证，可以选择一个桌面目标及可选 HTTPS upstream override；它不会生成 updater 产物。精确 stable 版本 tag 始终忽略验证 override，等待全部五个桌面 job，验证五个包 checksum 和签名 updater pair，汇总完整镜像 `SHA256SUMS` 与 `latest.json`，把面向 GitHub 的安装包子集（macOS 仅 DMG，无 sidecar `*.sha256`；GitHub `SHA256SUMS` 只列已挂文件）挂到 Release，再把含 macOS `.app.tar.gz` updater 归档与五个签名状态文件的完整集合镜像出去，并原子推进 `latest` updater channel。`scripts/package-release.sh` 强制执行 allowlist：只允许镜像 `CodeasierRouter-<os>-<arch>` 安装包、updater `.sig`、macOS `.app.tar.gz` updater 归档、`signing-status-*.txt`、`SHA256SUMS` 和 `latest.json`；任何 `mtls-router*` 二进制、安装脚本、CLI 归档、服务包装或 Windows arm64 包都会让打包失败。历史 release 绝不会被覆盖。
+`.github/workflows/release.yml` 配置五个原生桌面和两个原生 headless Linux CLI producer。Dispatch 可选桌面目标，并独立产生 CLI 归档；origin 固定，验证构建不推进更新频道。Stable 等待所有 producer，验证桌面 updater pair 和 CLI provenance，分别组装完整镜像与 GitHub 子集。GitHub 保留五个桌面安装包（macOS 仅 DMG）、两 CLI 归档/provenance、状态/feed 及适用 updater 签名；macOS `.app.tar.gz` updater 归档与签名只进入镜像。producer `.sha256` 仅作预检，公开校验用 `SHA256SUMS`，GitHub 的清单只列已挂文件。`latest.json` 继续仅列五个桌面平台；旧 Go/setup/服务资产与 Windows arm64 桌面包仍禁止，不覆盖历史 release。
 
-生产桌面构建需要 repository secrets `CLIENT_CERT_PEM`、`CLIENT_KEY_PEM`、`UPSTREAM_CA_PEM`，以及 variables `UPSTREAM_URL` 和非默认 `DEPLOYMENT_ID`；`build.rs` 在 `RELEASE_BUILD=1` 保护下将它们内嵌。Stable 桌面 updater 发布还要求 `TAURI_SIGNING_PRIVATE_KEY`、`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 和 `TAURI_UPDATER_PUBKEY`，以及固定 repository variable `TAURI_UPDATER_PUBKEY_SHA256`。可选 repository variable `AGENT_MODEL_PRESET_BASE64` 会提供给每个桌面包的内嵌 manager；空值有效并表示无 preset。Release preflight 会在 matrix build 前通过冻结的 Go manager loader 校验已配置的值且不打印其内容，桌面自身的 loader 在启动时执行同样严格的校验。可选 repository variable `SIMPLIFY` 遵循上述规范化规则，未设置或为空时默认启用；它会在 matrix fan-out 前规范化，并以同一个规范值编译进每个桌面包。Router 绝不会收到这两个仅供 manager 使用的值。可选平台凭据会选择上文所述的签名/notarization release 分支；与这些可选凭据不同，精确 stable tag 强制要求全部 updater-key 输入存在。
+生产客户端需要公有 variables `CLIENT_AUTH_CA_PEM`、`UPSTREAM_CA_PEM`、非默认 `DEPLOYMENT_ID` 及 `RELEASE_BUILD=1`，不接收个人/共享 client key 或 issuing key。Stable 桌面保留 updater private key/password/public key 及固定指纹检查，平台签名独立；桌面专属 preset/SIMPLIFY 的无 key 校验与规范化不变。CLI 用 `actions/attest-build-provenance`，发布时校验归档内容/摘要，以及绑定 repo、Release workflow、source ref/SHA、hosted runner 的 Sigstore bundle；恢复发布使用已核验原 tag SHA/ref，而不是当前 main SHA。
 
-每个桌面 matrix producer 都会生成 code-owned protocol metadata。`scripts/package-release.sh` 在组装 release 前要求每个桌面 producer 恰好一个 metadata 文件、全部文件声明 schema `1` 与 management protocol `4`，且每个 producer 名称都以 `desktop-` 开头。正常发布和恢复发布共用此 preflight，因此有效但 protocol 混合、或包含 CLI producer 的 artifact set 无法发布。
+所有 producer 都生成 schema `1`、protocol `4` metadata；正常/恢复发布必须恰好五个桌面和两个精确枚举的 CLI producer，无重复/混代。桌面与 CLI 分别核对资产数量/来源，CLI 归档内只有可执行文件。
 
 使用 `gh` 设置 release 输入：
 
 ```bash
-gh secret set CLIENT_CERT_PEM --repo codeasier/mtls-router < secrets/client.pem
-gh secret set CLIENT_KEY_PEM --repo codeasier/mtls-router < secrets/client.key
-gh secret set UPSTREAM_CA_PEM --repo codeasier/mtls-router < secrets/upstream-ca.pem
-gh variable set UPSTREAM_URL --repo codeasier/mtls-router --body "https://router.example.com"
+gh variable set CLIENT_AUTH_CA_PEM --repo codeasier/mtls-router < trust/client-auth-ca.pem
+gh variable set UPSTREAM_CA_PEM --repo codeasier/mtls-router < trust/upstream-ca.pem
 gh variable set DEPLOYMENT_ID --repo codeasier/mtls-router --body "production-service"
 gh variable set SIMPLIFY --repo codeasier/mtls-router --body "False"
 ```
@@ -328,11 +326,10 @@ gh workflow run release.yml \
   --repo codeasier/mtls-router \
   --ref main \
   -f version=0.2.0-windows-test.1 \
-  -f target=windows-amd64 \
-  -f upstream_url=https://router.example.com
+  -f target=windows-amd64
 ```
 
-所选目标会生成 `CodeasierRouter-desktop-windows-amd64`。省略 `upstream_url` 时使用仓库 `UPSTREAM_URL`；省略 `target` 时使用 `all`。Workflow input 在 GitHub Actions 元数据中可见，因此 override 不得包含凭据、token 或敏感 query parameter，并且必须兼容 repository Secrets 中的客户端证书和 upstream CA。
+所选目标生成 `CodeasierRouter-desktop-windows-amd64`，Linux CLI 资产独立生成；省略 `target` 则构建全部桌面目标，不接受 upstream override 或客户端秘密 input。归档验签见 [Linux CLI](LINUX-CLI.md)，实际灰度门见[迁移 runbook](MTLS-MIGRATION.md)。
 
 审查所需目标平台启动证据后，通过推送版本 tag 发布桌面 release：
 

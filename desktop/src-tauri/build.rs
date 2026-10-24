@@ -1,21 +1,17 @@
-//! Compile-time identity and embedded router credentials for the desktop.
-//!
-//! The Go sidecars received these through `-ldflags -X`; the embedded
-//! router-core receives the same inputs here. Credentials come from
-//! `secrets/` at the repository root or from `CLIENT_CERT_PEM` /
-//! `CLIENT_KEY_PEM` / `UPSTREAM_CA_PEM` (all three or none, never both
-//! sources). Without either a one-day placeholder pair is generated so
-//! development builds never contain real material. `RELEASE_BUILD=1` rejects
-//! placeholders and default identities.
+//! Desktop build identity and public CA trust. Device keys are runtime-only.
+//! Release builds require verified public trust and non-default deployment IDs.
 
 use std::{
-    env, fs,
+    env,
     path::{Path, PathBuf},
     process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
 
-const PLACEHOLDER_UPSTREAM: &str = "https://upstream.placeholder.invalid";
+mod public_trust {
+    include!("../../scripts/public-trust.rs");
+}
+const RELAY_ORIGIN: &str = "https://relay.codeasier.top";
 
 fn main() {
     for key in [
@@ -23,8 +19,7 @@ fn main() {
         "VERSION",
         "MANAGEMENT_PROTOCOL_VERSION",
         "UPSTREAM_URL",
-        "CLIENT_CERT_PEM",
-        "CLIENT_KEY_PEM",
+        "CLIENT_AUTH_CA_PEM",
         "UPSTREAM_CA_PEM",
         "RELEASE_BUILD",
         "AGENT_MODEL_PRESET_BASE64",
@@ -55,8 +50,13 @@ fn main() {
         protocol, "4",
         "unsupported MANAGEMENT_PROTOCOL_VERSION: {protocol}"
     );
-    let upstream_url =
-        nonempty_env("UPSTREAM_URL").unwrap_or_else(|| PLACEHOLDER_UPSTREAM.to_owned());
+    let upstream_url = RELAY_ORIGIN;
+    if let Some(requested) = nonempty_env("UPSTREAM_URL") {
+        assert_eq!(
+            requested, RELAY_ORIGIN,
+            "fixed personal mTLS origin is required"
+        );
+    }
     let simplify = normalize_simplify(env::var("SIMPLIFY").ok().as_deref());
     let preset = env::var("AGENT_MODEL_PRESET_BASE64").unwrap_or_default();
     assert!(
@@ -64,20 +64,12 @@ fn main() {
         "AGENT_MODEL_PRESET_BASE64 must not contain whitespace"
     );
 
-    let credentials = embed_credentials(&repo, &out_dir);
+    let trust_directory = public_trust::embed(&repo, &out_dir, release);
     if release {
         assert!(!is_default(&version), "release VERSION must be non-default");
         assert!(
             !is_default(&deployment_id),
             "release DEPLOYMENT_ID must be non-default"
-        );
-        assert!(
-            credentials != CredentialSource::Placeholder,
-            "release credentials are required"
-        );
-        assert!(
-            upstream_url.starts_with("https://"),
-            "release UPSTREAM_URL must use HTTPS"
         );
     }
 
@@ -95,98 +87,11 @@ fn main() {
         if simplify { "true" } else { "false" }
     );
     println!(
-        "cargo:rustc-env=MTLS_ROUTER_CREDENTIALS_DIR={}",
-        out_dir.join("router-credentials").display()
+        "cargo:rustc-env=MTLS_ROUTER_TRUST_DIR={}",
+        trust_directory.display()
     );
 
     tauri_build::build()
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum CredentialSource {
-    Files,
-    Environment,
-    Placeholder,
-}
-
-fn embed_credentials(repo: &Path, out_dir: &Path) -> CredentialSource {
-    let files = [
-        repo.join("secrets").join("client.pem"),
-        repo.join("secrets").join("client.key"),
-        repo.join("secrets").join("upstream-ca.pem"),
-    ];
-    for path in &files {
-        println!("cargo:rerun-if-changed={}", path.display());
-    }
-    let present = files.iter().filter(|path| path.is_file()).count();
-    assert!(
-        present == 0 || present == 3,
-        "partial secrets set; provide all three files or none"
-    );
-    let embedded: Vec<Option<String>> = ["CLIENT_CERT_PEM", "CLIENT_KEY_PEM", "UPSTREAM_CA_PEM"]
-        .iter()
-        .map(|key| nonempty_env(key))
-        .collect();
-    let embedded_count = embedded.iter().filter(|value| value.is_some()).count();
-    assert!(
-        embedded_count == 0 || embedded_count == 3,
-        "partial embedded secrets set; provide all three values or none"
-    );
-    assert!(
-        present == 0 || embedded_count == 0,
-        "provide credential files or environment values, not both"
-    );
-
-    let (cert, key, ca, source) = if embedded_count == 3 {
-        let mut values = embedded.into_iter().map(Option::unwrap);
-        (
-            values.next().unwrap(),
-            values.next().unwrap(),
-            values.next().unwrap(),
-            CredentialSource::Environment,
-        )
-    } else if present == 3 {
-        (
-            read(&files[0]),
-            read(&files[1]),
-            read(&files[2]),
-            CredentialSource::Files,
-        )
-    } else {
-        let (cert, key) = placeholder_pair();
-        (cert.clone(), key, cert, CredentialSource::Placeholder)
-    };
-
-    let dir = out_dir.join("router-credentials");
-    fs::create_dir_all(&dir).expect("create router credentials dir");
-    for (name, contents) in [
-        ("client.pem", cert),
-        ("client.key", key),
-        ("upstream-ca.pem", ca),
-    ] {
-        fs::write(dir.join(name), contents).expect("write embedded credential");
-    }
-    source
-}
-
-fn placeholder_pair() -> (String, String) {
-    use rcgen::{CertificateParams, DnType, KeyPair};
-
-    let key = KeyPair::generate().expect("placeholder key");
-    let mut params = CertificateParams::new(Vec::<String>::new()).expect("placeholder params");
-    params
-        .distinguished_name
-        .push(DnType::CommonName, "mtls-router-placeholder");
-    let now = SystemTime::now();
-    params.not_before = now.into();
-    params.not_after = (now + std::time::Duration::from_secs(24 * 60 * 60)).into();
-    let cert = params.self_signed(&key).expect("placeholder cert");
-    (cert.pem(), key.serialize_pem())
-}
-
-fn read(path: &Path) -> String {
-    fs::read_to_string(path)
-        .unwrap_or_else(|error| panic!("cannot read credential {}: {error}", path.display()))
 }
 
 fn nonempty_env(key: &str) -> Option<String> {

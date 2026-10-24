@@ -13,7 +13,7 @@ use uuid::Uuid;
 pub const SCHEMA_VERSION: u32 = 1;
 /// Generation 1 was the Go-sidecar desktop. The embedded runtime is a new
 /// generation so sidecar-era desktop records are migratable, never reclaimed.
-pub const PACKAGE_GENERATION: u32 = 2;
+pub const PACKAGE_GENERATION: u32 = 3;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InstallationOwnership {
@@ -196,7 +196,7 @@ mod tests {
             upgraded.installation_id,
             "11111111-1111-4111-8111-111111111111"
         );
-        assert_eq!(upgraded.package_generation, 2);
+        assert_eq!(upgraded.package_generation, PACKAGE_GENERATION);
         assert!(upgraded.manager_sidecar_sha256.is_empty());
         let raw = fs::read_to_string(Path::new(&dir).join("installation.json")).unwrap();
         assert!(!raw.contains("sidecar_sha256"), "{raw}");

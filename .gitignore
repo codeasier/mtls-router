@@ -1,4 +1,5 @@
 # Build output
+/target/
 /dist/
 /mtls-router
 /mtls-router.exe

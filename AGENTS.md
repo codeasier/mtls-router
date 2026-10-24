@@ -102,6 +102,7 @@ make desktop-verify                    # 同上，仓库根目录入口
 ```bash
 cargo fmt --manifest-path desktop/src-tauri/Cargo.toml --all -- --check
 cargo test --manifest-path desktop/src-tauri/Cargo.toml --locked
+cargo test --workspace --locked             # 共享核心、CLI 与桌面
 ```
 
 ## 提交偏好
@@ -121,12 +122,12 @@ cargo test --manifest-path desktop/src-tauri/Cargo.toml --locked
 ### 桌面完整打包构建
 
 ```bash
-make desktop-package-current           # tauri build → package:verify（build.rs 自动内嵌凭据）
+make desktop-package-current           # tauri build → package:verify（仅内嵌公有信任）
 ```
 
 ### 发布产物命名
 
-`v0.4.1` 之后的 release 只包含桌面应用；`scripts/package-release.sh` 以 allowlist 拒绝任何 `mtls-router*` 二进制、setup 脚本、CLI 归档或服务包装。历史 CLI 产物（`mtls-router-${GOOS}-${GOARCH}[.exe]`、`mtls-router-manager-*`、`.tar.gz`/`.zip` 归档）冻结在 `v0.4.1` 及更早的 tag 上，不得覆盖。
+历史 Go `mtls-router*`、manager/setup/服务包装继续冻结，不重建、不覆盖旧 tag。新 Rust CLI 只允许精确 Linux amd64/arm64 命名及校验/provenance；不能扩大归档 allowlist，不能混入桌面包或 updater feed。具体资产与构建事实见 [INDEX.md](INDEX.md#发布与公有构建)。
 
 桌面应用包（GitHub Release 用户可见）：
 - macOS：`CodeasierRouter-darwin-amd64.dmg`、`CodeasierRouter-darwin-arm64.dmg`
@@ -135,7 +136,7 @@ make desktop-package-current           # tauri build → package:verify（build.
 
 附属：stable 的 updater `.sig`、`latest.json`、`SHA256SUMS`（不含 signing-status 文件）+ `signing-status-${os}-${arch}.txt`（5 个）。不要再发布 sidecar `*.sha256`（GitHub asset digest 已覆盖；流水线仍用它们做聚合预检）。macOS `CodeasierRouter-darwin-${arch}.app.tar.gz` 及其 `.sig` 只进入 `release.codeasier.top` 镜像，供 Tauri updater 使用，不挂到 GitHub Release。
 
-桌面包内只有 `mtls-router-desktop[.exe]` 一个可执行文件；router 凭据、upstream URL、版本/deployment/协议、preset 与 simplify 由 `desktop/src-tauri/build.rs` 编译进去（`RELEASE_BUILD=1` 拒绝占位值与默认身份）。
+客户端构建不得读入或编入个人/共享 client key、issuing key 或 OAuth secret。保留公有 CA、固定 origin、deployment/protocol、updater 与平台签名保护；release 不能通过占位身份蒙混。私有 key/待办只存用户身份目录，支持包必须排除。
 `setup.ps1` 必须保留 UTF-8 BOM 以兼容 Windows PowerShell 5.1；`main_test.go` 会断言这一点（冻结实现仍受测试）。
 
 ## 文档偏好

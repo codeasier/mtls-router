@@ -1,0 +1,18 @@
+[package]
+name = "router-contract"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77.2"
+
+[dependencies]
+chrono = { version = "=0.4.44", default-features = false, features = ["clock", "std"] }
+libc = "=0.2.186"
+regex = "=1.13.0"
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.149"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Threading"] }
+
+[dev-dependencies]
+uuid = { version = "=1.21.0", features = ["v4"] }

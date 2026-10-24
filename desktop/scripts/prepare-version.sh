@@ -25,7 +25,7 @@ for (const name of ["package.json", "package-lock.json", "src-tauri/tauri.conf.j
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-for (const name of ["src-tauri/Cargo.toml", "src-tauri/Cargo.lock"]) {
+for (const name of ["src-tauri/Cargo.toml", "../Cargo.lock"]) {
   const file = path.join(root, name);
   let content = fs.readFileSync(file, "utf8");
   const pattern = name.endsWith("Cargo.toml")
@@ -40,4 +40,4 @@ NODE
 (cd "$desktop_dir" && npm exec prettier -- --write package.json package-lock.json src-tauri/tauri.conf.json >/dev/null)
 
 grep -Fq "version = \"$version\"" "$desktop_dir/src-tauri/Cargo.toml"
-grep -Fq "version = \"$version\"" "$desktop_dir/src-tauri/Cargo.lock"
+grep -Fq "version = \"$version\"" "$desktop_dir/../Cargo.lock"

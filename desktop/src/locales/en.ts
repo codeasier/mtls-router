@@ -1,6 +1,41 @@
 import type { TranslationKey } from "./zh-CN";
 
 export const en: Record<TranslationKey, string> = {
+  "identity.title": "GitCode authentication",
+  "identity.phase.disconnected": "Sign-in required",
+  "identity.phase.authorizing": "Waiting for browser authorization",
+  "identity.phase.connected": "Authenticated",
+  "identity.phase.renewing": "Refreshing automatically",
+  "identity.phase.expired": "Session expired; sign in again",
+  "identity.phase.reauth_required": "Sign-in required",
+  "identity.phase.rejected":
+    "Authorization is no longer accepted; retry or sign in again",
+  "identity.phase.revocation_pending": "Signed out locally",
+  "identity.keyIndependent":
+    "Sign in with your GitCode account to continue using the console. Model calls keep your existing API key and Agent configuration.",
+  "identity.account": "Account ID: {user}",
+  "identity.expires": "Valid until: {date}",
+  "identity.remotePending":
+    "Remote sign-out is not yet confirmed. Late results cannot re-enable the disabled local session.",
+  "identity.confirm":
+    "Approve sign-in in your browser and check code {code}. The console will unlock automatically.",
+  "identity.failed":
+    "Authentication could not be completed. Retry or sign in again.",
+  "identity.error.certServiceUnavailable":
+    "The authentication service is unavailable. Check your network or retry later (CERT_SERVICE_UNAVAILABLE).",
+  "identity.error.certReauthRequired":
+    "GitCode authorization has expired. Sign in again (CERT_REAUTH_REQUIRED).",
+  "identity.error.operationConflict":
+    "Another authentication operation is still pending. Retry later (CERT_OPERATION_CONFLICT).",
+  "identity.error.storageUnavailable":
+    "The local authentication store is unreadable (IDENTITY_STORAGE_UNAVAILABLE).",
+  "identity.error.busy":
+    "The authentication service is busy. Retry later (IDENTITY_BUSY).",
+  "identity.error.invalidState":
+    "The local authentication state is invalid. Sign in again (IDENTITY_STATE_INVALID).",
+  "identity.connect": "Connect GitCode account",
+  "identity.renew": "Refresh session",
+  "identity.disconnect": "Cancel and reset",
   "app.homeAria": "CodeasierRouter home",
   "app.navigationAria": "Main navigation",
   "app.localMode": "Local mode",

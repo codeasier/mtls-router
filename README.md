@@ -2,15 +2,15 @@
 
 [中文](docs/zh-CN/README.md)
 
-CodeasierRouter is a local reverse proxy for AI coding agents. It accepts plain HTTP from local clients such as Claude Code or Codex CLI on `127.0.0.1:19099`, then forwards requests to a public upstream mTLS server using an embedded client certificate, private key, upstream CA, and upstream URL. The current deliverable is the Tauri desktop application, which runs the router and its management control plane inside one process.
+CodeasierRouter is a local reverse proxy for AI coding agents. It accepts plain HTTP on `127.0.0.1:19099` and forwards to `https://relay.codeasier.top` with a personal device mTLS certificate and the original model API key. One-click GitCode authorization obtains the certificate automatically; each device generates and privately stores its own key. The Tauri desktop and headless Linux `codeasier-router` share the Rust identity/streaming core. Unified packages contain public trust, not a shared client private key.
 
 The proxy streams request bodies and Server-Sent Events responses transparently. It does not perform protocol conversion: local traffic is HTTP, and upstream traffic is HTTPS with mTLS.
 
-## Distribution notice: CLI end of life
+## Distribution notice: historical Go CLI
 
-> Versions after **v0.4.1** publish the desktop application only. The standalone `mtls-router` and `mtls-router-manager` CLI binaries, the `setup.sh` / `setup.ps1` scripts, the `.tar.gz` / `.zip` archives, and the systemd, Docker, and NSSM service wrappers are frozen at their historical release tags. They remain downloadable from those tags and are never overwritten, but they receive no new builds, fixes, or updater support, and new release manifests contain no CLI artifacts.
+> The historical Go `mtls-router` / `mtls-router-manager`, setup scripts and service wrappers remain frozen at **v0.4.1** and earlier tags. New releases do not rebuild or overwrite them. The new Rust Linux CLI uses only `CodeasierRouter-cli-linux-amd64.tar.gz` / `CodeasierRouter-cli-linux-arm64.tar.gz`, with checksums and GitHub provenance; it is separate from desktop bundles and the updater feed. See [Linux CLI](docs/LINUX-CLI.md).
 >
-> The sections below that describe one-click setup, manual download, service management, and the CLI flags document those historical releases (`v0.4.1` and earlier). New installations should use the desktop application; see [Desktop application](#desktop-application). An existing CLI router left running on the port is recognised by the desktop and, when it belongs to the same installation lineage and its process identity verifies completely, migrated once; otherwise the port is reported as occupied and nothing is terminated.
+> One-click setup, old manual downloads/service flags below describe historical Go releases (`v0.4.1` and earlier). Current installations use [desktop](#desktop-application) or the [new Linux CLI](docs/LINUX-CLI.md). A proven same-installation legacy process can be migrated explicitly; an unknown port occupant is never terminated automatically.
 
 ## Release notes
 
@@ -26,11 +26,24 @@ Initial release of the single-binary local reverse proxy for forwarding local HT
 
 ## Desktop application
 
+Connect your GitCode account from the device-certificate panel and approve the
+account, organization, device and short code in the browser. CSR/key handling is
+automatic. Certificates normally last 30 days and renew 7 days before expiry;
+the fixed public `enroll.codeasier.top` handles authorization/recovery only.
+Models retain the original API key with no online GitCode/auth subrequest.
+Without a usable certificate, local management and whole-package updates remain
+available. Logout disables locally first and reports remote revocation separately.
+See [enrollment operations](docs/ENROLLMENT-OPERATIONS.md), [Linux CLI](docs/LINUX-CLI.md)
+and the [staged migration runbook](docs/MTLS-MIGRATION.md). Production/domain/CA and
+native-platform acceptance remain separate from repository implementation.
+
 The Tauri desktop application provides current-user router control, tray operation, default launch-at-login, health/log views, supervised port-conflict recovery, whole-package online updates, explicit preview/write flows for Claude Code, opencode, and Codex, and a local **Chat images** workbench. The workbench chats first, then generates or edits images through Rust on a non-redialable loopback connection; the webview never receives the API key, upstream URL, or raw image bytes except as a bounded import. Sessions and images are stored unencrypted under the app data `image-workbench` folder. Chat models come from `GET /v1/models` without slash IDs; image models come from `GET /v1/models/image` and are presented verbatim with no aliasing, filtering, or hidden allowlist. Missing catalog defaults disable send instead of inventing fallback IDs. This is an explicit product surface, not a router-lifecycle extra. Port recovery reports structured reasons and supervisor guidance, never elevates or executes stop commands, and periodically samples the port for about 10 seconds to report whether reoccupation was detected. The manager control plane and the mTLS router are embedded in the desktop process: the router runs on a dedicated supervised runtime thread with request timeouts, bounded concurrency, and panic containment, and no `mtls-router` or `mtls-router-manager` child process is spawned. The desktop never changes Agent files on first launch.
 
 The checked-in release workflow builds five native desktop packages: a Windows x86_64 NSIS installer, macOS Intel/Apple Silicon DMGs, and Linux x86_64/arm64 AppImages. CI spot-checks unsigned Windows x86_64 and Linux arm64 packages. Stable desktop builds silently check `https://release.codeasier.top/latest.json` at startup and also provide a manual check in Settings. An available update is downloaded, signature-verified, installed, and restarted only after user confirmation; it replaces the complete desktop package. Each matching target runner inspects its package contents, architecture, version/deployment identity, and executable permissions, verifies that no CLI router or manager binary is bundled, then constructs the packaged Tauri application and its embedded manager to catch initialization failures without entering the event loop. Release jobs sign Windows and macOS packages only when signing credentials are complete, notarize and staple macOS applications only when the additional Apple credentials are complete, and publish one explicit signing-status file per target. Package inspection does not install, perform a normal launch, or exercise a previous-to-next update, so separate successful target-runner evidence is still required before a desktop release is considered fully validated. See [Desktop Application](docs/DESKTOP.md) for installation, updates, first-launch, Agent, credential, and uninstall behavior, [Desktop Troubleshooting](docs/TROUBLESHOOTING.md) for recovery guidance, and [Build and Release](docs/BUILD.md) for the exact evidence boundary.
 
 ## One-click setup
+
+**Historical Go reference only (`v0.4.1` and earlier).** Current personal-device installations use desktop account connection or the [new Linux CLI](docs/LINUX-CLI.md).
 
 Release installation is package-first. From [GitHub Releases](https://github.com/codeasier/mtls-router/releases), select the archive for your operating system and CPU architecture (`.tar.gz` for macOS/Linux or `.zip` for Windows), extract it, and run the setup script from the extracted directory. Each archive contains the setup script, the exact-platform `mtls-router` and `mtls-router-manager` binaries, and `SHA256SUMS` entries for both binaries.
 

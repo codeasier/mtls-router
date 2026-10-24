@@ -145,11 +145,12 @@ fn version_response(
         serde_json::to_vec(&serde_json::json!({
             "pid": version["pid"],
             "deployment_id": version["deployment_id"],
-            "management_protocol_version": version["management_protocol_version"]
+            "management_protocol_version": version["management_protocol_version"],
+            "upstream_auth":"per_user_mtls","auth_protocol_version":"1"
         }))
         .unwrap()
     } else {
-        br#"{"pid":91,"deployment_id":"prod-a","management_protocol_version":"4"}"#.to_vec()
+        br#"{"pid":91,"deployment_id":"prod-a","management_protocol_version":"4","upstream_auth":"per_user_mtls","auth_protocol_version":"1"}"#.to_vec()
     };
     let close = if connection == "close" {
         "close"

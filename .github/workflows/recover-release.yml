@@ -77,8 +77,10 @@ jobs:
             'Desktop aarch64-apple-darwin'
             'Desktop x86_64-unknown-linux-gnu'
             'Desktop aarch64-unknown-linux-gnu'
+            'CLI x86_64-unknown-linux-gnu'
+            'CLI aarch64-unknown-linux-gnu'
           )
-          test "$(printf '%s\n' "$jobs" | wc -l)" -eq 7
+          test "$(printf '%s\n' "$jobs" | wc -l)" -eq 9
           for name in "${expected_jobs[@]}"; do
             test "$(printf '%s\n' "$jobs" | awk -F '\t' -v name="$name" '$1 == name && $2 == "success" { count++ } END { print count+0 }')" -eq 1
           done
@@ -91,8 +93,10 @@ jobs:
             CodeasierRouter-desktop-darwin-arm64
             CodeasierRouter-desktop-linux-amd64
             CodeasierRouter-desktop-linux-arm64
+            CodeasierRouter-cli-linux-amd64
+            CodeasierRouter-cli-linux-arm64
           )
-          test "$(printf '%s\n' "$artifacts" | wc -l)" -eq 5
+          test "$(printf '%s\n' "$artifacts" | wc -l)" -eq 7
           for name in "${expected_artifacts[@]}"; do
             test "$(printf '%s\n' "$artifacts" | awk -F '\t' -v name="$name" '$1 == name && $2 == "false" { count++ } END { print count+0 }')" -eq 1
           done
@@ -121,8 +125,21 @@ jobs:
         run: |
           mkdir protocol-metadata
           mv desktop-packages/release-metadata-*.json protocol-metadata/
+      - name: Download all CLI packages from source run
+        uses: actions/download-artifact@v4
+        with:
+          pattern: CodeasierRouter-cli-linux-*
+          path: cli-packages
+          merge-multiple: true
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ github.token }}
+      - name: Collect CLI protocol metadata
+        run: mv cli-packages/release-metadata-*.json protocol-metadata/
       - name: Preflight and package
         env:
+          GH_TOKEN: ${{ github.token }}
+          CLI_SOURCE_SHA: ${{ steps.validate.outputs.tag_sha }}
+          CLI_SOURCE_REF: refs/tags/${{ inputs.release_tag }}
           DESKTOP_DOWNLOAD_BASE_URL: https://release.codeasier.top/${{ github.event.repository.name }}/${{ inputs.release_tag }}
           RELEASE_TAG: ${{ inputs.release_tag }}
           SOURCE_DATE_EPOCH: '0'

@@ -1,0 +1,4 @@
+[
+  {"id":"jump","target":"codeasier-crl@REPLACE_WITH_VERIFIED_JUMP_SSH_HOST"},
+  {"id":"jump2","target":"codeasier-crl@REPLACE_WITH_VERIFIED_JUMP2_SSH_HOST"}
+]

@@ -121,6 +121,8 @@ impl BoundSession {
         let remote: WireVersion = serde_json::from_slice(&version.body)
             .map_err(|_| WorkbenchError::new(SafeKind::Identity))?;
         if remote.pid <= 0
+            || remote.upstream_auth != "per_user_mtls"
+            || remote.auth_protocol_version != "1"
             || remote.pid != target.pid
             || remote.deployment_id != target.deployment_id
             || remote.management_protocol_version != target.protocol_version
@@ -430,6 +432,10 @@ impl BoundSession {
 
 #[derive(Deserialize)]
 struct WireVersion {
+    #[serde(default)]
+    upstream_auth: String,
+    #[serde(default)]
+    auth_protocol_version: String,
     #[serde(default)]
     pid: i32,
     #[serde(default)]

@@ -1,4 +1,36 @@
 export const zhCN = {
+  "identity.title": "GitCode 身份认证",
+  "identity.phase.disconnected": "需要登录",
+  "identity.phase.authorizing": "等待浏览器授权",
+  "identity.phase.connected": "已认证",
+  "identity.phase.renewing": "正在自动刷新",
+  "identity.phase.expired": "登录已过期，请重新登录",
+  "identity.phase.reauth_required": "需要重新登录",
+  "identity.phase.rejected": "当前授权已失效，请重新登录",
+  "identity.phase.revocation_pending": "本地已退出登录",
+  "identity.keyIndependent":
+    "请先使用 GitCode 账号完成身份认证以继续使用控制台；模型调用仍使用原 API 密钥，Agent 配置保持不变。",
+  "identity.account": "账号 ID：{user}",
+  "identity.expires": "有效至：{date}",
+  "identity.remotePending":
+    "远端退出待确认；当前设备登录状态已停用，不会被迟到结果重新启用。",
+  "identity.confirm":
+    "请在浏览器确认登录并核对确认码 {code}；完成后将自动进入应用。",
+  "identity.failed": "登录认证暂时未完成，可重试或重新发起登录。",
+  "identity.error.certServiceUnavailable":
+    "认证服务不可用，请检查网络或稍后重试（CERT_SERVICE_UNAVAILABLE）。",
+  "identity.error.certReauthRequired":
+    "GitCode 授权已失效，请重新登录（CERT_REAUTH_REQUIRED）。",
+  "identity.error.operationConflict":
+    "已有认证操作尚未完成，请稍后重试（CERT_OPERATION_CONFLICT）。",
+  "identity.error.storageUnavailable":
+    "无法读取本地登录状态存储（IDENTITY_STORAGE_UNAVAILABLE）。",
+  "identity.error.busy": "认证服务繁忙，请稍后重试（IDENTITY_BUSY）。",
+  "identity.error.invalidState":
+    "本地登录状态异常，请重新登录（IDENTITY_STATE_INVALID）。",
+  "identity.connect": "连接 GitCode 账号",
+  "identity.renew": "刷新登录状态",
+  "identity.disconnect": "取消并重置",
   "app.homeAria": "CodeasierRouter 首页",
   "app.navigationAria": "主导航",
   "app.localMode": "本地模式",

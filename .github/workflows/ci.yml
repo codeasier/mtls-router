@@ -47,6 +47,8 @@ jobs:
               - 'tests/setup_*.sh'
               - 'Dockerfile'
               - 'systemd/**'
+              - 'deploy/**'
+              - 'testdata/router-mtls-v1/**'
             frontend:
               - 'desktop/src/**'
               - 'desktop/package.json'
@@ -61,11 +63,25 @@ jobs:
               - 'desktop/tsconfig.json'
               - 'desktop/vite.config.ts'
             rust:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'crates/**'
+              - 'cli/**'
+              - 'testdata/**'
+              - 'scripts/public-trust.rs'
               - 'desktop/src-tauri/**'
               - 'internal/manager/**'
+              - 'internal/routerenroll/**'
+              - 'cmd/codeasier-router-enroll/**'
+              - 'deploy/nginx/**'
               - 'go.mod'
               - 'go.sum'
             package:
+              - 'scripts/public-trust.rs'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'crates/**'
+              - 'cli/**'
               - 'desktop/**'
       - run: make test-workflows
 
@@ -84,6 +100,8 @@ jobs:
         run: test -z "$(gofmt -l .)"
       - name: Shell tests
         run: make test-shell
+      - name: Install real nginx for enrollment TLS and CRL integration
+        run: sudo apt-get update && sudo apt-get install -y nginx procps lsof
       - name: Test
         run: go test ./...
       - name: Vet
@@ -116,6 +134,31 @@ jobs:
       - run: npm test
       - run: npm run build
 
+  shared-rust:
+    name: Headless shared Rust (${{ matrix.runner }})
+    needs: scope
+    if: needs.scope.outputs.rust == 'true' || needs.scope.outputs.ci == 'true'
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test shared crates without GUI system packages
+        run: cargo test --locked -p router-contract -p router-core -p router-identity -p codeasier-router
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install nginx without GUI packages
+        run: sudo apt-get update && sudo apt-get install -y nginx procps lsof
+      - name: Rust native through real nginx and Go enrollment
+        env:
+          MTLS_TEST_RUST_NATIVE: '1'
+        run: go test ./internal/routerenroll -run TestRealNginxRenewalAndObservedCRLLoad -count=1 -v
+
   rust:
     name: Rust (${{ matrix.os }})
     needs: scope
@@ -146,7 +189,7 @@ jobs:
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: desktop/src-tauri
+          workspaces: .
       - name: Install Linux desktop dependencies
         if: runner.os == 'Linux'
         run: |
@@ -155,7 +198,7 @@ jobs:
       - name: Check Rust formatting
         run: cargo fmt --manifest-path desktop/src-tauri/Cargo.toml --all -- --check
       - name: Run Rust tests
-        run: cargo test --manifest-path desktop/src-tauri/Cargo.toml --locked
+        run: cargo test --manifest-path desktop/src-tauri/Cargo.toml --locked --workspace
 
   desktop-package:
     name: Package ${{ matrix.target }}
@@ -195,7 +238,7 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: desktop/src-tauri
+          workspaces: .
           key: ${{ matrix.target }}
       - name: Install Linux package dependencies
         if: runner.os == 'Linux'

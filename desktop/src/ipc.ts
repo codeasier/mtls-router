@@ -7,6 +7,10 @@ export const AGENT_DRAFT_QUIT_REQUESTED_EVENT = "agent-draft-quit-requested";
 export const UPDATE_PROGRESS_EVENT = "update-download-progress";
 
 export const COMMANDS = {
+  identityStatus: "identity_status",
+  identityConnect: "identity_connect",
+  identityRenew: "identity_renew",
+  identityDisconnect: "identity_disconnect",
   routerStatus: "router_status",
   routerListenConfig: "router_listen_config",
   routerSetListenOverride: "router_set_listen_override",
@@ -954,7 +958,27 @@ export interface WorkbenchOperationDone {
   conversation_id: string;
 }
 
+export interface IdentitySummary {
+  generation: number;
+  phase: string;
+  user_id: string | null;
+  device_id: string | null;
+  expires_at: number | null;
+  revocation_pending: boolean;
+  error_code: string | null;
+}
+
+export interface IdentityAuthorization {
+  verification_uri: string;
+  short_code: string;
+  browser_opened: boolean;
+}
+
 export interface DesktopApi {
+  getIdentityStatus?(): Promise<IdentitySummary>;
+  connectIdentity?(): Promise<IdentityAuthorization>;
+  renewIdentity?(): Promise<IdentitySummary>;
+  disconnectIdentity?(): Promise<IdentitySummary>;
   getPollSnapshot(): Promise<PollSnapshot>;
   subscribePollSnapshots(
     listener: (snapshot: PollSnapshot) => void,
@@ -1121,6 +1145,10 @@ export function createDesktopApi(
   listen: ListenFn = tauriListen,
 ): DesktopApi {
   return {
+    getIdentityStatus: () => invoke(COMMANDS.identityStatus),
+    connectIdentity: () => invoke(COMMANDS.identityConnect),
+    renewIdentity: () => invoke(COMMANDS.identityRenew),
+    disconnectIdentity: () => invoke(COMMANDS.identityDisconnect),
     getPollSnapshot: () => invoke(COMMANDS.pollSnapshot),
     subscribePollSnapshots: (listener) =>
       listen<PollSnapshot>(POLL_SNAPSHOT_EVENT, (event) =>

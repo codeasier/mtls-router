@@ -13,22 +13,20 @@ use crate::error::{CommandError, Result};
 use crate::installation::InstallationOwnership;
 use crate::manager_core::{
     current_identity, load_embedded_preset, normalize_listener, CurrentLineage, EmbeddedBackend,
-    EmbeddedConfig, Paths, ProductionRuntime, SessionConfig, DEFAULT_LISTEN,
+    EmbeddedConfig, Paths, ProductionRuntime, SessionConfig,
 };
 use crate::protocol::MANAGEMENT_PROTOCOL_VERSION;
 use crate::router_core::{
     BuildInfo, RouterDefaults, RouterEnv, RouterFlags, SupervisorConfig, SupervisorLimits,
-    TlsMaterials, DEFAULT_REQUEST_TIMEOUT, DEFAULT_TIMEOUT,
+    TlsMaterials, DEFAULT_TIMEOUT,
 };
 
-const CLIENT_CERT_PEM: &str =
-    include_str!(concat!(env!("MTLS_ROUTER_CREDENTIALS_DIR"), "/client.pem"));
-const CLIENT_KEY_PEM: &str =
-    include_str!(concat!(env!("MTLS_ROUTER_CREDENTIALS_DIR"), "/client.key"));
-const UPSTREAM_CA_PEM: &str = include_str!(concat!(
-    env!("MTLS_ROUTER_CREDENTIALS_DIR"),
-    "/upstream-ca.pem"
+const CLIENT_AUTH_CA_PEM: &str = include_str!(concat!(
+    env!("MTLS_ROUTER_TRUST_DIR"),
+    "/client-auth-ca.pem"
 ));
+const UPSTREAM_CA_PEM: &str =
+    include_str!(concat!(env!("MTLS_ROUTER_TRUST_DIR"), "/upstream-ca.pem"));
 
 pub const UPSTREAM_URL: &str = env!("MTLS_UPSTREAM_URL");
 
@@ -47,19 +45,30 @@ pub fn build_info() -> BuildInfo {
         option_env!("MTLS_ROUTER_BUILD_DATE").unwrap_or("unknown"),
         env!("MTLS_DEPLOYMENT_ID"),
     )
+    .with_personal_auth()
+}
+
+pub fn identity_store(data_dir: &Path) -> Result<router_identity::IdentityStore> {
+    let trust = router_identity::IdentityTrust::new(CLIENT_AUTH_CA_PEM.into())
+        .map_err(|e| CommandError::new(e.code(), "public certificate trust is unavailable"))?;
+    router_identity::IdentityStore::for_runtime(data_dir, trust)
+        .map_err(|e| CommandError::new(e.code(), "private certificate storage is unavailable"))
+}
+
+pub fn identity_client(data_dir: &Path) -> Result<router_identity::NativeClient> {
+    router_identity::NativeClient::new(identity_store(data_dir)?, UPSTREAM_CA_PEM.into())
+        .map_err(|e| CommandError::new(e.code(), "certificate service is unavailable"))
 }
 
 /// Same listen/TLS/probe configuration the desktop passed to the Go router:
 /// loopback listen, TLS 1.2 floor, 10s probe timeout, debug off, foreground.
 /// `request_timeout` is a separate supervisor isolation budget, not Go
 /// `-timeout` / `MTLS_TIMEOUT`.
-#[cfg_attr(not(test), allow(dead_code))]
-pub fn supervisor_config() -> SupervisorConfig {
-    supervisor_config_with_listen(DEFAULT_LISTEN)
-}
-
-pub fn supervisor_config_with_listen(listen_addr: &str) -> SupervisorConfig {
-    SupervisorConfig {
+pub fn supervisor_config_with_listen(
+    listen_addr: &str,
+    data_dir: &Path,
+) -> Result<SupervisorConfig> {
+    Ok(SupervisorConfig {
         defaults: RouterDefaults {
             listen_addr: listen_addr.to_owned(),
             upstream_url: UPSTREAM_URL.to_owned(),
@@ -71,14 +80,14 @@ pub fn supervisor_config_with_listen(listen_addr: &str) -> SupervisorConfig {
         },
         env: RouterEnv::default(),
         flags: RouterFlags::default(),
-        materials: TlsMaterials::new(CLIENT_CERT_PEM, CLIENT_KEY_PEM, UPSTREAM_CA_PEM),
+        materials: TlsMaterials::from_identity(identity_store(data_dir)?, UPSTREAM_CA_PEM),
         identity: build_info(),
         limits: SupervisorLimits {
             command_timeout: COMMAND_TIMEOUT,
             ..SupervisorLimits::default()
         },
         logger: None,
-    }
+    })
 }
 
 pub fn production_runtime(
@@ -114,7 +123,7 @@ pub fn production_runtime(
             log_base: paths.desktop_log_file.clone(),
             version: env!("MTLS_MANAGER_VERSION").to_owned(),
         },
-        supervisor_config_with_listen(&configured.listen_addr),
+        supervisor_config_with_listen(&configured.listen_addr, desktop_data_dir)?,
     ));
     Ok(Arc::new(ProductionRuntime {
         session: SessionConfig {
@@ -135,18 +144,22 @@ pub fn production_runtime(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::router_core::{parse_pem_certificates, parse_pem_private_key};
+    use crate::manager_core::DEFAULT_LISTEN;
+    use crate::router_core::{parse_pem_certificates, DEFAULT_REQUEST_TIMEOUT};
 
     #[test]
     fn embedded_credentials_parse_and_never_reach_protocol_surfaces() {
-        assert!(!parse_pem_certificates(CLIENT_CERT_PEM.as_bytes())
+        assert!(!parse_pem_certificates(CLIENT_AUTH_CA_PEM.as_bytes())
             .unwrap()
             .is_empty());
-        parse_pem_private_key(CLIENT_KEY_PEM.as_bytes()).unwrap();
         assert!(!parse_pem_certificates(UPSTREAM_CA_PEM.as_bytes())
             .unwrap()
             .is_empty());
-        let config = supervisor_config();
+        let directory =
+            std::env::temp_dir().join(format!("router-public-trust-{}", uuid::Uuid::new_v4()));
+        let config = supervisor_config_with_listen(DEFAULT_LISTEN, &directory).unwrap();
+        assert!(config.materials.is_personal());
+        let _ = std::fs::remove_dir_all(directory);
         assert_eq!(config.defaults.listen_addr, "127.0.0.1:19099");
         assert_eq!(config.defaults.tls_min, "tls1.2");
         assert_eq!(config.defaults.timeout, DEFAULT_TIMEOUT);
@@ -187,7 +200,10 @@ mod tests {
         assert_eq!(runtime.current.manager, own);
         assert_eq!(runtime.session.parent, own);
         assert_eq!(runtime.session.manager_identity, own);
-        assert_eq!(runtime.current.package_generation, 2);
+        assert_eq!(
+            runtime.current.package_generation,
+            crate::installation::PACKAGE_GENERATION as i32
+        );
         assert_eq!(runtime.current.session_id, "session-under-test");
         assert!(!runtime.session.isolate_agent);
         assert_eq!(

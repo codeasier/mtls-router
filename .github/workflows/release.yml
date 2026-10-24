@@ -22,10 +22,6 @@ on:
           - darwin-arm64
           - linux-amd64
           - linux-arm64
-      upstream_url:
-        description: Optional HTTPS upstream override for this validation build
-        required: false
-        type: string
 
 permissions:
   contents: write
@@ -69,15 +65,8 @@ jobs:
         shell: bash
         env:
           SELECTED_TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.target || 'all' }}
-          VALIDATION_UPSTREAM: ${{ github.event_name == 'workflow_dispatch' && inputs.upstream_url || '' }}
         run: |
           set -euo pipefail
-          if [[ -n "$VALIDATION_UPSTREAM" ]]; then
-            [[ "$VALIDATION_UPSTREAM" == https://* && "$VALIDATION_UPSTREAM" != *[[:space:]\'\"]* ]] || {
-              echo 'validation upstream must be an HTTPS URL without whitespace or quotes' >&2
-              exit 1
-            }
-          fi
           desktop='[
             {"name":"windows-amd64","runner":"windows-2025","target":"x86_64-pc-windows-msvc","os":"windows","arch":"amd64","bundles":"nsis"},
             {"name":"darwin-amd64","runner":"macos-15-intel","target":"x86_64-apple-darwin","os":"darwin","arch":"amd64","bundles":"dmg"},
@@ -105,12 +94,10 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare.outputs.desktop-matrix) }}
     env:
-      # Consumed by desktop/src-tauri/build.rs, which embeds the router
-      # credentials and identity into the desktop executable.
-      CLIENT_CERT_PEM: ${{ secrets.CLIENT_CERT_PEM }}
-      CLIENT_KEY_PEM: ${{ secrets.CLIENT_KEY_PEM }}
-      UPSTREAM_CA_PEM: ${{ secrets.UPSTREAM_CA_PEM }}
-      UPSTREAM_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.upstream_url || vars.UPSTREAM_URL }}
+      # Public trust only. Personal keys are generated on each runtime device.
+      CLIENT_AUTH_CA_PEM: ${{ vars.CLIENT_AUTH_CA_PEM }}
+      UPSTREAM_CA_PEM: ${{ vars.UPSTREAM_CA_PEM }}
+      UPSTREAM_URL: https://relay.codeasier.top
       DEPLOYMENT_ID: ${{ vars.DEPLOYMENT_ID }}
       AGENT_MODEL_PRESET_BASE64: ${{ vars.AGENT_MODEL_PRESET_BASE64 }}
       SIMPLIFY: ${{ needs.prepare.outputs.simplify }}
@@ -149,7 +136,7 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: desktop/src-tauri
+          workspaces: .
           key: release-${{ matrix.target }}
       - name: Install Linux package dependencies
         if: runner.os == 'Linux'
@@ -184,8 +171,8 @@ jobs:
         shell: bash
         run: |
           case "${DEPLOYMENT_ID:-}" in ""|dev|unknown) echo "DEPLOYMENT_ID must be a non-default production identifier" >&2; exit 1;; esac
-          test -n "$CLIENT_CERT_PEM" && test -n "$CLIENT_KEY_PEM" && test -n "$UPSTREAM_CA_PEM"
-          case "${UPSTREAM_URL:-}" in https://*) ;; *) echo "UPSTREAM_URL must use HTTPS" >&2; exit 1;; esac
+          test -n "$CLIENT_AUTH_CA_PEM" && test -n "$UPSTREAM_CA_PEM"
+          test "$UPSTREAM_URL" = https://relay.codeasier.top
           test "$MANAGEMENT_PROTOCOL_VERSION" = 4
       - name: Import Windows signing certificate
         if: runner.os == 'Windows' && env.WINDOWS_CERTIFICATE != '' && env.WINDOWS_CERTIFICATE_PASSWORD != ''
@@ -222,13 +209,13 @@ jobs:
           Push-Location desktop
           npm exec tauri -- build --target ${{ matrix.target }} --no-bundle --config "$env:TAURI_UPDATER_CONFIG" --no-sign --ci
           Pop-Location
-          $desktop = "desktop/src-tauri/target/${{ matrix.target }}/release/mtls-router-desktop.exe"
+          $desktop = "target/${{ matrix.target }}/release/mtls-router-desktop.exe"
           & signtool sign /sha1 $env:WINDOWS_CERTIFICATE_THUMBPRINT /fd sha256 /tr https://timestamp.digicert.com /td sha256 $desktop
           if ($LASTEXITCODE -ne 0) { throw 'desktop executable signing failed' }
           Push-Location desktop
           npm exec tauri -- bundle --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config "$env:TAURI_UPDATER_CONFIG" --no-sign --ci
           Pop-Location
-          $package = (Get-ChildItem desktop/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*-setup.exe).FullName
+          $package = (Get-ChildItem target/${{ matrix.target }}/release/bundle/nsis/*-setup.exe).FullName
           & signtool sign /sha1 $env:WINDOWS_CERTIFICATE_THUMBPRINT /fd sha256 /tr https://timestamp.digicert.com /td sha256 $package
           if ($LASTEXITCODE -ne 0) { throw 'installer signing failed' }
           if ($env:ONLINE_UPDATE -eq 'true') {
@@ -245,7 +232,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           npm exec tauri -- build --target ${{ matrix.target }} --bundles app --config "$TAURI_UPDATER_CONFIG" --no-sign --ci
-          app=src-tauri/target/${{ matrix.target }}/release/bundle/macos/CodeasierRouter.app
+          app=../target/${{ matrix.target }}/release/bundle/macos/CodeasierRouter.app
           codesign --force --sign - "$app/Contents/MacOS/mtls-router-desktop"
           codesign --force --sign - "$app"
           ./scripts/create-macos-dmg.sh ${{ matrix.target }} "$VERSION"
@@ -276,7 +263,7 @@ jobs:
         run: |
           cd desktop
           npm exec tauri -- build --target ${{ matrix.target }} --bundles app --config "$TAURI_UPDATER_CONFIG" --no-sign --ci
-          app=src-tauri/target/${{ matrix.target }}/release/bundle/macos/CodeasierRouter.app
+          app=../target/${{ matrix.target }}/release/bundle/macos/CodeasierRouter.app
           codesign --force --options runtime --timestamp --keychain "$APPLE_SIGNING_KEYCHAIN" --sign "$APPLE_SIGNING_IDENTITY" "$app/Contents/MacOS/mtls-router-desktop"
           codesign --force --options runtime --timestamp --keychain "$APPLE_SIGNING_KEYCHAIN" --sign "$APPLE_SIGNING_IDENTITY" "$app"
           if [[ -n "$APPLE_ID" && -n "$APPLE_PASSWORD" && -n "$APPLE_TEAM_ID" ]]; then
@@ -285,7 +272,7 @@ jobs:
             xcrun stapler staple "$app"
           fi
           ./scripts/create-macos-dmg.sh ${{ matrix.target }} "$VERSION"
-          codesign --force --timestamp --keychain "$APPLE_SIGNING_KEYCHAIN" --sign "$APPLE_SIGNING_IDENTITY" "src-tauri/target/${{ matrix.target }}/release/bundle/dmg/CodeasierRouter_${VERSION}.dmg"
+          codesign --force --timestamp --keychain "$APPLE_SIGNING_KEYCHAIN" --sign "$APPLE_SIGNING_IDENTITY" "../target/${{ matrix.target }}/release/bundle/dmg/CodeasierRouter_${VERSION}.dmg"
           ./scripts/create-macos-updater.sh ${{ matrix.target }}
       - name: Sign final Linux or unsigned Windows updater package
         if: env.ONLINE_UPDATE == 'true' && (runner.os == 'Linux' || (runner.os == 'Windows' && (env.WINDOWS_CERTIFICATE == '' || env.WINDOWS_CERTIFICATE_PASSWORD == '')))
@@ -295,9 +282,9 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           if [[ '${{ runner.os }}' == Linux ]]; then
-            package="$(printf '%s\n' desktop/src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage)"
+            package="$(printf '%s\n' target/${{ matrix.target }}/release/bundle/appimage/*.AppImage)"
           else
-            package="$(printf '%s\n' desktop/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*-setup.exe)"
+            package="$(printf '%s\n' target/${{ matrix.target }}/release/bundle/nsis/*-setup.exe)"
           fi
           [[ -f "$package" ]]
           (cd desktop && npm exec tauri -- signer sign "$GITHUB_WORKSPACE/$package")
@@ -348,7 +335,7 @@ jobs:
         if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != '' && env.APPLE_CERTIFICATE_PASSWORD != '' && (env.APPLE_ID == '' || env.APPLE_PASSWORD == '' || env.APPLE_TEAM_ID == '')
         shell: bash
         run: |
-          codesign --verify --deep --strict desktop/src-tauri/target/${{ matrix.target }}/release/bundle/macos/CodeasierRouter.app
+          codesign --verify --deep --strict target/${{ matrix.target }}/release/bundle/macos/CodeasierRouter.app
           codesign --verify --strict desktop/release-artifacts/CodeasierRouter-darwin-${{ matrix.arch }}.dmg
           status="signed (notarization credentials unavailable)"
           printf '%s\n' "$status" >desktop/release-artifacts/signing-status-${{ matrix.os }}-${{ matrix.arch }}.txt
@@ -356,7 +343,7 @@ jobs:
         if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != '' && env.APPLE_CERTIFICATE_PASSWORD != '' && env.APPLE_ID != '' && env.APPLE_PASSWORD != '' && env.APPLE_TEAM_ID != ''
         shell: bash
         run: |
-          app=desktop/src-tauri/target/${{ matrix.target }}/release/bundle/macos/CodeasierRouter.app
+          app=target/${{ matrix.target }}/release/bundle/macos/CodeasierRouter.app
           codesign --verify --deep --strict "$app"
           codesign --verify --strict desktop/release-artifacts/CodeasierRouter-darwin-${{ matrix.arch }}.dmg
           spctl --assess --type execute "$app"
@@ -369,10 +356,72 @@ jobs:
           path: desktop/release-artifacts/*
           if-no-files-found: error
 
+  cli:
+    name: CLI ${{ matrix.target }}
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            arch: arm64
+    env:
+      CLIENT_AUTH_CA_PEM: ${{ vars.CLIENT_AUTH_CA_PEM }}
+      UPSTREAM_CA_PEM: ${{ vars.UPSTREAM_CA_PEM }}
+      DEPLOYMENT_ID: ${{ vars.DEPLOYMENT_ID }}
+      RELEASE_BUILD: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Select CLI build version
+        env:
+          DISPATCH_VERSION: ${{ inputs.version }}
+        run: |
+          selected="${GITHUB_REF_NAME#v}"
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then selected="$DISPATCH_VERSION"; fi
+          [[ "$selected" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
+          printf 'VERSION=%s\n' "$selected" >>"$GITHUB_ENV"
+      - name: Test and build native headless CLI
+        run: |
+          cargo test --locked -p router-contract -p router-identity -p router-core -p codeasier-router
+          cargo build --locked --release -p codeasier-router
+          test "$(target/release/codeasier-router --version | jq -r .version)" = "$VERSION"
+          if ldd target/release/codeasier-router | grep -Ei 'webkit|gtk|gdk|tauri'; then exit 1; fi
+          mkdir -p "$RUNNER_TEMP/cli-stage" cli-artifacts
+          cp target/release/codeasier-router "$RUNNER_TEMP/cli-stage/"
+          archive="CodeasierRouter-cli-linux-${{ matrix.arch }}.tar.gz"
+          tar -C "$RUNNER_TEMP/cli-stage" -czf "cli-artifacts/$archive" codeasier-router
+          (cd cli-artifacts && sha256sum "$archive" >"CodeasierRouter-cli-linux-${{ matrix.arch }}.sha256")
+          printf '{"schema_version":1,"producer":"cli-linux-${{ matrix.arch }}","management_protocol_version":"4"}\n' >"cli-artifacts/release-metadata-cli-linux-${{ matrix.arch }}.json"
+      - name: Sign CLI provenance
+        id: attest
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: cli-artifacts/CodeasierRouter-cli-linux-${{ matrix.arch }}.tar.gz
+      - name: Include portable signature bundle
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: cp "$BUNDLE" "cli-artifacts/CodeasierRouter-cli-linux-${{ matrix.arch }}.tar.gz.sigstore.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CodeasierRouter-cli-linux-${{ matrix.arch }}
+          path: cli-artifacts/*
+          if-no-files-found: error
+
   release:
     name: Package and publish release
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [prepare, desktop]
+    needs: [prepare, desktop, cli]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -386,8 +435,17 @@ jobs:
         run: |
           mkdir protocol-metadata
           mv desktop-packages/release-metadata-*.json protocol-metadata/
+      - name: Download all CLI packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: CodeasierRouter-cli-linux-*
+          path: cli-packages
+          merge-multiple: true
+      - name: Collect CLI protocol metadata
+        run: mv cli-packages/release-metadata-*.json protocol-metadata/
       - name: Preflight and package
         env:
+          GH_TOKEN: ${{ github.token }}
           DESKTOP_DOWNLOAD_BASE_URL: https://release.codeasier.top/${{ github.event.repository.name }}/${{ github.ref_name }}
           RELEASE_TAG: ${{ github.ref_name }}
           SOURCE_DATE_EPOCH: '0'

@@ -15,17 +15,18 @@ package_contains() { grep -Fq -- "$1" "$PACKAGE_SCRIPT" || fail "package script 
 [[ "$(grep -c '^  release:$' "$WORKFLOW")" -eq 1 ]] || fail "expected one aggregation/release job"
 [[ "$(grep -c 'softprops/action-gh-release@' "$WORKFLOW")" -eq 1 ]] || fail "release must be published once"
 [[ "$(grep -c 'easingthemes/ssh-deploy@' "$WORKFLOW")" -eq 1 ]] || fail "staged outputs must be mirrored once"
-contains 'needs: [prepare, desktop]'
+contains 'needs: [prepare, desktop, cli]'
 contains 'actions/download-artifact@v4'
 contains 'merge-multiple: true'
-# New versions publish the desktop only; CLI lifecycle artifacts are frozen at
-# historical tags and must be rejected if they reappear.
+# Historical Go lifecycle artifacts remain frozen; only the exact Rust CLI lane
+# is admitted alongside the five desktop targets.
 for forbidden in 'needs: [prepare, build, desktop]' 'pattern: mtls-router-cli-*' './cmd/mtls-router-manager' \
-  'go build' 'cli-matrix' 'release-metadata-cli-'; do
+  'cli-matrix'; do
   if grep -Fq -- "$forbidden" "$WORKFLOW" "$RECOVERY"; then
     fail "new releases must not build or publish CLI artifacts: $forbidden"
   fi
 done
+if grep -Eq '(^|[[:space:]])go build' "$WORKFLOW" "$RECOVERY"; then fail 'frozen Go CLI must not be rebuilt'; fi
 for forbidden in 'cp setup.sh stage/' 'cp setup.ps1 stage/' 'packages/$package.tar.gz' 'packages/$package.zip' 'cp binaries/'; do
   if grep -Fq -- "$forbidden" "$PACKAGE_SCRIPT"; then
     fail "package script must not stage CLI lifecycle artifacts: $forbidden"
@@ -38,8 +39,8 @@ package_contains 'CLI lifecycle artifact must not be published'
 package_contains 'artifact is not on the release allowlist'
 package_contains 'unexpected release file'
 package_contains 'test "$(find release -maxdepth 1 -type f -name '\''mtls-router*'\'' | wc -l)" -eq 0'
-contains 'test -n "$CLIENT_CERT_PEM" && test -n "$CLIENT_KEY_PEM" && test -n "$UPSTREAM_CA_PEM"'
-contains 'case "${UPSTREAM_URL:-}" in https://*)'
+contains 'test -n "$CLIENT_AUTH_CA_PEM" && test -n "$UPSTREAM_CA_PEM"'
+contains 'test "$UPSTREAM_URL" = https://relay.codeasier.top'
 contains "RELEASE_BUILD: '1'"
 contains 'files: github-release/*'
 contains 'SOURCE: release/'
@@ -48,18 +49,18 @@ contains 'ARGS: -avz --delete'
 package_contains 'expected_desktop_assets=5'
 package_contains 'if [[ "$online_update" == true ]]; then expected_desktop_assets=12; fi'
 package_contains 'test "$(find release -maxdepth 1 -type f -name '\''signing-status-*'\'' | wc -l)" -eq 5'
-package_contains 'expected_release_files=11'
-package_contains 'expected_release_files=19'
-package_contains 'expected_github_files=11'
+package_contains 'expected_release_files=15'
+package_contains 'expected_release_files=23'
 package_contains 'expected_github_files=15'
-package_contains 'expected_github_checksums=5'
+package_contains 'expected_github_files=19'
 package_contains 'expected_github_checksums=9'
+package_contains 'expected_github_checksums=13'
 package_contains $'awk \'!/\\.app\\.tar\\.gz/\' release/SHA256SUMS >github-release/SHA256SUMS'
 package_contains 'Windows arm64 artifacts are not published'
 contains './scripts/package-release.sh'
 package_contains './scripts/check-release-protocol.sh protocol-metadata'
 [[ -x "$PROTOCOL_CHECK" ]] || fail 'release protocol preflight is missing or not executable'
-grep -Fq '(.producer | startswith("desktop-"))' "$PROTOCOL_CHECK" || fail 'release protocol preflight must accept desktop producers only'
+grep -Fq '"cli-linux-amd64","cli-linux-arm64"' "$PROTOCOL_CHECK" || fail 'release protocol preflight must enumerate only the two new CLI producers'
 [[ "$(grep -Fc 'release-metadata-' "$WORKFLOW")" -ge 2 ]] || fail 'release producers/aggregation do not carry protocol metadata'
 grep -Fq 'mv desktop-packages/release-metadata-*.json protocol-metadata/' "$RECOVERY" || fail 'recovery release does not collect desktop protocol metadata'
 grep -Fq 'mv desktop-packages/release-metadata-*.json protocol-metadata/' "$WORKFLOW" || fail 'release does not collect desktop protocol metadata'
@@ -84,8 +85,45 @@ jq -e '
 
 protocol_tmp="$(mktemp -d)"
 trap 'rm -rf "$protocol_tmp"' EXIT
+mkdir -p "$protocol_tmp/bin"
+cat >"$protocol_tmp/bin/gh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "${FAKE_GH_ATTEST_FAILURE:-0}" != 1 ]]
+[[ "$1" == attestation && "$2" == verify ]]
+archive=$3; shift 3
+bundle=''
+repo_ok=0; workflow_ok=0; digest_ok=0; ref_ok=0; runner_ok=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --repo) [[ "$2" == codeasier/mtls-router ]]; repo_ok=1; shift 2 ;;
+    --signer-workflow) [[ "$2" == codeasier/mtls-router/.github/workflows/release.yml ]]; workflow_ok=1; shift 2 ;;
+    --source-digest) [[ "$2" == 1111111111111111111111111111111111111111 ]]; digest_ok=1; shift 2 ;;
+    --source-ref) [[ "$2" == refs/tags/v1.2.3* ]]; ref_ok=1; shift 2 ;;
+    --bundle) bundle=$2; shift 2 ;;
+    --deny-self-hosted-runners) runner_ok=1; shift ;;
+    *) exit 1 ;;
+  esac
+done
+[[ "$repo_ok$workflow_ok$digest_ok$ref_ok$runner_ok" == 11111 ]]
+python3 - "$archive" "$bundle" <<'PY'
+import hashlib,json,sys
+from pathlib import Path
+artifact,bundle=map(Path,sys.argv[1:])
+value=json.loads(bundle.read_text())
+assert value["synthetic"] is True
+assert value["sha256"] == hashlib.sha256(artifact.read_bytes()).hexdigest()
+PY
+SH
+chmod +x "$protocol_tmp/bin/gh"
+export PATH="$protocol_tmp/bin:$PATH"
+export GITHUB_REPOSITORY=codeasier/mtls-router
+export CLI_SOURCE_SHA=1111111111111111111111111111111111111111
 for os_arch in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64; do
   printf '{"schema_version":1,"producer":"desktop-%s","management_protocol_version":"4"}\n' "$os_arch" >"$protocol_tmp/release-metadata-desktop-$os_arch.json"
+done
+for arch in amd64 arm64; do
+  printf '{"schema_version":1,"producer":"cli-linux-%s","management_protocol_version":"4"}\n' "$arch" >"$protocol_tmp/release-metadata-cli-linux-$arch.json"
 done
 "$PROTOCOL_CHECK" "$protocol_tmp" || fail 'matching desktop protocol-v4 metadata was rejected'
 jq '.management_protocol_version = "3"' "$protocol_tmp/release-metadata-desktop-linux-amd64.json" >"$protocol_tmp/deliberate-protocol-v3-mismatch.json"
@@ -94,17 +132,27 @@ if "$PROTOCOL_CHECK" "$protocol_tmp" >/dev/null 2>&1; then
   fail 'deliberate mixed protocol-v3/v4 release metadata was accepted'
 fi
 printf '{"schema_version":1,"producer":"desktop-linux-amd64","management_protocol_version":"4"}\n' >"$protocol_tmp/release-metadata-desktop-linux-amd64.json"
-printf '{"schema_version":1,"producer":"cli-linux-amd64","management_protocol_version":"4"}\n' >"$protocol_tmp/release-metadata-cli-linux-amd64.json"
+printf '{"schema_version":1,"producer":"cli-windows-amd64","management_protocol_version":"4"}\n' >"$protocol_tmp/release-metadata-cli-linux-amd64.json"
 if "$PROTOCOL_CHECK" "$protocol_tmp" >/dev/null 2>&1; then
-  fail 'CLI producer metadata was accepted into a desktop-only release'
+  fail 'unapproved CLI producer metadata was accepted'
 fi
-rm "$protocol_tmp/release-metadata-cli-linux-amd64.json"
+printf '{"schema_version":1,"producer":"cli-linux-amd64","management_protocol_version":"4"}\n' >"$protocol_tmp/release-metadata-cli-linux-amd64.json"
 
 package_tmp="$protocol_tmp/package-fixture"
-mkdir -p "$package_tmp/scripts" "$package_tmp/desktop-packages" "$package_tmp/protocol-metadata"
+mkdir -p "$package_tmp/scripts" "$package_tmp/desktop-packages" "$package_tmp/cli-packages" "$package_tmp/protocol-metadata"
 cp "$PACKAGE_SCRIPT" "$PROTOCOL_CHECK" "$package_tmp/scripts/"
 for os_arch in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64; do
   printf '{"schema_version":1,"producer":"desktop-%s","management_protocol_version":"4"}\n' "$os_arch" >"$package_tmp/protocol-metadata/release-metadata-desktop-$os_arch.json"
+done
+for arch in amd64 arm64; do
+  printf '{"schema_version":1,"producer":"cli-linux-%s","management_protocol_version":"4"}\n' "$arch" >"$package_tmp/protocol-metadata/release-metadata-cli-linux-$arch.json"
+  mkdir -p "$protocol_tmp/cli-stage-$arch"
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$protocol_tmp/cli-stage-$arch/codeasier-router"
+  chmod +x "$protocol_tmp/cli-stage-$arch/codeasier-router"
+  archive="CodeasierRouter-cli-linux-$arch.tar.gz"
+  COPYFILE_DISABLE=1 tar -C "$protocol_tmp/cli-stage-$arch" -czf "$package_tmp/cli-packages/$archive" codeasier-router
+  (cd "$package_tmp/cli-packages" && sha256sum "$archive" >"CodeasierRouter-cli-linux-$arch.sha256")
+  printf '{"synthetic":true,"sha256":"%s"}\n' "$(sha256sum "$package_tmp/cli-packages/$archive" | cut -d' ' -f1)" >"$package_tmp/cli-packages/$archive.sigstore.json"
 done
 for os_arch in linux-amd64 linux-arm64 windows-amd64 darwin-amd64 darwin-arm64; do
   os=${os_arch%-*}
@@ -124,9 +172,9 @@ for os_arch in linux-amd64 linux-arm64 windows-amd64 darwin-amd64 darwin-arm64; 
 done
 (cd "$package_tmp" && RELEASE_TAG=v1.2.3 DESKTOP_DOWNLOAD_BASE_URL=https://release.codeasier.top/mtls-router/v1.2.3 SOURCE_DATE_EPOCH=0 ./scripts/package-release.sh) || \
   fail 'stable updater release fixture failed to package'
-[[ "$(find "$package_tmp/release" -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 19 ]] || \
+[[ "$(find "$package_tmp/release" -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 23 ]] || \
   fail 'stable updater release fixture has the wrong exact asset count'
-[[ "$(find "$package_tmp/github-release" -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 15 ]] || \
+[[ "$(find "$package_tmp/github-release" -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 19 ]] || \
   fail 'stable GitHub subset has the wrong exact asset count'
 [[ "$(find "$package_tmp/release" -maxdepth 1 -type f -name 'CodeasierRouter-*.sha256' | wc -l | tr -d ' ')" -eq 0 ]] || \
   fail 'stable release fixture published sidecar checksum files'
@@ -149,9 +197,9 @@ jq -e '
 (cd "$package_tmp/release" && sha256sum -c SHA256SUMS >/dev/null) || fail 'stable updater release checksums are invalid'
 (cd "$package_tmp/github-release" && sha256sum -c SHA256SUMS >/dev/null) || \
   fail 'stable GitHub SHA256SUMS does not match attached files'
-[[ "$(awk '$1 ~ /^[0-9a-f]{64}$/ { print $2 }' "$package_tmp/release/SHA256SUMS" | sort -u | wc -l | tr -d ' ')" -eq 13 ]] || \
+[[ "$(awk '$1 ~ /^[0-9a-f]{64}$/ { print $2 }' "$package_tmp/release/SHA256SUMS" | sort -u | wc -l | tr -d ' ')" -eq 17 ]] || \
   fail 'stable mirror SHA256SUMS has the wrong entry count'
-[[ "$(awk '$1 ~ /^[0-9a-f]{64}$/ { print $2 }' "$package_tmp/github-release/SHA256SUMS" | sort -u | wc -l | tr -d ' ')" -eq 9 ]] || \
+[[ "$(awk '$1 ~ /^[0-9a-f]{64}$/ { print $2 }' "$package_tmp/github-release/SHA256SUMS" | sort -u | wc -l | tr -d ' ')" -eq 13 ]] || \
   fail 'stable GitHub SHA256SUMS has the wrong entry count'
 ! grep -q '\.app\.tar\.gz' "$package_tmp/github-release/SHA256SUMS" || \
   fail 'GitHub SHA256SUMS lists a mirror-only macOS updater file'
@@ -160,12 +208,30 @@ github_linux_hash="$(awk '$2 == "CodeasierRouter-linux-amd64.AppImage" { print $
 [[ -n "$mirror_linux_hash" && "$mirror_linux_hash" == "$github_linux_hash" ]] || \
   fail 'GitHub SHA256SUMS must reuse the mirror checksum for attached files'
 
+signature_tmp="$protocol_tmp/invalid-cli-signature"
+mkdir -p "$signature_tmp"
+cp -R "$package_tmp/scripts" "$package_tmp/desktop-packages" "$package_tmp/cli-packages" "$package_tmp/protocol-metadata" "$signature_tmp/"
+if (cd "$signature_tmp" && FAKE_GH_ATTEST_FAILURE=1 RELEASE_TAG=v1.2.3 DESKTOP_DOWNLOAD_BASE_URL=https://release.codeasier.top/mtls-router/v1.2.3 ./scripts/package-release.sh >/dev/null 2>&1); then
+  fail 'CLI signature verification failure was ignored'
+fi
+
+extra_tmp="$protocol_tmp/extra-cli-content"
+mkdir -p "$extra_tmp"
+cp -R "$package_tmp/scripts" "$package_tmp/desktop-packages" "$package_tmp/cli-packages" "$package_tmp/protocol-metadata" "$extra_tmp/"
+printf 'not a private key; unexpected payload\n' >"$protocol_tmp/cli-stage-amd64/private.key"
+COPYFILE_DISABLE=1 tar -C "$protocol_tmp/cli-stage-amd64" -czf "$extra_tmp/cli-packages/CodeasierRouter-cli-linux-amd64.tar.gz" codeasier-router private.key
+(cd "$extra_tmp/cli-packages" && sha256sum CodeasierRouter-cli-linux-amd64.tar.gz >CodeasierRouter-cli-linux-amd64.sha256)
+printf '{"synthetic":true,"sha256":"%s"}\n' "$(sha256sum "$extra_tmp/cli-packages/CodeasierRouter-cli-linux-amd64.tar.gz" | cut -d' ' -f1)" >"$extra_tmp/cli-packages/CodeasierRouter-cli-linux-amd64.tar.gz.sigstore.json"
+if (cd "$extra_tmp" && RELEASE_TAG=v1.2.3 DESKTOP_DOWNLOAD_BASE_URL=https://release.codeasier.top/mtls-router/v1.2.3 ./scripts/package-release.sh >/dev/null 2>&1); then
+  fail 'CLI archive with extra identity-like content was accepted'
+fi
+
 # A stray CLI binary or setup script among the desktop artifacts must fail
 # packaging instead of being published alongside the desktop.
 for stray in mtls-router-linux-amd64 setup.sh mtls-router-windows-amd64.zip; do
   stray_tmp="$protocol_tmp/stray-$stray"
   mkdir -p "$stray_tmp"
-  cp -R "$package_tmp/scripts" "$package_tmp/desktop-packages" "$package_tmp/protocol-metadata" "$stray_tmp/"
+  cp -R "$package_tmp/scripts" "$package_tmp/desktop-packages" "$package_tmp/cli-packages" "$package_tmp/protocol-metadata" "$stray_tmp/"
   rm -rf "$stray_tmp/release"
   printf 'stray %s\n' "$stray" >"$stray_tmp/desktop-packages/$stray"
   if (cd "$stray_tmp" && RELEASE_TAG=v1.2.3 DESKTOP_DOWNLOAD_BASE_URL=https://release.codeasier.top/mtls-router/v1.2.3 SOURCE_DATE_EPOCH=0 ./scripts/package-release.sh >/dev/null 2>&1); then
@@ -174,18 +240,18 @@ for stray in mtls-router-linux-amd64 setup.sh mtls-router-windows-amd64.zip; do
 done
 prerelease_tmp="$protocol_tmp/prerelease"
 mkdir -p "$prerelease_tmp"
-cp -R "$package_tmp/scripts" "$package_tmp/desktop-packages" "$package_tmp/protocol-metadata" "$prerelease_tmp/"
+cp -R "$package_tmp/scripts" "$package_tmp/desktop-packages" "$package_tmp/cli-packages" "$package_tmp/protocol-metadata" "$prerelease_tmp/"
 rm -f "$prerelease_tmp"/desktop-packages/*.sig "$prerelease_tmp"/desktop-packages/*.app.tar.gz
 (cd "$prerelease_tmp" && RELEASE_TAG=v1.2.3-rc.1 SOURCE_DATE_EPOCH=0 ./scripts/package-release.sh) || \
   fail 'pre-release fixture failed to package without updater artifacts'
-[[ "$(find "$prerelease_tmp/release" -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 11 ]] || \
+[[ "$(find "$prerelease_tmp/release" -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 15 ]] || \
   fail 'pre-release fixture has the wrong exact asset count'
-[[ "$(find "$prerelease_tmp/github-release" -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 11 ]] || \
+[[ "$(find "$prerelease_tmp/github-release" -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 15 ]] || \
   fail 'pre-release GitHub subset has the wrong exact asset count'
 
 windows_arm_tmp="$protocol_tmp/windows-arm64"
 mkdir -p "$windows_arm_tmp"
-cp -R "$package_tmp/scripts" "$package_tmp/desktop-packages" "$package_tmp/protocol-metadata" "$windows_arm_tmp/"
+cp -R "$package_tmp/scripts" "$package_tmp/desktop-packages" "$package_tmp/cli-packages" "$package_tmp/protocol-metadata" "$windows_arm_tmp/"
 rm -rf "$windows_arm_tmp/release" "$windows_arm_tmp/github-release"
 printf 'retired windows arm64\n' >"$windows_arm_tmp/desktop-packages/CodeasierRouter-windows-arm64.exe"
 (cd "$windows_arm_tmp/desktop-packages" && sha256sum CodeasierRouter-windows-arm64.exe >CodeasierRouter-windows-arm64.sha256)
@@ -253,7 +319,7 @@ grep -Fq 'pattern: CodeasierRouter-desktop-*' "$RECOVERY" || \
   fail 'the desktop producer job must consume the prepared dynamic matrix'
 grep -Fq 'SELECTED_TARGET: ${{ github.event_name == '\''workflow_dispatch'\'' && inputs.target || '\''all'\'' }}' "$WORKFLOW" || \
   fail 'tag releases must select all build targets'
-[[ "$(grep -Fc 'UPSTREAM_URL: ${{ github.event_name == '\''workflow_dispatch'\'' && inputs.upstream_url || vars.UPSTREAM_URL }}' "$WORKFLOW")" -eq 1 ]] || \
+[[ "$(grep -Fc 'UPSTREAM_URL: https://relay.codeasier.top' "$WORKFLOW")" -eq 1 ]] || \
   fail 'validation upstream override must be isolated to the desktop producer job'
 
 if grep -Fq 'http://' "$WORKFLOW"; then

@@ -389,6 +389,7 @@ function AppContent({ api }: { api: DesktopApi }) {
         </header>
 
         <div className="main-scroll">
+          <IdentityPanel api={api} />
           {blockedLeaveAttempt > 0 && (
             <p
               key={blockedLeaveAttempt}
@@ -497,3 +498,4 @@ export function App({ api = desktopApi }: { api?: DesktopApi }) {
     </ThemeProvider>
   );
 }
+import { IdentityPanel } from "./IdentityPanel";

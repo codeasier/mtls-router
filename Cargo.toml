@@ -1,0 +1,4 @@
+[workspace]
+members = ["crates/router-contract", "crates/router-identity", "crates/router-core", "cli/codeasier-router", "desktop/src-tauri"]
+default-members = ["crates/router-contract", "crates/router-identity", "crates/router-core"]
+resolver = "2"

@@ -743,6 +743,7 @@ mod tests {
                 "pid": pid,
                 "deployment_id": deployment,
                 "management_protocol_version": protocol,
+                "upstream_auth":"per_user_mtls","auth_protocol_version":"1",
             }));
         }
 

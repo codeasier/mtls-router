@@ -1,0 +1,31 @@
+{
+  "version": "1",
+  "leaf_days": 30,
+  "clock_skew_seconds": 300,
+  "renew_before_days": 7,
+  "handover_seconds": 86400,
+  "issuing_ca": {"is_ca": true, "max_path_len": 0, "key_usage": ["cert_sign", "crl_sign"]},
+  "leaf": {"is_ca": false, "key_usage": ["digital_signature"], "extended_key_usage": ["client_auth"], "algorithm": "ECDSA-P256-SHA256"},
+  "validation_cases": [
+    {"name": "personal-client", "trust": "personal", "eku": "client_auth", "expired": false, "revoked": false, "accepted": true},
+    {"name": "old-shared-client", "trust": "old_shared", "eku": "client_auth", "expired": false, "revoked": false, "accepted": false},
+    {"name": "wrong-ca", "trust": "unknown", "eku": "client_auth", "expired": false, "revoked": false, "accepted": false},
+    {"name": "server-only", "trust": "personal", "eku": "server_auth", "expired": false, "revoked": false, "accepted": false},
+    {"name": "expired-client", "trust": "personal", "eku": "client_auth", "expired": true, "revoked": false, "accepted": false},
+    {"name": "revoked-client", "trust": "personal", "eku": "client_auth", "expired": false, "revoked": true, "accepted": false}
+  ],
+  "issuance_cases": [
+    {"name": "concurrent-poll", "same_transaction": true, "same_proof": true, "max_certificates": 1, "same_serial": true},
+    {"name": "response-lost-recovery", "retry_after_seconds": 86399, "same_proof": true, "max_certificates": 1, "same_serial": true},
+    {"name": "wrong-proof", "same_transaction": true, "same_proof": false, "max_certificates": 0, "consumes_transaction": false},
+    {"name": "cancel-before-commit", "cancelled_before_commit": true, "max_certificates": 0},
+    {"name": "cancel-after-commit", "cancelled_before_commit": false, "max_certificates": 1, "must_revoke": true}
+  ],
+  "renewal_cases": [
+    {"name": "same-operation-recovery", "same_operation": true, "same_csr": true, "max_successors": 1, "same_serial": true},
+    {"name": "operation-csr-rebinding", "same_operation": true, "same_csr": false, "max_successors": 0, "error": "CERT_OPERATION_CONFLICT"},
+    {"name": "second-successor", "same_operation": false, "predecessor_has_successor": true, "max_successors": 0, "error": "CERT_OPERATION_CONFLICT"},
+    {"name": "late-after-logout", "same_operation": true, "same_csr": true, "generation_matches": false, "activate": false},
+    {"name": "old-serial-handover-expired", "retry_after_seconds": 86401, "accepted": false, "error": "CERT_REAUTH_REQUIRED"}
+  ]
+}

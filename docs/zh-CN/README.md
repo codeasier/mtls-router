@@ -2,15 +2,15 @@
 
 [English](../../README.md)
 
-CodeasierRouter 是面向 AI 编码 Agent 的本地反向代理。它在 `127.0.0.1:19099` 接收来自 Claude Code、Codex CLI 等本地客户端的 plain HTTP 请求，然后使用内嵌的客户端证书、私钥、上游 CA 和上游 URL，将请求转发到公开的上游 mTLS 服务。当前交付物是 Tauri 桌面应用，它把 router 与管理控制面运行在同一个进程内。
+CodeasierRouter 是面向 AI 编码 Agent 的本地反向代理，在 `127.0.0.1:19099` 接收 plain HTTP，以个人设备 mTLS 证书和原模型 API key 访问 `https://relay.codeasier.top`。一键 GitCode 授权自动领取证书，每设备本地生成、私有保存自己的 key。Tauri 桌面与无 GUI Linux `codeasier-router` 共用 Rust 身份/流式核心；统一包只含公有信任，不含共享客户端私钥。
 
 代理会透明转发请求体和 Server-Sent Events 响应。它不做协议转换：本地流量是 HTTP，上游流量是带 mTLS 的 HTTPS。
 
-## 分发说明：CLI 停止维护
+## 分发说明：历史 Go CLI
 
-> **v0.4.1** 之后的版本只发布桌面应用。独立的 `mtls-router` 与 `mtls-router-manager` CLI 二进制、`setup.sh` / `setup.ps1` 脚本、`.tar.gz` / `.zip` 归档，以及 systemd、Docker、NSSM 服务包装都冻结在各自的历史 release tag 上。它们仍可从这些 tag 下载且不会被覆盖，但不再有新构建、修复或更新器支持，新 release 的产物清单中也不包含任何 CLI 产物。
+> 历史 Go `mtls-router` / `mtls-router-manager`、setup 和服务包装继续冻结在 **v0.4.1** 及更早 tag，新版本不重建、不覆盖。新的 Rust Linux CLI 仅使用 `CodeasierRouter-cli-linux-amd64.tar.gz` / `CodeasierRouter-cli-linux-arm64.tar.gz` 及校验/GitHub provenance，与桌面包和 updater feed 分离，见 [Linux CLI](LINUX-CLI.md)。
 >
-> 下文关于一键安装、手动下载、服务管理和 CLI flag 的章节描述的是这些历史版本（`v0.4.1` 及更早）。新安装请使用桌面应用，见[桌面应用](#桌面应用)。桌面应用能识别仍占用端口的既有 CLI router：当它属于同一安装谱系且进程身份完整校验通过时会一次性迁移；否则只报告端口被占用，不会终止任何进程。
+> 下方旧一键安装、手动下载/服务 flag 仅描述历史 Go 版本（`v0.4.1` 及更早）。当前安装使用[桌面应用](#桌面应用)或[新 Linux CLI](LINUX-CLI.md)；只有完整谱系/OS 身份下的同安装旧进程可显式迁移，未知占用者不会被自动终止。
 
 ## 发布说明
 
@@ -26,11 +26,15 @@ CodeasierRouter 是面向 AI 编码 Agent 的本地反向代理。它在 `127.0.
 
 ## 桌面应用
 
+在设备证书面板连接 GitCode 账号，浏览器核对账号、组织、设备和短码后批准，CSR/key 全程自动处理。证书通常 30 天，提前 7 天续期；固定公信 `enroll.codeasier.top` 只处理授权/恢复。模型保留原 API key，不增加在线 GitCode/鉴权子请求。没有可用证书时仍可本地管理和整包更新；退出先本地停用，远端撤销单独确认。见[领证运维](ENROLLMENT-OPERATIONS.md)、[Linux CLI](LINUX-CLI.md)与[分阶段迁移 runbook](MTLS-MIGRATION.md)。生产域名/CA 与原生平台验收独立于仓库实现。
+
 Tauri 桌面应用提供当前用户 router 控制、托盘操作、默认登录时启动、健康/日志视图、受 supervisor 管理的端口冲突恢复、整包在线更新，Claude Code、opencode 和 Codex 的显式预览/写入流程，以及本地「对话生图」工作台。工作台先闲聊再出图/改图，由 Rust 在不可重拨的 loopback 连接上持 Key；WebView 拿不到 API key、上游 URL 或除有界导入外的原始图片字节。会话与图片未加密存放在应用数据目录的 `image-workbench` 文件夹。对话模型来自 `GET /v1/models`（丢掉含 `/` 的 ID）；生图模型来自 `GET /v1/models/image`，按上游返回原样呈现并可选，不做别名映射、过滤或白名单。默认 ID 不在目录中时禁用发送，不写死 fallback。这是显式的产品数据面，不是路由生命周期的附属功能。端口恢复会报告结构化原因和 supervisor 人工引导，绝不提权或执行停止命令，并在约 10 秒内定期采样端口，报告是否检测到重新占用。manager 控制面和 mTLS router 内嵌在桌面进程中：router 运行在独立、受监督的运行时线程上，具备请求超时、有界并发和 panic 隔离，不会拉起 `mtls-router` 或 `mtls-router-manager` 子进程。首次启动绝不会修改 Agent 文件。
 
 当前仓库中的 release workflow 会构建五个原生桌面包：Windows x86_64 NSIS 安装器、macOS Intel/Apple Silicon DMG，以及 Linux x86_64/arm64 AppImage。CI 抽检未签名的 Windows x86_64 与 Linux arm64 包。Stable 桌面构建会在启动时静默检查 `https://release.codeasier.top/latest.json`，设置中也可以手动检查。发现更新后，只有用户确认才会下载、校验 updater 签名、安装并重启；更新会替换完整桌面包。每个匹配的目标 runner 都会检查对应包的内容、架构、版本/deployment 身份和可执行权限，确认包内没有任何 CLI router/manager 二进制，再构造包内 Tauri 应用及其内嵌 manager 以捕获初始化失败，但不进入事件循环。Release job 仅在签名凭据完整时签名 Windows 和 macOS 包，仅在额外 Apple 凭据完整时 notarize 并 staple macOS 应用，并为每个目标发布一个明确的签名状态文件。包检查不会安装、正常启动应用或执行上一版本到下一版本的真实更新，因此在把桌面 release 视为完整验证之前，仍需单独提供目标 runner 证据。安装、更新、首次启动、Agent、凭据和卸载行为见[桌面应用](DESKTOP.md)，恢复指导见[桌面应用故障排查](TROUBLESHOOTING.md)，精确证据边界见[构建与发布](BUILD.md)。
 
 ## 一键安装
+
+**仅供历史 Go 版本（`v0.4.1` 及更早）参考。** 当前个人设备版本使用桌面连接账号或[新 Linux CLI](LINUX-CLI.md)。
 
 Release 安装优先使用平台包。请从 [GitHub Releases](https://github.com/codeasier/mtls-router/releases) 选择适合当前操作系统和 CPU 架构的压缩包（macOS/Linux 使用 `.tar.gz`，Windows 使用 `.zip`），解压后运行其中的安装脚本。每个压缩包都包含安装脚本、当前平台的 `mtls-router` 和 `mtls-router-manager` 二进制文件，以及两者在 `SHA256SUMS` 中的校验记录。
 

@@ -23,7 +23,11 @@ contains "$ROOT/desktop/src-tauri/Cargo.toml" 'authors = ["CodeasierRouter contr
 contains "$ROOT/desktop/src-tauri/tauri.conf.json" '"productName": "CodeasierRouter"'
 contains "$ROOT/desktop/src-tauri/src/lib.rs" 'CodeasierRouter: removing malformed credential file'
 contains "$ROOT/desktop/src-tauri/src/lib.rs" 'error while building CodeasierRouter desktop'
-contains "$ROOT/desktop/src-tauri/src/manager_diagnostics.rs" 'CodeasierRouter manager: {}'
+contains "$ROOT/crates/router-contract/src/manager_diagnostics.rs" 'CodeasierRouter manager: {}'
+contains "$ROOT/desktop/src-tauri/src/manager_diagnostics.rs" 'pub use router_contract::manager_diagnostics::*;'
+contains "$ROOT/Cargo.toml" 'default-members = ["crates/router-contract", "crates/router-identity", "crates/router-core"]'
+contains "$ROOT/.github/workflows/ci.yml" "- 'crates/**'"
+contains "$ROOT/desktop/scripts/prepare-version.sh" '"../Cargo.lock"'
 contains "$ROOT/desktop/src-tauri/src/tray.rs" 'CodeasierRouter: cannot deliver draft quit confirmation request'
 
 node - "$PACKAGE" "$LOCK" <<'NODE' || fail 'desktop package and lockfile metadata is inconsistent'
@@ -196,13 +200,14 @@ contains "$ROOT/desktop/src-tauri/src/main.rs" '"--verify-app-startup"'
 contains "$ROOT/desktop/src-tauri/src/main.rs" 'verify_app_startup()'
 contains "$BUILD_RS" 'unsupported MANAGEMENT_PROTOCOL_VERSION'
 contains "$BUILD_RS" 'RELEASE_BUILD'
-contains "$BUILD_RS" 'release credentials are required'
-contains "$BUILD_RS" 'release UPSTREAM_URL must use HTTPS'
+contains "$ROOT/scripts/public-trust.rs" 'release public trust is required'
+contains "$BUILD_RS" 'fixed personal mTLS origin is required'
 contains "$BUILD_RS" 'release DEPLOYMENT_ID must be non-default'
-contains "$BUILD_RS" 'provide credential files or environment values, not both'
-contains "$BUILD_RS" 'mtls-router-placeholder'
-contains "$BUILD_RS" 'MTLS_ROUTER_CREDENTIALS_DIR'
-contains "$ROOT/desktop/src-tauri/src/runtime.rs" 'include_str!(concat!(env!("MTLS_ROUTER_CREDENTIALS_DIR"), "/client.key"))'
+contains "$ROOT/scripts/public-trust.rs" 'provide public trust files or environment values, not both'
+contains "$ROOT/scripts/public-trust.rs" 'codeasier-public-placeholder'
+contains "$BUILD_RS" 'MTLS_ROUTER_TRUST_DIR'
+contains "$ROOT/desktop/src-tauri/src/runtime.rs" '"/client-auth-ca.pem"'
+contains "$ROOT/desktop/src-tauri/src/runtime.rs" 'TlsMaterials::from_identity'
 contains "$ROOT/desktop/scripts/verify-package.sh" 'node -p "require('\''./package.json'\'').version"'
 contains "$PREPARE" 'const root = process.cwd();'
 contains "$ROOT/desktop/scripts/verify-package.sh" 'expected_protocol="${MANAGEMENT_PROTOCOL_VERSION:-4}"'
@@ -235,12 +240,12 @@ for file in package.json package-lock.json src-tauri/tauri.conf.json; do
   printf '%s\n' '{"version":"0.1.0","packages":{"":{"version":"0.1.0"}}}' >"$prepare_work/desktop/$file"
 done
 printf '%s\r\n' '[package]' 'name = "mtls-router-desktop"' 'version = "0.1.0"' >"$prepare_work/desktop/src-tauri/Cargo.toml"
-printf '%s\r\n' '[[package]]' 'name = "mtls-router-desktop"' 'version = "0.1.0"' >"$prepare_work/desktop/src-tauri/Cargo.lock"
+printf '%s\r\n' '[[package]]' 'name = "mtls-router-desktop"' 'version = "0.1.0"' >"$prepare_work/Cargo.lock"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$prepare_work/bin/npm"
 chmod +x "$prepare_work/bin/npm"
 PATH="$prepare_work/bin:$PATH" bash "$prepare_work/desktop/scripts/prepare-version.sh" 9.8.7 || \
   fail 'prepare-version.sh must update CRLF Cargo metadata'
-node - "$prepare_work/desktop/src-tauri/Cargo.toml" "$prepare_work/desktop/src-tauri/Cargo.lock" <<'NODE' || \
+node - "$prepare_work/desktop/src-tauri/Cargo.toml" "$prepare_work/Cargo.lock" <<'NODE' || \
   fail 'prepare-version.sh changed CRLF Cargo metadata incorrectly'
 const fs = require('node:fs');
 
@@ -252,8 +257,11 @@ for (const file of process.argv.slice(2)) {
 }
 NODE
 
-[[ "$(grep -Fc 'fn placeholder_pair' "$BUILD_RS")" -eq 1 ]] || \
-  fail 'build.rs must generate exactly one placeholder credential pair path'
+[[ "$(grep -Fc 'fn placeholder_root' "$ROOT/scripts/public-trust.rs")" -eq 1 ]] || \
+  fail 'public trust must use one CA-only development generator'
+if grep -Eq 'CLIENT_CERT_PEM|CLIENT_KEY_PEM|serialize_pem\(' "$BUILD_RS" "$ROOT/scripts/public-trust.rs"; then
+  fail 'client build inputs must not include a private/shared identity'
+fi
 if grep -Fq 'openssl' "$BUILD_RS"; then
   fail 'build.rs must not shell out to openssl for placeholder credentials'
 fi
@@ -477,15 +485,15 @@ fi
 if grep -q '^  build:$' "$RELEASE"; then
   fail 'release must not build CLI artifacts for new versions'
 fi
-if grep -Eq 'go build|mtls-router-cli-|cli-matrix' "$RELEASE"; then
+if grep -Eq '(^|[[:space:]])go build|mtls-router-cli-|cli-matrix' "$RELEASE"; then
   fail 'release must not produce or collect CLI binaries'
 fi
 [[ "$release_desktop_block" == *"RELEASE_BUILD: '1'"* ]] || \
   fail 'release desktop build must enforce release credential and identity guards in build.rs'
-[[ "$release_desktop_block" == *'test -n "$CLIENT_CERT_PEM" && test -n "$CLIENT_KEY_PEM" && test -n "$UPSTREAM_CA_PEM"'* ]] || \
-  fail 'release desktop build must validate embedded router credentials before compiling'
-[[ "$release_desktop_block" == *'case "${UPSTREAM_URL:-}" in https://*)'* ]] || \
-  fail 'release desktop build must require an HTTPS upstream'
+[[ "$release_desktop_block" == *'test -n "$CLIENT_AUTH_CA_PEM" && test -n "$UPSTREAM_CA_PEM"'* ]] || \
+  fail 'release desktop build must validate public CA trust before compiling'
+[[ "$release_desktop_block" == *'test "$UPSTREAM_URL" = https://relay.codeasier.top'* ]] || \
+  fail 'release desktop build must require the fixed personal mTLS origin'
 if [[ "$unsigned_macos_block" == *'--bundles dmg'* ]]; then
   fail 'unsigned macOS packaging must not ask Tauri to create a DMG'
 fi
@@ -587,7 +595,8 @@ assert_filter_paths ci "$ci_scope_block" \
   '.github/workflows/ci.yml' 'Makefile'
 assert_filter_paths go "$ci_scope_block" \
   '*.go' 'cmd/**/*.go' 'internal/**/*.go' 'go.mod' 'go.sum' 'setup.sh' \
-  'setup.ps1' 'scripts/**' 'tests/setup_*.sh' 'Dockerfile' 'systemd/**'
+  'setup.ps1' 'scripts/**' 'tests/setup_*.sh' 'Dockerfile' 'systemd/**' \
+  'deploy/**' 'testdata/router-mtls-v1/**'
 assert_filter_paths frontend "$ci_scope_block" \
   'desktop/src/**' 'desktop/package.json' 'desktop/package-lock.json' \
   'desktop/.npmrc' 'desktop/.prettierignore' 'desktop/index.html' \
@@ -595,8 +604,11 @@ assert_filter_paths frontend "$ci_scope_block" \
   'desktop/src-tauri/capabilities/default.json' 'desktop/eslint.config.js' \
   'desktop/tsconfig.json' 'desktop/vite.config.ts'
 assert_filter_paths rust "$ci_scope_block" \
-  'desktop/src-tauri/**' 'internal/manager/**' 'go.mod' 'go.sum'
+  'Cargo.toml' 'Cargo.lock' 'crates/**' 'cli/**' 'testdata/**' 'scripts/public-trust.rs' \
+  'desktop/src-tauri/**' 'internal/manager/**' 'internal/routerenroll/**' 'cmd/codeasier-router-enroll/**' 'deploy/nginx/**' 'go.mod' 'go.sum'
 assert_filter_paths package "$ci_scope_block" \
+  'scripts/public-trust.rs' \
+  'Cargo.toml' 'Cargo.lock' 'crates/**' 'cli/**' \
   'desktop/**'
 
 for entry in \
@@ -650,11 +662,10 @@ assert_exact_lines 'CI package matrix rows (runner|target|bundles)' \
 for input in \
   '      target:' \
   '        type: choice' \
-  '        default: all' \
-  '      upstream_url:' \
-  '        description: Optional HTTPS upstream override for this validation build'; do
+  '        default: all'; do
   contains "$RELEASE" "$input"
 done
+if grep -Fq '      upstream_url:' "$RELEASE"; then fail 'personal mTLS release must not permit origin overrides'; fi
 for target in all windows-amd64 darwin-amd64 darwin-arm64 linux-amd64 linux-arm64; do
   [[ "$(grep -Fxc "          - $target" "$RELEASE")" -eq 1 ]] || \
     fail "release dispatch choices must contain $target exactly once"
@@ -704,8 +715,8 @@ preset_preflight_line="$(printf '%s\n' "$release_prepare_block" | awk '/name: Pr
   fail 'the desktop is the only release producer consuming prepared SIMPLIFY'
 [[ "$release_prepare_block" == *'SELECTED_TARGET: ${{ github.event_name == '\''workflow_dispatch'\'' && inputs.target || '\''all'\'' }}'* ]] || \
   fail 'tag builds must force the complete target matrix'
-[[ "$(grep -Fc 'UPSTREAM_URL: ${{ github.event_name == '\''workflow_dispatch'\'' && inputs.upstream_url || vars.UPSTREAM_URL }}' "$RELEASE")" -eq 1 ]] || \
-  fail 'the desktop producer job must use validation-only upstream overrides'
+[[ "$(grep -Fc 'UPSTREAM_URL: https://relay.codeasier.top' "$RELEASE")" -eq 1 ]] || \
+  fail 'the desktop producer must use the fixed personal mTLS origin'
 
 [[ "$(awk '/^[[:space:]]+- run: npm ci$/{n++} END{print n+0}' "$CI")" -eq 2 ]] || \
   fail 'CI must contain exactly two npm ci commands'
@@ -764,7 +775,7 @@ contains "$RELEASE" 'status="signed (notarization credentials unavailable)"'
 contains "$RELEASE" 'status="signed and notarized"'
 contains "$RELEASE" 'status="signed"'
 contains "$RELEASE" 'status="unsigned (credentials unavailable)"'
-contains "$RELEASE" 'needs: [prepare, desktop]'
+contains "$RELEASE" 'needs: [prepare, desktop, cli]'
 contains "$RELEASE" './scripts/package-release.sh'
 contains "$RELEASE_PACKAGE" '(cd desktop-packages && sha256sum -c CodeasierRouter-*.sha256)'
 
