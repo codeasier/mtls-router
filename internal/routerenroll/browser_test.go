@@ -90,6 +90,9 @@ func newBrowserFlow(t *testing.T) *browserFlow {
 	if strings.Contains(w.Body.String(), "<script>") {
 		t.Fatal("device label XSS")
 	}
+	if got := w.Header().Get("Content-Security-Policy"); got != enrollmentCSP || !strings.Contains(got, "style-src 'sha256-"+styleDigest(enrollmentCSS)+"'") {
+		t.Fatalf("unexpected CSP %q", got)
+	}
 	return flow
 }
 func extractCSRF(t *testing.T, body string) string {

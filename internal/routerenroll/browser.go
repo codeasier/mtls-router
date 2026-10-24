@@ -2,7 +2,9 @@ package routerenroll
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"html/template"
@@ -66,17 +68,27 @@ func browserForm(w http.ResponseWriter, r *http.Request, allowed ...string) bool
 	return true
 }
 
-var enrollmentPage = template.Must(template.New("enroll").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>CodeasierRouter device approval</title></head><body><main><h1>CodeasierRouter device approval</h1><p>Device: {{.Device}}</p><p>Confirmation code: <strong>{{.Short}}</strong></p>{{if .Account}}<p>GitCode account: {{.Account.Username}} ({{.Account.ID}})</p><p>Organization: {{.Account.Organization.Path}} ({{.Account.Organization.ID}})</p>{{end}}<p>{{.Message}}</p>{{if .Action}}<form method="post" action="{{.Action}}"><input type="hidden" name="transaction" value="{{.Transaction}}"><input type="hidden" name="csrf" value="{{.CSRF}}">{{if .Account}}<button name="decision" value="approve">Approve this device</button><button name="decision" value="deny">Deny</button>{{else}}<button type="submit">Continue with GitCode</button>{{end}}</form>{{end}}</main></body></html>`))
+const enrollmentCSS = `:root{color-scheme:light dark;--ink:#302a25;--muted:#74695f;--paper:#f7f2ea;--paper-deep:#eee6dc;--surface:#fffaf4;--surface-subtle:#fbf7f1;--line:#dfd3c5;--line-strong:#cdbba9;--signal:#b94722;--signal-hover:#963719;--signal-soft:#f8e3d8;--on-signal:#fffaf4;--good:#486331;--good-soft:#e7eddf;--danger:#963c2f;--danger-hover:#70291f;--danger-soft:#f6e1dc;--shadow:0 20px 50px rgba(64,45,30,.10),0 4px 14px rgba(64,45,30,.05)}@media(prefers-color-scheme:dark){:root{--ink:#f3ebe2;--muted:#b6aa9e;--paper:#161311;--paper-deep:#1f1b17;--surface:#24201c;--surface-subtle:#1c1815;--line:#3d352d;--line-strong:#564c42;--signal:#e07a4c;--signal-hover:#f08a5c;--signal-soft:#3a241c;--on-signal:#1c1916;--good:#9bb87a;--good-soft:#24301c;--danger:#e08a7a;--danger-hover:#f0a090;--danger-soft:#3a221e;--shadow:0 24px 60px rgba(0,0,0,.45),0 4px 16px rgba(0,0,0,.28)}}*{box-sizing:border-box}html,body{margin:0;min-height:100%;font-family:"Avenir Next","PingFang SC","Hiragino Sans GB","Microsoft YaHei","Segoe UI",system-ui,sans-serif;color:var(--ink);background:radial-gradient(circle at 50% 0%,var(--signal-soft) 0%,transparent 58%),var(--paper);-webkit-font-smoothing:antialiased}body{display:flex;align-items:center;justify-content:center;padding:28px 16px}main{width:100%;max-width:480px;background:var(--surface);border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow);padding:28px;position:relative;overflow:hidden}.brand{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:20px}.brand-id{display:flex;align-items:center;gap:10px}.brand-mark{width:36px;height:36px;border-radius:10px;background:var(--signal-soft);color:var(--signal);display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--line-strong);flex-shrink:0}.brand-mark svg{width:20px;height:20px}.brand-text{display:flex;flex-direction:column;gap:2px}.overline{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--signal)}.subline{font-size:12px;color:var(--muted)}.badge{font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;background:var(--paper-deep);color:var(--muted);border:1px solid var(--line);white-space:nowrap}.badge-good{background:var(--good-soft);color:var(--good);border-color:transparent}.badge-danger{background:var(--danger-soft);color:var(--danger);border-color:transparent}h1{margin:0 0 6px;font-size:22px;line-height:1.3;letter-spacing:-.01em}.subtitle{margin:0 0 20px;font-size:14px;line-height:1.55;color:var(--muted)}.code-box{background:var(--surface-subtle);border:1.5px dashed var(--line-strong);border-radius:14px;padding:16px 18px;margin-bottom:18px;display:flex;align-items:center;justify-content:space-between;gap:12px}.code-label{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--muted)}.code-label span{font-weight:600;color:var(--ink);font-size:13px}.code-value{font-family:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;font-size:24px;font-weight:800;letter-spacing:.12em;color:var(--signal);background:var(--signal-soft);padding:6px 12px;border-radius:10px}.meta{background:var(--surface-subtle);border:1px solid var(--line);border-radius:14px;padding:6px 16px;margin-bottom:18px}.row{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:11px 0;border-bottom:1px solid var(--line);font-size:13.5px}.row:last-child{border-bottom:none}.row-key{color:var(--muted);flex-shrink:0}.row-val{font-weight:600;color:var(--ink);text-align:right;word-break:break-word}.mono-id{font-family:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px;font-weight:500;color:var(--muted);margin-left:4px}.notice{margin:0 0 20px;padding:12px 14px;border-radius:12px;background:var(--paper-deep);font-size:13px;line-height:1.5;color:var(--ink)}.notice-good{background:var(--good-soft);color:var(--good)}.notice-danger{background:var(--danger-soft);color:var(--danger)}.notice-sub{display:block;margin-top:3px;font-size:12px;color:var(--muted)}form{margin:0}.actions{display:flex;gap:10px}.btn{appearance:none;border-radius:11px;font-family:inherit;font-size:14px;font-weight:600;padding:12px 18px;cursor:pointer;transition:background-color .15s ease,border-color .15s ease,transform .08s ease;display:inline-flex;align-items:center;justify-content:center;gap:6px;line-height:1.2}.btn:active{transform:translateY(1px)}.btn-primary{flex:1;background:var(--signal);color:var(--on-signal);border:1px solid transparent}.btn-primary:hover{background:var(--signal-hover)}.btn-deny{background:transparent;color:var(--danger);border:1px solid var(--line-strong);min-width:108px}.btn-deny:hover{background:var(--danger-soft);border-color:var(--danger)}.foot{margin-top:18px;padding-top:14px;border-top:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11.5px;color:var(--muted)}`
+
+var (
+	enrollmentCSP  = "default-src 'none'; style-src 'sha256-" + styleDigest(enrollmentCSS) + "'; form-action 'self' https://gitcode.com; frame-ancestors 'none'; base-uri 'none'"
+	enrollmentPage = template.Must(template.New("enroll").Parse(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CodeasierRouter device approval</title><style>` + enrollmentCSS + `</style></head><body><main><header class="brand"><div class="brand-id"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 4v5c0 4.5-3 8.2-7 9-4-.8-7-4.5-7-9V7l7-4z"/><path d="M9 12l2 2 4-4"/></svg></span><div class="brand-text"><span class="overline">CodeasierRouter</span><span class="subline">mTLS Device Identity · 设备证书控制面</span></div></div>{{if eq .Tone "approved"}}<span class="badge badge-good">已批准 · Approved</span>{{else if eq .Tone "denied"}}<span class="badge badge-danger">已拒绝 · Denied</span>{{else if .Account}}<span class="badge badge-good">GitCode 已核验 · Step 2/2</span>{{else if .Action}}<span class="badge">待核验 · Step 1/2</span>{{else}}<span class="badge">处理中 · In Progress</span>{{end}}</header><h1>CodeasierRouter device approval</h1><p class="subtitle">{{if eq .Tone "approved"}}设备证书授权已确认，请返回客户端完成自动连接。{{else if eq .Tone "denied"}}已拒绝本次设备证书请求，未签发任何证书。{{else if .Account}}请核对下方确认码、设备与 GitCode 组织身份，确认无误后批准此设备。{{else if .Action}}请核对客户端显示的确认码，并前往 GitCode 验证组织成员身份。{{else}}当前设备授权正在处理中，请返回客户端查看状态。{{end}}</p><section class="code-box" aria-label="Confirmation code"><div class="code-label"><span>确认码 · Confirmation code</span>核对与客户端显示是否一致</div><strong class="code-value">{{.Short}}</strong></section><section class="meta" aria-label="Request details"><div class="row"><span class="row-key">请求设备 · Device</span><span class="row-val">{{.Device}}</span></div>{{if .Account}}<div class="row"><span class="row-key">GitCode 账号 · Account</span><span class="row-val">{{.Account.Username}}<span class="mono-id">({{.Account.ID}})</span></span></div><div class="row"><span class="row-key">所属组织 · Organization</span><span class="row-val">{{.Account.Organization.Path}}<span class="mono-id">({{.Account.Organization.ID}})</span></span></div>{{end}}</section><p class="notice{{if eq .Tone "approved"}} notice-good{{else if eq .Tone "denied"}} notice-danger{{end}}">{{.Message}}{{if .Hint}}<span class="notice-sub">{{.Hint}}</span>{{end}}</p>{{if .Action}}<form method="post" action="{{.Action}}"><input type="hidden" name="transaction" value="{{.Transaction}}"><input type="hidden" name="csrf" value="{{.CSRF}}"><div class="actions">{{if .Account}}<button class="btn btn-primary" name="decision" value="approve">Approve this device · 批准此设备</button><button class="btn btn-deny" name="decision" value="deny">Deny · 拒绝</button>{{else}}<button class="btn btn-primary" type="submit">Continue with GitCode · 前往 GitCode 授权</button>{{end}}</div></form>{{end}}<footer class="foot"><span>enroll.codeasier.top</span><span>个人 mTLS 证书仅绑定当前设备</span></footer></main></body></html>`))
+)
+
+func styleDigest(css string) string {
+	sum := sha256.Sum256([]byte(css))
+	return base64.StdEncoding.EncodeToString(sum[:])
+}
 
 type browserPage struct {
-	Device, Short, Message, Action, Transaction, CSRF string
-	Account                                           *Account
+	Device, Short, Message, Hint, Tone, Action, Transaction, CSRF string
+	Account                                                       *Account
 }
 
 func renderEnrollment(w http.ResponseWriter, value browserPage) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; form-action 'self' https://gitcode.com; frame-ancestors 'none'; base-uri 'none'")
+	w.Header().Set("Content-Security-Policy", enrollmentCSP)
 	_ = enrollmentPage.Execute(w, value)
 }
 func (s *Service) validBrowser(ctx context.Context, tx *writeTx, id, cookie, csrf string) (browserTransaction, error) {
@@ -140,6 +152,7 @@ func (s *Service) verifyHTTP(w http.ResponseWriter, r *http.Request) {
 		if v.Status == "pending" || v.Status == "failed" {
 			page.Action = "/enroll/native/authorize"
 			page.Message = "Only continue if you started this device request."
+			page.Hint = "仅当您本人在客户端发起该请求时继续；若非本人操作，请直接关闭此页面。"
 		} else if v.Status == "verified" {
 			var account Account
 			if json.Unmarshal([]byte(v.AccountJSON), &account) != nil {
@@ -148,8 +161,10 @@ func (s *Service) verifyHTTP(w http.ResponseWriter, r *http.Request) {
 			page.Account = &account
 			page.Action = "/enroll/native/approve"
 			page.Message = "Check the account, device and confirmation code before approving."
+			page.Hint = "批准后将为上述设备签发绑定该组织成员身份的个人 mTLS 证书。"
 		} else {
 			page.Message = "Authorization is in progress. Return to the native client."
+			page.Hint = "授权流程正在进行或已提交，请返回 CodeasierRouter 客户端。"
 			return nil
 		}
 		_, err = tx.ExecContext(r.Context(), "UPDATE enrollment_transactions SET browser_hash=?,csrf_hash=?,version=version+1 WHERE id=?", Digest([]byte(cookie)), Digest([]byte(csrf)), id)
@@ -298,7 +313,7 @@ func (s *Service) callbackHTTP(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, publicCode(err))
 		return
 	}
-	renderEnrollment(w, browserPage{Device: claimed.Label, Short: claimed.ShortCode, Message: "Check the account, device and confirmation code before approving.", Action: "/enroll/native/approve", Transaction: claimed.ID, CSRF: csrf, Account: &account})
+	renderEnrollment(w, browserPage{Device: claimed.Label, Short: claimed.ShortCode, Message: "Check the account, device and confirmation code before approving.", Hint: "批准后将为上述设备签发绑定该组织成员身份的个人 mTLS 证书。", Action: "/enroll/native/approve", Transaction: claimed.ID, CSRF: csrf, Account: &account})
 }
 func (s *Service) finishBrowserFailure(ctx context.Context, claimed browserTransaction, code string) {
 	_ = s.store.transaction(ctx, func(tx *writeTx) error {
@@ -404,5 +419,11 @@ func (s *Service) approveHTTP(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, publicCode(err))
 		return
 	}
-	renderEnrollment(w, browserPage{Device: claimed.Label, Short: claimed.ShortCode, Account: &account, Message: "Device decision saved. Return to the native client."})
+	tone := "denied"
+	hint := "已拒绝本次设备授权请求，现在可以安全关闭此浏览器标签页。"
+	if decision == "approve" {
+		tone = "approved"
+		hint = "设备批准已生效，客户端将在数秒内自动完成证书领取与连接，现在可以关闭此页面。"
+	}
+	renderEnrollment(w, browserPage{Device: claimed.Label, Short: claimed.ShortCode, Account: &account, Tone: tone, Message: "Device decision saved. Return to the native client.", Hint: hint})
 }
