@@ -17,7 +17,11 @@ import (
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	os.Exit(run(ctx, os.Args[1:], os.LookupEnv, os.Stderr))
+	output := io.Writer(os.Stderr)
+	if len(os.Args) > 1 && os.Args[1] == "gateway-load" {
+		output = os.Stdout
+	}
+	os.Exit(run(ctx, os.Args[1:], os.LookupEnv, output))
 }
 
 func run(ctx context.Context, args []string, env func(string) (string, bool), output io.Writer) int {
