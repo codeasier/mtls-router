@@ -14,7 +14,10 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Instant;
 
-use super::connect::{open_mtls_http1, origin_form_path, upstream_host_header, ConnectError};
+use super::connect::{
+    open_mtls_http1, origin_form_path, peer_certificate_rejected, upstream_host_header,
+    ConnectError,
+};
 use super::{dispatch_management, BuildInfo, InfoProvider, MtlsTransport};
 
 const HOP_BY_HOP: &[&str] = &[
@@ -179,7 +182,13 @@ impl ReverseProxy {
                 })?;
         let response = match sender.send_request(outgoing).await {
             Ok(response) => response,
-            Err(error) => return Err(classify_send_error(&error, failed.load(Ordering::SeqCst))),
+            Err(error) => {
+                let kind = classify_send_error(&error, failed.load(Ordering::SeqCst));
+                if matches!(kind, ProxyErrorKind::Certificate(_)) {
+                    self.transport.feedback(generation, true).await;
+                }
+                return Err(kind);
+            }
         };
         let (mut parts, body) = response.into_parts();
         let rejected = parts
@@ -339,6 +348,11 @@ fn classify_send_error(error: &hyper::Error, client_body_failed: bool) -> ProxyE
     }
     if error.is_timeout() || is_timeout_error(error) {
         return ProxyErrorKind::Timeout;
+    }
+    // TLS 1.3 servers can reject the client certificate after the client
+    // finished its handshake, so the alert surfaces on the first request.
+    if peer_certificate_rejected(error) {
+        return ProxyErrorKind::Certificate(super::CertificateState::Rejected);
     }
     ProxyErrorKind::Upstream
 }

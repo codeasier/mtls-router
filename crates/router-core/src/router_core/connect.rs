@@ -46,28 +46,39 @@ pub(super) fn upstream_host_header(url: &Uri) -> Result<String, ConnectError> {
 // A server that rejects our client certificate answers with a certificate
 // alert. Local validation of the server chain (unknown issuer, expired,
 // hostname mismatch) is not a client-certificate rejection and must stay a
-// transport failure so the UI does not blame the device certificate.
-fn client_certificate_rejected(error: &std::io::Error) -> bool {
-    let Some(error) = error
-        .get_ref()
-        .and_then(|error| error.downcast_ref::<rustls::Error>())
-    else {
-        return false;
-    };
-    match error {
-        rustls::Error::AlertReceived(alert) => matches!(
-            alert,
-            rustls::AlertDescription::BadCertificate
-                | rustls::AlertDescription::UnsupportedCertificate
-                | rustls::AlertDescription::CertificateRevoked
-                | rustls::AlertDescription::CertificateExpired
-                | rustls::AlertDescription::CertificateUnknown
-                | rustls::AlertDescription::UnknownCA
-                | rustls::AlertDescription::AccessDenied
-                | rustls::AlertDescription::CertificateRequired
-        ),
-        _ => false,
+// transport failure so the UI does not blame the device certificate. Walk
+// the source chain because hyper and tokio-rustls wrap the rustls error.
+pub(super) fn peer_certificate_rejected(error: &(dyn std::error::Error + 'static)) -> bool {
+    let mut current = Some(error);
+    while let Some(error) = current {
+        if let Some(error) = error.downcast_ref::<rustls::Error>() {
+            return match error {
+                rustls::Error::AlertReceived(alert) => matches!(
+                    alert,
+                    rustls::AlertDescription::BadCertificate
+                        | rustls::AlertDescription::UnsupportedCertificate
+                        | rustls::AlertDescription::CertificateRevoked
+                        | rustls::AlertDescription::CertificateExpired
+                        | rustls::AlertDescription::CertificateUnknown
+                        | rustls::AlertDescription::UnknownCA
+                        | rustls::AlertDescription::AccessDenied
+                        | rustls::AlertDescription::CertificateRequired
+                        // rustls servers map client certificate BadSignature to
+                        // decrypt_error; nginx/OpenSSL use unknown_ca.
+                        | rustls::AlertDescription::DecryptError
+                ),
+                _ => false,
+            };
+        }
+        if let Some(io_error) = error.downcast_ref::<std::io::Error>() {
+            if let Some(inner) = io_error.get_ref() {
+                current = Some(inner);
+                continue;
+            }
+        }
+        current = error.source();
     }
+    false
 }
 
 pub(super) async fn open_mtls_http1<B>(
@@ -98,7 +109,7 @@ where
         .map_err(|_| ConnectError::Transport)?;
     let tls = match connector.connect(server_name, tcp).await {
         Ok(tls) => tls,
-        Err(error) if transport.is_personal() && client_certificate_rejected(&error) => {
+        Err(error) if transport.is_personal() && peer_certificate_rejected(&error) => {
             transport.feedback(generation, true).await;
             return Err(ConnectError::Certificate(super::CertificateState::Rejected));
         }
@@ -115,7 +126,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::client_certificate_rejected;
+    use super::peer_certificate_rejected;
 
     fn wrapped(error: rustls::Error) -> std::io::Error {
         std::io::Error::other(error)
@@ -132,8 +143,9 @@ mod tests {
             rustls::AlertDescription::UnknownCA,
             rustls::AlertDescription::AccessDenied,
             rustls::AlertDescription::CertificateRequired,
+            rustls::AlertDescription::DecryptError,
         ] {
-            assert!(client_certificate_rejected(&wrapped(
+            assert!(peer_certificate_rejected(&wrapped(
                 rustls::Error::AlertReceived(alert)
             )));
         }
@@ -141,10 +153,10 @@ mod tests {
 
     #[test]
     fn local_server_certificate_validation_is_not_a_client_rejection() {
-        assert!(!client_certificate_rejected(&wrapped(
+        assert!(!peer_certificate_rejected(&wrapped(
             rustls::Error::InvalidCertificate(rustls::CertificateError::UnknownIssuer)
         )));
-        assert!(!client_certificate_rejected(&std::io::Error::from(
+        assert!(!peer_certificate_rejected(&std::io::Error::from(
             std::io::ErrorKind::ConnectionReset
         )));
     }

@@ -227,3 +227,46 @@ async fn untrusted_server_certificate_is_transport_and_keeps_feedback_clean() {
     assert!(matches!(result, Err(ConnectError::Transport)));
     assert_eq!(state_error(&dir.0), None);
 }
+
+// Windows can reset the connection before the peer certificate alert is read,
+// so the supervisor observes a transport failure there. The classifier unit
+// tests still cover the alert mapping on every platform.
+#[cfg(not(windows))]
+#[tokio::test]
+async fn request_time_client_certificate_rejection_is_forbidden_and_recorded() {
+    let server_authority = TestAuthority::new();
+    let client_authority = TestAuthority::new();
+    let server = start_mtls_optional_handler_with_certs(
+        TestCerts {
+            ca: server_authority.root.pem(),
+            client_cert: String::new(),
+            client_key: String::new(),
+            server_cert: server_authority.server_certificate.clone(),
+            server_key: server_authority.server_key.clone(),
+        },
+        |_request| async { Some(Response::new(boxed_bytes("unused"))) },
+    )
+    .await;
+    let (dir, store) = active_personal_store(&client_authority, "request-rejected");
+    let supervisor = RouterSupervisor::spawn(SupervisorConfig {
+        defaults: RouterDefaults {
+            listen_addr: "127.0.0.1:0".into(),
+            upstream_url: server.url.clone(),
+            ..RouterDefaults::default()
+        },
+        env: RouterEnv::default(),
+        flags: RouterFlags::default(),
+        materials: TlsMaterials::from_identity(store, server_authority.root.pem()),
+        identity: BuildInfo::default().with_personal_auth(),
+        limits: SupervisorLimits::default(),
+        logger: None,
+    });
+    let address = supervisor.start().await.unwrap();
+    let rejected = request(&address, "/v1/models").await;
+    assert_eq!(rejected.status(), 403);
+    let body = rejected.into_body().collect().await.unwrap().to_bytes();
+    assert!(String::from_utf8_lossy(&body).contains("CLIENT_CERT_REJECTED"));
+    assert_eq!(request(&address, "/health").await.status(), 200);
+    assert_eq!(state_error(&dir.0).as_deref(), Some("CLIENT_CERT_REJECTED"));
+    supervisor.shutdown().await.unwrap();
+}
