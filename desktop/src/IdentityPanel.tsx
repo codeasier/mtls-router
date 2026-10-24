@@ -14,6 +14,15 @@ const phases = new Set([
   "rejected",
 ]);
 
+const errorMessages: Record<string, TranslationKey> = {
+  CERT_SERVICE_UNAVAILABLE: "identity.error.certServiceUnavailable",
+  CERT_REAUTH_REQUIRED: "identity.error.certReauthRequired",
+  CERT_OPERATION_CONFLICT: "identity.error.operationConflict",
+  IDENTITY_STORAGE_UNAVAILABLE: "identity.error.storageUnavailable",
+  IDENTITY_BUSY: "identity.error.busy",
+  IDENTITY_STATE_INVALID: "identity.error.invalidState",
+};
+
 export function IdentityPanel({ api }: { api: DesktopApi }) {
   const { t } = useI18n();
   const [summary, setSummary] = useState<IdentitySummary | null>(null);
@@ -75,6 +84,9 @@ export function IdentityPanel({ api }: { api: DesktopApi }) {
   const phase =
     summary && phases.has(summary.phase) ? summary.phase : "disconnected";
   const active = phase === "connected" || phase === "renewing";
+  const errorText =
+    (summary?.error_code && errorMessages[summary.error_code]) ||
+    "identity.failed";
   return (
     <section
       className="identity-panel"
@@ -107,7 +119,9 @@ export function IdentityPanel({ api }: { api: DesktopApi }) {
             <code>{authorization.verification_uri}</code>
           </p>
         )}
-        {failed && <p role="alert">{t("identity.failed")}</p>}
+        {(failed || summary?.error_code) && (
+          <p role="alert">{t(errorText)}</p>
+        )}
       </div>
       <div className="action-row">
         {!active && (

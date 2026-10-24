@@ -523,6 +523,31 @@ async fn native_client_is_key_private_and_rejects_late_login() {
 }
 
 #[tokio::test]
+async fn failed_start_reports_service_unavailable_instead_of_waiting_for_browser() {
+    use crate::client::Route;
+    use std::sync::Arc;
+    let dir = Temp::new();
+    let fixture = Arc::new(Fixture::new());
+    let store = IdentityStore::open(&dir.0, fixture.trust.clone()).unwrap();
+    let backend = FakeWire(|route, _body: serde_json::Value| match route {
+        Route::Start => Err(IdentityError::Unavailable),
+        _ => Err(IdentityError::Conflict),
+    });
+    let client = NativeClient::with_backend(store.clone(), Arc::new(backend), Arc::new(|| NOW));
+    assert!(matches!(
+        client.connect("desktop", "device").await,
+        Err(IdentityError::Unavailable)
+    ));
+    let summary = client.status().await.unwrap();
+    assert_eq!(summary.phase, "disconnected");
+    assert_eq!(
+        summary.error_code.as_deref(),
+        Some("CERT_SERVICE_UNAVAILABLE")
+    );
+    assert!(store.read().unwrap().pending.is_some());
+}
+
+#[tokio::test]
 async fn lost_renewal_response_recovers_after_old_expiry_without_new_issuance() {
     use crate::client::Route;
     use std::sync::{

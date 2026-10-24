@@ -21,6 +21,18 @@ export const en: Record<TranslationKey, string> = {
     "Approve this device in your browser and check code {code}. Connection completes automatically.",
   "identity.failed":
     "The certificate operation could not complete. Retry or sign in again.",
+  "identity.error.certServiceUnavailable":
+    "The certificate service is unavailable. Check your network or retry later (CERT_SERVICE_UNAVAILABLE).",
+  "identity.error.certReauthRequired":
+    "GitCode authorization has expired. Sign in again (CERT_REAUTH_REQUIRED).",
+  "identity.error.operationConflict":
+    "Another certificate operation is still pending. Retry later (CERT_OPERATION_CONFLICT).",
+  "identity.error.storageUnavailable":
+    "The local certificate store is unreadable (IDENTITY_STORAGE_UNAVAILABLE).",
+  "identity.error.busy":
+    "The certificate service is busy. Retry later (IDENTITY_BUSY).",
+  "identity.error.invalidState":
+    "The local certificate state is invalid. Sign in again (IDENTITY_STATE_INVALID).",
   "identity.connect": "Connect GitCode account",
   "identity.renew": "Check renewal",
   "identity.disconnect": "Disable this device",

@@ -262,7 +262,11 @@ impl NativeClient {
             "reauth_required"
         } else if state.renewal.is_some() {
             "renewing"
-        } else if state.pending.is_some() {
+        } else if state
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.started.is_some())
+        {
             "authorizing"
         } else if active.is_some_and(|v| v.certificate.not_after <= now) {
             "expired"

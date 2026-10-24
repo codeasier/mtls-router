@@ -73,6 +73,24 @@ describe("IdentityPanel", () => {
     expect(api.getCredential).not.toHaveBeenCalled();
     expect(api.deleteCredential).not.toHaveBeenCalled();
   });
+  it("reports a concrete certificate-service failure instead of waiting for a browser", async () => {
+    const api = createMockApi({
+      getIdentityStatus: vi.fn(async () => ({
+        ...disconnected,
+        error_code: "CERT_SERVICE_UNAVAILABLE",
+      })),
+      connectIdentity: vi.fn(),
+    });
+    render(
+      <I18nProvider>
+        <IdentityPanel api={api} />
+      </I18nProvider>,
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /证书服务不可用/,
+    );
+    expect(screen.queryByText(/等待浏览器授权/)).not.toBeInTheDocument();
+  });
   it("does not replace a completed connection with a late old status response", async () => {
     let resolveOld!: (value: IdentitySummary) => void;
     const old = new Promise<IdentitySummary>((resolve) => {

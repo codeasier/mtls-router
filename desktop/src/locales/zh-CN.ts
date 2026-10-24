@@ -16,6 +16,17 @@ export const zhCN = {
     "远端撤销待确认；本地身份已停用不会被迟到结果重新启用。",
   "identity.confirm": "请在浏览器确认设备，核对短码 {code}；完成后自动连接。",
   "identity.failed": "证书操作暂时未完成，可重试或重新登录。",
+  "identity.error.certServiceUnavailable":
+    "证书服务不可用，请检查网络或稍后重试（CERT_SERVICE_UNAVAILABLE）。",
+  "identity.error.certReauthRequired":
+    "GitCode 授权已失效，请重新登录（CERT_REAUTH_REQUIRED）。",
+  "identity.error.operationConflict":
+    "已有证书操作尚未完成，请稍后重试（CERT_OPERATION_CONFLICT）。",
+  "identity.error.storageUnavailable":
+    "无法读取本地证书存储（IDENTITY_STORAGE_UNAVAILABLE）。",
+  "identity.error.busy": "证书服务繁忙，请稍后重试（IDENTITY_BUSY）。",
+  "identity.error.invalidState":
+    "本地证书状态异常，请重新登录（IDENTITY_STATE_INVALID）。",
   "identity.connect": "连接 GitCode 账号",
   "identity.renew": "检查续期",
   "identity.disconnect": "停用此设备",
