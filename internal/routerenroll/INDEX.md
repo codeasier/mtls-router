@@ -49,8 +49,8 @@
 - SQLite 驱动固定 `modernc.org/sqlite v1.61.0`（纯 Go）；其他依赖为标准库与 `golang.org/x/sys/unix`。
 - 台账分离 policy/users/encrypted tokens/devices/enrollment/issuance/certificates/renewal/revocations/CRL/实际网关 ack；不包含 Router access/refresh 会话。
 - `GITCODE_ORG_PATH` 缺省 `msinsight-org`、显式空值拒绝；首次核验绑定稳定 ID，配置变更推进 epoch 并记录旧证书撤销意图，不冒充网关已生效。
-- GitCode user ID 为不透明稳定字符串，组织成员结果必须匹配该 user ID 与稳定组织；403/404/缺字段/路径漂移均不等同于确认退组。最小请求 scope 固定 `read_user read_groups`，真实应用验收仍待上线输入。
-- schema 5 的 SQLite 是独立日志投影；已锚定 schema 2–4 通过日志化迁移增加浏览器、复核时间和 root CRL ack 字段，早期未锚定 schema 1 不自动接管。普通启动不新建日志；日志须独立持久/快照域，不能随 DB 回滚，哈希链不防御服务账户同时篡改两者。独立 `head.json` 高水位可发现完整尾记录丢失。
+- GitCode user ID 为不透明稳定字符串，组织成员结果必须匹配该 user ID 与稳定组织；403/404/缺字段/路径漂移均不等同于确认退组。请求 scope 为 `all_user read_groups`（GitCode 用户权限平台固定读写；Key/Action/项目/PR/Issue/Notes/Hook/Repository/看板/讨论均禁止）；代码兼容旧 `read_user`，非预期 scope 拒绝。
+- schema 5 的 SQLite 是独立日志投影；已锚定 schema 2–4 通过日志化迁移增加浏览器、复核时间和 root CRL ack 字段，早期未锚定 schema 1 不自动接管。普通启动不新建日志；日志须有独立于 DB 备份的快照/异地备份域（当前为 jump 10 分钟快照），不能随 DB 回滚，哈希链不防御服务账户同时篡改两者。独立 `head.json` 高水位可发现完整尾记录丢失。
 - 单主锁同时绑定 state 与 journal，持有到关闭，不删除锁文件；不同 state 目录不能绕过同一 journal 的签发租约。跨主机仍须先 fence 旧主，本地锁不是分布式 HA。
 - 在线签发者仅持 issuing key；公有链固定 root→clientAuth issuing→leaf，叶仅 digitalSignature/clientAuth。身份 URI 为 `urn:codeasier:router:identity:v1:` 加无填充 base64url JSON，CSR 的 subject/SAN/CA 扩展不会被复制。
 - 最终领证只在正确 native verifier、显式设备批准及可信成员复核后进行；先日志和 SQLite 持久化，再通过 native poll 返回公有结果，不向浏览器返回 private key 或原生证明。正常轮询不改变浏览器授权版本，取消/拒绝/策略变化会使迟到返回失效。
@@ -60,4 +60,4 @@
 - 新续期只在独立 Unix gateway Handler 上可达；公开 Handler 仅有已提交结果恢复和设备退出，不信任公网身份头。原证到期后的恢复例外不授权模型请求或新签发，24h 期限不延长。
 - CRL 发布与资格维护不在模型路径；根 CRL 无效/过期时阻止新签发，模型仍按网关现用有效链/CRL 判断。双网关公有 SSH 分发固定 host key/forced command，根/设备私钥不进入传输。ack 先要求旧 worker 关闭 TCP 监听，再观察与 `ssl_crl` 同代际的 loopback marker；新旧 worker 会短暂共存，单次新 marker 不足以确认。loader 依赖 `ps`/`lsof`，需 root 或拥有 nginx 进程；`--nginx-pid-file` / `MTLS_GATEWAY_NGINX_PID_FILE` 默认 `/run/nginx.pid`，必须匹配实际配置。部分加载不称全局生效。
 - 有效根 CRL 吊销 issuing CA 时先持久化不可移除的根撤销集合，提交门停止签发/恢复；继续发布最后有效 issuing CRL 与新根拒绝材料。网关同样防更高版本移除旧根撤销，不能因“CA 已吊销”而保留较宽松旧材料。
-- [服务/CA 模板与恢复手册](../../docs/zh-CN/ENROLLMENT-OPERATIONS.md) 描述独立挂载、显式 journal-init、离线根、备份/恢复和跨主机 fencing；这些不是生产已部署证据。
+- [服务/CA 模板与恢复手册](../../docs/zh-CN/ENROLLMENT-OPERATIONS.md) 描述日志与异地快照、显式 journal-init、离线根、备份/恢复和跨主机 fencing；这些不是生产已部署证据。

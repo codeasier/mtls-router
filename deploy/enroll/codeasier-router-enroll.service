@@ -2,8 +2,9 @@
 Description=CodeasierRouter personal certificate enrollment master
 After=network-online.target
 Wants=network-online.target
-RequiresMountsFor=/srv/codeasier-enroll-journal
-AssertPathIsMountPoint=/srv/codeasier-enroll-journal
+# The journal is append-only on a private local directory; an independent
+# off-host snapshot (see ENROLLMENT-OPERATIONS) bounds the recovery point.
+ConditionPathIsDirectory=/srv/codeasier-enroll-journal
 
 [Service]
 Type=simple

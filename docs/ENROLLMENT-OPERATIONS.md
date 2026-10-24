@@ -16,10 +16,16 @@ See [Chinese](zh-CN/ENROLLMENT-OPERATIONS.md).
   The journal directory is explicitly configured using `--journal-dir` /
   `MTLS_ENROLL_JOURNAL_DIR`. It cannot be inside the state directory, including
   through symlink aliases.
-- Provision `/srv/codeasier-enroll-journal` as an independently persistent,
-  service-account-owned mount with a separate snapshot/retention policy. The
-  example unit requires that mount. A sibling directory on the same rollback
-  volume alone is not an independent recovery authority.
+- Provision `/srv/codeasier-enroll-journal` as a service-account-owned directory
+  outside the state directory. The default deployment uses an independently
+  persistent mount; as of 2026-10-24 a reduced deployment is permitted: the
+  append-only journal lives on the local system disk and jump2 snapshots it to
+  jump every 10 minutes. Recovery uses that off-host copy, and it must not be
+  rolled back together with the database backup. The RPO on disk loss is
+  bounded by the last successful snapshot (currently 10 minutes); the unit
+  checks the directory/mode instead of asserting a mount point. Record this
+  reduction in the acceptance ledger; a sibling directory on the same volume
+  is still not an independent recovery authority by itself.
 - The journal is append-only through the service API. It holds a random store ID,
   sequence/hash chain and deterministic typed SQL changes, including encrypted
   GitCode ciphertext and public certificate results. It is sensitive operational
@@ -173,11 +179,21 @@ feedback by generation/serial, so a late failure cannot taint a new account.
    Set `MTLS_ENROLL_ROOT_CRL_FILE` and `MTLS_ENROLL_GATEWAYS_FILE`. Root CRL
    signature, expiry, issuing-CA revocation and monotonic number/digest are
    checked. Invalid root material blocks new signing; it does not loosen TLS.
+   CRLs SHOULD carry an AKI; for compatibility with an existing offline root CRL
+   the loader accepts an absent AKI only because signature and RawIssuer bind it,
+   while a present AKI must match the issuer SKI. New root CRLs get an AKI from
+   `crl_ext` in `offline-root.cnf`.
 2. Provision each gateway with the pinned **public** root/issuing certificates,
    the service binary and root-owned `/var/lib/codeasier-router-gateway` (`0700`).
    No issuing key or OAuth/token key is copied there. Install and adapt the
    [nginx template](../deploy/nginx/codeasier-personal.conf.example), keeping old
     shared-CA vhosts isolated and replacing server certificates/backend routing.
+    Enrollment pages must send `Referrer-Policy: same-origin`; `no-referrer` makes
+    Chromium submit same-origin forms with `Origin: null`, which the strict
+    `authorize` check rejects with `ENROLL_INVALID_REQUEST`. Client builds must
+    embed the real relay public root (currently ISRG Root X1) as
+    `UPSTREAM_CA_PEM`; a placeholder CA fails server-certificate verification
+    and can be misreported as `CLIENT_CERT_REJECTED`.
    The loader also requires `ps` and `lsof`, and must run as root or own the nginx
    master/workers so descriptor visibility is not mistaken for retirement. Its
    `--nginx-pid-file` / `MTLS_GATEWAY_NGINX_PID_FILE` defaults to `/run/nginx.pid`

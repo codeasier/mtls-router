@@ -6,7 +6,7 @@
 
 - 用独立 Unix 服务账户以前台方式运行 `codeasier-router-enroll`。[服务单元](../../deploy/enroll/codeasier-router-enroll.service)及[配置](../../deploy/enroll/enroll.env.example)仅为示例，应用/组织 ID 必须替换为已核验值。
 - 状态目录 0700，DB/WAL/SHM、日志及密钥文件 0600。日志目录必须通过 `--journal-dir` / `MTLS_ENROLL_JOURNAL_DIR` 显式指定，不能在 state 内，也不能通过 symlink 别名混入。
-- `/srv/codeasier-enroll-journal` 必须是服务账户拥有、独立持久化且独立快照/保留策略的挂载。示例 unit 要求该挂载存在。同一回滚卷上的兄弟目录本身不构成独立恢复依据。
+- `/srv/codeasier-enroll-journal` 必须由服务账户拥有并保持在 state 目录之外。默认部署把它放在独立持久挂载上；2026-10-24 起允许“本地系统盘 + 独立异地快照”的降级部署：jump2 每 10 分钟把追加日志快照到 jump，恢复时使用该异地副本，且不得与 DB 备份同批回滚。此时磁盘丢失的 RPO 以最近一次成功快照为上限（当前 10 分钟），unit 只检查目录/权限，不再断言挂载点；该降级必须在验收台账中明确记录，不能把同盘兄弟目录本身说成独立恢复域。
 - 日志只通过服务 API 追加，含随机 store ID、序号/哈希链及有类型参数的确定性 SQL 变更，包含已加密 GitCode 密文及公有证书结果。它属于敏感运维状态，排除在诊断之外，不能随普通 DB 备份回滚。
 - 先 fsync 日志，再提交 SQLite 投影/检查点；两者之间崩溃可重放，保留原 serial 和所有撤销，包括尚未发布至网关 CRL 的决定。两者完成后才响应，响应中断不能当作未签发/未撤销。
 - 文件锁串行化服务/admin 提交，签发租约也属于日志目录，因此换 state 路径不能再开一个签发主。迁主必须先停止并 fence 旧主，本地文件锁不是分布式 HA，备用节点不能凭复制的日志签发。
@@ -83,7 +83,7 @@ codeasier-router-enroll admin backup --state-dir /var/lib/codeasier-router-enrol
 网关只发封闭证书拒绝 JSON/marker，并隐藏后端伪造的同名 marker，业务状态原样保留。原生诊断区分“拒绝”与“已确认撤销”，按 generation/serial 保护反馈，迟到失败不能污染新账号。
 
 1. 签发主安装当前离线 `root-crl.pem` 和私有 0600 的[双网关配置](../../deploy/enroll/gateways.json.example)，设置 `MTLS_ENROLL_ROOT_CRL_FILE`、`MTLS_ENROLL_GATEWAYS_FILE`。核验根 CRL 签名/期限、issuing CA 撤销及单调 number/digest；无效根材料阻止新签发，不降低 TLS。
-2. 每个网关仅安装 pinned **公有** root/issuing 证书、服务二进制及 root 拥有的 `/var/lib/codeasier-router-gateway`（0700），不复制 issuing/OAuth/token key。安装并适配 [nginx 模板](../../deploy/nginx/codeasier-personal.conf.example)，替换服务器 TLS 和后端路由，旧共享 CA vhost 保持隔离。
+2. 每个网关仅安装 pinned **公有** root/issuing 证书、服务二进制及 root 拥有的 `/var/lib/codeasier-router-gateway`（0700），不复制 issuing/OAuth/token key。安装并适配 [nginx 模板](../../deploy/nginx/codeasier-personal.conf.example)，替换服务器 TLS 和后端路由，旧共享 CA vhost 保持隔离。领证页必须发送 `Referrer-Policy: same-origin`；`no-referrer` 会让 Chromium 对同源表单提交 `Origin: null`，被严格 `authorize` 校验以 `ENROLL_INVALID_REQUEST` 拒绝。客户端构建的 `UPSTREAM_CA_PEM` 必须是真实 relay 公有根（当前 ISRG Root X1）；占位 CA 会无法验证服务器证书，并可能被误报为 `CLIENT_CERT_REJECTED`。CRL SHOULD 携带 AKI；为兼容既有离线根 CRL，加载器仅在 AKI 缺失时退回“签名 + RawIssuer 绑定”，非空 AKI 必须等于 issuer SKI。新 root CRL 由 `offline-root.cnf` 的 `crl_ext` 生成 AKI。
    loader 还依赖 `ps` 与 `lsof`，必须以 root 或 nginx master/worker 的所有者运行，不能把权限不足导致的描述符不可见当作已退出。`--nginx-pid-file` / `MTLS_GATEWAY_NGINX_PID_FILE` 默认 `/run/nginx.pid`，必须匹配实际 nginx 配置的 PID 文件。
 3. 签发服务账户 `known_hosts` 固定两个 SSH host key。专用 `codeasier-crl` 账户仅允许固定 loader：使用 root 拥有的 forced command 及精确 sudo 规则 `/usr/local/libexec/codeasier-router-enroll gateway-load --id jump`（另一节点为 `jump2`）；不授予任意命令、参数通配或登录 shell。loader 从 stdin 读取有界公有 JSON，只输出 ack。
 4. 首次配置可能已安装有效 CRL/标记文件，但 nginx 尚未运行时不能 ack。配置校验后启动 nginx，再重试同一版本。正常每小时刷新，有新撤销及时生成；`current-crl.pem` 同时包含 issuing/root CRL。
