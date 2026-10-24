@@ -36,7 +36,7 @@ const authorization = {
 };
 
 describe("IdentityPanel", () => {
-  it("connects with public approval information and keeps local disablement distinct from remote revocation", async () => {
+  it("blocks the app with a modal gate during OAuth and keeps local reset distinct from remote sign-out", async () => {
     let state = disconnected;
     const api = createMockApi({
       getIdentityStatus: vi.fn(async () => state),
@@ -60,20 +60,23 @@ describe("IdentityPanel", () => {
       </I18nProvider>,
     );
     await waitFor(() => expect(api.getIdentityStatus).toHaveBeenCalled());
+    expect(
+      screen.getByRole("dialog", { name: "GitCode 身份认证" }),
+    ).toHaveAttribute("aria-modal", "true");
     fireEvent.click(
       await screen.findByRole("button", { name: "连接 GitCode 账号" }),
     );
-    expect(await screen.findByText(/ABCD-EFGH/)).toBeInTheDocument();
+    expect(await screen.findByText("ABCD-EFGH")).toBeInTheDocument();
     expect(
       screen.getByText(authorization.verification_uri),
     ).toBeInTheDocument();
-    fireEvent.click(await screen.findByRole("button", { name: "停用此设备" }));
-    expect(await screen.findByText(/远端撤销待确认/)).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "取消并重置" }));
+    expect(await screen.findByText(/远端退出待确认/)).toBeInTheDocument();
     expect(screen.queryByText("已撤销")).not.toBeInTheDocument();
     expect(api.getCredential).not.toHaveBeenCalled();
     expect(api.deleteCredential).not.toHaveBeenCalled();
   });
-  it("reports a concrete certificate-service failure instead of waiting for a browser", async () => {
+  it("reports a concrete authentication-service failure instead of waiting for a browser", async () => {
     const api = createMockApi({
       getIdentityStatus: vi.fn(async () => ({
         ...disconnected,
@@ -87,11 +90,11 @@ describe("IdentityPanel", () => {
       </I18nProvider>,
     );
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      /证书服务不可用/,
+      /认证服务不可用/,
     );
     expect(screen.queryByText(/等待浏览器授权/)).not.toBeInTheDocument();
   });
-  it("does not replace a completed connection with a late old status response", async () => {
+  it("hides the modal gate once authenticated and ignores late stale status responses", async () => {
     let resolveOld!: (value: IdentitySummary) => void;
     const old = new Promise<IdentitySummary>((resolve) => {
       resolveOld = resolve;
@@ -112,9 +115,13 @@ describe("IdentityPanel", () => {
       await screen.findByRole("button", { name: "连接 GitCode 账号" }),
     );
     await waitFor(() =>
-      expect(screen.getByText(/设备证书 · 已连接/)).toBeInTheDocument(),
+      expect(
+        screen.queryByRole("dialog", { name: "GitCode 身份认证" }),
+      ).not.toBeInTheDocument(),
     );
     await act(async () => resolveOld(disconnected));
-    expect(screen.getByText(/设备证书 · 已连接/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("dialog", { name: "GitCode 身份认证" }),
+    ).not.toBeInTheDocument();
   });
 });

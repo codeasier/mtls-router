@@ -84,74 +84,76 @@ export function IdentityPanel({ api }: { api: DesktopApi }) {
   const phase =
     summary && phases.has(summary.phase) ? summary.phase : "disconnected";
   const active = phase === "connected" || phase === "renewing";
+  if (active && !failed && !summary?.error_code) return null;
   const errorText =
     (summary?.error_code && errorMessages[summary.error_code]) ||
     "identity.failed";
   return (
-    <section
-      className="identity-panel"
-      aria-label={t("identity.title")}
-      aria-busy={busy}
-    >
-      <div className="identity-panel__copy">
-        <strong>
-          {t("identity.title")} ·{" "}
-          {t(`identity.phase.${phase}` as TranslationKey)}
-        </strong>
-        <p>{t("identity.keyIndependent")}</p>
-        {summary?.user_id && (
-          <small>{t("identity.account", { user: summary.user_id })}</small>
-        )}
-        {summary?.expires_at && (
-          <small>
-            {t("identity.expires", {
-              date: new Date(summary.expires_at * 1000).toLocaleString(),
-            })}
-          </small>
-        )}
-        {summary?.revocation_pending && (
-          <small role="status">{t("identity.remotePending")}</small>
-        )}
-        {authorization && (
-          <p role="status">
-            {t("identity.confirm", { code: authorization.short_code })}
-            <br />
-            <code>{authorization.verification_uri}</code>
-          </p>
-        )}
-        {(failed || summary?.error_code) && (
-          <p role="alert">{t(errorText)}</p>
-        )}
-      </div>
-      <div className="action-row">
-        {!active && (
-          <button
-            className="control-button"
-            disabled={busy}
-            onClick={() => void act("connect")}
-          >
-            {t("identity.connect")}
-          </button>
-        )}
-        {active && (
-          <button
-            className="text-button"
-            disabled={busy}
-            onClick={() => void act("renew")}
-          >
-            {t("identity.renew")}
-          </button>
-        )}
-        {(active || phase === "authorizing" || phase === "expired") && (
-          <button
-            className="text-button"
-            disabled={busy}
-            onClick={() => void act("disconnect")}
-          >
-            {t("identity.disconnect")}
-          </button>
-        )}
-      </div>
-    </section>
+    <div className="dialog-backdrop identity-backdrop">
+      <section
+        className="identity-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-label={t("identity.title")}
+        aria-busy={busy}
+      >
+        <header className="identity-panel__header">
+          <div className="identity-panel__brand">
+            <span className="brand-mark" aria-hidden="true">
+              CR
+            </span>
+            <div>
+              <p className="overline">CodeasierRouter</p>
+              <h2>{t("identity.title")}</h2>
+            </div>
+          </div>
+          <span className="signal">
+            {t(`identity.phase.${phase}` as TranslationKey)}
+          </span>
+        </header>
+        <div className="identity-panel__copy">
+          <p>{t("identity.keyIndependent")}</p>
+          {summary?.revocation_pending && (
+            <small role="status">{t("identity.remotePending")}</small>
+          )}
+          {authorization && (
+            <div className="identity-panel__code" role="status">
+              <p>{t("identity.confirm", { code: authorization.short_code })}</p>
+              <strong className="identity-panel__short-code">
+                {authorization.short_code}
+              </strong>
+              <code>{authorization.verification_uri}</code>
+            </div>
+          )}
+          {(failed || summary?.error_code) && (
+            <p className="identity-panel__error" role="alert">
+              {t(errorText)}
+            </p>
+          )}
+        </div>
+        <div className="action-row identity-panel__actions">
+          {!active && (
+            <button
+              type="button"
+              className="control-button"
+              disabled={busy}
+              onClick={() => void act("connect")}
+            >
+              {t("identity.connect")}
+            </button>
+          )}
+          {(phase === "authorizing" || phase === "expired") && (
+            <button
+              type="button"
+              className="text-button"
+              disabled={busy}
+              onClick={() => void act("disconnect")}
+            >
+              {t("identity.disconnect")}
+            </button>
+          )}
+        </div>
+      </section>
+    </div>
   );
 }

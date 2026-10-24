@@ -1,41 +1,41 @@
 import type { TranslationKey } from "./zh-CN";
 
 export const en: Record<TranslationKey, string> = {
-  "identity.title": "Device certificate",
-  "identity.phase.disconnected": "Not connected",
-  "identity.phase.authorizing": "Waiting for browser approval and certificate",
-  "identity.phase.connected": "Connected",
-  "identity.phase.renewing": "Renewing automatically",
-  "identity.phase.expired": "Certificate expired; sign in again",
+  "identity.title": "GitCode authentication",
+  "identity.phase.disconnected": "Sign-in required",
+  "identity.phase.authorizing": "Waiting for browser authorization",
+  "identity.phase.connected": "Authenticated",
+  "identity.phase.renewing": "Refreshing automatically",
+  "identity.phase.expired": "Session expired; sign in again",
   "identity.phase.reauth_required": "Sign-in required",
   "identity.phase.rejected":
-    "Certificate not accepted remotely; retry or sign in again",
-  "identity.phase.revocation_pending": "Disabled locally",
+    "Authorization is no longer accepted; retry or sign in again",
+  "identity.phase.revocation_pending": "Signed out locally",
   "identity.keyIndependent":
-    "Get a personal certificate with GitCode. Model calls keep your existing API key and Agent configuration.",
+    "Sign in with your GitCode account to continue using the console. Model calls keep your existing API key and Agent configuration.",
   "identity.account": "Account ID: {user}",
-  "identity.expires": "Certificate expires: {date}",
+  "identity.expires": "Valid until: {date}",
   "identity.remotePending":
-    "Remote revocation is not yet confirmed. Late results cannot re-enable the disabled local identity.",
+    "Remote sign-out is not yet confirmed. Late results cannot re-enable the disabled local session.",
   "identity.confirm":
-    "Approve this device in your browser and check code {code}. Connection completes automatically.",
+    "Approve sign-in in your browser and check code {code}. The console will unlock automatically.",
   "identity.failed":
-    "The certificate operation could not complete. Retry or sign in again.",
+    "Authentication could not be completed. Retry or sign in again.",
   "identity.error.certServiceUnavailable":
-    "The certificate service is unavailable. Check your network or retry later (CERT_SERVICE_UNAVAILABLE).",
+    "The authentication service is unavailable. Check your network or retry later (CERT_SERVICE_UNAVAILABLE).",
   "identity.error.certReauthRequired":
     "GitCode authorization has expired. Sign in again (CERT_REAUTH_REQUIRED).",
   "identity.error.operationConflict":
-    "Another certificate operation is still pending. Retry later (CERT_OPERATION_CONFLICT).",
+    "Another authentication operation is still pending. Retry later (CERT_OPERATION_CONFLICT).",
   "identity.error.storageUnavailable":
-    "The local certificate store is unreadable (IDENTITY_STORAGE_UNAVAILABLE).",
+    "The local authentication store is unreadable (IDENTITY_STORAGE_UNAVAILABLE).",
   "identity.error.busy":
-    "The certificate service is busy. Retry later (IDENTITY_BUSY).",
+    "The authentication service is busy. Retry later (IDENTITY_BUSY).",
   "identity.error.invalidState":
-    "The local certificate state is invalid. Sign in again (IDENTITY_STATE_INVALID).",
+    "The local authentication state is invalid. Sign in again (IDENTITY_STATE_INVALID).",
   "identity.connect": "Connect GitCode account",
-  "identity.renew": "Check renewal",
-  "identity.disconnect": "Disable this device",
+  "identity.renew": "Refresh session",
+  "identity.disconnect": "Cancel and reset",
   "app.homeAria": "CodeasierRouter home",
   "app.navigationAria": "Main navigation",
   "app.localMode": "Local mode",
