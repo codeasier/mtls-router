@@ -90,3 +90,45 @@ func TestRootCRLRevocationAndRollbackFailClosed(t *testing.T) {
 		t.Fatal("untrusted root CRL accepted")
 	}
 }
+
+const noAKIRootPEM = `-----BEGIN CERTIFICATE-----
+MIIBxzCCAWygAwIBAgIUWv3CodBMvd8bDAdHBQDHYLOWfIowCgYIKoZIzj0EAwIw
+LzEtMCsGA1UEAwwkQ29kZWFzaWVyUm91dGVyIFBlcnNvbmFsIENsaWVudCBSb290
+MB4XDTI2MTAyNDAxNDMwOFoXDTM2MTAyMTAxNDMwOFowLzEtMCsGA1UEAwwkQ29k
+ZWFzaWVyUm91dGVyIFBlcnNvbmFsIENsaWVudCBSb290MFkwEwYHKoZIzj0CAQYI
+KoZIzj0DAQcDQgAEsq1Y7TWfT9vqfTg/GYFHuem5YohD5q4S5X9WirJho01LoIW9
+BT4vix2qf0j9sNVg9pGgAJw5PWpQSRB1NusOrKNmMGQwEgYDVR0TAQH/BAgwBgEB
+/wIBATAOBgNVHQ8BAf8EBAMCAQYwHQYDVR0OBBYEFGDvZXwpk+7aTF5eBmEByBjR
+IGAjMB8GA1UdIwQYMBaAFGDvZXwpk+7aTF5eBmEByBjRIGAjMAoGCCqGSM49BAMC
+A0kAMEYCIQDipSVAtFmsdeCQaiTWJZjqqsO7gunw/5RFo0wU3kLPqwIhAJx4cY4Q
+q4PcrqbBfZO7NiUbCWzglarSacEpOe9Go264
+-----END CERTIFICATE-----`
+
+const noAKICRLPEM = `-----BEGIN X509 CRL-----
+MIHHMG8CAQEwCgYIKoZIzj0EAwIwLzEtMCsGA1UEAwwkQ29kZWFzaWVyUm91dGVy
+IFBlcnNvbmFsIENsaWVudCBSb290Fw0yNjEwMjQwMTQzMDhaFw0yNjExMjMwMTQz
+MDhaoA8wDTALBgNVHRQEBAICEAAwCgYIKoZIzj0EAwIDSAAwRQIhAOmYqm/4FNdX
+eoAcZIkWj4a+80vTVRvG13fxJcW04+ltAiAN0MciFRuR9aZAGkjp9EQ52CnEHo5Y
+3tad8+XtCSUBUw==
+-----END X509 CRL-----`
+
+func TestValidateCRLAcceptsMissingAKI(t *testing.T) {
+	root, err := parseSingleCertificate([]byte(noAKIRootPEM))
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := ParseCRLPEM([]byte(noAKICRLPEM))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := x509.ParseRevocationList(der)
+	if err != nil || len(parsed.AuthorityKeyId) != 0 {
+		t.Fatal("fixture unexpectedly carries an AKI")
+	}
+	if _, err := ValidateCRL(der, root, 0, "", time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("valid CRL without AKI rejected: %v", err)
+	}
+	if _, err := ValidateCRL([]byte{0x01}, root, 0, "", time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)); err == nil {
+		t.Fatal("malformed CRL accepted")
+	}
+}

@@ -38,7 +38,11 @@ func ValidateCRL(der []byte, issuer *x509.Certificate, minimum int64, previousDi
 		return nil, ErrCRL
 	}
 	crl, err := x509.ParseRevocationList(der)
-	if err != nil || crl.CheckSignatureFrom(issuer) != nil || !bytes.Equal(crl.RawIssuer, issuer.RawSubject) || !bytes.Equal(crl.AuthorityKeyId, issuer.SubjectKeyId) || crl.Number == nil || !crl.Number.IsInt64() || crl.Number.Int64() < 1 || crl.Number.Int64() < minimum || (crl.Number.Int64() == minimum && previousDigest != "" && previousDigest != Digest(der)) || crl.ThisUpdate.After(now) || !crl.NextUpdate.After(now) || !crl.NextUpdate.After(crl.ThisUpdate) || now.Before(issuer.NotBefore) || !now.Before(issuer.NotAfter) {
+	// AuthorityKeyIdentifier is optional in RFC 5280. When present it must
+	// bind the CRL to this exact issuer; an absent AKI is still bound by the
+	// signature and RawIssuer check below.
+	akiMatches := err == nil && (len(crl.AuthorityKeyId) == 0 || bytes.Equal(crl.AuthorityKeyId, issuer.SubjectKeyId))
+	if err != nil || crl.CheckSignatureFrom(issuer) != nil || !bytes.Equal(crl.RawIssuer, issuer.RawSubject) || !akiMatches || crl.Number == nil || !crl.Number.IsInt64() || crl.Number.Int64() < 1 || crl.Number.Int64() < minimum || (crl.Number.Int64() == minimum && previousDigest != "" && previousDigest != Digest(der)) || crl.ThisUpdate.After(now) || !crl.NextUpdate.After(now) || !crl.NextUpdate.After(crl.ThisUpdate) || now.Before(issuer.NotBefore) || !now.Before(issuer.NotAfter) {
 		return nil, ErrCRL
 	}
 	for _, ext := range crl.Extensions {

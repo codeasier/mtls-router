@@ -12,6 +12,7 @@ private_key = $dir/root-key.pem
 default_md = sha256
 default_days = 1095
 default_crl_days = 30
+crl_extensions = crl_ext
 policy = subject_policy
 unique_subject = no
 copy_extensions = none
@@ -38,3 +39,6 @@ keyUsage = critical, keyCertSign, cRLSign
 extendedKeyUsage = clientAuth
 subjectKeyIdentifier = hash
 authorityKeyIdentifier = keyid:always, issuer
+
+[ crl_ext ]
+authorityKeyIdentifier = keyid:always
