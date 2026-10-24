@@ -43,6 +43,33 @@ pub(super) fn upstream_host_header(url: &Uri) -> Result<String, ConnectError> {
     Ok(header)
 }
 
+// A server that rejects our client certificate answers with a certificate
+// alert. Local validation of the server chain (unknown issuer, expired,
+// hostname mismatch) is not a client-certificate rejection and must stay a
+// transport failure so the UI does not blame the device certificate.
+fn client_certificate_rejected(error: &std::io::Error) -> bool {
+    let Some(error) = error
+        .get_ref()
+        .and_then(|error| error.downcast_ref::<rustls::Error>())
+    else {
+        return false;
+    };
+    match error {
+        rustls::Error::AlertReceived(alert) => matches!(
+            alert,
+            rustls::AlertDescription::BadCertificate
+                | rustls::AlertDescription::UnsupportedCertificate
+                | rustls::AlertDescription::CertificateRevoked
+                | rustls::AlertDescription::CertificateExpired
+                | rustls::AlertDescription::CertificateUnknown
+                | rustls::AlertDescription::UnknownCA
+                | rustls::AlertDescription::AccessDenied
+                | rustls::AlertDescription::CertificateRequired
+        ),
+        _ => false,
+    }
+}
+
 pub(super) async fn open_mtls_http1<B>(
     transport: &MtlsTransport,
     url: &Uri,
@@ -71,13 +98,11 @@ where
         .map_err(|_| ConnectError::Transport)?;
     let tls = match connector.connect(server_name, tcp).await {
         Ok(tls) => tls,
-        Err(_) => {
-            if transport.is_personal() {
-                transport.feedback(generation, true).await;
-                return Err(ConnectError::Certificate(super::CertificateState::Rejected));
-            }
-            return Err(ConnectError::Transport);
+        Err(error) if transport.is_personal() && client_certificate_rejected(&error) => {
+            transport.feedback(generation, true).await;
+            return Err(ConnectError::Certificate(super::CertificateState::Rejected));
         }
+        Err(_) => return Err(ConnectError::Transport),
     };
     let (sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(tls))
         .await
@@ -86,4 +111,41 @@ where
         let _ = connection.await;
     });
     Ok((sender, connection_task, generation))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::client_certificate_rejected;
+
+    fn wrapped(error: rustls::Error) -> std::io::Error {
+        std::io::Error::other(error)
+    }
+
+    #[test]
+    fn peer_certificate_alerts_are_client_rejections() {
+        for alert in [
+            rustls::AlertDescription::BadCertificate,
+            rustls::AlertDescription::UnsupportedCertificate,
+            rustls::AlertDescription::CertificateRevoked,
+            rustls::AlertDescription::CertificateExpired,
+            rustls::AlertDescription::CertificateUnknown,
+            rustls::AlertDescription::UnknownCA,
+            rustls::AlertDescription::AccessDenied,
+            rustls::AlertDescription::CertificateRequired,
+        ] {
+            assert!(client_certificate_rejected(&wrapped(
+                rustls::Error::AlertReceived(alert)
+            )));
+        }
+    }
+
+    #[test]
+    fn local_server_certificate_validation_is_not_a_client_rejection() {
+        assert!(!client_certificate_rejected(&wrapped(
+            rustls::Error::InvalidCertificate(rustls::CertificateError::UnknownIssuer)
+        )));
+        assert!(!client_certificate_rejected(&std::io::Error::from(
+            std::io::ErrorKind::ConnectionReset
+        )));
+    }
 }

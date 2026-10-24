@@ -8,6 +8,7 @@ use http_body_util::{BodyExt, Empty};
 use hyper_util::rt::TokioIo;
 use router_identity::{test_support::TestAuthority, IdentityStore};
 use std::{
+    path::Path,
     sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -15,6 +16,8 @@ use tokio::{
     net::TcpStream,
     sync::{mpsc, Notify},
 };
+
+use super::connect::{open_mtls_http1, ConnectError};
 
 async fn request(address: &str, path: &str) -> Response<hyper::body::Incoming> {
     let tcp = TcpStream::connect(address).await.unwrap();
@@ -161,4 +164,66 @@ async fn personal_management_without_certificate_and_atomic_live_generations() {
     let rest = stream.collect().await.unwrap().to_bytes();
     assert_eq!(rest, "data: done\n\n");
     supervisor.shutdown().await.unwrap();
+}
+
+fn active_personal_store(authority: &TestAuthority, label: &str) -> (Temp, IdentityStore) {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let dir = Temp(std::env::temp_dir().join(format!(
+        "router-personal-{}-{label}-{now}",
+        std::process::id()
+    )));
+    let store = IdentityStore::open(&dir.0, authority.trust.clone()).unwrap();
+    let (generation, pending) = store.begin_login("linux_cli", label, now).unwrap();
+    let issued = authority.issue_pending(&pending, now, 4242);
+    store.activate_login(generation, issued, now).unwrap();
+    (dir, store)
+}
+
+fn state_error(dir: &Path) -> Option<String> {
+    let data = std::fs::read(dir.join("identity").join("state.json")).ok()?;
+    let value: serde_json::Value = serde_json::from_slice(&data).ok()?;
+    value
+        .get("last_error")
+        .and_then(|error| error.as_str())
+        .map(ToOwned::to_owned)
+}
+
+async fn personal_transport_connect(
+    server_url: &str,
+    store: IdentityStore,
+    upstream_ca_pem: String,
+) -> Result<(), ConnectError> {
+    let transport = MtlsTransport::new(
+        &TlsMaterials::from_identity(store, upstream_ca_pem),
+        TlsMinVersion::default(),
+    )
+    .unwrap();
+    let url: http::Uri = server_url.parse().unwrap();
+    open_mtls_http1::<Empty<Bytes>>(&transport, &url)
+        .await
+        .map(|_| ())
+}
+
+#[tokio::test]
+async fn untrusted_server_certificate_is_transport_and_keeps_feedback_clean() {
+    let server_authority = TestAuthority::new();
+    let client_authority = TestAuthority::new();
+    let server = start_mtls_optional_handler_with_certs(
+        TestCerts {
+            ca: server_authority.root.pem(),
+            client_cert: String::new(),
+            client_key: String::new(),
+            server_cert: server_authority.server_certificate.clone(),
+            server_key: server_authority.server_key.clone(),
+        },
+        |_request| async { Some(Response::new(boxed_bytes("unused"))) },
+    )
+    .await;
+    let (dir, store) = active_personal_store(&client_authority, "untrusted");
+    let result = personal_transport_connect(&server.url, store, client_authority.root.pem()).await;
+    assert!(matches!(result, Err(ConnectError::Transport)));
+    assert_eq!(state_error(&dir.0), None);
 }

@@ -193,7 +193,7 @@ feedback by generation/serial, so a late failure cannot taint a new account.
     `authorize` check rejects with `ENROLL_INVALID_REQUEST`. Client builds must
     embed the real relay public root (currently ISRG Root X1) as
     `UPSTREAM_CA_PEM`; a placeholder CA fails server-certificate verification
-    and can be misreported as `CLIENT_CERT_REJECTED`.
+    and surfaces as an upstream transport failure, not `CLIENT_CERT_REJECTED`.
    The loader also requires `ps` and `lsof`, and must run as root or own the nginx
    master/workers so descriptor visibility is not mistaken for retirement. Its
    `--nginx-pid-file` / `MTLS_GATEWAY_NGINX_PID_FILE` defaults to `/run/nginx.pid`
