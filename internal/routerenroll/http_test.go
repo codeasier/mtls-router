@@ -67,6 +67,18 @@ func TestEnrollmentRoutesAndClosedLogs(t *testing.T) {
 	}
 }
 
+func TestEnrollmentReferrerPolicyKeepsSameOriginForms(t *testing.T) {
+	server, err := NewHTTPServer(DefaultListen, NewHandler(func(context.Context) bool { return true }), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	server.Handler.ServeHTTP(w, httptest.NewRequest("GET", "/enroll/ready", nil))
+	if got := w.Header().Get("Referrer-Policy"); got != "same-origin" {
+		t.Fatalf("referrer policy %q", got)
+	}
+}
+
 func TestBodyBudgetStrictDecodeAndPanic(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body NativeStart

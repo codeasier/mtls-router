@@ -103,7 +103,7 @@ func newHandler(ready func(context.Context) bool, routes map[string]http.Handler
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		method, exists := endpointMethods[r.URL.Path]
 		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Referrer-Policy", "same-origin")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		if !exists {
 			w.WriteHeader(http.StatusNotFound)
