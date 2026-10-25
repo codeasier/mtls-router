@@ -258,11 +258,19 @@ export function createMockDesktopApi(
       current_version: "0.1.0-mock",
       update: {
         version: "0.2.0-mock",
-        notes: "Mock update for browser-only UX testing.",
+        notes:
+          "简体中文\n\n这是一条用于界面预览的模拟更新说明。\n\nEnglish\n\nMock update for browser-only UX testing.\n",
         published_at: "2026-08-01T00:00:00Z",
       },
     }),
     installUpdate: async () => undefined,
+    openGithubReleases: async () => {
+      window.open(
+        "https://github.com/codeasier/mtls-router/releases",
+        "_blank",
+        "noopener,noreferrer",
+      );
+    },
     subscribeUpdateProgress: async () => noopUnlisten(),
     getRouterLogs: async () => ({
       lines: [

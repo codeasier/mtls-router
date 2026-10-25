@@ -401,7 +401,14 @@ export const zhCN = {
   "update.current": "当前已是最新版本",
   "update.statusUnavailable": "尚未取得更新状态",
   "update.publishedAt": "发布时间：{date}",
-  "update.releaseNotes": "版本说明",
+  "update.releaseNotes": "更新日志",
+  "update.historyAction": "历史更新",
+  "update.historyClose": "关闭",
+  "update.historyEmpty": "这份构建没有带入历史更新日志。",
+  "update.viewOnGitHub": "在 GitHub 上查看发布",
+  "update.githubOpenFailed": "无法打开 GitHub 发布页，请稍后重试。",
+  "update.releaseNotesMissing":
+    "这次更新没有附带更新日志，安装前无法在这里核对改动。仍可继续安装。",
   "update.installAction": "安装并重启",
   "update.installing": "正在下载...",
   "update.installConfirm":

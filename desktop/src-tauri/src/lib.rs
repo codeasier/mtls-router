@@ -241,6 +241,7 @@ fn build_app() -> tauri::Result<tauri::App<tauri::Wry>> {
             commands::diagnostics_collect,
             commands::diagnostics_snapshot,
             commands::export_support_bundle,
+            commands::open_github_releases,
             commands::open_log_location,
             commands::agent_detect,
             commands::agent_models,

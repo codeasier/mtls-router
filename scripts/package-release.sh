@@ -125,7 +125,12 @@ test "$(find release -maxdepth 1 -type f -name 'CodeasierRouter-windows-arm64.*'
 if [[ "$online_update" == true ]]; then
   test "$(find release -maxdepth 1 -type f -name 'CodeasierRouter-*.sig' | wc -l)" -eq 5
   test "$(find release -maxdepth 1 -type f -name 'CodeasierRouter-darwin-*.app.tar.gz' | wc -l)" -eq 2
-  RELEASE_TAG="$release_tag" DESKTOP_DOWNLOAD_BASE_URL="$DESKTOP_DOWNLOAD_BASE_URL" python3 - <<'PY'
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  release_notes_json="$(python3 "$script_dir/extract-release-notes.py" "${release_tag#v}" \
+    "$script_dir/../docs/CHANGELOG.md" \
+    "$script_dir/../docs/zh-CN/CHANGELOG.md")"
+  RELEASE_TAG="$release_tag" DESKTOP_DOWNLOAD_BASE_URL="$DESKTOP_DOWNLOAD_BASE_URL" \
+    RELEASE_NOTES_JSON="$release_notes_json" python3 - <<'PY'
 import json
 import os
 from pathlib import Path
@@ -155,11 +160,29 @@ for target, name in targets.items():
         "url": f"{base_url}/{name}",
     }
 
-feed = {"version": version, "platforms": platforms}
-(release / "latest.json").write_text(json.dumps(feed, indent=2) + "\n", encoding="utf-8")
+notes_doc = json.loads(os.environ["RELEASE_NOTES_JSON"])
+notes = notes_doc["notes"]
+pub_date = notes_doc["pub_date"]
+if not isinstance(notes, str) or not notes.startswith("简体中文\n\n") or "\n\nEnglish\n\n" not in notes:
+    raise SystemExit("release notes must contain the Chinese and English changelog sections")
+if not isinstance(pub_date, str) or len(pub_date) != 20:
+    raise SystemExit("release pub_date must be the changelog date at midnight UTC")
+
+feed = {
+    "version": version,
+    "notes": notes,
+    "pub_date": pub_date,
+    "platforms": platforms,
+}
+(release / "latest.json").write_text(
+    json.dumps(feed, indent=2, ensure_ascii=False) + "\n",
+    encoding="utf-8",
+)
 PY
   jq -e --arg version "${release_tag#v}" '
     .version == $version and
+    (.notes | type == "string" and startswith("简体中文\n") and contains("\nEnglish\n")) and
+    (.pub_date | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T00:00:00Z$")) and
     (.platforms | keys | sort) == ([
       "darwin-aarch64", "darwin-x86_64", "linux-aarch64",
       "linux-x86_64", "windows-x86_64"

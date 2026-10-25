@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { homedir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import react from "@vitejs/plugin-react";
 import type { Plugin } from "vite";
@@ -9,6 +10,10 @@ import { defineConfig } from "vitest/config";
 
 const host = process.env.TAURI_DEV_HOST;
 const liveWorkbench = process.env.VITE_WORKBENCH_LIVE === "true";
+const desktopRoot = path.dirname(fileURLToPath(import.meta.url));
+// Changelog sections ship in the settings page. Vite denies `?raw` reads
+// outside the desktop root unless that directory is on the allow list.
+const changelogDir = path.resolve(desktopRoot, "../docs");
 
 function desktopDataDir(): string {
   if (process.env.MTLS_ROUTER_DESKTOP_DATA_DIR) {
@@ -78,6 +83,9 @@ export default defineConfig({
   plugins: [react(), ...(liveWorkbench ? [liveWorkbenchStatusPlugin()] : [])],
   clearScreen: false,
   server: {
+    fs: {
+      allow: [desktopRoot, changelogDir],
+    },
     port: 1420,
     strictPort: true,
     host: host || false,

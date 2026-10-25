@@ -436,6 +436,14 @@ export const en: Record<TranslationKey, string> = {
   "update.statusUnavailable": "Update status is not available yet",
   "update.publishedAt": "Published: {date}",
   "update.releaseNotes": "Release notes",
+  "update.historyAction": "Release history",
+  "update.historyClose": "Close",
+  "update.historyEmpty": "This build does not include a release history.",
+  "update.viewOnGitHub": "View releases on GitHub",
+  "update.githubOpenFailed":
+    "The GitHub releases page could not be opened. Try again later.",
+  "update.releaseNotesMissing":
+    "This update has no release notes, so the changes cannot be reviewed here before install. You can still continue.",
   "update.installAction": "Install and restart",
   "update.installing": "Downloading...",
   "update.installConfirm":

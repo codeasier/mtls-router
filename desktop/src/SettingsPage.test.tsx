@@ -176,6 +176,132 @@ describe("SettingsPage", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("shows the active language changelog before install and the current one when up to date", async () => {
+    const feed =
+      "简体中文\n\n新增了可在安装前阅读的更新日志。\n\nEnglish\n\nRelease notes are visible before install.\n";
+    const api = await openSettings(
+      createMockApi({
+        getComponentVersions: vi.fn().mockResolvedValue({
+          version: "0.5.3",
+          management_protocol: "4",
+        }),
+        checkForUpdate: vi.fn().mockResolvedValue({
+          available: true,
+          current_version: "0.5.3",
+          update: {
+            version: "0.6.0",
+            notes: feed,
+            published_at: "2026-10-01T00:00:00Z",
+          },
+        }),
+      }),
+    );
+
+    expect(
+      await screen.findByText("新增了可在安装前阅读的更新日志。"),
+    ).toBeVisible();
+    expect(screen.getByText("发布时间：2026-10-01")).toBeVisible();
+    expect(
+      screen.queryByText("Release notes are visible before install."),
+    ).not.toBeInTheDocument();
+    const versions = screen
+      .getByRole("heading", { name: "版本" })
+      .closest("section");
+    expect(versions).not.toBeNull();
+    expect(
+      within(versions as HTMLElement).getByRole("button", {
+        name: "历史更新",
+      }),
+    ).toBeVisible();
+    expect(
+      within(versions as HTMLElement).getByRole("button", {
+        name: "在 GitHub 上查看发布",
+      }),
+    ).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "更新日志" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /v0\.5\.3/ }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("combobox"), {
+      target: { value: "en" },
+    });
+    expect(
+      await screen.findByText("Release notes are visible before install."),
+    ).toBeVisible();
+    expect(
+      screen.queryByText("新增了可在安装前阅读的更新日志。"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Install and restart" }),
+    );
+    expect(
+      within(
+        await screen.findByRole("dialog", { name: "Install update" }),
+      ).getByText("Release notes are visible before install."),
+    ).toBeVisible();
+    expect(api.installUpdate).not.toHaveBeenCalled();
+  });
+
+  it("shows release history without an update and opens GitHub from its mark", async () => {
+    const api = await openSettings(
+      createMockApi({
+        getComponentVersions: vi.fn().mockResolvedValue({
+          version: "0.5.3",
+          management_protocol: "4",
+        }),
+        checkForUpdate: vi.fn().mockResolvedValue({
+          available: false,
+          current_version: "0.5.3",
+        }),
+      }),
+    );
+
+    expect(
+      screen.queryByRole("heading", { name: "更新日志" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/个人设备身份/)).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "历史更新" }));
+    const history = await screen.findByRole("dialog", { name: "历史更新" });
+    expect(within(history).getByText(/个人设备身份/)).toBeVisible();
+    expect(
+      within(history).getByRole("heading", { name: "新增" }),
+    ).toBeVisible();
+    expect(within(history).queryByText(/### 新增/)).not.toBeInTheDocument();
+    fireEvent.click(within(history).getByRole("button", { name: /v0\.5\.3/ }));
+    expect(within(history).getByText(/回环端口/)).toBeVisible();
+    expect(screen.queryByText(/个人设备身份/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/This patch release/)).not.toBeInTheDocument();
+    fireEvent.click(within(history).getByRole("button", { name: "关闭" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "在 GitHub 上查看发布" }),
+    );
+    await waitFor(() => expect(api.openGithubReleases).toHaveBeenCalledOnce());
+  });
+
+  it("says when an offered update has no changelog and still allows install", async () => {
+    await openSettings(
+      createMockApi({
+        checkForUpdate: vi.fn().mockResolvedValue({
+          available: true,
+          current_version: "1.0.0",
+          update: { version: "1.1.0" },
+        }),
+      }),
+    );
+
+    expect(await screen.findByText(/这次更新没有附带更新日志/)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "安装并重启" }));
+    expect(
+      within(await screen.findByRole("dialog", { name: "安装更新" })).getByText(
+        /这次更新没有附带更新日志/,
+      ),
+    ).toBeVisible();
+  });
+
   it("surfaces an accessible error when the update check rejects", async () => {
     const api = await openSettings(
       createMockApi({
@@ -219,12 +345,17 @@ describe("SettingsPage", () => {
         installUpdate: vi.fn(() => installPromise),
       }),
     );
-    await screen.findByText("Security and reliability fixes.");
+    expect(
+      await screen.findByText("Security and reliability fixes."),
+    ).toBeVisible();
 
     fireEvent.click(screen.getByRole("button", { name: "安装并重启" }));
     const dialog = await screen.findByRole("dialog", {
       name: "安装更新",
     });
+    expect(
+      within(dialog).getByText("Security and reliability fixes."),
+    ).toBeVisible();
     expect(api.installUpdate).not.toHaveBeenCalled();
 
     fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));

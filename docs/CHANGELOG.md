@@ -2,6 +2,12 @@
 
 [中文](zh-CN/CHANGELOG.md)
 
+## Unreleased
+
+### Added
+
+- Beside Check for updates, Settings has Release history and a GitHub mark. Release history opens a dialog of every shipped version and renders that changelog as Markdown. The mark opens the public releases page. An available update still shows that version's notes before install and again in the confirmation dialog, in the selected language. The stable update feed publishes that version's notes from this changelog. An update that arrives without notes can still be installed.
+
 ## v0.6.0 - 2026-10-25
 
 This release replaces the shared client certificate and private key with a personal device identity issued through GitCode authorization. The desktop and the new Linux CLI now reach the model path at the fixed `relay.codeasier.top` origin over per-device mTLS and the original API key. The upgrade is breaking: each installation signs in once to obtain a certificate; saved API keys and Agent files are preserved. Existing 0.5.x clients can keep using the legacy shared entry while the migration completes.
