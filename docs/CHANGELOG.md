@@ -12,6 +12,7 @@
 
 - Diagnostic snapshots and support bundles now keep the latched startup `last_error` as closed `stage`/`code` plus optional `os_error`/`listen_refusal`, and may include a redacted recorded-state identity (PID, start identity, executable basename) from a successfully parsed `desktop-state.json`.
 - A leftover desktop state file whose PID now belongs to a different complete live process is removed without signaling when the configured listen port is idle, so a later start can bind. Unreadable, incomplete, still-associated, or generic stale records still fail closed.
+- Usage on macOS and Windows now reads the jump2 relay `recorded_usage` response and sends an explicit `start`/`end` window, so the page no longer reports an unrecognized usage response and rolling/calendar windows match the selection.
 
 ## v0.5.3 - 2026-09-10
 

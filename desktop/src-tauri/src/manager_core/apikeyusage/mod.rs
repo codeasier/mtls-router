@@ -2,7 +2,10 @@
 
 //! Bounded per-key `/v1/usage` client and fail-closed parser.
 //!
-//! Frozen against Go `internal/manager/apikeyusage`.
+//! Mirrors Go `internal/manager/apikeyusage`, and additionally accepts the
+//! jump2 relay `recorded_usage` shape (`total`/`byModel`/window object) that
+//! the per-user mTLS relay serves. Windows are sent as `start`/`end` because
+//! jump2 ignores the legacy `period` token; it is still sent for jump.
 
 mod client;
 mod error;

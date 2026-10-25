@@ -24,6 +24,8 @@ React UI ──Tauri invoke──▶ Rust commands.rs ──ManagerClient (proto
 - **桌面整包更新**：仅精确 stable `vX.Y.Z` release 配置 `https://release.codeasier.top/latest.json` 与 updater 公钥；非 stable 构建保留可反序列化但无 endpoint 的禁用配置。启动时静默检查一次，Settings 可手动复查。用户确认后 `updater.rs` 重新检查精确 stable SemVer、下载并强制校验 Tauri 签名，停止经验证的 desktop-owned router（内嵌 supervisor），安装完整桌面包并重启；关联 `legacy_managed` router 需先经 `router.migrate_legacy` 一次性接管，`router.stop` 对非本进程记录返回 `ROUTER_NOT_OWNED`。已锁存的 `start_failed`（`owner=desktop`）与 `absent` 一样直接安装、不先 `router.stop`。关联状态为 stale、unknown、未知枚举或 owner/state 组合不可验证时拒绝安装。不停止 external router。CLI 已冻结，没有更新路径。设置页安装失败展示稳定 `CommandError.code`。
 - **安装所有权与启动诊断**：`installation.json` 由 Rust 桌面端单独维护，保存稳定 installation ID 与 package generation；内嵌运行时为 generation `2`（sidecar 时代为 `1`），因此同安装 generation 1 的桌面记录是迁移候选而非可 reclaim 对象。旧版本写入的 sidecar 哈希字段读取后清空，不再写出。会话 ID 只作 epoch。`ManagerClient` 的诊断环沿用 `sidecar_resolution` / `spawn` / `handshake` / `protocol_parse` / `watchdog_timeout` / `unexpected_exit` 阶段名（前端文案已改为拓扑中立），in-process session 只产生 `Stdout` 事件，其余传输事件保留给恢复契约测试。
 
+- **用量兼容**：`manager_core/apikeyusage` 同时解析冻结 Go 对照的 `period` token / `summary` / `by_model` 与 jump2 的窗口对象 / `total` / `byModel`；仅接受一次安全标量对象形式的 `apiKey` 元数据并丢弃，保留重复字段、秘密字段、数值和行数上限校验。Rust 查询同时携带旧 `period` 与 RFC 3339 `start`/`end`，滚动窗口按当前 UTC 时间回溯，日历窗口按 UTC 日 / ISO 周 / 月边界（北京时间 08:00）起算；relay 的窗口结束时间映射为快照 `as_of`。
+
 ## Windows 原生边界
 
 - `src-tauri/src/windows_security.rs`：共享进程 TokenUser SID 与私有文件 DACL；新凭据、事务材料和敏感备份仅授权当前用户，DACL 禁止继承；Agent 替换保留原目标非空 DACL 并保护它免受父目录继承影响。读取既有签名材料、事务 lock 与 sidecar 时，若对象仍是旧版默认继承 ACL，先收紧再严格校验；NULL DACL 目标继续 fail-closed。
