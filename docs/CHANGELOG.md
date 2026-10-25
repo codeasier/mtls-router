@@ -2,17 +2,42 @@
 
 [中文](zh-CN/CHANGELOG.md)
 
-## Unreleased
+## v0.6.0 - 2026-10-25
+
+This release replaces the shared client certificate and private key with a personal device identity issued through GitCode authorization. The desktop and the new Linux CLI now reach the model path at the fixed `relay.codeasier.top` origin over per-device mTLS and the original API key. The upgrade is breaking: each installation signs in once to obtain a certificate; saved API keys and Agent files are preserved. Existing 0.5.x clients can keep using the legacy shared entry while the migration completes.
+
+### Added
+
+- Personal-device enrollment at `enroll.codeasier.top`: one-click GitCode authorization shows the account, organization, device, and a one-time short code before approval. The private key and CSR stay on the device; the browser only handles public links and confirmation. Certificates renew before expiry, and the device can be signed out or revoked. Model requests do not consult GitCode or the enrollment service.
+- Desktop identity experience: a full-screen sign-in gate replaces the old certificate banner; connection, renewal, and disconnect states are shown in Chinese and English, and support bundles exclude private identity material.
+- New headless Linux client `codeasier-router` (`login [--no-browser]`, `identity status/renew`, `logout`, `serve`, `--version`) for Linux amd64/arm64. It needs no GUI or keyring and accepts no token, private key, or API key as an argument or environment variable. Release archives carry GitHub OIDC/Sigstore provenance.
+- `codeasier-router-enroll` control plane: single-writer SQLite/AES-GCM state, a restricted clientAuth issuing CA, append-only journal with replay, device/certificate/enrollment ledger, CRL publication, and per-gateway load acknowledgement. It is deployed separately from client releases.
+- Release assets now include two Linux CLI archives alongside the desktop installers, with exact allowlists and provenance checks.
 
 ### Changed
 
-- New desktop releases publish five installers (Windows x86_64, macOS Intel/Apple Silicon DMG, Linux x86_64/arm64). Windows arm64 packages are no longer built or shipped. Sidecar `*.sha256` files stay in the workflow as aggregation preflight and are not attached to GitHub Releases. macOS `.app.tar.gz` updater archives remain on `release.codeasier.top` for in-app updates and are not listed as GitHub download assets. The GitHub `SHA256SUMS` lists only attached files; the complete checksum inventory stays on the mirror.
+- Desktop packages no longer embed a shared client certificate or private key. Each installation creates a private device identity at runtime; the certificate generation advances to generation 3, and older installations migrate only after full identity verification. API keys and Agent files remain independent of the identity.
+- Model traffic is fixed at build time to `https://relay.codeasier.top`; the client cannot be pointed at another upstream. The legacy shared entry remains available to 0.5.x clients during the migration.
+- The Usage page reads the jump2 relay `recorded_usage` response and sends an explicit UTC `start`/`end` window; rolling and calendar periods (including the Beijing 08:00 boundaries) match the selection. Provider limits use full-width bars with two-decimal amounts and percentages.
+- New desktop releases publish five installers (Windows x86_64, macOS Intel/Apple Silicon DMG, Linux x86_64/arm64); Windows arm64 is no longer built or shipped. Sidecar `*.sha256` files stay in the workflow as aggregation preflight and are not attached to GitHub Releases. macOS `.app.tar.gz` updater archives remain on `release.codeasier.top`; the complete checksum inventory stays on the mirror.
 
 ### Fixed
 
-- Diagnostic snapshots and support bundles now keep the latched startup `last_error` as closed `stage`/`code` plus optional `os_error`/`listen_refusal`, and may include a redacted recorded-state identity (PID, start identity, executable basename) from a successfully parsed `desktop-state.json`.
+- Usage on macOS and Windows no longer reports an unrecognized response against the jump2 relay; the page and period selection work for all rolling and calendar windows. The model filter no longer clips, and the usage card keeps its height when the filter is cleared.
+- TLS failures are classified by cause: local server-certificate validation and transport errors are reported as upstream failures, while a TLS 1.3 post-handshake client-certificate rejection returns `403 CLIENT_CERT_REJECTED` instead of a generic `502`.
+- Windows native security and recovery: private DACLs for credentials, Agent transaction material, and sensitive backups; SCM/SID-aware occupant inspection; and updater preflight that lets a latched desktop-owned `start_failed` proceed without stopping a missing router, while stale or unverifiable states stay fail-closed. Settings shows the stable install error code.
+- Enrollment fixes: accept existing root CRLs without an AKI, accept GitCode callback extras and the `all_user` scope, keep the same-origin referrer policy for browser forms, and write gateway-load acknowledgements to stdout.
+- Release packaging fixtures no longer inherit the runner's `GITHUB_REF`, so the release assertions run the same way on every runner.
+- Diagnostic snapshots and support bundles keep the latched startup `last_error` as closed `stage`/`code` plus optional `os_error`/`listen_refusal`, and may include a redacted recorded-state identity (PID, start identity, executable basename) from a successfully parsed `desktop-state.json`.
 - A leftover desktop state file whose PID now belongs to a different complete live process is removed without signaling when the configured listen port is idle, so a later start can bind. Unreadable, incomplete, still-associated, or generic stale records still fail closed.
-- Usage on macOS and Windows now reads the jump2 relay `recorded_usage` response and sends an explicit `start`/`end` window, so the page no longer reports an unrecognized usage response and rolling/calendar windows match the selection.
+
+### Upgrade notes
+
+- 0.5.x → 0.6.0: after the update, sign in with a GitCode account that belongs to the required organization. The first launch shows the authorization gate; the API key and Agent configuration are preserved.
+- Windows arm64 is no longer published. Existing arm64 installations stay on 0.5.3 and can continue to use the legacy shared entry; reinstall the x86_64 build to move to 0.6.0.
+- The new Linux client is separate from the historical Go CLI. Historical Go releases remain downloadable from their tags; 0.6.0 does not re-publish or replace them.
+
+---
 
 ## v0.5.3 - 2026-09-10
 
