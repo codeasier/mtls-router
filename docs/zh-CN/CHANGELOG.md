@@ -2,17 +2,42 @@
 
 [English](../CHANGELOG.md)
 
-## Unreleased
+## v0.6.0 - 2026-10-25
 
-### Changed
+本次发布把共享客户端证书与私钥替换为经 GitCode 授权的个人设备身份。桌面与新的 Linux CLI 通过个人 mTLS 和原 API key 访问固定 `relay.codeasier.top` 模型入口。这是一次破坏性升级：每台设备需登录一次获取证书；已保存的 API key 与 Agent 文件保留。迁移期间，现有 0.5.x 客户端可继续使用旧共享入口。
 
-- 新的桌面 release 只发布五个安装包（Windows x86_64、macOS Intel/Apple Silicon DMG、Linux x86_64/arm64），不再构建或分发 Windows arm64。sidecar `*.sha256` 仍用于聚合预检，但不再挂到 GitHub Release。macOS `.app.tar.gz` updater 归档继续放到 `release.codeasier.top` 供应用内更新，不作为 GitHub 下载项列出。GitHub 的 `SHA256SUMS` 只列已挂文件，完整校验清单留在镜像。
+### 新增
+
+- `enroll.codeasier.top` 个人设备领证：一键 GitCode 授权，批准前展示账号、组织、设备与一次性短码。私钥与 CSR 留在设备，浏览器只处理公开链接与确认信息。证书在到期前自动续期，设备可退出或撤销；模型请求不会访问 GitCode 或领证服务。
+- 桌面身份体验：全屏登录门控替换旧证书横幅；连接、续期、断开状态提供中英文；支持包排除私有身份材料。
+- 新的无 GUI Linux 客户端 `codeasier-router`（`login [--no-browser]`、`identity status/renew`、`logout`、`serve`、`--version`），支持 Linux amd64/arm64。无需 GUI 或密钥环，不接受 token、私钥或 API key 作为参数或环境变量。发布归档带 GitHub OIDC/Sigstore provenance。
+- `codeasier-router-enroll` 控制面：单写 SQLite/AES-GCM 状态、受限 clientAuth 签发 CA、可重放追加日志、设备/证书/签发台账、CRL 发布与逐网关加载确认；与客户端发布分开部署。
+- 发布资产新增两个 Linux CLI 归档，与桌面安装包一起校验精确 allowlist 与 provenance。
+
+### 变更
+
+- 桌面包不再内嵌共享客户端证书或私钥。每台安装运行时生成私有设备身份；证书代际推进到 generation 3，旧安装仅在完整身份校验后迁移。API key 与 Agent 文件仍与身份独立。
+- 模型流量在构建期固定为 `https://relay.codeasier.top`，客户端不能指向其他上游。迁移期间旧共享入口继续对 0.5.x 客户端可用。
+- 用量页读取 jump2 relay 的 `recorded_usage` 响应，并发送明确的 UTC `start`/`end` 窗口；滚动与日历周期（含北京时间 08:00 边界）与选择一致。供应商限额改为满宽进度条，金额保留两位小数并显示百分比。
+- 新桌面 release 只发布五个安装包（Windows x86_64、macOS Intel/Apple Silicon DMG、Linux x86_64/arm64），不再构建或分发 Windows arm64。sidecar `*.sha256` 仍用于聚合预检，但不再挂到 GitHub Release。macOS `.app.tar.gz` updater 归档继续放到 `release.codeasier.top`；完整校验清单留在镜像。
 
 ### 修复
 
-- 诊断快照与支持包现在保留锁存的启动 `last_error`，写成封闭的 `stage`/`code` 以及可选 `os_error`/`listen_refusal`；若 `desktop-state.json` 解析成功，还可带上脱敏的记录身份（PID、启动标识、可执行文件 basename）。
+- macOS 与 Windows 的「用量」页不再对 jump2 relay 报“用量响应无法识别”；所有滚动/日历周期可用，模型筛选不再被裁剪，清空筛选时卡片高度保持稳定。
+- TLS 失败按原因分类：服务器证书本地校验与传输错误归为 upstream；TLS 1.3 握手后拒绝客户端证书返回 `403 CLIENT_CERT_REJECTED`，不再报通用 `502`。
+- Windows 原生安全与恢复：凭据、Agent 事务材料与敏感备份使用私有 DACL；按 SCM/SID 校验占用者；已锁存且 owner=desktop 的 `start_failed` 可直接更新，不再尝试停止不存在的 router，stale/不可验证状态仍 fail closed。设置页展示稳定的安装错误码。
+- 领证修复：接受不带 AKI 的既有 root CRL，兼容 GitCode 回调附加参数与 `all_user` scope，浏览器表单保持同源 Referrer-Policy，`gateway-load` ack 输出到 stdout。
+- 发布打包测试不再继承 runner 的 `GITHUB_REF`，各 runner 的发布断言行为一致。
+- 诊断快照与支持包保留锁存的启动 `last_error`，写成封闭的 `stage`/`code` 以及可选 `os_error`/`listen_refusal`；若 `desktop-state.json` 解析成功，还可带上脱敏的记录身份（PID、启动标识、可执行文件 basename）。
 - 残留桌面状态文件的 PID 已被其他完整活进程占用、且已配置监听端口空闲时，会在不发信号的前提下删除该记录，以便随后启动可以绑定。不可读、不完整、仍关联或笼统的 stale 记录仍 fail closed。
-- macOS 与 Windows 的「用量」页现在能解析 jump2 relay 的 `recorded_usage` 响应，并按所选周期发送明确的 `start`/`end` 时间窗；不再显示“用量响应无法识别”，滚动/日历窗口也与选择一致。
+
+### 升级说明
+
+- 0.5.x → 0.6.0：升级后用具备所需组织成员资格的 GitCode 账号登录一次；首次启动显示授权门控，API key 与 Agent 配置保留。
+- Windows arm64 不再发布。现有 arm64 安装停留在 0.5.3，可继续使用旧共享入口；改装 x86_64 包才能进入 0.6.0。
+- 新 Linux 客户端与历史 Go CLI 是两套实现。历史 Go 版本仍可从各自 tag 下载；0.6.0 不重发、也不替换它们。
+
+---
 
 ## v0.5.3 - 2026-09-10
 
