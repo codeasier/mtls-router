@@ -12,6 +12,7 @@
 
 - 诊断快照与支持包现在保留锁存的启动 `last_error`，写成封闭的 `stage`/`code` 以及可选 `os_error`/`listen_refusal`；若 `desktop-state.json` 解析成功，还可带上脱敏的记录身份（PID、启动标识、可执行文件 basename）。
 - 残留桌面状态文件的 PID 已被其他完整活进程占用、且已配置监听端口空闲时，会在不发信号的前提下删除该记录，以便随后启动可以绑定。不可读、不完整、仍关联或笼统的 stale 记录仍 fail closed。
+- macOS 与 Windows 的「用量」页现在能解析 jump2 relay 的 `recorded_usage` 响应，并按所选周期发送明确的 `start`/`end` 时间窗；不再显示“用量响应无法识别”，滚动/日历窗口也与选择一致。
 
 ## v0.5.3 - 2026-09-10
 

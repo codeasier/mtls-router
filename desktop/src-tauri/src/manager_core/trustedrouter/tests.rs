@@ -181,6 +181,19 @@ fn channel_validates_and_fetches_on_exactly_one_connection() {
 
 #[test]
 fn channel_fetches_usage_on_exactly_one_connection() {
+    assert_usage_on_exactly_one_connection(
+        br#"{"period":"7d","summary":{"requests":4,"prompt_tokens":8,"completion_tokens":2,"cost":0.5},"by_model":[]}"#,
+    );
+}
+
+#[test]
+fn channel_fetches_jump2_usage_on_exactly_one_connection() {
+    assert_usage_on_exactly_one_connection(
+        br#"{"scope":"recorded_usage","apiKey":{"id":"key-id","name":"key-name"},"period":{"start":"2026-10-18T05:00:00Z","end":"2026-10-25T05:00:00Z"},"total":{"requests":4,"promptTokens":8,"completionTokens":2,"cost":0.5},"byModel":[]}"#,
+    );
+}
+
+fn assert_usage_on_exactly_one_connection(body: &'static [u8]) {
     let dials = Arc::new(AtomicUsize::new(0));
     let connections = Arc::new(Mutex::new(Vec::new()));
     let seen = connections.clone();
@@ -192,12 +205,14 @@ fn channel_fetches_usage_on_exactly_one_connection() {
                 TestResponse::json(200, version_body())
             }
             "/v1/usage" => {
-                assert_eq!(request.query, "period=7d");
+                assert!(
+                    request.query.starts_with("period=7d&start="),
+                    "{}",
+                    request.query
+                );
+                assert!(request.query.contains("&end="), "{}", request.query);
                 assert_eq!(request.authorization, format!("Bearer {CHANNEL_KEY}"));
-                TestResponse::json(
-                    200,
-                    br#"{"period":"7d","summary":{"requests":4,"prompt_tokens":8,"completion_tokens":2,"cost":0.5},"by_model":[]}"#.to_vec(),
-                )
+                TestResponse::json(200, body.to_vec())
             }
             _ => TestResponse::json(404, Vec::new()),
         }

@@ -161,8 +161,10 @@ pub fn parse(body: &[u8], period: Period) -> Result<Snapshot, UsageError> {
         return Err(response_invalid());
     }
     let parsed: ParsedSnapshot = serde_json::from_slice(body).map_err(|_| response_invalid())?;
-    if parsed.period != period {
-        return Err(response_invalid());
+    if let Some(token) = parsed.period {
+        if token != period {
+            return Err(response_invalid());
+        }
     }
     Ok(Snapshot {
         period,
@@ -175,7 +177,7 @@ pub fn parse(body: &[u8], period: Period) -> Result<Snapshot, UsageError> {
 }
 
 struct ParsedSnapshot {
-    period: Period,
+    period: Option<Period>,
     as_of: String,
     summary: Summary,
     quota: Option<Quota>,
@@ -200,30 +202,57 @@ impl<'de> Visitor<'de> for SnapshotVisitor {
 
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
         let mut seen = HashSet::new();
-        let mut period = None;
-        let mut as_of = String::new();
-        let mut summary = None;
+        let mut period_token = None;
+        let mut window_end: Option<String> = None;
+        let mut as_of: Option<String> = None;
+        let mut summary: Option<Summary> = None;
         let mut quota = None;
         let mut quotas = Vec::new();
-        let mut by_model = None;
+        let mut by_model: Option<Vec<Model>> = None;
         while let Some(key) = map.next_key::<String>()? {
-            if !seen_field(&mut seen, &key) {
+            // Only the exact relay metadata name is exempt from the secret-name
+            // guard; it must still occur once and contain a safe scalar object.
+            let valid_field = if key == "apiKey" {
+                seen.insert(key.clone())
+            } else {
+                seen_field(&mut seen, &key)
+            };
+            if !valid_field {
                 return Err(de::Error::custom("invalid field"));
             }
             match key.as_str() {
                 "period" => {
-                    let value = map.next_value::<String>()?;
-                    period =
-                        Some(Period::parse(&value).ok_or_else(|| de::Error::custom("period"))?);
+                    if period_token.is_some() || window_end.is_some() {
+                        return Err(de::Error::custom("duplicate period"));
+                    }
+                    match map.next_value::<PeriodField>()? {
+                        PeriodField::Token(value) => {
+                            period_token = Some(
+                                Period::parse(&value).ok_or_else(|| de::Error::custom("period"))?,
+                            );
+                        }
+                        PeriodField::Window { end } => window_end = Some(end),
+                    }
                 }
                 "as_of" => {
                     let value = map.next_value::<String>()?;
                     if !valid_time(&value) {
                         return Err(de::Error::custom("as_of"));
                     }
-                    as_of = value;
+                    as_of = Some(value);
                 }
-                "summary" => summary = Some(map.next_value::<Summary>()?),
+                "summary" => {
+                    if summary.is_some() {
+                        return Err(de::Error::custom("duplicate summary"));
+                    }
+                    summary = Some(decode_summary(&map.next_value::<ScalarObject>()?, false)?);
+                }
+                "total" => {
+                    if summary.is_some() {
+                        return Err(de::Error::custom("duplicate summary"));
+                    }
+                    summary = Some(decode_summary(&map.next_value::<ScalarObject>()?, true)?);
+                }
                 "quota" => quota = map.next_value::<Option<Quota>>()?,
                 "quotas" => {
                     quotas = map
@@ -231,17 +260,35 @@ impl<'de> Visitor<'de> for SnapshotVisitor {
                         .map(|rows| rows.0)
                         .unwrap_or_default();
                 }
-                "by_model" => by_model = Some(map.next_value::<ModelRows>()?.0),
+                "by_model" => {
+                    if by_model.is_some() {
+                        return Err(de::Error::custom("duplicate model rows"));
+                    }
+                    by_model = Some(decode_models(map.next_value::<ScalarObjects>()?.0, false)?);
+                }
+                "byModel" => {
+                    if by_model.is_some() {
+                        return Err(de::Error::custom("duplicate model rows"));
+                    }
+                    by_model = Some(decode_models(map.next_value::<ScalarObjects>()?.0, true)?);
+                }
+                "apiKey" => {
+                    let _: ScalarObject = map.next_value()?;
+                }
                 _ => {
                     let _: IgnoredAny = map.next_value()?;
                 }
             }
         }
-        if !seen.contains("period") || !seen.contains("summary") || !seen.contains("by_model") {
-            return Err(de::Error::custom("missing required"));
+        if period_token.is_none() && window_end.is_none() {
+            return Err(de::Error::custom("missing period"));
         }
+        if as_of.is_some() && window_end.is_some() {
+            return Err(de::Error::custom("ambiguous period"));
+        }
+        let as_of = as_of.or(window_end).unwrap_or_default();
         Ok(ParsedSnapshot {
-            period: period.ok_or_else(|| de::Error::custom("period"))?,
+            period: period_token,
             as_of,
             summary: summary.ok_or_else(|| de::Error::custom("summary"))?,
             quota,
@@ -251,15 +298,105 @@ impl<'de> Visitor<'de> for SnapshotVisitor {
     }
 }
 
-impl<'de> Deserialize<'de> for Summary {
+fn decode_summary<E: de::Error>(object: &ScalarObject, camel: bool) -> Result<Summary, E> {
+    let fields = &object.0;
+    Ok(Summary {
+        requests: required_count(fields, "requests")?,
+        prompt_tokens: required_count(
+            fields,
+            if camel {
+                "promptTokens"
+            } else {
+                "prompt_tokens"
+            },
+        )?,
+        completion_tokens: required_count(
+            fields,
+            if camel {
+                "completionTokens"
+            } else {
+                "completion_tokens"
+            },
+        )?,
+        cost: required_amount(fields, "cost")?,
+    })
+}
+
+fn decode_models<E: de::Error>(rows: Vec<ScalarObject>, camel: bool) -> Result<Vec<Model>, E> {
+    rows.iter().map(|row| decode_model(row, camel)).collect()
+}
+
+fn decode_model<E: de::Error>(object: &ScalarObject, camel: bool) -> Result<Model, E> {
+    let fields = &object.0;
+    let model = match fields.get("model") {
+        Some(Scalar::String(value)) if valid_id(value) => value.clone(),
+        _ => return Err(de::Error::custom("model")),
+    };
+    Ok(Model {
+        model,
+        requests: required_count(fields, "requests")?,
+        prompt_tokens: required_count(
+            fields,
+            if camel {
+                "promptTokens"
+            } else {
+                "prompt_tokens"
+            },
+        )?,
+        completion_tokens: required_count(
+            fields,
+            if camel {
+                "completionTokens"
+            } else {
+                "completion_tokens"
+            },
+        )?,
+        cost: required_amount(fields, "cost")?,
+    })
+}
+
+enum PeriodField {
+    Token(String),
+    Window { end: String },
+}
+
+impl<'de> Deserialize<'de> for PeriodField {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let fields = ScalarObject::deserialize(deserializer)?.0;
-        Ok(Summary {
-            requests: required_count(&fields, "requests")?,
-            prompt_tokens: required_count(&fields, "prompt_tokens")?,
-            completion_tokens: required_count(&fields, "completion_tokens")?,
-            cost: required_amount(&fields, "cost")?,
-        })
+        struct PeriodVisitor;
+        impl<'de> Visitor<'de> for PeriodVisitor {
+            type Value = PeriodField;
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("period token or window")
+            }
+            fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                Ok(PeriodField::Token(value.to_owned()))
+            }
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                let mut seen = HashSet::new();
+                let mut end = None;
+                while let Some(key) = map.next_key::<String>()? {
+                    if !seen_field(&mut seen, &key) {
+                        return Err(de::Error::custom("invalid field"));
+                    }
+                    match key.as_str() {
+                        "end" => {
+                            let value = map.next_value::<String>()?;
+                            if !valid_time(&value) {
+                                return Err(de::Error::custom("end"));
+                            }
+                            end = Some(value);
+                        }
+                        _ => {
+                            let _: IgnoredAny = map.next_value()?;
+                        }
+                    }
+                }
+                Ok(PeriodField::Window {
+                    end: end.ok_or_else(|| de::Error::custom("end"))?,
+                })
+            }
+        }
+        deserializer.deserialize_any(PeriodVisitor)
     }
 }
 
@@ -333,45 +470,28 @@ impl<'de> Deserialize<'de> for ProviderQuota {
     }
 }
 
-impl<'de> Deserialize<'de> for Model {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let fields = ScalarObject::deserialize(deserializer)?.0;
-        let model = match fields.get("model") {
-            Some(Scalar::String(value)) if valid_id(value) => value.clone(),
-            _ => return Err(de::Error::custom("model")),
-        };
-        Ok(Model {
-            model,
-            requests: required_count(&fields, "requests")?,
-            prompt_tokens: required_count(&fields, "prompt_tokens")?,
-            completion_tokens: required_count(&fields, "completion_tokens")?,
-            cost: required_amount(&fields, "cost")?,
-        })
-    }
-}
+struct ScalarObjects(Vec<ScalarObject>);
 
-struct ModelRows(Vec<Model>);
-
-impl<'de> Deserialize<'de> for ModelRows {
+impl<'de> Deserialize<'de> for ScalarObjects {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct ModelsVisitor;
-        impl<'de> Visitor<'de> for ModelsVisitor {
-            type Value = ModelRows;
+        struct ObjectsVisitor;
+        impl<'de> Visitor<'de> for ObjectsVisitor {
+            type Value = ScalarObjects;
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
                 formatter.write_str("model rows")
             }
             fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
-                let mut models = Vec::new();
-                while let Some(model) = seq.next_element::<Model>()? {
-                    models.push(model);
-                    if models.len() > MAX_MODELS {
+                let mut rows = Vec::new();
+                while let Some(row) = seq.next_element::<ScalarObject>()? {
+                    rows.push(row);
+                    if rows.len() > MAX_MODELS {
                         return Err(de::Error::custom("too many models"));
                     }
                 }
-                Ok(ModelRows(models))
+                Ok(ScalarObjects(rows))
             }
         }
-        deserializer.deserialize_seq(ModelsVisitor)
+        deserializer.deserialize_seq(ObjectsVisitor)
     }
 }
 
