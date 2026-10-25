@@ -656,6 +656,27 @@ pub async fn export_support_bundle(state: tauri::State<'_, AppState>) -> Result<
     .map_err(|_| CommandError::new("EXPORT_FAILED", "export task failed"))?
 }
 
+/// Matches `GITHUB_RELEASES_URL` in `desktop/src/releaseNotes.ts`.
+pub const GITHUB_RELEASES_URL: &str = "https://github.com/codeasier/mtls-router/releases";
+
+#[tauri::command]
+pub fn open_github_releases(app: AppHandle) -> Result<()> {
+    app.opener()
+        .open_url(GITHUB_RELEASES_URL, None::<&str>)
+        .map_err(|_| CommandError::new("OPEN_FAILED", "cannot open the release page"))
+}
+
+#[cfg(test)]
+mod github_release_page {
+    #[test]
+    fn url_is_the_public_releases_page() {
+        assert_eq!(
+            super::GITHUB_RELEASES_URL,
+            "https://github.com/codeasier/mtls-router/releases"
+        );
+    }
+}
+
 #[tauri::command]
 pub fn open_log_location(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<()> {
     let directory = PathBuf::from(&state.paths.log_directory);

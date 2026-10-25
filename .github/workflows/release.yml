@@ -522,6 +522,8 @@ jobs:
             if curl -fsSL https://release.codeasier.top/latest.json | jq -e \
               --arg version "$expected" --arg base "$base" '
               .version == $version and
+              (.notes | type == "string" and length > 0) and
+              (.pub_date | type == "string" and length > 0) and
               ([.platforms[] | select((.url | startswith($base)) | not)] | length) == 0
             ' >/dev/null; then
               exit 0

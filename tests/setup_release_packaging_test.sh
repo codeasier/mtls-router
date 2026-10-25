@@ -144,7 +144,26 @@ printf '{"schema_version":1,"producer":"cli-linux-amd64","management_protocol_ve
 
 package_tmp="$protocol_tmp/package-fixture"
 mkdir -p "$package_tmp/scripts" "$package_tmp/desktop-packages" "$package_tmp/cli-packages" "$package_tmp/protocol-metadata"
-cp "$PACKAGE_SCRIPT" "$PROTOCOL_CHECK" "$package_tmp/scripts/"
+cp "$PACKAGE_SCRIPT" "$PROTOCOL_CHECK" "$ROOT/scripts/extract-release-notes.py" "$package_tmp/scripts/"
+mkdir -p "$package_tmp/docs/zh-CN"
+cat >"$package_tmp/docs/CHANGELOG.md" <<'EOF'
+## v1.2.3 - 2026-01-02
+
+English fixture note.
+
+### Added
+
+- Show the changelog before install.
+EOF
+cat >"$package_tmp/docs/zh-CN/CHANGELOG.md" <<'EOF'
+## v1.2.3 - 2026-01-02
+
+中文夹具说明。
+
+### 新增
+
+- 安装前展示更新日志。
+EOF
 for os_arch in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64; do
   printf '{"schema_version":1,"producer":"desktop-%s","management_protocol_version":"4"}\n' "$os_arch" >"$package_tmp/protocol-metadata/release-metadata-desktop-$os_arch.json"
 done
@@ -192,12 +211,27 @@ done
   fail 'stable release fixture published setup scripts'
 jq -e '
   .version == "1.2.3" and
+  .pub_date == "2026-01-02T00:00:00Z" and
+  (.notes | startswith("简体中文\n") and contains("中文夹具说明") and contains("\nEnglish\n") and contains("English fixture note")) and
+  (.notes | contains("Older release") | not) and
   (.platforms | length) == 5 and
   (.platforms | has("windows-aarch64") | not) and
   .platforms["darwin-aarch64"].url == "https://release.codeasier.top/mtls-router/v1.2.3/CodeasierRouter-darwin-arm64.app.tar.gz" and
   .platforms["linux-x86_64"].url == "https://release.codeasier.top/mtls-router/v1.2.3/CodeasierRouter-linux-amd64.AppImage" and
   .platforms["windows-x86_64"].url == "https://release.codeasier.top/mtls-router/v1.2.3/CodeasierRouter-windows-amd64.exe"
 ' "$package_tmp/release/latest.json" >/dev/null || fail 'stable updater latest.json is invalid'
+python3 "$ROOT/scripts/extract-release-notes.py" 0.5.3 \
+  "$ROOT/docs/CHANGELOG.md" "$ROOT/docs/zh-CN/CHANGELOG.md" | jq -e '
+  .pub_date == "2026-09-10T00:00:00Z" and
+  (.notes | contains("回环端口") and contains("loopback") and (contains("Chat images workbench") | not))
+' >/dev/null || fail 'v0.5.3 changelog did not become updater notes'
+missing_notes="$protocol_tmp/missing-notes"
+mkdir -p "$missing_notes"
+cp -R "$package_tmp/scripts" "$package_tmp/desktop-packages" "$package_tmp/cli-packages" "$package_tmp/protocol-metadata" "$package_tmp/docs" "$missing_notes/"
+rm "$missing_notes/docs/zh-CN/CHANGELOG.md"
+if (cd "$missing_notes" && RELEASE_TAG=v1.2.3 DESKTOP_DOWNLOAD_BASE_URL=https://release.codeasier.top/mtls-router/v1.2.3 SOURCE_DATE_EPOCH=0 ./scripts/package-release.sh >/dev/null 2>&1); then
+  fail 'stable release without the Chinese changelog was accepted'
+fi
 (cd "$package_tmp/release" && sha256sum -c SHA256SUMS >/dev/null) || fail 'stable updater release checksums are invalid'
 (cd "$package_tmp/github-release" && sha256sum -c SHA256SUMS >/dev/null) || \
   fail 'stable GitHub SHA256SUMS does not match attached files'

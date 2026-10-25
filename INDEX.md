@@ -116,7 +116,7 @@ key 绝不出现于环境变量、CLI 参数、model config、日志或 journal 
 
 Rust 侧绝不向 webview 暴露 shell/fs/http 权限（由 `lib.rs` 中的测试强制保证）；`bundle.externalBin` 为空，Rust 亦不依赖 shell 插件。
 
-桌面在线更新仅由精确 stable `vX.Y.Z` release 启用，固定检查 `https://release.codeasier.top/latest.json`，`latest.json` 中各平台产物 URL 指向 `https://release.codeasier.top/mtls-router/<tag>/`。更新包即完整桌面应用（内嵌 manager/router），必须通过独立 Tauri updater 签名校验并经用户确认后安装。
+桌面在线更新仅由精确 stable `vX.Y.Z` release 启用，固定检查 `https://release.codeasier.top/latest.json`，`latest.json` 中各平台产物 URL 指向 `https://release.codeasier.top/mtls-router/<tag>/`。更新包即完整桌面应用（内嵌 manager/router），必须通过独立 Tauri updater 签名校验并经用户确认后安装。`latest.json` 的 `notes` 是该 tag 在 `docs/CHANGELOG.md` 与 `docs/zh-CN/CHANGELOG.md` 中对应章节拼成的纯文本（先简体中文，后 English），`pub_date` 为章节日期的 `T00:00:00Z`。设置页按界面语言在安装前展示这段说明，并在确认对话框中再次展示；已是最新版本时展示随构建带入的当前版本章节。缺少说明不阻断安装。
 
 ## Setup 脚本（`setup.sh` / `setup.ps1`，冻结）
 
@@ -165,6 +165,6 @@ Rust 侧绝不向 webview 暴露 shell/fs/http 权限（由 `lib.rs` 中的测�
 - `scripts/build.sh` 在 `secrets/` 下生成占位 PEM 供本地构建；真实发布密钥来自 GitHub secrets/vars。
 - 新个人设备领证服务的日志与异地快照、离线根/受限签发 CA、单主模板与备份恢复见 [运维手册](docs/zh-CN/ENROLLMENT-OPERATIONS.md)；当前实施状态见 OpenSpec 变更任务，模板不代表生产已上线。
 - `desktop/scripts/prepare-updater-config.sh` 为 stable tag 生成私有 Tauri updater overlay 并校验固定公钥指纹；`desktop/scripts/updater-public-key-fingerprint.mjs` 生成该指纹；`desktop/scripts/create-macos-updater.sh` 从最终 macOS app 生成签名 `.app.tar.gz`；`desktop/scripts/verify-package.sh` 收集五平台 updater 产物及 `.sig` 并验证签名与公钥匹配。
-- `scripts/package-release.sh` 对精确 stable tag 汇总五平台 updater artifact/signature 及两 CLI/provenance，生成 `latest.json`（平台 URL 指向 `release.codeasier.top`，darwin 仍指向 `.app.tar.gz`）并纳入镜像 `SHA256SUMS`；GitHub Release 挂五个桌面安装包（macOS 仅 DMG）、两 CLI/provenance、Windows/Linux updater `.sig`、`latest.json`、只含已挂文件的 `SHA256SUMS` 与五个 `signing-status`。macOS `.app.tar.gz` updater 归档及其 `.sig` 只进入镜像，完整校验清单也只在镜像 `SHA256SUMS`。release/recovery workflow 另将完整 tag 目录镜像至 `downloads.codeasier.top` 并单调、原子推进其 `latest` symlink；updater feed 与下载以 `release.codeasier.top` 为准。Updater、平台签名与 CLI provenance 为独立信任链，不发布 sidecar `*.sha256`。
+- `scripts/package-release.sh` 对精确 stable tag 汇总五平台 updater artifact/signature 及两 CLI/provenance，生成 `latest.json`（平台 URL 指向 `release.codeasier.top`，darwin 仍指向 `.app.tar.gz`；`notes` 为双语更新日志，`pub_date` 为日志日期的午夜 UTC，缺章节则打包失败）并纳入镜像 `SHA256SUMS`；GitHub Release 挂五个桌面安装包（macOS 仅 DMG）、两 CLI/provenance、Windows/Linux updater `.sig`、`latest.json`、只含已挂文件的 `SHA256SUMS` 与五个 `signing-status`。macOS `.app.tar.gz` updater 归档及其 `.sig` 只进入镜像，完整校验清单也只在镜像 `SHA256SUMS`。release/recovery workflow 另将完整 tag 目录镜像至 `downloads.codeasier.top` 并单调、原子推进其 `latest` symlink；updater feed 与下载以 `release.codeasier.top` 为准。Updater、平台签名与 CLI provenance 为独立信任链，不发布 sidecar `*.sha256`。
 - `.worktrees/` 目录含 git worktree 产物，已在 `.gitignore` 中忽略；分析产品代码时忽略。
 - 管理协议当前版本为 `4`；router、manager、setup receipt、release metadata 与桌面端必须同版本，桌面端在启动握手时校验并拒绝混合代。

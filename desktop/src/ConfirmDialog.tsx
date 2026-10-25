@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 interface ConfirmDialogProps {
   title: string;
   description: string;
+  details?: string;
   confirmLabel: string;
   cancelLabel: string;
   danger?: boolean;
@@ -13,6 +14,7 @@ interface ConfirmDialogProps {
 export function ConfirmDialog({
   title,
   description,
+  details,
   confirmLabel,
   cancelLabel,
   danger = false,
@@ -63,6 +65,11 @@ export function ConfirmDialog({
       >
         <h2 id="confirm-dialog-title">{title}</h2>
         <p id="confirm-dialog-description">{description}</p>
+        {details ? (
+          <div className="confirm-dialog__notes" tabIndex={0}>
+            {details}
+          </div>
+        ) : null}
         <div className="danger-dialog__actions">
           <button
             ref={cancelRef}

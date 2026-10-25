@@ -86,6 +86,7 @@ export function createMockApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
       summary: "classification=not_started",
     }),
     exportSupportBundle: vi.fn().mockResolvedValue(undefined),
+    openGithubReleases: vi.fn().mockResolvedValue(undefined),
     openLogLocation: vi.fn().mockResolvedValue(undefined),
     detectAgents: vi.fn().mockResolvedValue({ agents: [] }),
     discoverModels: vi.fn().mockResolvedValue({
