@@ -355,6 +355,24 @@ mod tests {
             file.read_to_string(&mut body).unwrap();
             assert_eq!(body, "safe log");
         }
+
+        fs::write(
+            log_dir.join("app.log"),
+            b"{\"event\":\"update.verify_failed\",\"token\":\"sk-supersecretvalue\"}\n",
+        )
+        .unwrap();
+        let redacted_dest = root.join("redacted.zip");
+        write_support_bundle(&minimal_snapshot(), &log_dir, &redacted_dest).unwrap();
+        let redacted_bytes = fs::read(&redacted_dest).unwrap();
+        let mut redacted = ZipArchive::new(Cursor::new(redacted_bytes)).unwrap();
+        let mut app_log = String::new();
+        redacted
+            .by_name("mtls-router-logs/app.log")
+            .unwrap()
+            .read_to_string(&mut app_log)
+            .unwrap();
+        assert!(!app_log.contains("sk-supersecretvalue"));
+        assert!(app_log.contains("update.verify_failed"));
         {
             let mut file = archive.by_name("last-diagnostics.json").unwrap();
             let mut body = String::new();

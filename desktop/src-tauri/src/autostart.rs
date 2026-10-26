@@ -95,10 +95,10 @@ fn initialize_sequence(
 
 #[tauri::command]
 pub fn autostart_get(app: AppHandle) -> Result<AutostartState, String> {
-    let enabled = app
-        .autolaunch()
-        .is_enabled()
-        .map_err(|_| "could not read current-user autostart state".to_string())?;
+    let enabled = app.autolaunch().is_enabled().map_err(|_| {
+        note_autostart_failure("AUTOSTART_READ_FAILED");
+        "could not read current-user autostart state".to_string()
+    })?;
     let diagnostic = app
         .try_state::<InitializationDiagnostic>()
         .and_then(|state| state.0.lock().unwrap().clone());
@@ -112,21 +112,36 @@ pub fn autostart_get(app: AppHandle) -> Result<AutostartState, String> {
 pub fn autostart_set_immediate(app: AppHandle, enabled: bool) -> Result<bool, String> {
     let manager = app.autolaunch();
     if enabled {
-        manager
-            .enable()
-            .map_err(|_| "could not enable current-user autostart".to_string())?;
+        manager.enable().map_err(|_| {
+            note_autostart_failure("AUTOSTART_ENABLE_FAILED");
+            "could not enable current-user autostart".to_string()
+        })?;
     } else {
-        manager
-            .disable()
-            .map_err(|_| "could not disable current-user autostart".to_string())?;
+        manager.disable().map_err(|_| {
+            note_autostart_failure("AUTOSTART_DISABLE_FAILED");
+            "could not disable current-user autostart".to_string()
+        })?;
     }
 
-    let actual = manager
-        .is_enabled()
-        .map_err(|_| "could not verify current-user autostart state".to_string())?;
+    let actual = manager.is_enabled().map_err(|_| {
+        note_autostart_failure("AUTOSTART_VERIFY_FAILED");
+        "could not verify current-user autostart state".to_string()
+    })?;
     if actual != enabled {
+        note_autostart_failure("AUTOSTART_UNCHANGED");
         return Err("current-user autostart state did not change".to_string());
     }
+    crate::app_log::record(crate::app_log::Fields {
+        level: "info",
+        event: "settings.changed",
+        component: "settings",
+        outcome: "success",
+        code: None,
+        stage: Some("autostart"),
+        duration_ms: None,
+        detail: &[("enabled", if actual { "true" } else { "false" })],
+        durable: true,
+    });
     Ok(commit_autostart_change(
         || match marker_path(&app) {
             Ok(path) => write_marker(&path),
@@ -151,6 +166,20 @@ fn commit_autostart_change(
     actual
 }
 
+fn note_autostart_failure(code: &'static str) {
+    crate::app_log::record(crate::app_log::Fields {
+        level: "error",
+        event: "command.failed",
+        component: "settings",
+        outcome: "failure",
+        code: Some(code),
+        stage: Some("autostart"),
+        duration_ms: None,
+        detail: &[],
+        durable: true,
+    });
+}
+
 fn prepare_uninstall_sequence(
     disable: impl FnOnce() -> Result<(), ()>,
     is_enabled: impl FnOnce() -> Result<bool, ()>,
@@ -169,6 +198,7 @@ fn prepare_uninstall_sequence(
 #[tauri::command]
 pub fn prepare_for_uninstall(app: AppHandle) -> Result<(), String> {
     if cfg!(windows) {
+        note_autostart_failure("AUTOSTART_WINDOWS_INSTALLER");
         return Err("the Windows installer handles autostart removal".to_string());
     }
     let manager = app.autolaunch();

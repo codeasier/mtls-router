@@ -1,7 +1,41 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useI18n, type Translator } from "./i18n";
-import { MAX_LOG_LINES, type DesktopApi } from "./ipc";
+import { MAX_LOG_LINES, type AppLogRecord, type DesktopApi } from "./ipc";
+
+const APP_COMPONENTS = [
+  "lifecycle",
+  "updater",
+  "router",
+  "command",
+  "settings",
+  "credential",
+  "identity",
+  "agent",
+  "workbench",
+] as const;
+
+const APP_LEVELS = ["error", "warn", "info", "debug"] as const;
+
+function formatAppRecord(record: AppLogRecord): string {
+  const detail = record.detail
+    ? Object.entries(record.detail)
+        .map(([key, value]) => `${key}=${value}`)
+        .join(" ")
+    : "";
+  return [
+    record.ts,
+    record.level,
+    record.component,
+    record.event,
+    record.code,
+    record.stage,
+    record.outcome,
+    detail,
+  ]
+    .filter((part) => part && part.length > 0)
+    .join(" ");
+}
 
 function safeLogError(action: "load" | "open" | "copy", t: Translator): string {
   return {
@@ -13,38 +47,67 @@ function safeLogError(action: "load" | "open" | "copy", t: Translator): string {
 
 export function LogsPage({ api }: { api: DesktopApi }) {
   const { t } = useI18n();
+  const [source, setSource] = useState<"router" | "app">("router");
+  const [level, setLevel] = useState("all");
+  const [component, setComponent] = useState("all");
   const [lines, setLines] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
+  const requestEpoch = useRef(0);
 
-  async function load() {
+  function startRequest() {
+    requestEpoch.current += 1;
+    return requestEpoch.current;
+  }
+
+  async function load(
+    nextSource = source,
+    nextLevel = level,
+    nextComponent = component,
+  ) {
+    const request = startRequest();
     setLoading(true);
     setMessage("");
     try {
-      const result = await api.getRouterLogs(MAX_LOG_LINES);
-      setLines(result.lines);
+      const nextLines =
+        nextSource === "router"
+          ? (await api.getRouterLogs(MAX_LOG_LINES)).lines
+          : (await api.getAppLogs(MAX_LOG_LINES)).records
+              .filter(
+                (record) => nextLevel === "all" || record.level === nextLevel,
+              )
+              .filter(
+                (record) =>
+                  nextComponent === "all" || record.component === nextComponent,
+              )
+              .map(formatAppRecord);
+      if (request !== requestEpoch.current) return;
+      setLines(nextLines);
     } catch {
+      if (request !== requestEpoch.current) return;
       setMessage(safeLogError("load", t));
     } finally {
-      setLoading(false);
+      if (request === requestEpoch.current) setLoading(false);
     }
   }
 
   useEffect(() => {
-    let current = true;
+    const request = startRequest();
     void api
       .getRouterLogs(MAX_LOG_LINES)
       .then((result) => {
-        if (current) setLines(result.lines);
+        if (request === requestEpoch.current) setLines(result.lines);
       })
       .catch(() => {
-        if (current) setMessage(safeLogError("load", t));
+        if (request === requestEpoch.current) {
+          setMessage(safeLogError("load", t));
+        }
       })
       .finally(() => {
-        if (current) setLoading(false);
+        if (request === requestEpoch.current) setLoading(false);
       });
     return () => {
-      current = false;
+      requestEpoch.current += 1;
     };
   }, [api, t]);
 
@@ -106,7 +169,7 @@ export function LogsPage({ api }: { api: DesktopApi }) {
           <button
             type="button"
             className="text-button"
-            onClick={load}
+            onClick={() => void load()}
             disabled={loading}
           >
             {t("logs.refresh")}
@@ -131,6 +194,59 @@ export function LogsPage({ api }: { api: DesktopApi }) {
         </div>
       </div>
 
+      <div className="logs-filters">
+        <label>
+          {t("logs.source")}
+          <select
+            value={source}
+            onChange={(event) => {
+              const next = event.target.value === "app" ? "app" : "router";
+              setSource(next);
+              void load(next, level, component);
+            }}
+          >
+            <option value="router">{t("logs.source.router")}</option>
+            <option value="app">{t("logs.source.app")}</option>
+          </select>
+        </label>
+        <label>
+          {t("logs.filter.level")}
+          <select
+            value={level}
+            disabled={source !== "app"}
+            onChange={(event) => {
+              setLevel(event.target.value);
+              void load(source, event.target.value, component);
+            }}
+          >
+            <option value="all">{t("logs.filter.all")}</option>
+            {APP_LEVELS.map((item) => (
+              <option key={item} value={item}>
+                {t(`logs.level.${item}`)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          {t("logs.filter.component")}
+          <select
+            value={component}
+            disabled={source !== "app"}
+            onChange={(event) => {
+              setComponent(event.target.value);
+              void load(source, level, event.target.value);
+            }}
+          >
+            <option value="all">{t("logs.filter.all")}</option>
+            {APP_COMPONENTS.map((item) => (
+              <option key={item} value={item}>
+                {t(`logs.component.${item}`)}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
       <div
         className="log-screen log-screen--scroll"
         role="log"
@@ -140,7 +256,9 @@ export function LogsPage({ api }: { api: DesktopApi }) {
         {loading && lines.length === 0 ? (
           <p className="log-empty">{t("logs.loading")}</p>
         ) : lines.length === 0 ? (
-          <p className="log-empty">{t("logs.empty")}</p>
+          <p className="log-empty">
+            {t(source === "app" ? "logs.emptyApp" : "logs.empty")}
+          </p>
         ) : (
           <ol>
             {lines.map((line, index) => (

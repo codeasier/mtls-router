@@ -17,6 +17,12 @@ pub const OPERATION_DONE_EVENT: &str = "workbench-operation-done";
 
 pub struct WorkbenchCommands;
 
+impl From<WorkbenchError> for crate::error::IpcError {
+    fn from(error: WorkbenchError) -> Self {
+        crate::error::CommandError::from(error).into()
+    }
+}
+
 struct AppSink(AppHandle);
 
 impl EventSink for AppSink {
@@ -76,17 +82,23 @@ pub struct AssetIdRequest {
 }
 
 #[tauri::command]
-pub async fn workbench_readiness(state: State<'_, AppState>) -> Result<Readiness> {
-    refresh_if_possible(&state).await
+pub async fn workbench_readiness(
+    state: State<'_, AppState>,
+) -> crate::error::CommandResult<Readiness> {
+    refresh_if_possible(&state).await.map_err(Into::into)
 }
 
 #[tauri::command]
-pub async fn workbench_refresh_catalogs(state: State<'_, AppState>) -> Result<Readiness> {
-    refresh_if_possible(&state).await
+pub async fn workbench_refresh_catalogs(
+    state: State<'_, AppState>,
+) -> crate::error::CommandResult<Readiness> {
+    refresh_if_possible(&state).await.map_err(Into::into)
 }
 
 #[tauri::command]
-pub async fn workbench_list(state: State<'_, AppState>) -> Result<serde_json::Value> {
+pub async fn workbench_list(
+    state: State<'_, AppState>,
+) -> crate::error::CommandResult<serde_json::Value> {
     let snapshot = match state.workbench.store().snapshot() {
         Ok(snapshot) => snapshot,
         Err(_) => {
@@ -109,7 +121,9 @@ pub async fn workbench_list(state: State<'_, AppState>) -> Result<serde_json::Va
 }
 
 #[tauri::command]
-pub async fn workbench_create(state: State<'_, AppState>) -> Result<serde_json::Value> {
+pub async fn workbench_create(
+    state: State<'_, AppState>,
+) -> crate::error::CommandResult<serde_json::Value> {
     let readiness = state.workbench.readiness_snapshot(true, true);
     let chat = readiness
         .chat_models
@@ -133,7 +147,7 @@ pub async fn workbench_create(state: State<'_, AppState>) -> Result<serde_json::
 pub async fn workbench_select(
     request: ConversationIdRequest,
     state: State<'_, AppState>,
-) -> Result<serde_json::Value> {
+) -> crate::error::CommandResult<serde_json::Value> {
     let snapshot = state
         .workbench
         .store()
@@ -145,7 +159,7 @@ pub async fn workbench_select(
 pub async fn workbench_delete(
     request: ConversationIdRequest,
     state: State<'_, AppState>,
-) -> Result<serde_json::Value> {
+) -> crate::error::CommandResult<serde_json::Value> {
     let snapshot = state
         .workbench
         .store()
@@ -160,7 +174,7 @@ pub async fn workbench_delete(
 pub async fn workbench_set_options(
     request: SetOptionsRequest,
     state: State<'_, AppState>,
-) -> Result<()> {
+) -> crate::error::CommandResult<()> {
     state.workbench.store().set_options(
         &request.conversation_id,
         request.chat_model.map(Some),
@@ -171,7 +185,9 @@ pub async fn workbench_set_options(
 }
 
 #[tauri::command]
-pub async fn workbench_pick_reference(state: State<'_, AppState>) -> Result<serde_json::Value> {
+pub async fn workbench_pick_reference(
+    state: State<'_, AppState>,
+) -> crate::error::CommandResult<serde_json::Value> {
     let workbench = state.workbench.clone();
     let asset = tauri::async_runtime::spawn_blocking(move || workbench.pick_reference())
         .await
@@ -183,7 +199,7 @@ pub async fn workbench_pick_reference(state: State<'_, AppState>) -> Result<serd
 pub async fn workbench_import_bytes(
     request: ImportBytesRequest,
     state: State<'_, AppState>,
-) -> Result<serde_json::Value> {
+) -> crate::error::CommandResult<serde_json::Value> {
     if request.bytes.len() > crate::image_workbench::image::MAX_IMAGE_BYTES {
         return Err(WorkbenchError::new(SafeKind::ImageTooLarge).into());
     }
@@ -195,7 +211,7 @@ pub async fn workbench_import_bytes(
 pub async fn workbench_quote_asset(
     request: QuoteAssetRequest,
     state: State<'_, AppState>,
-) -> Result<serde_json::Value> {
+) -> crate::error::CommandResult<serde_json::Value> {
     let (meta, _) = state.workbench.store().read_asset(&request.asset_id)?;
     Ok(json!(meta))
 }
@@ -205,9 +221,10 @@ pub async fn workbench_send(
     request: SendRequest,
     app: AppHandle,
     state: State<'_, AppState>,
-) -> Result<serde_json::Value> {
+) -> crate::error::CommandResult<serde_json::Value> {
     let target = bind_target(&state).await?;
     let key = state.credentials.use_().await?;
+    let text_bytes = request.text.len().to_string();
     let workbench = state.workbench.clone();
     let snapshot = tauri::async_runtime::spawn_blocking(move || {
         workbench.send(
@@ -222,6 +239,17 @@ pub async fn workbench_send(
     })
     .await
     .map_err(|_| CommandError::from(WorkbenchError::new(SafeKind::Unknown)))??;
+    crate::app_log::record(crate::app_log::Fields {
+        level: "info",
+        event: "workbench.finished",
+        component: "workbench",
+        outcome: "success",
+        code: None,
+        stage: Some("send"),
+        duration_ms: None,
+        detail: &[("result", "send"), ("bytes", text_bytes.as_str())],
+        durable: false,
+    });
     Ok(json!({
         "selected_conversation_id": snapshot.selected_conversation_id,
         "conversations": snapshot.conversations,
@@ -236,7 +264,7 @@ pub async fn workbench_regenerate(
     request: RegenerateRequest,
     app: AppHandle,
     state: State<'_, AppState>,
-) -> Result<serde_json::Value> {
+) -> crate::error::CommandResult<serde_json::Value> {
     let target = bind_target(&state).await?;
     let key = state.credentials.use_().await?;
     let workbench = state.workbench.clone();
@@ -260,8 +288,19 @@ pub async fn workbench_regenerate(
 }
 
 #[tauri::command]
-pub async fn workbench_cancel(state: State<'_, AppState>) -> Result<()> {
+pub async fn workbench_cancel(state: State<'_, AppState>) -> crate::error::CommandResult<()> {
     state.workbench.cancel();
+    crate::app_log::record(crate::app_log::Fields {
+        level: "info",
+        event: "workbench.finished",
+        component: "workbench",
+        outcome: "cancelled",
+        code: None,
+        stage: Some("cancel"),
+        duration_ms: None,
+        detail: &[("result", "cancel")],
+        durable: false,
+    });
     Ok(())
 }
 
@@ -269,7 +308,7 @@ pub async fn workbench_cancel(state: State<'_, AppState>) -> Result<()> {
 pub async fn workbench_save_asset(
     request: AssetIdRequest,
     state: State<'_, AppState>,
-) -> Result<()> {
+) -> crate::error::CommandResult<()> {
     let workbench = state.workbench.clone();
     tauri::async_runtime::spawn_blocking(move || workbench.save_asset(&request.asset_id))
         .await
@@ -278,7 +317,9 @@ pub async fn workbench_save_asset(
 }
 
 #[tauri::command]
-pub async fn workbench_rebuild(state: State<'_, AppState>) -> Result<serde_json::Value> {
+pub async fn workbench_rebuild(
+    state: State<'_, AppState>,
+) -> crate::error::CommandResult<serde_json::Value> {
     let snapshot = state.workbench.store().rebuild()?;
     Ok(json!({ "version": snapshot.version }))
 }

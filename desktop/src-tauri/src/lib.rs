@@ -1,3 +1,4 @@
+mod app_log;
 mod autostart;
 mod commands;
 mod credential;
@@ -100,6 +101,17 @@ fn build_app() -> tauri::Result<tauri::App<tauri::Wry>> {
     #[cfg(desktop)]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            app_log::record(app_log::Fields {
+                level: "info",
+                event: "app.instance_activated",
+                component: "lifecycle",
+                outcome: "success",
+                code: None,
+                stage: Some("single_instance"),
+                duration_ms: None,
+                detail: &[],
+                durable: false,
+            });
             tray::show_main_window(app);
         }));
     }
@@ -128,6 +140,18 @@ fn build_app() -> tauri::Result<tauri::App<tauri::Wry>> {
         })
         .setup(|app| {
             let paths = paths::resolve()?;
+            app_log::install(std::path::Path::new(&paths.log_directory));
+            app_log::record(app_log::Fields {
+                level: "info",
+                event: "app.starting",
+                component: "lifecycle",
+                outcome: "success",
+                code: None,
+                stage: Some("startup"),
+                duration_ms: None,
+                detail: &[],
+                durable: true,
+            });
             let credentials = load_credentials(std::path::PathBuf::from(&paths.credentials_path));
             let manager = embedded_manager(&paths.data_dir);
             if let Ok(identity) = runtime::identity_client(std::path::Path::new(&paths.data_dir)) {
@@ -183,6 +207,17 @@ fn build_app() -> tauri::Result<tauri::App<tauri::Wry>> {
                 workbench,
             });
             scheduler.start();
+            app_log::record(app_log::Fields {
+                level: "info",
+                event: "app.ready",
+                component: "lifecycle",
+                outcome: "success",
+                code: None,
+                stage: Some("startup"),
+                duration_ms: None,
+                detail: &[],
+                durable: true,
+            });
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let Some(output) = lifecycle
@@ -204,6 +239,19 @@ fn build_app() -> tauri::Result<tauri::App<tauri::Wry>> {
             tray::handle_window_event(window, event);
             match event {
                 WindowEvent::Focused(true) => {
+                    if window.label() == "main" {
+                        app_log::record(app_log::Fields {
+                            level: "info",
+                            event: "app.window_shown",
+                            component: "lifecycle",
+                            outcome: "success",
+                            code: None,
+                            stage: Some("window"),
+                            duration_ms: None,
+                            detail: &[],
+                            durable: false,
+                        });
+                    }
                     window.state::<AppState>().scheduler.set_visible(true);
                     if window.label() == "main" {
                         let _ = tray::emit_main_window_event(
@@ -213,6 +261,19 @@ fn build_app() -> tauri::Result<tauri::App<tauri::Wry>> {
                     }
                 }
                 WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed => {
+                    if window.label() == "main" {
+                        app_log::record(app_log::Fields {
+                            level: "info",
+                            event: "app.window_hidden",
+                            component: "lifecycle",
+                            outcome: "success",
+                            code: None,
+                            stage: Some("window"),
+                            duration_ms: None,
+                            detail: &[],
+                            durable: false,
+                        });
+                    }
                     window.state::<AppState>().scheduler.set_visible(false);
                 }
                 _ => {}
@@ -235,6 +296,7 @@ fn build_app() -> tauri::Result<tauri::App<tauri::Wry>> {
             commands::router_health,
             commands::poll_snapshot,
             commands::router_logs,
+            commands::app_logs,
             commands::component_versions,
             updater::update_check,
             updater::update_install,
@@ -296,6 +358,7 @@ pub fn run() {
         .expect("error while building CodeasierRouter desktop")
         .run(|app, event| {
             if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                app_log::flush();
                 let lifecycle = &app.state::<AppState>().lifecycle;
                 app.state::<AppState>().workbench.interrupt_on_exit();
                 if tray::should_prevent_exit(lifecycle) {

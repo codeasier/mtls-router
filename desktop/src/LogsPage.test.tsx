@@ -5,6 +5,7 @@ import {
   COMMANDS,
   createDesktopApi,
   MAX_LOG_LINES,
+  type AppLogRecord,
   type InvokeFn,
 } from "./ipc";
 import { LogsPage } from "./LogsPage";
@@ -56,6 +57,107 @@ describe("LogsPage", () => {
     renderWithI18n(<LogsPage api={populated} />);
     expect(await screen.findByText("safe line")).toBeVisible();
     expect(screen.queryByText("暂无路由日志")).not.toBeInTheDocument();
+  });
+
+  it("drops a late response after the source or component changes", async () => {
+    const initialRouter = deferred<{ lines: string[] }>();
+    const firstApp = deferred<{ records: AppLogRecord[] }>();
+    const filteredApp = deferred<{ records: AppLogRecord[] }>();
+    const records: AppLogRecord[] = [
+      {
+        ts: "2026-10-26T00:00:00.000Z",
+        level: "error",
+        event: "update.install_failed",
+        component: "updater",
+        code: "UPDATE_INSTALL_FAILED",
+        stage: "install",
+        outcome: "failure",
+      },
+      {
+        ts: "2026-10-26T00:00:01.000Z",
+        level: "info",
+        event: "router.start_finished",
+        component: "router",
+        outcome: "success",
+        stage: "start",
+      },
+    ];
+    const api = createMockApi({
+      getRouterLogs: vi.fn(() => initialRouter.promise),
+      getAppLogs: vi
+        .fn()
+        .mockImplementationOnce(() => firstApp.promise)
+        .mockImplementationOnce(() => filteredApp.promise),
+    });
+    renderWithI18n(<LogsPage api={api} />);
+
+    fireEvent.change(screen.getByLabelText("来源"), {
+      target: { value: "app" },
+    });
+    fireEvent.change(screen.getByLabelText("组件"), {
+      target: { value: "updater" },
+    });
+    await act(async () => {
+      filteredApp.resolve({ records });
+    });
+
+    expect(await screen.findByText(/UPDATE_INSTALL_FAILED/)).toBeVisible();
+    expect(screen.queryByText(/router.start_finished/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("组件")).toHaveValue("updater");
+
+    await act(async () => {
+      firstApp.resolve({ records });
+      initialRouter.resolve({ lines: ["late router line"] });
+    });
+
+    expect(screen.getByText(/UPDATE_INSTALL_FAILED/)).toBeVisible();
+    expect(screen.queryByText(/router.start_finished/)).not.toBeInTheDocument();
+    expect(screen.queryByText("late router line")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("来源")).toHaveValue("app");
+    expect(screen.getByLabelText("组件")).toHaveValue("updater");
+  });
+
+  it("filters application events by component and level", async () => {
+    const api = createMockApi({
+      getAppLogs: vi.fn().mockResolvedValue({
+        records: [
+          {
+            ts: "2026-10-26T00:00:00.000Z",
+            level: "error",
+            event: "update.install_failed",
+            component: "updater",
+            code: "UPDATE_INSTALL_FAILED",
+            stage: "install",
+            outcome: "failure",
+          },
+          {
+            ts: "2026-10-26T00:00:01.000Z",
+            level: "info",
+            event: "router.start_finished",
+            component: "router",
+            outcome: "success",
+            stage: "start",
+          },
+        ],
+      }),
+    });
+    renderWithI18n(<LogsPage api={api} />);
+    fireEvent.change(screen.getByLabelText("来源"), {
+      target: { value: "app" },
+    });
+    expect(await screen.findByText(/UPDATE_INSTALL_FAILED/)).toBeVisible();
+    expect(screen.getByText(/router.start_finished/)).toBeVisible();
+
+    fireEvent.change(screen.getByLabelText("组件"), {
+      target: { value: "updater" },
+    });
+    expect(await screen.findByText(/UPDATE_INSTALL_FAILED/)).toBeVisible();
+    expect(screen.queryByText(/router.start_finished/)).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("级别"), {
+      target: { value: "info" },
+    });
+    expect(await screen.findByText("暂无应用事件")).toBeVisible();
   });
 
   it("refreshes the bounded range from the toolbar", async () => {

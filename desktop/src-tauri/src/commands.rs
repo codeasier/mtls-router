@@ -220,15 +220,20 @@ pub struct ForceTerminateOccupantRequest {
 }
 
 #[tauri::command]
-pub async fn router_status(state: tauri::State<'_, AppState>) -> Result<RouterStatus> {
+pub async fn router_status(
+    state: tauri::State<'_, AppState>,
+) -> crate::error::CommandResult<RouterStatus> {
     let value: RouterStatus = state.manager.call("router.status", json!({})).await?;
     state.scheduler.set_status(value.clone()).await;
     Ok(value)
 }
 
 #[tauri::command]
-pub fn router_listen_config(state: tauri::State<'_, AppState>) -> Result<ListenConfig> {
+pub fn router_listen_config(
+    state: tauri::State<'_, AppState>,
+) -> crate::error::CommandResult<ListenConfig> {
     listen_override::load_configured(std::path::Path::new(&state.paths.data_dir))
+        .map_err(Into::into)
 }
 
 #[tauri::command]
@@ -236,22 +241,22 @@ pub async fn router_set_listen_override(
     port: u16,
     app: AppHandle,
     state: tauri::State<'_, AppState>,
-) -> Result<ListenConfig> {
+) -> crate::error::CommandResult<ListenConfig> {
     let listen_addr = listen_override::listen_from_port(port)?;
     // The factory address is a deliberate clear: store_override redirects it to
     // clear_override, so skip the reserved-port gate used for a new bind.
     if listen_addr != crate::manager_core::DEFAULT_LISTEN {
         require_listen_override_gate(&state.manager).await?;
     }
-    persist_listen_override_and_restart(&app, &state, Some(&listen_addr))
+    persist_listen_override_and_restart(&app, &state, Some(&listen_addr)).map_err(Into::into)
 }
 
 #[tauri::command]
 pub async fn router_clear_listen_override(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
-) -> Result<ListenConfig> {
-    persist_listen_override_and_restart(&app, &state, None)
+) -> crate::error::CommandResult<ListenConfig> {
+    persist_listen_override_and_restart(&app, &state, None).map_err(Into::into)
 }
 
 fn persist_listen_override_and_restart(
@@ -284,7 +289,27 @@ fn commit_listen_override(
         Some(addr) => listen_override::store_override(data_dir, addr),
         None => listen_override::clear_override(data_dir),
     } {
-        Ok(config) => Ok(config),
+        Ok(config) => {
+            crate::app_log::record(crate::app_log::Fields {
+                level: "info",
+                event: "settings.changed",
+                component: "settings",
+                outcome: "success",
+                code: None,
+                stage: Some("listen_override"),
+                duration_ms: None,
+                detail: &[(
+                    "result",
+                    if listen_addr.is_some() {
+                        "set"
+                    } else {
+                        "clear"
+                    },
+                )],
+                durable: true,
+            });
+            Ok(config)
+        }
         Err(error) => {
             lifecycle.abort_prepared_restart(previous_dirty);
             Err(error)
@@ -318,9 +343,9 @@ pub async fn router_start(
     owner: String,
     app: AppHandle,
     state: tauri::State<'_, AppState>,
-) -> Result<RouterStatus> {
+) -> crate::error::CommandResult<RouterStatus> {
     if owner != "desktop" {
-        return Err(CommandError::invalid_params("owner must be desktop"));
+        return Err(CommandError::invalid_params("owner must be desktop").into());
     }
     let output = run_lifecycle_command(
         &state.lifecycle,
@@ -328,27 +353,27 @@ pub async fn router_start(
     )
     .await?;
     resume_quit_after_operation(&app, output.quit_action);
-    output.value
+    output.value.map_err(Into::into)
 }
 
 #[tauri::command]
 pub async fn router_stop(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
-) -> Result<RouterStatus> {
+) -> crate::error::CommandResult<RouterStatus> {
     let output = run_lifecycle_command(
         &state.lifecycle,
         crate::orchestration::stop(&state.manager, &state.scheduler),
     )
     .await?;
     resume_quit_after_operation(&app, output.quit_action);
-    output.value
+    output.value.map_err(Into::into)
 }
 
 #[tauri::command]
 pub async fn router_inspect_occupant(
     state: tauri::State<'_, AppState>,
-) -> Result<OccupantInspection> {
+) -> crate::error::CommandResult<OccupantInspection> {
     let configured = listen_override::load_configured(Path::new(&state.paths.data_dir))?;
     inspect_occupant_command(
         &state.manager,
@@ -356,6 +381,7 @@ pub async fn router_inspect_occupant(
         &configured.listen_addr,
     )
     .await
+    .map_err(Into::into)
 }
 
 async fn inspect_occupant_command(
@@ -401,7 +427,7 @@ pub async fn router_force_terminate_occupant(
     request: ForceTerminateOccupantRequest,
     app: AppHandle,
     state: tauri::State<'_, AppState>,
-) -> Result<OccupantTerminationResult> {
+) -> crate::error::CommandResult<OccupantTerminationResult> {
     let output = run_lifecycle_command(
         &state.lifecycle,
         force_terminate_occupant_command(
@@ -413,7 +439,7 @@ pub async fn router_force_terminate_occupant(
     )
     .await?;
     resume_quit_after_operation(&app, output.quit_action);
-    output.value
+    output.value.map_err(Into::into)
 }
 
 async fn run_lifecycle_command<F, T>(
@@ -491,34 +517,59 @@ async fn force_terminate_occupant_command_at(
 }
 
 #[tauri::command]
-pub async fn router_cancel_release_observation(state: tauri::State<'_, AppState>) -> Result<()> {
+pub async fn router_cancel_release_observation(
+    state: tauri::State<'_, AppState>,
+) -> crate::error::CommandResult<()> {
     state.scheduler.cancel_release_observation().await;
     Ok(())
 }
 
 #[tauri::command]
-pub async fn router_health(state: tauri::State<'_, AppState>) -> Result<RouterHealth> {
+pub async fn router_health(
+    state: tauri::State<'_, AppState>,
+) -> crate::error::CommandResult<RouterHealth> {
     let value: RouterHealth = state.manager.call("router.health", json!({})).await?;
     state.scheduler.set_health(value.clone()).await;
     Ok(value)
 }
 
 #[tauri::command]
-pub async fn poll_snapshot(state: tauri::State<'_, AppState>) -> Result<PollSnapshot> {
+pub async fn poll_snapshot(
+    state: tauri::State<'_, AppState>,
+) -> crate::error::CommandResult<PollSnapshot> {
     Ok(state.scheduler.snapshot().await)
 }
 
+#[derive(serde::Serialize)]
+pub struct AppLogPage {
+    pub records: Vec<crate::app_log::AppLogRecord>,
+}
+
 #[tauri::command]
-pub async fn router_logs(limit: u16, state: tauri::State<'_, AppState>) -> Result<RouterLogs> {
+pub fn app_logs(limit: u16) -> crate::error::CommandResult<AppLogPage> {
+    validate_log_limit(limit)?;
+    Ok(AppLogPage {
+        records: crate::app_log::recent(usize::from(limit)),
+    })
+}
+
+#[tauri::command]
+pub async fn router_logs(
+    limit: u16,
+    state: tauri::State<'_, AppState>,
+) -> crate::error::CommandResult<RouterLogs> {
     validate_log_limit(limit)?;
     state
         .manager
         .call("router.logs", json!({ "limit": limit }))
         .await
+        .map_err(Into::into)
 }
 
 #[tauri::command]
-pub async fn component_versions(state: tauri::State<'_, AppState>) -> Result<ComponentVersions> {
+pub async fn component_versions(
+    state: tauri::State<'_, AppState>,
+) -> crate::error::CommandResult<ComponentVersions> {
     let manager: ManagerInfo = state.manager.call("manager.info", json!({})).await?;
     let external_router = external_router_version(&state.manager).await;
     Ok(ComponentVersions {
@@ -573,7 +624,9 @@ fn append_manager_failure(summary: &mut String, failure: &ManagerFailure) {
 }
 
 #[tauri::command]
-pub async fn diagnostics_collect(state: tauri::State<'_, AppState>) -> Result<Diagnostics> {
+pub async fn diagnostics_collect(
+    state: tauri::State<'_, AppState>,
+) -> crate::error::CommandResult<Diagnostics> {
     match state
         .manager
         .call::<Diagnostics>("diagnostics.collect", json!({}))
@@ -624,7 +677,9 @@ pub async fn diagnostics_collect(state: tauri::State<'_, AppState>) -> Result<Di
 }
 
 #[tauri::command]
-pub fn diagnostics_snapshot(state: tauri::State<'_, AppState>) -> Result<serde_json::Value> {
+pub fn diagnostics_snapshot(
+    state: tauri::State<'_, AppState>,
+) -> crate::error::CommandResult<serde_json::Value> {
     let snapshot = state.diagnostics.current();
     let mut value = serde_json::to_value(&snapshot)
         .map_err(|_| CommandError::new("SNAPSHOT_FAILED", "cannot encode diagnostic snapshot"))?;
@@ -639,7 +694,9 @@ pub fn diagnostics_snapshot(state: tauri::State<'_, AppState>) -> Result<serde_j
 }
 
 #[tauri::command]
-pub async fn export_support_bundle(state: tauri::State<'_, AppState>) -> Result<()> {
+pub async fn export_support_bundle(
+    state: tauri::State<'_, AppState>,
+) -> crate::error::CommandResult<()> {
     let snapshot = state.diagnostics.current();
     let _ = snapshot.write_atomic(state.diagnostics.path());
     let log_directory = PathBuf::from(&state.paths.log_directory);
@@ -654,16 +711,18 @@ pub async fn export_support_bundle(state: tauri::State<'_, AppState>) -> Result<
     })
     .await
     .map_err(|_| CommandError::new("EXPORT_FAILED", "export task failed"))?
+    .map_err(Into::into)
 }
 
 /// Matches `GITHUB_RELEASES_URL` in `desktop/src/releaseNotes.ts`.
 pub const GITHUB_RELEASES_URL: &str = "https://github.com/codeasier/mtls-router/releases";
 
 #[tauri::command]
-pub fn open_github_releases(app: AppHandle) -> Result<()> {
+pub fn open_github_releases(app: AppHandle) -> crate::error::CommandResult<()> {
     app.opener()
         .open_url(GITHUB_RELEASES_URL, None::<&str>)
         .map_err(|_| CommandError::new("OPEN_FAILED", "cannot open the release page"))
+        .map_err(Into::into)
 }
 
 #[cfg(test)]
@@ -678,7 +737,10 @@ mod github_release_page {
 }
 
 #[tauri::command]
-pub fn open_log_location(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<()> {
+pub fn open_log_location(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> crate::error::CommandResult<()> {
     let directory = PathBuf::from(&state.paths.log_directory);
     let location = if directory.is_dir() {
         directory
@@ -691,18 +753,38 @@ pub fn open_log_location(app: AppHandle, state: tauri::State<'_, AppState>) -> R
     app.opener()
         .open_path(location.to_string_lossy(), None::<&str>)
         .map_err(|_| CommandError::new("OPEN_FAILED", "cannot open the log location"))
+        .map_err(Into::into)
+}
+
+fn note_agent(stage: &'static str, count: usize) {
+    let count = count.to_string();
+    crate::app_log::record(crate::app_log::Fields {
+        level: "info",
+        event: "agent.finished",
+        component: "agent",
+        outcome: "success",
+        code: None,
+        stage: Some(stage),
+        duration_ms: None,
+        detail: &[("result", stage), ("count", count.as_str())],
+        durable: true,
+    });
 }
 
 #[tauri::command]
-pub async fn agent_detect(state: tauri::State<'_, AppState>) -> Result<AgentDetect> {
-    agent_detect_command(&state.manager).await
+pub async fn agent_detect(
+    state: tauri::State<'_, AppState>,
+) -> crate::error::CommandResult<AgentDetect> {
+    let detected = agent_detect_command(&state.manager).await?;
+    note_agent("detect", detected.agents.len());
+    Ok(detected)
 }
 
 #[tauri::command]
 pub async fn agent_models(
     request: AgentModelsRequest,
     state: tauri::State<'_, AppState>,
-) -> Result<AgentModelsResult> {
+) -> crate::error::CommandResult<AgentModelsResult> {
     agent_models_command(
         request,
         &state.manager,
@@ -710,6 +792,7 @@ pub async fn agent_models(
         &state.credentials,
     )
     .await
+    .map_err(Into::into)
 }
 
 async fn agent_models_command(
@@ -761,8 +844,10 @@ async fn agent_models_command(
 pub async fn agent_render(
     request: AgentConfigRequest,
     state: tauri::State<'_, AppState>,
-) -> Result<AgentRenderResult> {
-    agent_render_command(request, &state.manager, &state.model_flows).await
+) -> crate::error::CommandResult<AgentRenderResult> {
+    agent_render_command(request, &state.manager, &state.model_flows)
+        .await
+        .map_err(Into::into)
 }
 
 async fn agent_render_command(
@@ -787,8 +872,11 @@ async fn agent_render_command(
 pub async fn agent_preview(
     request: AgentConfigRequest,
     state: tauri::State<'_, AppState>,
-) -> Result<AgentPreview> {
-    agent_preview_command(request, &state.manager, &state.model_flows).await
+) -> crate::error::CommandResult<AgentPreview> {
+    let count = request.agents.len();
+    let preview = agent_preview_command(request, &state.manager, &state.model_flows).await?;
+    note_agent("preview", count);
+    Ok(preview)
 }
 
 async fn agent_preview_command(
@@ -829,8 +917,10 @@ async fn agent_detect_command(manager: &ManagerClient) -> Result<AgentDetect> {
 pub async fn agent_cleanup_preview(
     request: AgentCleanupPreviewRequest,
     state: tauri::State<'_, AppState>,
-) -> Result<AgentCleanupPreview> {
-    agent_cleanup_preview_command(request, &state.manager).await
+) -> crate::error::CommandResult<AgentCleanupPreview> {
+    agent_cleanup_preview_command(request, &state.manager)
+        .await
+        .map_err(Into::into)
 }
 
 async fn agent_cleanup_preview_command(
@@ -848,14 +938,16 @@ pub async fn agent_cleanup_write(
     request: AgentCleanupWriteRequest,
     app: AppHandle,
     state: tauri::State<'_, AppState>,
-) -> Result<AgentWriteResult> {
+) -> crate::error::CommandResult<AgentWriteResult> {
     let output = run_lifecycle_command(
         &state.lifecycle,
         agent_cleanup_write_command(request, &state.manager),
     )
     .await?;
     resume_quit_after_operation(&app, output.quit_action);
-    output.value
+    let written = output.value?;
+    note_agent("cleanup", 1);
+    Ok(written)
 }
 
 async fn agent_cleanup_write_command(
@@ -875,14 +967,17 @@ async fn agent_cleanup_write_command(
 pub async fn agent_write(
     request: AgentWriteRequest,
     state: tauri::State<'_, AppState>,
-) -> Result<AgentWriteResult> {
-    agent_write_command(
+) -> crate::error::CommandResult<AgentWriteResult> {
+    let count = request.agents.len();
+    let written = agent_write_command(
         request,
         &state.manager,
         &state.model_flows,
         &state.credentials,
     )
-    .await
+    .await?;
+    note_agent("write", count);
+    Ok(written)
 }
 
 async fn agent_write_command(
@@ -977,7 +1072,7 @@ async fn finish_model_flow_write(
 pub async fn agent_model_flow_destroy(
     flow_id: String,
     state: tauri::State<'_, AppState>,
-) -> Result<()> {
+) -> crate::error::CommandResult<()> {
     validate_flow_id(&flow_id)?;
     state.model_flows.lock().await.remove(&flow_id);
     Ok(())
@@ -989,14 +1084,14 @@ pub async fn agent_model_config_import(
     agents: Vec<String>,
     flow_id: String,
     state: tauri::State<'_, AppState>,
-) -> Result<ModelConfig> {
+) -> crate::error::CommandResult<ModelConfig> {
     validate_agents(&agents)?;
     let flows = state.model_flows.lock().await;
     let flow = flows.get(&flow_id).ok_or_else(flow_expired)?;
     if flow.write_in_flight || flow.agents != agents {
-        return Err(flow_expired());
+        return Err(flow_expired().into());
     }
-    model_config::import_json(&content, &agents, &flow.models)
+    model_config::import_json(&content, &agents, &flow.models).map_err(Into::into)
 }
 
 #[tauri::command]
@@ -1005,14 +1100,14 @@ pub async fn agent_model_config_export(
     agents: Vec<String>,
     flow_id: String,
     state: tauri::State<'_, AppState>,
-) -> Result<String> {
+) -> crate::error::CommandResult<String> {
     validate_agents(&agents)?;
     let flows = state.model_flows.lock().await;
     let flow = flows.get(&flow_id).ok_or_else(flow_expired)?;
     if flow.write_in_flight || flow.agents != agents {
-        return Err(flow_expired());
+        return Err(flow_expired().into());
     }
-    model_config::export_json(&model_config, &agents, &flow.models)
+    model_config::export_json(&model_config, &agents, &flow.models).map_err(Into::into)
 }
 
 #[tauri::command]
@@ -1029,8 +1124,12 @@ async fn get_credential_command(credentials: &CredentialStore) -> Result<Credent
 }
 
 #[tauri::command]
-pub async fn get_credential(state: tauri::State<'_, AppState>) -> Result<CredentialSummary> {
-    get_credential_command(&state.credentials).await
+pub async fn get_credential(
+    state: tauri::State<'_, AppState>,
+) -> crate::error::CommandResult<CredentialSummary> {
+    get_credential_command(&state.credentials)
+        .await
+        .map_err(Into::into)
 }
 
 async fn save_credential_command(
@@ -1052,8 +1151,19 @@ async fn save_credential_command(
 pub async fn save_credential(
     api_key: String,
     state: tauri::State<'_, AppState>,
-) -> Result<CredentialSummary> {
+) -> crate::error::CommandResult<CredentialSummary> {
     let summary = save_credential_command(api_key, &state.credentials).await?;
+    crate::app_log::record(crate::app_log::Fields {
+        level: "info",
+        event: "credential.changed",
+        component: "credential",
+        outcome: "success",
+        code: None,
+        stage: Some("save"),
+        duration_ms: None,
+        detail: &[("result", "saved")],
+        durable: true,
+    });
     state.workbench.invalidate_catalogs();
     crate::image_workbench::ipc::refresh_after_credential_change(&state).await;
     Ok(summary)
@@ -1065,8 +1175,21 @@ async fn delete_credential_command(credentials: &CredentialStore) -> Result<Cred
 }
 
 #[tauri::command]
-pub async fn delete_credential(state: tauri::State<'_, AppState>) -> Result<CredentialSummary> {
+pub async fn delete_credential(
+    state: tauri::State<'_, AppState>,
+) -> crate::error::CommandResult<CredentialSummary> {
     let summary = delete_credential_command(&state.credentials).await?;
+    crate::app_log::record(crate::app_log::Fields {
+        level: "info",
+        event: "credential.changed",
+        component: "credential",
+        outcome: "success",
+        code: None,
+        stage: Some("delete"),
+        duration_ms: None,
+        detail: &[("result", "deleted")],
+        durable: true,
+    });
     state.workbench.invalidate_catalogs();
     crate::image_workbench::ipc::refresh_after_credential_change(&state).await;
     Ok(summary)
@@ -1155,12 +1278,28 @@ fn valid_rfc3339(value: &str) -> bool {
 pub async fn apikey_usage(
     request: APIKeyUsageRequest,
     state: tauri::State<'_, AppState>,
-) -> Result<APIKeyUsage> {
-    apikey_usage_command(request, &state.manager, &state.credentials).await
+) -> crate::error::CommandResult<APIKeyUsage> {
+    let period = request.period.clone();
+    let usage = apikey_usage_command(request, &state.manager, &state.credentials).await?;
+    crate::app_log::record(crate::app_log::Fields {
+        level: "info",
+        event: "usage.fetched",
+        component: "credential",
+        outcome: "success",
+        code: None,
+        stage: Some("fetch"),
+        duration_ms: None,
+        detail: &[("period", period.as_str())],
+        durable: false,
+    });
+    Ok(usage)
 }
 
 #[tauri::command]
-pub async fn window_visibility(visible: bool, state: tauri::State<'_, AppState>) -> Result<()> {
+pub async fn window_visibility(
+    visible: bool,
+    state: tauri::State<'_, AppState>,
+) -> crate::error::CommandResult<()> {
     state.set_window_visibility(visible);
     Ok(())
 }
@@ -1170,7 +1309,7 @@ pub fn set_native_language(
     language: String,
     app: AppHandle,
     state: tauri::State<'_, AppState>,
-) -> Result<()> {
+) -> crate::error::CommandResult<()> {
     let language = NativeLanguage::parse(&language)
         .ok_or_else(|| CommandError::invalid_params("language must be zh-CN or en"))?;
     state.workbench.set_language(match language {
@@ -1182,7 +1321,25 @@ pub fn set_native_language(
             "NATIVE_UI_UPDATE_FAILED",
             "could not update native interface language",
         )
-    })
+    })?;
+    crate::app_log::record(crate::app_log::Fields {
+        level: "info",
+        event: "settings.changed",
+        component: "settings",
+        outcome: "success",
+        code: None,
+        stage: Some("language"),
+        duration_ms: None,
+        detail: &[(
+            "language",
+            match language {
+                NativeLanguage::En => "en",
+                NativeLanguage::ZhCn => "zh-CN",
+            },
+        )],
+        durable: true,
+    });
+    Ok(())
 }
 
 pub fn validate_log_limit(limit: u16) -> Result<()> {

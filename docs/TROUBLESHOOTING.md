@@ -72,7 +72,7 @@ This state means the local router process is available but the latest upstream m
 1. On Router, if the heading is status unavailable, treat it as control-plane unread, not as a current upstream verdict.
 2. Select Retry health check.
 3. Check local network, DNS, proxy/VPN policy, clock, and upstream availability.
-4. From Router (or Logs), copy the diagnostic snapshot or export the log bundle and send it to the maintainer. The zip contains all session logs under `mtls-router-logs/` plus the snapshot; it does not include credentials, Agent configs, or backups.
+4. From Router (or Logs), copy the diagnostic snapshot or export the log bundle and send it to the maintainer. The zip contains all session logs under `mtls-router-logs/` (including the application event log `app.log`) plus the snapshot; it does not include credentials, Agent configs, or backups. Delete `app.log`, `app.log.1`, and `app.log.2` in that folder to clear local application events. Nothing in that log is uploaded.
 5. Restart only if still needed. Do not replace embedded certificates manually. Credential or deployment rotation requires a complete replacement release.
 
 The router process state and upstream health are independent. Stopping a healthy local process is not required merely because a transient upstream check is degraded.
@@ -82,7 +82,7 @@ The router process state and upstream health are independent. Stopping a healthy
 An unexpected router exit is not restarted in an unlimited loop. If the manager exits, the desktop attempts at most one bounded recovery; failed recovery disables lifecycle commands until the application restarts.
 
 1. On Router, if the heading is status unavailable, treat it as control-plane unread, not as a current upstream verdict.
-2. From Router (or Logs), copy the diagnostic snapshot or export the log bundle and send it to the maintainer. The zip contains all session logs under `mtls-router-logs/` plus the snapshot; it does not include credentials, Agent configs, or backups.
+2. From Router (or Logs), copy the diagnostic snapshot or export the log bundle and send it to the maintainer. The zip contains all session logs under `mtls-router-logs/` (including the application event log `app.log`) plus the snapshot; it does not include credentials, Agent configs, or backups. Delete `app.log`, `app.log.1`, and `app.log.2` in that folder to clear local application events. Nothing in that log is uploaded.
 3. Then restart the desktop once if still needed. Reinstall if the error identifies an embedded manager validation problem. Do not start another router on a different port as a workaround.
 
 If a freshly built or installed desktop reports `MANAGER_INIT_FAILED` with an
