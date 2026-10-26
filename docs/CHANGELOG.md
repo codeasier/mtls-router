@@ -2,11 +2,22 @@
 
 [中文](zh-CN/CHANGELOG.md)
 
-## Unreleased
+## v0.6.1 - 2026-10-27
+
+This patch release makes desktop updates auditable before and after install. Settings keeps a bundled release history and the stable update feed now carries each version's changelog, while a bounded local application log records update and router failures for support. Enrollment now separates GitCode authorization problems from service outages instead of reporting every failure as a network or server problem.
 
 ### Added
 
-- Beside Check for updates, Settings has Release history and a GitHub mark. Release history opens a dialog of every shipped version and renders that changelog as Markdown. The mark opens the public releases page. An available update still shows that version's notes before install and again in the confirmation dialog, in the selected language. The stable update feed publishes that version's notes from this changelog. An update that arrives without notes can still be installed.
+- Settings adds **Release history** beside Check for updates. It lists every version bundled with this build and renders that changelog as Markdown; a GitHub mark opens the public releases page. The stable update feed now publishes each version's bilingual changelog as `notes`, and an available update shows those notes in the selected language before install and again in the confirmation dialog. An update without notes can still be installed, and Settings says the changes could not be reviewed.
+- The desktop writes a bounded, redacted application event log at `mtls-router-logs/app.log` (JSON Lines, rotated at 5 MiB to `app.log.1` and `app.log.2`). It records startup, quit, update checks and install failures, router start and stop, settings changes, and failed desktop commands; fields are a closed allowlist and never include API keys, tokens, private keys, certificates, request or response bodies, or file contents. Nothing is uploaded. The Logs page shows these events and filters them by component and level, and **Export support bundle** includes them.
+
+### Fixed
+
+- GitCode enrollment reports the actual failure: a missing `all_user`/`read_groups` scope or expired authorization asks for reauthorization, a confirmed non-member account reports `ORG_MEMBERSHIP_REQUIRED`, an unreachable service reports `IDENTITY_NETWORK_UNAVAILABLE`, and a provider outage or unconfirmed membership lookup reports `CERT_SERVICE_UNAVAILABLE` as a server problem. Only an explicit inactive membership revokes the device, invalid or unauthorized enroll-app credentials stay a service error instead of sending the user through reauthorization, and the message no longer names the default organization.
+- The Logs page keeps install evidence visible: identity status is recorded only when its phase changes, a late response is ignored after the source or component changes, and `update.succeeded` is persisted before the deferred quit.
+- Parallel desktop test runs no longer share the process-wide application-log sink or the process-wide simplify default, so updater and model-catalog tests are deterministic.
+
+---
 
 ## v0.6.0 - 2026-10-25
 
