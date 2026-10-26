@@ -22,7 +22,7 @@ export const zhCN = {
   "identity.error.networkUnavailable":
     "无法连接认证服务，请检查网络后重试（IDENTITY_NETWORK_UNAVAILABLE）。",
   "identity.error.membershipRequired":
-    "当前 GitCode 账号不是 msinsight-org 组织成员，无法完成认证（ORG_MEMBERSHIP_REQUIRED）。",
+    "当前 GitCode 账号不是所需 GitCode 组织的成员，无法完成认证（ORG_MEMBERSHIP_REQUIRED）。",
   "identity.error.certReauthRequired":
     "GitCode 授权范围不足或已过期。请重新授权，并确认授予 all_user 与 read_groups（CERT_REAUTH_REQUIRED）。",
   "identity.error.operationConflict":

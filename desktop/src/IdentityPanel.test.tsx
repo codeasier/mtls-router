@@ -109,7 +109,7 @@ describe("IdentityPanel", () => {
       </I18nProvider>,
     );
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      /不是 msinsight-org 组织成员/,
+      /不是所需 GitCode 组织的成员/,
     );
     expect(screen.queryByText(/检查网络/)).not.toBeInTheDocument();
   });

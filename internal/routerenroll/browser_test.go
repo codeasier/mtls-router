@@ -284,13 +284,15 @@ func TestGitCodeCallbackFailuresStayDistinct(t *testing.T) {
 	const tokenOK = `{"access_token":"oauth-access-canary","refresh_token":"oauth-refresh-canary","expires_in":300,"scope":"read_user read_groups"}`
 	const userOK = `{"id":"new-member-id","login":"member-canary"}`
 	cases := []struct {
-		name, tokenBody, memberBody, wantCode, wantReason string
-		tokenStatus, memberStatus, wantHTTP, wantProvider int
+		name, tokenBody, memberBody, wantCode, wantReason, wantStatus string
+		tokenStatus, memberStatus, wantHTTP, wantProvider             int
 	}{
-		{"not-visible", tokenOK, `{"private":"account-canary"}`, MembershipRequired, "membership_not_found", 200, 404, 403, 404},
-		{"scope", tokenOK, `{"error":"insufficient_scope","access_token":"scope-canary"}`, ReauthRequired, "insufficient_scope", 200, 403, 401, 403},
-		{"outage", tokenOK, `upstream-diagnostic-canary`, ServiceUnavailable, "membership_lookup_unavailable", 200, 503, 503, 503},
-		{"token-scope", `{"error":"insufficient_scope","access_token":"leaked-token-canary"}`, `{}`, ReauthRequired, "insufficient_scope", 403, 200, 401, 403},
+		{"not-visible", tokenOK, `{"private":"account-canary"}`, MembershipRequired, "membership_not_found", "denied", 200, 404, 403, 404},
+		{"scope", tokenOK, `{"error":"insufficient_scope","access_token":"scope-canary"}`, ReauthRequired, "insufficient_scope", "denied", 200, 403, 401, 403},
+		{"outage", tokenOK, `upstream-diagnostic-canary`, ServiceUnavailable, "membership_lookup_unavailable", "failed", 200, 503, 503, 503},
+		{"token-scope", `{"error":"insufficient_scope","access_token":"leaked-token-canary"}`, `{}`, ReauthRequired, "insufficient_scope", "denied", 403, 200, 401, 403},
+		{"invalid-client", `{"error":"invalid_client","client_secret":"secret-canary"}`, `{}`, ServiceUnavailable, "gitcode_client_unauthorized", "failed", 401, 200, 503, 401},
+		{"unauthorized-client", `{"error":"unauthorized_client"}`, `{}`, ServiceUnavailable, "gitcode_client_unauthorized", "failed", 400, 200, 503, 400},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -318,7 +320,7 @@ func TestGitCodeCallbackFailuresStayDistinct(t *testing.T) {
 				t.Fatal("poll collapsed the failure", code)
 			}
 			v, err := readNative(context.Background(), f.s.store.db, f.started.Transaction)
-			if err != nil || v.FailureCode != test.wantCode || v.UserID != "" {
+			if err != nil || v.FailureCode != test.wantCode || v.Status != test.wantStatus || v.UserID != "" {
 				t.Fatalf("ledger %+v %v", v, err)
 			}
 			var accounts, revoked int
@@ -329,7 +331,7 @@ func TestGitCodeCallbackFailuresStayDistinct(t *testing.T) {
 			if !strings.Contains(logged, `"msg":"enroll_provider_failure"`) || !strings.Contains(logged, `"reason":"`+test.wantReason+`"`) || !strings.Contains(logged, `"provider_status":`+strconv.Itoa(test.wantProvider)) {
 				t.Fatalf("missing sanitized failure log: %s", logged)
 			}
-			for _, secret := range []string{"oauth-access-canary", "oauth-refresh-canary", "leaked-token-canary", "scope-canary", "account-canary", "upstream-diagnostic-canary", "member-canary", "oauth-code-canary", f.proof.Verifier} {
+			for _, secret := range []string{"oauth-access-canary", "oauth-refresh-canary", "leaked-token-canary", "scope-canary", "secret-canary", "account-canary", "upstream-diagnostic-canary", "member-canary", "oauth-code-canary", f.proof.Verifier} {
 				if strings.Contains(logged, secret) || strings.Contains(w.Body.String(), secret) {
 					t.Fatal("provider diagnostic leaked", secret)
 				}

@@ -164,10 +164,19 @@ func TestFixedGitCodeExchangeAndLeastPrivilege(t *testing.T) {
 		status int
 		body   string
 		reauth bool
-	}{{401, `{"error":"invalid_grant","secret":"canary"}`, true}, {403, `{"error":"insufficient_scope"}`, false}, {503, `private-provider-error-canary`, false}} {
+		code   string
+	}{
+		{401, `{"error":"invalid_grant","secret":"canary"}`, true, ReauthRequired},
+		{403, `{"error":"insufficient_scope"}`, false, ReauthRequired},
+		{401, `{"error":"invalid_client","client_secret":"canary"}`, false, ServiceUnavailable},
+		{400, `{"error":"unauthorized_client","client_id":"canary"}`, false, ServiceUnavailable},
+		{401, `{"message":"expired-canary"}`, true, ReauthRequired},
+		{503, `private-provider-error-canary`, false, ServiceUnavailable},
+	} {
 		err := classifyProviderFailure(payload.status, []byte(payload.body))
-		if needsReauthorization(err) != payload.reauth || strings.Contains(err.Error(), "canary") {
-			t.Fatal("unsafe provider failure", err)
+		code, reason, _ := providerPublicFailure(err)
+		if needsReauthorization(err) != payload.reauth || code != payload.code || strings.Contains(err.Error()+reason, "canary") {
+			t.Fatal("unsafe provider failure", err, code, reason)
 		}
 	}
 }

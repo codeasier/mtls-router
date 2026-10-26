@@ -257,10 +257,17 @@ func classifyProviderFailure(status int, data []byte) error {
 		Error string `json:"error"`
 	}
 	_ = json.Unmarshal(data, &payload)
-	if payload.Error == "insufficient_scope" {
+	switch payload.Error {
+	case "insufficient_scope":
 		return &providerFailure{reason: "insufficient_scope", status: status}
+	case "invalid_grant":
+		return &providerFailure{reason: "gitcode_reauthorization_required", reauth: true, status: status}
+	case "invalid_client", "unauthorized_client":
+		// RFC 6749 client authentication failure. Reauthorization cannot fix a
+		// wrong or rotated application secret.
+		return &providerFailure{reason: "gitcode_client_unauthorized", status: status}
 	}
-	if status == 401 || payload.Error == "invalid_grant" {
+	if status == 401 {
 		return &providerFailure{reason: "gitcode_reauthorization_required", reauth: true, status: status}
 	}
 	return &providerFailure{reason: "gitcode_response_unavailable", status: status}
@@ -286,7 +293,7 @@ func closedFailureReason(reason string) string {
 		"membership_lookup_unavailable", "membership_user_mismatch", "incomplete_membership",
 		"organization_id_mismatch", "organization_path_drift", "organization_config_invalid",
 		"oauth_code_invalid", "oauth_code_missing", "oauth_request_failed", "oauth_response_incomplete",
-		"gitcode_reauthorization_required", "gitcode_request_failed", "gitcode_response_invalid",
+		"gitcode_reauthorization_required", "gitcode_client_unauthorized", "gitcode_request_failed", "gitcode_response_invalid",
 		"gitcode_response_unavailable", "user_response_incomplete", "refresh_user_mismatch",
 		"provider_denied", "membership_loss_record_failed", "enrollment_failure_record_failed", "unclassified":
 		return reason

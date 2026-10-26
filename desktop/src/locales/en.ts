@@ -26,7 +26,7 @@ export const en: Record<TranslationKey, string> = {
   "identity.error.networkUnavailable":
     "The authentication service could not be reached. Check your network and retry (IDENTITY_NETWORK_UNAVAILABLE).",
   "identity.error.membershipRequired":
-    "This GitCode account is not a member of msinsight-org, so authentication cannot finish (ORG_MEMBERSHIP_REQUIRED).",
+    "This GitCode account is not a member of the required GitCode organization, so authentication cannot finish (ORG_MEMBERSHIP_REQUIRED).",
   "identity.error.certReauthRequired":
     "GitCode authorization is missing the required scope or has expired. Authorize again and allow all_user and read_groups (CERT_REAUTH_REQUIRED).",
   "identity.error.operationConflict":
