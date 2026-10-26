@@ -365,6 +365,7 @@ pub async fn update_install(
         })?;
 
     if output.quit_action == QuitAction::ExecuteQuit {
+        persist_success_before_deferred_quit(output.quit_action, output.value.is_ok());
         crate::tray::execute_quit(app);
         return output.value.map_err(Into::into);
     }
@@ -388,6 +389,13 @@ pub async fn update_install(
 enum InstallCompletion {
     ExitProcess,
     RestartApp,
+}
+
+fn persist_success_before_deferred_quit(quit_action: QuitAction, install_succeeded: bool) {
+    if quit_action == QuitAction::ExecuteQuit && install_succeeded {
+        note_update("update.succeeded", "install", "success", &[], true);
+        crate::app_log::flush();
+    }
 }
 
 fn complete_successful_install(windows: bool, restart_prepared: bool) -> Result<InstallCompletion> {
@@ -470,6 +478,28 @@ mod tests {
         }
         assert!(installer_launch_succeeded(33));
         assert!(installer_launch_succeeded(1024));
+    }
+
+    #[test]
+    fn deferred_quit_persists_update_success_before_exit() {
+        let directory = std::env::temp_dir().join(format!(
+            "mtls-update-deferred-quit-{}",
+            uuid::Uuid::new_v4()
+        ));
+        crate::app_log::with_temp(&directory, || {
+            persist_success_before_deferred_quit(QuitAction::ExecuteQuit, false);
+            persist_success_before_deferred_quit(QuitAction::None, true);
+            assert!(crate::app_log::recent(10).is_empty());
+
+            persist_success_before_deferred_quit(QuitAction::ExecuteQuit, true);
+            let records = crate::app_log::recent(10);
+            assert_eq!(records.len(), 1);
+            assert_eq!(records[0].event, "update.succeeded");
+            assert_eq!(records[0].component, "updater");
+            assert_eq!(records[0].stage.as_deref(), Some("install"));
+            assert_eq!(records[0].outcome, "success");
+        });
+        let _ = std::fs::remove_dir_all(directory);
     }
 
     #[test]

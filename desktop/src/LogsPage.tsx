@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useI18n, type Translator } from "./i18n";
 import { MAX_LOG_LINES, type AppLogRecord, type DesktopApi } from "./ipc";
@@ -53,54 +53,61 @@ export function LogsPage({ api }: { api: DesktopApi }) {
   const [lines, setLines] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
+  const requestEpoch = useRef(0);
+
+  function startRequest() {
+    requestEpoch.current += 1;
+    return requestEpoch.current;
+  }
 
   async function load(
     nextSource = source,
     nextLevel = level,
     nextComponent = component,
   ) {
+    const request = startRequest();
     setLoading(true);
     setMessage("");
     try {
-      if (nextSource === "router") {
-        const result = await api.getRouterLogs(MAX_LOG_LINES);
-        setLines(result.lines);
-      } else {
-        const result = await api.getAppLogs(MAX_LOG_LINES);
-        setLines(
-          result.records
-            .filter(
-              (record) => nextLevel === "all" || record.level === nextLevel,
-            )
-            .filter(
-              (record) =>
-                nextComponent === "all" || record.component === nextComponent,
-            )
-            .map(formatAppRecord),
-        );
-      }
+      const nextLines =
+        nextSource === "router"
+          ? (await api.getRouterLogs(MAX_LOG_LINES)).lines
+          : (await api.getAppLogs(MAX_LOG_LINES)).records
+              .filter(
+                (record) => nextLevel === "all" || record.level === nextLevel,
+              )
+              .filter(
+                (record) =>
+                  nextComponent === "all" || record.component === nextComponent,
+              )
+              .map(formatAppRecord);
+      if (request !== requestEpoch.current) return;
+      setLines(nextLines);
     } catch {
+      if (request !== requestEpoch.current) return;
       setMessage(safeLogError("load", t));
     } finally {
-      setLoading(false);
+      if (request === requestEpoch.current) setLoading(false);
     }
   }
 
   useEffect(() => {
-    let current = true;
+    const request = startRequest();
     void api
       .getRouterLogs(MAX_LOG_LINES)
       .then((result) => {
-        if (current) setLines(result.lines);
+        if (request === requestEpoch.current) setLines(result.lines);
       })
       .catch(() => {
-        if (current) setMessage(safeLogError("load", t));
+        if (request === requestEpoch.current) {
+          setMessage(safeLogError("load", t));
+        }
       })
       .finally(() => {
-        if (current) setLoading(false);
+        if (request === requestEpoch.current) setLoading(false);
       });
     return () => {
-      current = false;
+      requestEpoch.current += 1;
     };
   }, [api, t]);
 
