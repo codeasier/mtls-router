@@ -95,8 +95,10 @@ func TestMembershipDecisionsAreExplicitAndUserBound(t *testing.T) {
 		{"wrong-user", strings.Replace(base, user, "other-user", 1), 200, ServiceUnavailable, "membership_user_mismatch"},
 		{"wrong-org", strings.Replace(base, "1783195", "1783196", 1), 200, ServiceUnavailable, "organization_id_mismatch"},
 		{"renamed", strings.Replace(base, "msinsight-org", "renamed-org", 1), 200, ServiceUnavailable, "organization_path_drift"},
-		{"unknown-404", `{}`, 404, ServiceUnavailable, "membership_lookup_unavailable"},
-		{"scope", `{"error":"insufficient_scope"}`, 403, ServiceUnavailable, "insufficient_scope"},
+		{"unknown-404", `{}`, 404, MembershipRequired, "membership_not_found"},
+		{"scope", `{"error":"insufficient_scope"}`, 403, ReauthRequired, "insufficient_scope"},
+		{"scope-on-404", `{"error":"insufficient_scope"}`, 404, ReauthRequired, "insufficient_scope"},
+		{"forbidden", `{"error":"forbidden","token":"canary"}`, 403, ServiceUnavailable, "membership_lookup_unavailable"},
 		{"outage", `upstream-diagnostic-canary`, 503, ServiceUnavailable, "membership_lookup_unavailable"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -162,10 +164,19 @@ func TestFixedGitCodeExchangeAndLeastPrivilege(t *testing.T) {
 		status int
 		body   string
 		reauth bool
-	}{{401, `{"error":"invalid_grant","secret":"canary"}`, true}, {403, `{"error":"insufficient_scope"}`, false}, {503, `private-provider-error-canary`, false}} {
+		code   string
+	}{
+		{401, `{"error":"invalid_grant","secret":"canary"}`, true, ReauthRequired},
+		{403, `{"error":"insufficient_scope"}`, false, ReauthRequired},
+		{401, `{"error":"invalid_client","client_secret":"canary"}`, false, ServiceUnavailable},
+		{400, `{"error":"unauthorized_client","client_id":"canary"}`, false, ServiceUnavailable},
+		{401, `{"message":"expired-canary"}`, true, ReauthRequired},
+		{503, `private-provider-error-canary`, false, ServiceUnavailable},
+	} {
 		err := classifyProviderFailure(payload.status, []byte(payload.body))
-		if needsReauthorization(err) != payload.reauth || strings.Contains(err.Error(), "canary") {
-			t.Fatal("unsafe provider failure", err)
+		code, reason, _ := providerPublicFailure(err)
+		if needsReauthorization(err) != payload.reauth || code != payload.code || strings.Contains(err.Error()+reason, "canary") {
+			t.Fatal("unsafe provider failure", err, code, reason)
 		}
 	}
 }

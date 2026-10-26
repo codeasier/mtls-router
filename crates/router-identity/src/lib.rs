@@ -20,7 +20,9 @@ pub enum IdentityError {
     Conflict,
     InvalidCertificate,
     Unavailable,
+    Network,
     ReauthRequired,
+    MembershipRequired,
     Rejected,
 }
 
@@ -33,7 +35,9 @@ impl IdentityError {
             Self::Conflict => "CERT_OPERATION_CONFLICT",
             Self::InvalidCertificate => "CLIENT_CERT_REJECTED",
             Self::Unavailable => "CERT_SERVICE_UNAVAILABLE",
+            Self::Network => "IDENTITY_NETWORK_UNAVAILABLE",
             Self::ReauthRequired => "CERT_REAUTH_REQUIRED",
+            Self::MembershipRequired => "ORG_MEMBERSHIP_REQUIRED",
             Self::Rejected => "CLIENT_CERT_REJECTED",
         }
     }

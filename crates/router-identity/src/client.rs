@@ -123,17 +123,13 @@ impl WireBackend for HttpsBackend {
                 .body(body.to_vec())
                 .send()
                 .await
-                .map_err(|_| IdentityError::Unavailable)?;
+                .map_err(|_| IdentityError::Network)?;
             if response.content_length().is_some_and(|len| len > 65536) {
                 return Err(IdentityError::Unavailable);
             }
             let status = response.status().as_u16();
             let mut data = Vec::new();
-            while let Some(chunk) = response
-                .chunk()
-                .await
-                .map_err(|_| IdentityError::Unavailable)?
-            {
+            while let Some(chunk) = response.chunk().await.map_err(|_| IdentityError::Network)? {
                 if data.len() + chunk.len() > 65536 {
                     return Err(IdentityError::Unavailable);
                 }
@@ -302,10 +298,10 @@ impl NativeClient {
             return Err(
                 match error.get("code").and_then(|v| v.as_str()).unwrap_or("") {
                     "CERT_OPERATION_CONFLICT" => IdentityError::Conflict,
-                    "CERT_REAUTH_REQUIRED"
-                    | "ENROLL_EXPIRED"
-                    | "ENROLL_DENIED"
-                    | "ORG_MEMBERSHIP_REQUIRED" => IdentityError::ReauthRequired,
+                    "CERT_REAUTH_REQUIRED" | "ENROLL_EXPIRED" | "ENROLL_DENIED" => {
+                        IdentityError::ReauthRequired
+                    }
+                    "ORG_MEMBERSHIP_REQUIRED" => IdentityError::MembershipRequired,
                     "CLIENT_CERT_REJECTED" | "ENROLL_CANCELLED" => IdentityError::Rejected,
                     "ENROLL_SLOW_DOWN" | "ENROLL_CAPACITY_REACHED" => IdentityError::Busy,
                     _ => IdentityError::Unavailable,

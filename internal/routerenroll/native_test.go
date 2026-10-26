@@ -71,6 +71,31 @@ func TestNativeProofDoesNotConsumeOrCancelAnotherTransaction(t *testing.T) {
 	}
 }
 
+func TestPollReturnsOnlyClosedFailureCodes(t *testing.T) {
+	s, request, verifier := nativeFixture(t)
+	ctx := context.Background()
+	started, code := s.start(ctx, request)
+	if code != "" {
+		t.Fatal(code)
+	}
+	proof := NativeProof{started.Transaction, verifier}
+	for _, test := range []struct{ status, stored, want string }{
+		{"failed", ServiceUnavailable, ServiceUnavailable},
+		{"failed", ReauthRequired, ReauthRequired},
+		{"failed", "oauth-token-canary", ServiceUnavailable},
+		{"denied", MembershipRequired, MembershipRequired},
+		{"denied", ReauthRequired, ReauthRequired},
+		{"denied", "account-canary", EnrollmentDenied},
+	} {
+		if _, err := s.store.db.ExecContext(ctx, "UPDATE enrollment_transactions SET status=?,failure_code=?,next_poll=0 WHERE id=?", test.status, test.stored, started.Transaction); err != nil {
+			t.Fatal(err)
+		}
+		if _, code := s.poll(ctx, proof); code != test.want || strings.Contains(code, "canary") {
+			t.Fatalf("%s/%s returned %s", test.status, test.stored, code)
+		}
+	}
+}
+
 func TestNativeExpiryCapacityAndPolicyEpoch(t *testing.T) {
 	s, request, verifier := nativeFixture(t)
 	ctx := context.Background()

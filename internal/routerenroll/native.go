@@ -8,6 +8,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -25,9 +27,26 @@ type Service struct {
 	checksMu  sync.Mutex
 	checks    map[string]*memberCheck
 	publisher *Publisher
+	logger    *slog.Logger
 }
 
 func (s *Service) SetPublisher(p *Publisher) { s.publisher = p }
+func (s *Service) SetLogger(logger *slog.Logger) {
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	s.logger = logger
+}
+func (s *Service) logProviderFailure(code, reason string, providerStatus int) {
+	if s.logger == nil {
+		return
+	}
+	args := []any{"code", code, "reason", closedFailureReason(reason)}
+	if providerStatus > 0 {
+		args = append(args, "provider_status", providerStatus)
+	}
+	s.logger.Warn("enroll_provider_failure", args...)
+}
 
 func NewService(store *Store, provider *GitCode, issuer *Issuer) *Service {
 	return &Service{store: store, provider: provider, issuer: issuer, now: time.Now, slots: make(chan struct{}, MaxConcurrentControlRequests)}
@@ -187,12 +206,19 @@ func (s *Service) poll(ctx context.Context, proof NativeProof) (NativeStatus, st
 	case "cancelled":
 		return NativeStatus{}, EnrollmentCancelled
 	case "denied":
-		if failureCode == MembershipRequired {
-			return NativeStatus{}, MembershipRequired
+		switch failureCode {
+		case MembershipRequired, ReauthRequired:
+			return NativeStatus{}, failureCode
+		default:
+			return NativeStatus{}, EnrollmentDenied
 		}
-		return NativeStatus{}, EnrollmentDenied
 	case "failed":
-		return NativeStatus{}, ServiceUnavailable
+		switch failureCode {
+		case ServiceUnavailable, MembershipRequired, ReauthRequired:
+			return NativeStatus{}, failureCode
+		default:
+			return NativeStatus{}, ServiceUnavailable
+		}
 	case "revocation_pending":
 		return NativeStatus{}, ClientCertRejected
 	}

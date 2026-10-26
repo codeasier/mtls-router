@@ -209,7 +209,9 @@ impl IdentityStore {
                     | "CERT_OPERATION_CONFLICT"
                     | "CLIENT_CERT_REJECTED"
                     | "CERT_SERVICE_UNAVAILABLE"
+                    | "IDENTITY_NETWORK_UNAVAILABLE"
                     | "CERT_REAUTH_REQUIRED"
+                    | "ORG_MEMBERSHIP_REQUIRED"
             )
         }) {
             return Err(IdentityError::InvalidState);

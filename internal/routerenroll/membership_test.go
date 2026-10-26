@@ -5,6 +5,8 @@ package routerenroll
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -54,6 +56,32 @@ func TestMembershipRefreshEncryptionAndTransientFailure(t *testing.T) {
 	}
 	if refreshes.Load() != 1 {
 		t.Fatal("reused old rotating refresh token")
+	}
+}
+
+func TestHiddenMembershipDoesNotRevokeExistingCertificates(t *testing.T) {
+	f := newRenewalFixture(t)
+	f.s.provider.client.Transport = providerTransport(func(r *http.Request) (*http.Response, error) {
+		status, body := 200, ""
+		switch {
+		case strings.Contains(r.URL.Path, "memberships"):
+			status, body = 404, `{"login":"account-canary"}`
+		case strings.HasSuffix(r.URL.Path, "/oauth/token"):
+			body = `{"access_token":"refreshed-access-canary","refresh_token":"rotated-refresh-canary","expires_in":3600,"scope":"read_user read_groups"}`
+		case strings.HasSuffix(r.URL.Path, "/user"):
+			body = fmt.Sprintf(`{"id":%q,"login":"fixture"}`, f.old.Identity.UserID)
+		default:
+			t.Errorf("unexpected provider target %s", r.URL.Path)
+		}
+		return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+	})
+	if _, code := f.s.verifyMember(context.Background(), f.old.Identity.PolicyEpoch, f.old.Identity.UserID); code != ServiceUnavailable {
+		t.Fatal(code)
+	}
+	var status string
+	var revoked int
+	if f.s.store.db.QueryRow("SELECT verification_status FROM users").Scan(&status) != nil || status == "nonmember" || f.s.store.db.QueryRow("SELECT count(*) FROM revocations").Scan(&revoked) != nil || revoked != 0 {
+		t.Fatal("404 revoked a member", status, revoked)
 	}
 }
 

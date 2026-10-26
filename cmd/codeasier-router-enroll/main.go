@@ -77,6 +77,7 @@ func run(ctx context.Context, args []string, env func(string) (string, bool), ou
 		return 1
 	}
 	service := routerenroll.NewService(store, provider, issuer)
+	service.SetLogger(logger)
 	targets, err := routerenroll.ReadGatewayTargets(cfg.GatewaysFile)
 	if err != nil {
 		logger.Error("enroll_gateways_invalid")

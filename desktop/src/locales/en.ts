@@ -22,9 +22,13 @@ export const en: Record<TranslationKey, string> = {
   "identity.failed":
     "Authentication could not be completed. Retry or sign in again.",
   "identity.error.certServiceUnavailable":
-    "The authentication service is unavailable. Check your network or retry later (CERT_SERVICE_UNAVAILABLE).",
+    "The authentication service is temporarily unavailable. This is a server problem; retry later (CERT_SERVICE_UNAVAILABLE).",
+  "identity.error.networkUnavailable":
+    "The authentication service could not be reached. Check your network and retry (IDENTITY_NETWORK_UNAVAILABLE).",
+  "identity.error.membershipRequired":
+    "This GitCode account is not a member of the required GitCode organization, so authentication cannot finish (ORG_MEMBERSHIP_REQUIRED).",
   "identity.error.certReauthRequired":
-    "GitCode authorization has expired. Sign in again (CERT_REAUTH_REQUIRED).",
+    "GitCode authorization is missing the required scope or has expired. Authorize again and allow all_user and read_groups (CERT_REAUTH_REQUIRED).",
   "identity.error.operationConflict":
     "Another authentication operation is still pending. Retry later (CERT_OPERATION_CONFLICT).",
   "identity.error.storageUnavailable":

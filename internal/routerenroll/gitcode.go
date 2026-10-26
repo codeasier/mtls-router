@@ -41,6 +41,7 @@ type Account struct {
 type providerFailure struct {
 	reason string
 	reauth bool
+	status int
 }
 
 func (e *providerFailure) Error() string { return e.reason }
@@ -148,8 +149,9 @@ func (g *GitCode) User(ctx context.Context, access string) (Account, error) {
 }
 
 type membershipDecision struct {
-	Organization Organization
-	Code, Reason string
+	Organization   Organization
+	Code, Reason   string
+	ProviderStatus int
 }
 
 func (g *GitCode) Membership(ctx context.Context, access string, account Account, policy Policy) (membershipDecision, error) {
@@ -168,16 +170,24 @@ func (g *GitCode) Membership(ctx context.Context, access string, account Account
 	return evaluateMembership(status, data, account.ID, policy), nil
 }
 func evaluateMembership(status int, data []byte, userID string, policy Policy) membershipDecision {
-	reject := func(code, reason string) membershipDecision { return membershipDecision{Code: code, Reason: reason} }
+	reject := func(code, reason string) membershipDecision {
+		return membershipDecision{Code: code, Reason: reason, ProviderStatus: status}
+	}
 	if status != 200 {
 		var payload struct {
 			Error string `json:"error"`
 		}
 		_ = json.Unmarshal(data, &payload)
-		if payload.Error == "insufficient_scope" {
-			return reject(ServiceUnavailable, "insufficient_scope")
+		// A 404 is not a confirmed departure. Callers may show it to the
+		// enrolling user, but only an explicit inactive membership revokes.
+		switch {
+		case payload.Error == "insufficient_scope":
+			return reject(ReauthRequired, "insufficient_scope")
+		case status == http.StatusNotFound:
+			return reject(MembershipRequired, "membership_not_found")
+		default:
+			return reject(ServiceUnavailable, "membership_lookup_unavailable")
 		}
-		return reject(ServiceUnavailable, "membership_lookup_unavailable")
 	}
 	var payload struct {
 		Active json.RawMessage `json:"active"`
@@ -247,13 +257,49 @@ func classifyProviderFailure(status int, data []byte) error {
 		Error string `json:"error"`
 	}
 	_ = json.Unmarshal(data, &payload)
-	if payload.Error == "insufficient_scope" {
-		return providerError("insufficient_scope")
+	switch payload.Error {
+	case "insufficient_scope":
+		return &providerFailure{reason: "insufficient_scope", status: status}
+	case "invalid_grant":
+		return &providerFailure{reason: "gitcode_reauthorization_required", reauth: true, status: status}
+	case "invalid_client", "unauthorized_client":
+		// RFC 6749 client authentication failure. Reauthorization cannot fix a
+		// wrong or rotated application secret.
+		return &providerFailure{reason: "gitcode_client_unauthorized", status: status}
 	}
-	if status == 401 || payload.Error == "invalid_grant" {
-		return &providerFailure{reason: "gitcode_reauthorization_required", reauth: true}
+	if status == 401 {
+		return &providerFailure{reason: "gitcode_reauthorization_required", reauth: true, status: status}
 	}
-	return providerError("gitcode_response_unavailable")
+	return &providerFailure{reason: "gitcode_response_unavailable", status: status}
+}
+func providerPublicFailure(err error) (code, reason string, status int) {
+	var failure *providerFailure
+	if !errors.As(err, &failure) || failure.reason == "" {
+		return ServiceUnavailable, "unclassified", 0
+	}
+	switch failure.reason {
+	case "insufficient_scope", "scope_escalation", "gitcode_reauthorization_required":
+		return ReauthRequired, failure.reason, failure.status
+	default:
+		return ServiceUnavailable, failure.reason, failure.status
+	}
+}
+func confirmedMembershipLoss(decision membershipDecision) bool {
+	return decision.Code == MembershipRequired && decision.Reason == "inactive"
+}
+func closedFailureReason(reason string) string {
+	switch reason {
+	case "active", "inactive", "insufficient_scope", "scope_escalation", "membership_not_found",
+		"membership_lookup_unavailable", "membership_user_mismatch", "incomplete_membership",
+		"organization_id_mismatch", "organization_path_drift", "organization_config_invalid",
+		"oauth_code_invalid", "oauth_code_missing", "oauth_request_failed", "oauth_response_incomplete",
+		"gitcode_reauthorization_required", "gitcode_client_unauthorized", "gitcode_request_failed", "gitcode_response_invalid",
+		"gitcode_response_unavailable", "user_response_incomplete", "refresh_user_mismatch",
+		"provider_denied", "membership_loss_record_failed", "enrollment_failure_record_failed", "unclassified":
+		return reason
+	default:
+		return "unclassified"
+	}
 }
 func boundedProviderToken(value string) bool {
 	return len(value) > 0 && len(value) <= 8192 && !strings.ContainsAny(value, "\r\n\x00")
