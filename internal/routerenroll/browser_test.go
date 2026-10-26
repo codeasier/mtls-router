@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -73,6 +74,7 @@ func newBrowserFlow(t *testing.T) *browserFlow {
 	if err != nil {
 		t.Fatal(err)
 	}
+	flow.s.SetLogger(slog.New(slog.NewJSONHandler(&flow.logs, nil)))
 	flow.handler = server.Handler
 	w := flow.get("/enroll/native/verify?transaction="+started.Transaction, nil)
 	if w.Code != 200 {
@@ -275,5 +277,63 @@ func TestFinalApprovalRechecksMembership(t *testing.T) {
 	v, err := readNative(context.Background(), f.s.store.db, f.started.Transaction)
 	if err != nil || v.Status == "approved" {
 		t.Fatal("inactive account approved")
+	}
+}
+
+func TestGitCodeCallbackFailuresStayDistinct(t *testing.T) {
+	const tokenOK = `{"access_token":"oauth-access-canary","refresh_token":"oauth-refresh-canary","expires_in":300,"scope":"read_user read_groups"}`
+	const userOK = `{"id":"new-member-id","login":"member-canary"}`
+	cases := []struct {
+		name, tokenBody, memberBody, wantCode, wantReason string
+		tokenStatus, memberStatus, wantHTTP, wantProvider int
+	}{
+		{"not-visible", tokenOK, `{"private":"account-canary"}`, MembershipRequired, "membership_not_found", 200, 404, 403, 404},
+		{"scope", tokenOK, `{"error":"insufficient_scope","access_token":"scope-canary"}`, ReauthRequired, "insufficient_scope", 200, 403, 401, 403},
+		{"outage", tokenOK, `upstream-diagnostic-canary`, ServiceUnavailable, "membership_lookup_unavailable", 200, 503, 503, 503},
+		{"token-scope", `{"error":"insufficient_scope","access_token":"leaked-token-canary"}`, `{}`, ReauthRequired, "insufficient_scope", 403, 200, 401, 403},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			f := newBrowserFlow(t)
+			f.s.provider.client.Transport = providerTransport(func(r *http.Request) (*http.Response, error) {
+				status, body := 500, `{}`
+				switch r.URL.Scheme + "://" + r.URL.Host + r.URL.Path {
+				case tokenURL:
+					status, body = test.tokenStatus, test.tokenBody
+				case userURL:
+					status, body = 200, userOK
+				case membershipURL + "msinsight-org":
+					status, body = test.memberStatus, test.memberBody
+				default:
+					t.Errorf("unexpected provider target")
+				}
+				return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+			})
+			f.authorize(t)
+			w := f.callback()
+			if w.Code != test.wantHTTP || !strings.Contains(w.Body.String(), test.wantCode) {
+				t.Fatalf("callback %d %s", w.Code, w.Body.String())
+			}
+			if _, code := f.s.poll(context.Background(), f.proof); code != test.wantCode {
+				t.Fatal("poll collapsed the failure", code)
+			}
+			v, err := readNative(context.Background(), f.s.store.db, f.started.Transaction)
+			if err != nil || v.FailureCode != test.wantCode || v.UserID != "" {
+				t.Fatalf("ledger %+v %v", v, err)
+			}
+			var accounts, revoked int
+			if f.s.store.db.QueryRow("SELECT count(*) FROM users WHERE user_id='new-member-id'").Scan(&accounts) != nil || accounts != 0 || f.s.store.db.QueryRow("SELECT count(*) FROM revocations WHERE reason='membership_lost'").Scan(&revoked) != nil || revoked != 0 {
+				t.Fatal("ambiguous provider result revoked or stored an account")
+			}
+			logged := f.logs.String()
+			if !strings.Contains(logged, `"msg":"enroll_provider_failure"`) || !strings.Contains(logged, `"reason":"`+test.wantReason+`"`) || !strings.Contains(logged, `"provider_status":`+strconv.Itoa(test.wantProvider)) {
+				t.Fatalf("missing sanitized failure log: %s", logged)
+			}
+			for _, secret := range []string{"oauth-access-canary", "oauth-refresh-canary", "leaked-token-canary", "scope-canary", "account-canary", "upstream-diagnostic-canary", "member-canary", "oauth-code-canary", f.proof.Verifier} {
+				if strings.Contains(logged, secret) || strings.Contains(w.Body.String(), secret) {
+					t.Fatal("provider diagnostic leaked", secret)
+				}
+			}
+		})
 	}
 }

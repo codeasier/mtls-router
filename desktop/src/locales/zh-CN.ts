@@ -18,9 +18,13 @@ export const zhCN = {
     "请在浏览器确认登录并核对确认码 {code}；完成后将自动进入应用。",
   "identity.failed": "登录认证暂时未完成，可重试或重新发起登录。",
   "identity.error.certServiceUnavailable":
-    "认证服务不可用，请检查网络或稍后重试（CERT_SERVICE_UNAVAILABLE）。",
+    "认证服务暂时不可用。这是服务端问题，请稍后重试（CERT_SERVICE_UNAVAILABLE）。",
+  "identity.error.networkUnavailable":
+    "无法连接认证服务，请检查网络后重试（IDENTITY_NETWORK_UNAVAILABLE）。",
+  "identity.error.membershipRequired":
+    "当前 GitCode 账号不是 msinsight-org 组织成员，无法完成认证（ORG_MEMBERSHIP_REQUIRED）。",
   "identity.error.certReauthRequired":
-    "GitCode 授权已失效，请重新登录（CERT_REAUTH_REQUIRED）。",
+    "GitCode 授权范围不足或已过期。请重新授权，并确认授予 all_user 与 read_groups（CERT_REAUTH_REQUIRED）。",
   "identity.error.operationConflict":
     "已有认证操作尚未完成，请稍后重试（CERT_OPERATION_CONFLICT）。",
   "identity.error.storageUnavailable":

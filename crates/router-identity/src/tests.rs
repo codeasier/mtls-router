@@ -548,6 +548,62 @@ async fn failed_start_reports_service_unavailable_instead_of_waiting_for_browser
 }
 
 #[tokio::test]
+async fn poll_keeps_membership_reauth_and_outage_distinct() {
+    use crate::client::Route;
+    use std::sync::Arc;
+    for (status, code) in [
+        (403, "ORG_MEMBERSHIP_REQUIRED"),
+        (401, "CERT_REAUTH_REQUIRED"),
+        (503, "CERT_SERVICE_UNAVAILABLE"),
+    ] {
+        let dir = Temp::new();
+        let fixture = Arc::new(Fixture::new());
+        let store = IdentityStore::open(&dir.0, fixture.trust.clone()).unwrap();
+        let backend_store = store.clone();
+        let backend = FakeWire(move |route, _body: serde_json::Value| match route {
+            Route::Start => reply(started(backend_store.read()?.pending.as_ref().unwrap())),
+            Route::Poll => Ok(crate::client::Reply {
+                status,
+                body: serde_json::json!({"code": code, "error": "closed"})
+                    .to_string()
+                    .into_bytes(),
+            }),
+            _ => Err(IdentityError::Conflict),
+        });
+        let client = NativeClient::with_backend(store, Arc::new(backend), Arc::new(|| NOW));
+        client.connect("desktop", "device").await.unwrap();
+        let err = client.poll().await.unwrap_err();
+        assert_eq!(err.code(), code);
+        assert_eq!(
+            client.status().await.unwrap().error_code.as_deref(),
+            Some(code)
+        );
+    }
+}
+
+#[tokio::test]
+async fn unreachable_enrollment_is_not_a_server_outage() {
+    use crate::client::Route;
+    use std::sync::Arc;
+    let dir = Temp::new();
+    let fixture = Arc::new(Fixture::new());
+    let store = IdentityStore::open(&dir.0, fixture.trust.clone()).unwrap();
+    let backend = FakeWire(|route, _body: serde_json::Value| match route {
+        Route::Start => Err(IdentityError::Network),
+        _ => Err(IdentityError::Conflict),
+    });
+    let client = NativeClient::with_backend(store, Arc::new(backend), Arc::new(|| NOW));
+    assert!(matches!(
+        client.connect("desktop", "device").await,
+        Err(IdentityError::Network)
+    ));
+    assert_eq!(
+        client.status().await.unwrap().error_code.as_deref(),
+        Some("IDENTITY_NETWORK_UNAVAILABLE")
+    );
+}
+
+#[tokio::test]
 async fn lost_renewal_response_recovers_after_old_expiry_without_new_issuance() {
     use crate::client::Route;
     use std::sync::{

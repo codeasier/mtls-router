@@ -95,8 +95,10 @@ func TestMembershipDecisionsAreExplicitAndUserBound(t *testing.T) {
 		{"wrong-user", strings.Replace(base, user, "other-user", 1), 200, ServiceUnavailable, "membership_user_mismatch"},
 		{"wrong-org", strings.Replace(base, "1783195", "1783196", 1), 200, ServiceUnavailable, "organization_id_mismatch"},
 		{"renamed", strings.Replace(base, "msinsight-org", "renamed-org", 1), 200, ServiceUnavailable, "organization_path_drift"},
-		{"unknown-404", `{}`, 404, ServiceUnavailable, "membership_lookup_unavailable"},
-		{"scope", `{"error":"insufficient_scope"}`, 403, ServiceUnavailable, "insufficient_scope"},
+		{"unknown-404", `{}`, 404, MembershipRequired, "membership_not_found"},
+		{"scope", `{"error":"insufficient_scope"}`, 403, ReauthRequired, "insufficient_scope"},
+		{"scope-on-404", `{"error":"insufficient_scope"}`, 404, ReauthRequired, "insufficient_scope"},
+		{"forbidden", `{"error":"forbidden","token":"canary"}`, 403, ServiceUnavailable, "membership_lookup_unavailable"},
 		{"outage", `upstream-diagnostic-canary`, 503, ServiceUnavailable, "membership_lookup_unavailable"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

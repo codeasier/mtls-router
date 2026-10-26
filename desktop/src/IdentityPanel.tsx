@@ -16,6 +16,8 @@ const phases = new Set([
 
 const errorMessages: Record<string, TranslationKey> = {
   CERT_SERVICE_UNAVAILABLE: "identity.error.certServiceUnavailable",
+  IDENTITY_NETWORK_UNAVAILABLE: "identity.error.networkUnavailable",
+  ORG_MEMBERSHIP_REQUIRED: "identity.error.membershipRequired",
   CERT_REAUTH_REQUIRED: "identity.error.certReauthRequired",
   CERT_OPERATION_CONFLICT: "identity.error.operationConflict",
   IDENTITY_STORAGE_UNAVAILABLE: "identity.error.storageUnavailable",

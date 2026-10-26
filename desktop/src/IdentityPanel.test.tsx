@@ -90,9 +90,57 @@ describe("IdentityPanel", () => {
       </I18nProvider>,
     );
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      /认证服务不可用/,
+      /认证服务暂时不可用/,
     );
+    expect(screen.queryByText(/检查网络/)).not.toBeInTheDocument();
     expect(screen.queryByText(/等待浏览器授权/)).not.toBeInTheDocument();
+  });
+  it("distinguishes a missing organization membership from a network failure", async () => {
+    const api = createMockApi({
+      getIdentityStatus: vi.fn(async () => ({
+        ...disconnected,
+        phase: "authorizing",
+        error_code: "ORG_MEMBERSHIP_REQUIRED",
+      })),
+    });
+    render(
+      <I18nProvider>
+        <IdentityPanel api={api} />
+      </I18nProvider>,
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /不是 msinsight-org 组织成员/,
+    );
+    expect(screen.queryByText(/检查网络/)).not.toBeInTheDocument();
+  });
+  it("asks for a network check only when the authentication service cannot be reached", async () => {
+    const api = createMockApi({
+      getIdentityStatus: vi.fn(async () => ({
+        ...disconnected,
+        error_code: "IDENTITY_NETWORK_UNAVAILABLE",
+      })),
+    });
+    render(
+      <I18nProvider>
+        <IdentityPanel api={api} />
+      </I18nProvider>,
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(/请检查网络/);
+  });
+  it("tells the user which GitCode scopes a new authorization needs", async () => {
+    const api = createMockApi({
+      getIdentityStatus: vi.fn(async () => ({
+        ...disconnected,
+        error_code: "CERT_REAUTH_REQUIRED",
+      })),
+    });
+    render(
+      <I18nProvider>
+        <IdentityPanel api={api} />
+      </I18nProvider>,
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(/all_user/);
+    expect(screen.getByRole("alert")).toHaveTextContent(/read_groups/);
   });
   it("hides the modal gate once authenticated and ignores late stale status responses", async () => {
     let resolveOld!: (value: IdentitySummary) => void;

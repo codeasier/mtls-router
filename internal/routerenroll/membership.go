@@ -157,11 +157,21 @@ func (s *Service) checkMember(ctx context.Context, epoch int64, user string) (me
 	if failure != nil || code == ServiceUnavailable {
 		status, code = "unavailable", ServiceUnavailable
 	}
+	var provider *providerFailure
+	if errors.As(failure, &provider) && (provider.reason == "insufficient_scope" || provider.reason == "scope_escalation") {
+		status, code = "reauth", ReauthRequired
+	}
 	if needsReauthorization(failure) {
 		status, code = "reauth", ReauthRequired
 	}
-	if failure == nil && decision.Code == MembershipRequired {
+	if failure == nil && decision.Code == ReauthRequired {
+		status, code = "reauth", ReauthRequired
+	}
+	if failure == nil && confirmedMembershipLoss(decision) {
 		status, code = "nonmember", MembershipRequired
+	}
+	if failure == nil && decision.Code == MembershipRequired && decision.Reason != "inactive" {
+		status, code = "unavailable", ServiceUnavailable
 	}
 	if failure == nil && code == "" && decision.Organization != v.Account.Organization {
 		status, code = "unavailable", ServiceUnavailable

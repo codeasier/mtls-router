@@ -241,20 +241,26 @@ func (s *Service) callbackHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if query.Get("error") != "" || query.Get("code") == "" {
-		s.finishBrowserFailure(r.Context(), claimed, EnrollmentDenied)
+		reason := "provider_denied"
+		if query.Get("error") == "" {
+			reason = "oauth_code_missing"
+		}
+		s.rejectBrowser(r.Context(), claimed, EnrollmentDenied, reason, 0)
 		WriteError(w, EnrollmentDenied)
 		return
 	}
 	token, err := s.provider.Exchange(r.Context(), query.Get("code"))
 	if err != nil {
-		s.finishBrowserFailure(r.Context(), claimed, ServiceUnavailable)
-		WriteError(w, ServiceUnavailable)
+		code, reason, providerStatus := providerPublicFailure(err)
+		s.rejectBrowser(r.Context(), claimed, code, reason, providerStatus)
+		WriteError(w, code)
 		return
 	}
 	account, err := s.provider.User(r.Context(), token.AccessToken)
 	if err != nil {
-		s.finishBrowserFailure(r.Context(), claimed, ServiceUnavailable)
-		WriteError(w, ServiceUnavailable)
+		code, reason, providerStatus := providerPublicFailure(err)
+		s.rejectBrowser(r.Context(), claimed, code, reason, providerStatus)
+		WriteError(w, code)
 		return
 	}
 	policy, err := readPolicy(r.Context(), s.store.db)
@@ -269,16 +275,18 @@ func (s *Service) callbackHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	decision, err := s.provider.Membership(r.Context(), token.AccessToken, account, policy)
 	if err != nil || decision.Code != "" {
-		code := ServiceUnavailable
-		if decision.Code != "" {
-			code = decision.Code
+		code, reason, providerStatus := ServiceUnavailable, "membership_lookup_unavailable", 0
+		if err != nil {
+			code, reason, providerStatus = providerPublicFailure(err)
+		} else {
+			code, reason, providerStatus = decision.Code, decision.Reason, decision.ProviderStatus
 		}
-		if err == nil && code == MembershipRequired {
+		if err == nil && confirmedMembershipLoss(decision) {
 			if s.recordMembershipLoss(r.Context(), claimed.Epoch, account.ID, checkedVersion) != nil {
-				code = ServiceUnavailable
+				code, reason = ServiceUnavailable, "membership_loss_record_failed"
 			}
 		}
-		s.finishBrowserFailure(r.Context(), claimed, code)
+		s.rejectBrowser(r.Context(), claimed, code, reason, providerStatus)
 		WriteError(w, code)
 		return
 	}
@@ -315,13 +323,23 @@ func (s *Service) callbackHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	renderEnrollment(w, browserPage{Device: claimed.Label, Short: claimed.ShortCode, Message: "Check the account, device and confirmation code before approving.", Hint: "批准后将完成该客户端设备的 GitCode 组织成员身份认证。", Action: "/enroll/native/approve", Transaction: claimed.ID, CSRF: csrf, Account: &account})
 }
+func (s *Service) rejectBrowser(ctx context.Context, claimed browserTransaction, code, reason string, providerStatus int) {
+	s.logProviderFailure(code, reason, providerStatus)
+	s.finishBrowserFailure(ctx, claimed, code)
+}
 func (s *Service) finishBrowserFailure(ctx context.Context, claimed browserTransaction, code string) {
 	_ = s.store.transaction(ctx, func(tx *writeTx) error {
 		status := "failed"
-		if code == EnrollmentDenied || code == MembershipRequired {
+		if code == EnrollmentDenied || code == MembershipRequired || code == ReauthRequired {
 			status = "denied"
 		}
 		_, err := tx.ExecContext(ctx, "UPDATE enrollment_transactions SET status=?,failure_code=?,version=version+1 WHERE id=? AND version=? AND status='verifying'", status, code, claimed.ID, claimed.Version)
+		return err
+	})
+}
+func (s *Service) denyVerified(ctx context.Context, claimed browserTransaction, code string) error {
+	return s.store.transaction(ctx, func(tx *writeTx) error {
+		_, err := tx.ExecContext(ctx, "UPDATE enrollment_transactions SET status='denied',failure_code=?,version=version+1 WHERE id=? AND version=? AND status='verified'", code, claimed.ID, claimed.Version)
 		return err
 	})
 }
@@ -376,20 +394,24 @@ func (s *Service) approveHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		membership, err := s.provider.Membership(r.Context(), token.AccessToken, account, policy)
 		if err != nil || membership.Code != "" {
-			code := ServiceUnavailable
-			if membership.Code != "" {
-				code = membership.Code
+			code, reason, providerStatus := ServiceUnavailable, "membership_lookup_unavailable", 0
+			if err != nil {
+				code, reason, providerStatus = providerPublicFailure(err)
+			} else {
+				code, reason, providerStatus = membership.Code, membership.Reason, membership.ProviderStatus
 			}
-			if err == nil && code == MembershipRequired {
+			if err == nil && confirmedMembershipLoss(membership) {
 				if s.recordMembershipLoss(r.Context(), claimed.Epoch, account.ID, checkedVersion) != nil {
-					code = ServiceUnavailable
-				} else if s.store.transaction(r.Context(), func(tx *writeTx) error {
-					_, err := tx.ExecContext(r.Context(), "UPDATE enrollment_transactions SET status='denied',failure_code=?,version=version+1 WHERE id=? AND version=? AND status='verified'", MembershipRequired, claimed.ID, claimed.Version)
-					return err
-				}) != nil {
-					code = ServiceUnavailable
+					code, reason = ServiceUnavailable, "membership_loss_record_failed"
+				} else if s.denyVerified(r.Context(), claimed, MembershipRequired) != nil {
+					code, reason = ServiceUnavailable, "membership_loss_record_failed"
+				}
+			} else if code == MembershipRequired || code == ReauthRequired {
+				if s.denyVerified(r.Context(), claimed, code) != nil {
+					code, reason = ServiceUnavailable, "enrollment_failure_record_failed"
 				}
 			}
+			s.logProviderFailure(code, reason, providerStatus)
 			WriteError(w, code)
 			return
 		}
