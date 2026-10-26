@@ -29,7 +29,11 @@ const MAX_LINE_BYTES: usize = 2048;
 static GLOBAL: RwLock<Option<Arc<AppLog>>> = RwLock::new(None);
 static RECENT: Mutex<Vec<(String, Instant)>> = Mutex::new(Vec::new());
 static OPERATION: Mutex<Option<String>> = Mutex::new(None);
-static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+#[cfg(test)]
+thread_local! {
+    static LOCAL_LOG: std::cell::RefCell<Option<Arc<AppLog>>> = std::cell::RefCell::new(None);
+}
 
 pub struct OperationGuard;
 
@@ -338,6 +342,10 @@ fn open_append(path: &Path) -> io::Result<File> {
 }
 
 fn current() -> Option<Arc<AppLog>> {
+    #[cfg(test)]
+    if let Some(log) = LOCAL_LOG.with(|slot| slot.borrow().clone()) {
+        return Some(log);
+    }
     GLOBAL.read().ok()?.clone()
 }
 
@@ -662,19 +670,25 @@ fn contains_secret_marker(value: &str) -> bool {
 
 #[cfg(test)]
 pub fn with_temp<R>(directory: &Path, body: impl FnOnce() -> R) -> R {
-    let _guard = TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
-    if let Ok(mut recent) = RECENT.lock() {
-        recent.clear();
+    // The override is thread-local. Swapping GLOBAL lets parallel tests append
+    // their events to this directory while the body is running.
+    struct ClearLocal;
+    impl Drop for ClearLocal {
+        fn drop(&mut self) {
+            LOCAL_LOG.with(|slot| {
+                slot.borrow_mut().take();
+            });
+        }
     }
-    let previous = GLOBAL.write().ok().and_then(|mut slot| {
-        let opened = AppLog::open(directory, MAX_FILE_BYTES).ok().map(Arc::new);
-        std::mem::replace(&mut *slot, opened)
+
+    let opened = AppLog::open(directory, MAX_FILE_BYTES).ok().map(Arc::new);
+    LOCAL_LOG.with(|slot| {
+        *slot.borrow_mut() = opened.clone();
     });
+    let _clear = ClearLocal;
     let result = body();
-    if let Ok(mut slot) = GLOBAL.write() {
-        let installed = std::mem::replace(&mut *slot, previous);
-        drop(installed);
-    }
+    drop(_clear);
+    drop(opened);
     result
 }
 
@@ -800,6 +814,44 @@ mod tests {
                 .mode();
             assert_eq!(mode & 0o777, 0o600);
         }
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn temp_sink_ignores_records_from_other_threads() {
+        let directory =
+            std::env::temp_dir().join(format!("mtls-app-log-isolate-{}", Uuid::new_v4()));
+        let started = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let release = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let started_writer = std::sync::Arc::clone(&started);
+        let release_writer = std::sync::Arc::clone(&release);
+        let writer = thread::spawn(move || {
+            started_writer.wait();
+            record(fields(
+                "update.preflight",
+                "updater",
+                Some("UPDATE_BLOCKED_ROUTER_STATE"),
+                &[],
+            ));
+            release_writer.wait();
+        });
+        with_temp(&directory, || {
+            started.wait();
+            release.wait();
+            writer.join().unwrap();
+            record(fields(
+                "update.download_finished",
+                "updater",
+                Some("UPDATE_DOWNLOAD_FAILED"),
+                &[],
+            ));
+            let records = recent(10);
+            assert_eq!(records.len(), 1);
+            assert_eq!(records[0].code.as_deref(), Some("UPDATE_DOWNLOAD_FAILED"));
+            assert!(records
+                .iter()
+                .all(|record| record.event != "update.preflight"));
+        });
         let _ = fs::remove_dir_all(directory);
     }
 
