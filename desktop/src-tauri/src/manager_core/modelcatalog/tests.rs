@@ -7,7 +7,8 @@ use super::client::{Client, Request, MAX_BODY_BYTES};
 use super::error::code_of;
 use super::parse::{parse, MAX_MODELS};
 use super::simplify::{
-    parse_simplify, parse_simplify_value, set_simplify_for_test, SIMPLIFY_DEFAULT,
+    parse_simplify, parse_simplify_value, set_simplify_for_test, with_simplify_lock,
+    SIMPLIFY_DEFAULT,
 };
 
 fn assert_code(error: super::CatalogError, want: ErrorCode) {
@@ -196,7 +197,7 @@ fn parse_simplification_preserves_validation_and_limits() {
 #[test]
 fn parse_simplify_default() {
     assert_eq!(SIMPLIFY_DEFAULT, "True");
-    assert_eq!(parse_simplify().expect("default"), true);
+    with_simplify_lock(|| assert_eq!(parse_simplify().expect("default"), true));
 }
 
 #[test]

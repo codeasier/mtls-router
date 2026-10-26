@@ -26,14 +26,42 @@ pub fn parse_simplify_value(value: &str) -> Result<bool, &'static str> {
 }
 
 #[cfg(test)]
+fn simplify_test_lock() -> &'static Mutex<()> {
+    static LOCK: Mutex<()> = Mutex::new(());
+    &LOCK
+}
+
+#[cfg(test)]
+fn lock_simplify_tests() -> std::sync::MutexGuard<'static, ()> {
+    simplify_test_lock()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+}
+
+/// The stored value is process-wide. Hold this across a read so a parallel
+/// `set_simplify_for_test` cannot change it mid-assertion.
+#[cfg(test)]
+pub fn with_simplify_lock<R>(body: impl FnOnce() -> R) -> R {
+    let _lock = lock_simplify_tests();
+    body()
+}
+
+#[cfg(test)]
 pub fn set_simplify_for_test(value: impl Into<String>) -> impl Drop {
-    let previous = stored().lock().expect("simplify lock").clone();
-    *stored().lock().expect("simplify lock") = value.into();
-    SimplifyGuard { previous }
+    let lock = lock_simplify_tests();
+    let mut slot = stored().lock().expect("simplify lock");
+    let previous = slot.clone();
+    *slot = value.into();
+    drop(slot);
+    SimplifyGuard {
+        _lock: lock,
+        previous,
+    }
 }
 
 #[cfg(test)]
 struct SimplifyGuard {
+    _lock: std::sync::MutexGuard<'static, ()>,
     previous: String,
 }
 
