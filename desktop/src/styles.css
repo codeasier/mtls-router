@@ -1701,6 +1701,21 @@ main[data-section="images"] {
   align-items: center;
 }
 
+.logs-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 20px 0;
+}
+
+.logs-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .log-screen {
   min-height: 260px;
   max-height: calc(100dvh - 220px);

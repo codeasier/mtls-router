@@ -23,6 +23,7 @@ export const COMMANDS = {
   routerHealth: "router_health",
   pollSnapshot: "poll_snapshot",
   routerLogs: "router_logs",
+  appLogs: "app_logs",
   componentVersions: "component_versions",
   diagnosticsCollect: "diagnostics_collect",
   diagnosticsSnapshot: "diagnostics_snapshot",
@@ -74,6 +75,22 @@ export const WORKBENCH_CHAT_DELTA_EVENT = "workbench-chat-delta";
 export const WORKBENCH_PHASE_EVENT = "workbench-phase";
 export const WORKBENCH_IMAGE_STATUS_EVENT = "workbench-image-status";
 export const WORKBENCH_OPERATION_DONE_EVENT = "workbench-operation-done";
+
+export interface AppLogRecord {
+  ts: string;
+  level: string;
+  event: string;
+  component: string;
+  code?: string;
+  stage?: string;
+  outcome: string;
+  duration_ms?: number;
+  detail?: Record<string, string>;
+}
+
+export interface AppLogPage {
+  records: AppLogRecord[];
+}
 
 export const MAX_LOG_LINES = 200;
 export const FACTORY_LISTEN = "127.0.0.1:19099";
@@ -1008,6 +1025,7 @@ export interface DesktopApi {
     listener: (progress: UpdateProgress) => void,
   ): Promise<UnlistenFn>;
   getRouterLogs(limit?: number): Promise<RouterLogs>;
+  getAppLogs(limit?: number): Promise<AppLogPage>;
   collectDiagnostics(): Promise<Diagnostics>;
   getDiagnosticSnapshot(): Promise<DiagnosticSnapshot>;
   exportSupportBundle(): Promise<void>;
@@ -1194,6 +1212,25 @@ export function createDesktopApi(
         limit: safeLimit,
       });
       return { lines: boundedSanitizedLines(result.lines, safeLimit) };
+    },
+    getAppLogs: async (limit = MAX_LOG_LINES) => {
+      const safeLimit = Math.min(Math.max(limit, 1), MAX_LOG_LINES);
+      const result = await invoke<AppLogPage>(COMMANDS.appLogs, {
+        limit: safeLimit,
+      });
+      return {
+        records: (result.records ?? []).slice(0, safeLimit).map((record) => ({
+          ts: record.ts,
+          level: record.level,
+          event: record.event,
+          component: record.component,
+          code: record.code,
+          stage: record.stage,
+          outcome: record.outcome,
+          duration_ms: record.duration_ms,
+          detail: record.detail,
+        })),
+      };
     },
     collectDiagnostics: async () => {
       const result = await invoke<Diagnostics>(COMMANDS.diagnosticsCollect);

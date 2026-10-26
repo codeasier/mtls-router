@@ -272,6 +272,19 @@ export function createMockDesktopApi(
       );
     },
     subscribeUpdateProgress: async () => noopUnlisten(),
+    getAppLogs: async () => ({
+      records: [
+        {
+          ts: "2026-10-26T00:00:00.000Z",
+          level: "error",
+          event: "update.install_failed",
+          component: "updater",
+          code: "UPDATE_INSTALL_FAILED",
+          stage: "install",
+          outcome: "failure",
+        },
+      ],
+    }),
     getRouterLogs: async () => ({
       lines: [
         "mock: router ready on 127.0.0.1:19099",

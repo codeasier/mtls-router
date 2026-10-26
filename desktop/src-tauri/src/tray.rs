@@ -491,6 +491,19 @@ pub(crate) fn resolve_quit<R: Runtime>(
     lifecycle: &LifecycleState,
     confirmed: bool,
 ) {
+    if !confirmed {
+        crate::app_log::record(crate::app_log::Fields {
+            level: "info",
+            event: "app.quit_cancelled",
+            component: "lifecycle",
+            outcome: "cancelled",
+            code: None,
+            stage: Some("quit"),
+            duration_ms: None,
+            detail: &[],
+            durable: true,
+        });
+    }
     let action = lifecycle.resolve_quit(confirmed);
     handle_quit_action(app.clone(), lifecycle, action);
 }
@@ -534,6 +547,17 @@ fn handle_quit_action<R: Runtime>(
         show_main_window(&app);
     }
     if effects.emit_confirmation {
+        crate::app_log::record(crate::app_log::Fields {
+            level: "info",
+            event: "app.quit_requested",
+            component: "lifecycle",
+            outcome: "success",
+            code: None,
+            stage: Some("quit"),
+            duration_ms: None,
+            detail: &[],
+            durable: true,
+        });
         let delivered = emit_main_window_event(&app, MainWindowEvent::DraftQuitRequested).is_ok();
         record_confirmation_delivery(lifecycle, delivered);
         if !delivered {
@@ -550,6 +574,18 @@ pub(crate) fn should_prevent_exit(lifecycle: &LifecycleState) -> bool {
 }
 
 pub(crate) fn execute_quit<R: Runtime>(app: AppHandle<R>) {
+    crate::app_log::record(crate::app_log::Fields {
+        level: "info",
+        event: "app.quit",
+        component: "lifecycle",
+        outcome: "success",
+        code: None,
+        stage: Some("quit"),
+        duration_ms: None,
+        detail: &[],
+        durable: true,
+    });
+    crate::app_log::flush();
     let state = app.state::<TrayState<R>>();
     if !state.lifecycle.try_begin_quit_operation() {
         return;
@@ -563,6 +599,7 @@ pub(crate) fn execute_quit<R: Runtime>(app: AppHandle<R>) {
         if decision == QuitDecision::StopThenExit {
             let _ = (controller.stop)().await;
         }
+        crate::app_log::flush();
         app.exit(0);
     });
 }

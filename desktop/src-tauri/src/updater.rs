@@ -14,8 +14,77 @@ const UPDATE_PROGRESS_EVENT: &str = "update-download-progress";
 const CHECK_TIMEOUT: Duration = Duration::from_secs(15);
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
-fn command_error(code: &'static str, message: &'static str) -> CommandError {
-    CommandError::recoverable(code, message)
+fn command_error(stage: &'static str, code: &'static str, message: &'static str) -> CommandError {
+    command_error_detail(stage, code, message, &[])
+}
+
+fn command_error_detail(
+    stage: &'static str,
+    code: &'static str,
+    message: &'static str,
+    detail: &[(&'static str, &str)],
+) -> CommandError {
+    let event = match code {
+        "UPDATE_SIGNATURE_FAILED" => "update.verify_failed",
+        "UPDATE_BLOCKED_ROUTER_STATE" | "UPDATE_BLOCKED_LEGACY_ROUTER" => "update.preflight",
+        "UPDATE_INSTALL_FAILED" | "UPDATE_BUSY" => "update.install_failed",
+        "UPDATE_RESTART_BLOCKED" => "update.restart_blocked",
+        "UPDATE_DOWNLOAD_FAILED" => "update.download_finished",
+        _ => "update.check_finished",
+    };
+    crate::app_log::record(crate::app_log::Fields {
+        level: "error",
+        event,
+        component: "updater",
+        outcome: if code == "UPDATE_BUSY" {
+            "denied"
+        } else {
+            "failure"
+        },
+        code: Some(code),
+        stage: Some(stage),
+        duration_ms: None,
+        detail,
+        durable: true,
+    });
+    CommandError::recoverable(code, message).with_stage(stage)
+}
+
+fn note_update(
+    event: &'static str,
+    stage: &'static str,
+    outcome: &'static str,
+    detail: &[(&'static str, &str)],
+    durable: bool,
+) {
+    crate::app_log::record(crate::app_log::Fields {
+        level: "info",
+        event,
+        component: "updater",
+        outcome,
+        code: None,
+        stage: Some(stage),
+        duration_ms: None,
+        detail,
+        durable,
+    });
+}
+
+fn download_failure(error: &tauri_plugin_updater::Error) -> CommandError {
+    match error {
+        tauri_plugin_updater::Error::Minisign(_)
+        | tauri_plugin_updater::Error::Base64(_)
+        | tauri_plugin_updater::Error::SignatureUtf8(_) => command_error(
+            "verify",
+            "UPDATE_SIGNATURE_FAILED",
+            "cannot verify the update",
+        ),
+        _ => command_error(
+            "download",
+            "UPDATE_DOWNLOAD_FAILED",
+            "cannot download the update",
+        ),
+    }
 }
 
 fn is_new_stable_version(current: &Version, remote: &Version) -> bool {
@@ -29,6 +98,7 @@ fn updater(app: &AppHandle, timeout: Duration) -> Result<tauri_plugin_updater::U
         .build()
         .map_err(|_| {
             command_error(
+                "configure",
                 "UPDATE_NOT_CONFIGURED",
                 "online updates are unavailable in this build",
             )
@@ -39,7 +109,7 @@ async fn check(app: &AppHandle, timeout: Duration) -> Result<Option<Update>> {
     updater(app, timeout)?
         .check()
         .await
-        .map_err(|_| command_error("UPDATE_CHECK_FAILED", "cannot check for updates"))
+        .map_err(|_| command_error("check", "UPDATE_CHECK_FAILED", "cannot check for updates"))
 }
 
 fn update_info(update: &Update) -> UpdateInfo {
@@ -51,13 +121,35 @@ fn update_info(update: &Update) -> UpdateInfo {
 }
 
 #[tauri::command]
-pub async fn update_check(app: AppHandle) -> Result<UpdateCheckResult> {
+pub async fn update_check(app: AppHandle) -> crate::error::CommandResult<UpdateCheckResult> {
+    note_update("update.check_started", "check", "success", &[], false);
     let update = check(&app, CHECK_TIMEOUT).await?;
+    if let Some(update) = update.as_ref() {
+        if let Some(version) = stable_version_text(&update.version) {
+            note_update(
+                "update.available",
+                "check",
+                "success",
+                &[("version", version.as_str())],
+                false,
+            );
+        }
+    } else {
+        note_update("update.check_finished", "check", "success", &[], false);
+    }
     Ok(UpdateCheckResult {
         available: update.is_some(),
         current_version: env!("CARGO_PKG_VERSION").to_owned(),
         update: update.as_ref().map(update_info),
     })
+}
+
+fn stable_version_text(value: &str) -> Option<String> {
+    let version = Version::parse(value).ok()?;
+    if !version.pre.is_empty() || !version.build.is_empty() {
+        return None;
+    }
+    Some(version.to_string())
 }
 
 fn parse_expected_version(value: &str) -> Result<Version> {
@@ -77,8 +169,16 @@ enum UpdateRouterPreflight {
     Stop,
 }
 
+fn preflight_detail<'a>(status: &'a RouterStatus) -> Vec<(&'static str, &'a str)> {
+    let mut detail = vec![("state", status.state.as_str())];
+    if let Some(owner) = status.owner.as_deref() {
+        detail.push(("owner", owner));
+    }
+    detail
+}
+
 fn update_router_preflight(status: &RouterStatus) -> Result<UpdateRouterPreflight> {
-    match (status.state.as_str(), status.owner.as_deref()) {
+    let decision = match (status.state.as_str(), status.owner.as_deref()) {
         ("absent", None)
         | ("start_failed", Some("desktop"))
         | ("external_compatible", Some("cli"))
@@ -86,11 +186,23 @@ fn update_router_preflight(status: &RouterStatus) -> Result<UpdateRouterPrefligh
         ("desktop_owned", Some("desktop"))
         | ("degraded", Some("desktop"))
         | ("legacy_managed", Some("desktop")) => Ok(UpdateRouterPreflight::Stop),
-        _ => Err(command_error(
+        _ => Err(command_error_detail(
+            "preflight",
             "UPDATE_BLOCKED_ROUTER_STATE",
             "correlated router state could not be verified before the update",
+            &preflight_detail(status),
         )),
+    };
+    if decision.is_ok() {
+        note_update(
+            "update.preflight",
+            "preflight",
+            "success",
+            &preflight_detail(status),
+            true,
+        );
     }
+    decision
 }
 
 async fn stop_owned_router_with<ReadStatus, ReadStatusFuture, Stop, StopFuture>(
@@ -111,6 +223,7 @@ where
             let remaining = read_status().await?;
             if update_router_preflight(&remaining) != Ok(UpdateRouterPreflight::Proceed) {
                 return Err(command_error(
+                    "preflight",
                     "UPDATE_BLOCKED_LEGACY_ROUTER",
                     "a correlated legacy router could not be stopped before the update",
                 ));
@@ -149,6 +262,7 @@ where
             restart().await;
         }
         return Err(command_error(
+            "install",
             "UPDATE_INSTALL_FAILED",
             "cannot install the update",
         ));
@@ -157,19 +271,40 @@ where
 }
 
 async fn download_and_install(app: &AppHandle, state: &AppState, update: Update) -> Result<()> {
+    note_update("update.download_started", "download", "success", &[], true);
     let progress_app = app.clone();
     let mut downloaded = 0_u64;
+    let mut next_quarter = 1_u64;
     let bytes = update
         .download(
             move |chunk, total| {
                 downloaded = downloaded.saturating_add(chunk as u64);
                 let _ =
                     progress_app.emit(UPDATE_PROGRESS_EVENT, UpdateProgress { downloaded, total });
+                if let Some(total) = total.filter(|total| *total > 0) {
+                    let quarter = downloaded.saturating_mul(4) / total;
+                    if quarter >= next_quarter && quarter < 4 {
+                        next_quarter = quarter + 1;
+                        let downloaded_text = downloaded.to_string();
+                        let total_text = total.to_string();
+                        note_update(
+                            "update.download_milestone",
+                            "download",
+                            "success",
+                            &[
+                                ("downloaded", downloaded_text.as_str()),
+                                ("total", total_text.as_str()),
+                            ],
+                            false,
+                        );
+                    }
+                }
             },
             || {},
         )
         .await
-        .map_err(|_| command_error("UPDATE_DOWNLOAD_FAILED", "cannot download the update"))?;
+        .map_err(|error| download_failure(&error))?;
+    note_update("update.download_finished", "download", "success", &[], true);
 
     install_after_router_preflight_with(
         || state.manager.call("router.status", json!({})),
@@ -196,17 +331,24 @@ pub async fn update_install(
     version: String,
     app: AppHandle,
     state: tauri::State<'_, AppState>,
-) -> Result<()> {
+) -> crate::error::CommandResult<()> {
+    let _operation = crate::app_log::begin_operation();
+    note_update("update.install_requested", "install", "success", &[], true);
     let expected = parse_expected_version(&version)?;
     let output = state
         .lifecycle
         .run_operation(async {
             let update = check(&app, INSTALL_TIMEOUT).await?.ok_or_else(|| {
-                command_error("UPDATE_NOT_AVAILABLE", "the update is no longer available")
+                command_error(
+                    "recheck",
+                    "UPDATE_NOT_AVAILABLE",
+                    "the update is no longer available",
+                )
             })?;
             let announced = parse_expected_version(&update.version)?;
             if announced != expected {
                 return Err(command_error(
+                    "recheck",
                     "UPDATE_CHANGED",
                     "the available update changed; check again",
                 ));
@@ -215,18 +357,30 @@ pub async fn update_install(
         })
         .await
         .ok_or_else(|| {
-            command_error("UPDATE_BUSY", "another lifecycle operation is in progress")
+            command_error(
+                "lifecycle",
+                "UPDATE_BUSY",
+                "another lifecycle operation is in progress",
+            )
         })?;
 
     if output.quit_action == QuitAction::ExecuteQuit {
         crate::tray::execute_quit(app);
-        return output.value;
+        return output.value.map_err(Into::into);
     }
     output.value?;
     let prepared = state.lifecycle.prepare_restart();
     match complete_successful_install(cfg!(windows), prepared)? {
-        InstallCompletion::ExitProcess => std::process::exit(0),
-        InstallCompletion::RestartApp => app.restart(),
+        InstallCompletion::ExitProcess => {
+            note_update("update.succeeded", "install", "success", &[], true);
+            crate::app_log::flush();
+            std::process::exit(0)
+        }
+        InstallCompletion::RestartApp => {
+            note_update("update.succeeded", "install", "success", &[], true);
+            crate::app_log::flush();
+            app.restart()
+        }
     }
 }
 
@@ -244,6 +398,7 @@ fn complete_successful_install(windows: bool, restart_prepared: bool) -> Result<
     }
     if !restart_prepared {
         return Err(command_error(
+            "restart",
             "UPDATE_RESTART_BLOCKED",
             "restart is blocked after the update was applied",
         ));
@@ -793,5 +948,73 @@ mod tests {
                 "{state}/{owner:?}"
             );
         }
+    }
+
+    fn logged(body: impl FnOnce(&std::path::Path)) -> String {
+        let directory =
+            std::env::temp_dir().join(format!("mtls-update-log-{}", uuid::Uuid::new_v4()));
+        crate::app_log::with_temp(&directory, || body(&directory));
+        let text = std::fs::read_to_string(directory.join("app.log")).unwrap_or_default();
+        let _ = std::fs::remove_dir_all(directory);
+        text
+    }
+
+    #[test]
+    fn download_failure_writes_download_code_without_the_secret() {
+        let secret = "sk-supersecretvalue";
+        let text = logged(|_| {
+            let error = download_failure(&tauri_plugin_updater::Error::Network(secret.to_owned()));
+            assert_eq!(error.code, "UPDATE_DOWNLOAD_FAILED");
+            assert_eq!(error.stage.as_deref(), Some("download"));
+        });
+        assert!(text.contains("UPDATE_DOWNLOAD_FAILED"));
+        assert!(text.contains("\"stage\":\"download\""));
+        assert!(text.contains("update.download_finished"));
+        assert!(!text.contains(secret));
+    }
+
+    #[test]
+    fn signature_failure_writes_verify_code_without_the_secret() {
+        let secret = "sk-supersecretvalue";
+        let text = logged(|_| {
+            let error = download_failure(&tauri_plugin_updater::Error::SignatureUtf8(
+                secret.to_owned(),
+            ));
+            assert_eq!(error.code, "UPDATE_SIGNATURE_FAILED");
+            assert_eq!(error.stage.as_deref(), Some("verify"));
+        });
+        assert!(text.contains("UPDATE_SIGNATURE_FAILED"));
+        assert!(text.contains("\"event\":\"update.verify_failed\""));
+        assert!(!text.contains(secret));
+    }
+
+    #[test]
+    fn preflight_block_writes_router_state_code() {
+        let text = logged(|_| {
+            let error = update_router_preflight(&status("future_state", None)).unwrap_err();
+            assert_eq!(error.code, "UPDATE_BLOCKED_ROUTER_STATE");
+        });
+        assert!(text.contains("UPDATE_BLOCKED_ROUTER_STATE"));
+        assert!(text.contains("\"stage\":\"preflight\""));
+        assert!(text.contains("\"state\":\"future_state\""));
+    }
+
+    #[test]
+    fn install_failure_writes_install_code() {
+        let text = logged(|_| {
+            runtime().block_on(async {
+                let error = install_after_router_preflight_with(
+                    || async { Ok(status("absent", None)) },
+                    || async { Ok(status("absent", None)) },
+                    || false,
+                    || async {},
+                )
+                .await
+                .unwrap_err();
+                assert_eq!(error.code, "UPDATE_INSTALL_FAILED");
+            });
+        });
+        assert!(text.contains("UPDATE_INSTALL_FAILED"));
+        assert!(text.contains("\"stage\":\"install\""));
     }
 }

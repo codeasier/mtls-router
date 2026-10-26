@@ -58,6 +58,49 @@ describe("LogsPage", () => {
     expect(screen.queryByText("暂无路由日志")).not.toBeInTheDocument();
   });
 
+  it("filters application events by component and level", async () => {
+    const api = createMockApi({
+      getAppLogs: vi.fn().mockResolvedValue({
+        records: [
+          {
+            ts: "2026-10-26T00:00:00.000Z",
+            level: "error",
+            event: "update.install_failed",
+            component: "updater",
+            code: "UPDATE_INSTALL_FAILED",
+            stage: "install",
+            outcome: "failure",
+          },
+          {
+            ts: "2026-10-26T00:00:01.000Z",
+            level: "info",
+            event: "router.start_finished",
+            component: "router",
+            outcome: "success",
+            stage: "start",
+          },
+        ],
+      }),
+    });
+    renderWithI18n(<LogsPage api={api} />);
+    fireEvent.change(screen.getByLabelText("来源"), {
+      target: { value: "app" },
+    });
+    expect(await screen.findByText(/UPDATE_INSTALL_FAILED/)).toBeVisible();
+    expect(screen.getByText(/router.start_finished/)).toBeVisible();
+
+    fireEvent.change(screen.getByLabelText("组件"), {
+      target: { value: "updater" },
+    });
+    expect(await screen.findByText(/UPDATE_INSTALL_FAILED/)).toBeVisible();
+    expect(screen.queryByText(/router.start_finished/)).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("级别"), {
+      target: { value: "info" },
+    });
+    expect(await screen.findByText("暂无应用事件")).toBeVisible();
+  });
+
   it("refreshes the bounded range from the toolbar", async () => {
     const api = createMockApi({
       getRouterLogs: vi

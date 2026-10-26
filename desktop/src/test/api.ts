@@ -72,6 +72,7 @@ export function createMockApi(overrides: Partial<DesktopApi> = {}): DesktopApi {
     installUpdate: vi.fn().mockResolvedValue(undefined),
     subscribeUpdateProgress: vi.fn().mockResolvedValue(() => undefined),
     getRouterLogs: vi.fn().mockResolvedValue({ lines: [] }),
+    getAppLogs: vi.fn().mockResolvedValue({ records: [] }),
     collectDiagnostics: vi.fn().mockResolvedValue({ summary: "safe summary" }),
     getDiagnosticSnapshot: vi.fn().mockResolvedValue({
       schema_version: 1,

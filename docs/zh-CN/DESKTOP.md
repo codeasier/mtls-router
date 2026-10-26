@@ -66,7 +66,9 @@ Rust 桌面运行时是 `installation.json` 的唯一所有者。稳定 installa
 
 桌面端管理的每次启动都会分别写入应用数据目录下的 `mtls-router-logs/YYYY-MM-DD/HH-MM-SS.log`。日志页面跟随当前或最近一次启动；**打开日志位置**则可用于人工查看按会话分组的历史记录。
 
-每次 poll 时，桌面端会用当前内存中的诊断快照覆盖写入 `{data_dir}/last-diagnostics.json`。已锁存的 `start_failed` 会把脱敏后的 `last_error` 写成封闭 `stage`/`code` 以及可选 `os_error`/`listen_refusal`；成功解析的 `desktop-state.json` 只可附加 PID、启动标识和可执行文件 basename。Router 与日志页可不经 manager 复制该快照。**导出支持包**会写入用户选定的 zip，内含 `last-diagnostics.json` 以及 `mtls-router-logs/` 下的全部文件；不包含凭据、Agent 配置或备份。原始会话日志仅供维护者使用。对应 Tauri 命令为 `diagnostics_snapshot` 与 `export_support_bundle`。
+应用事件另写在 `mtls-router-logs/app.log`（JSON Lines）。单文件达到 5 MiB 后轮转到 `app.log.1` 和 `app.log.2`。内容覆盖启动、退出、更新检查与安装失败、router 启动和停止、设置变更，以及失败的桌面命令。字段是闭集（`ts`、`level`、`event`、`component`、`code`、`stage`，以及很小的 `detail` 白名单）。文件不含 API key、token、私钥、证书、请求或响应体、文件内容，也不会自动上传。日志页可以按 component 和 level 过滤这些事件。在**打开日志位置**打开的目录中删除 `app.log`、`app.log.1` 和 `app.log.2` 即可清理。
+
+每次 poll 时，桌面端会用当前内存中的诊断快照覆盖写入 `{data_dir}/last-diagnostics.json`。已锁存的 `start_failed` 会把脱敏后的 `last_error` 写成封闭 `stage`/`code` 以及可选 `os_error`/`listen_refusal`；成功解析的 `desktop-state.json` 只可附加 PID、启动标识和可执行文件 basename。Router 与日志页可不经 manager 复制该快照。**导出支持包**会写入用户选定的 zip，内含 `last-diagnostics.json` 以及 `mtls-router-logs/` 下的全部文件（含 router 会话日志和 `app.log`）；不包含凭据、Agent 配置或备份。原始会话日志仅供维护者使用。对应 Tauri 命令为 `diagnostics_snapshot` 与 `export_support_bundle`。
 
 恢复步骤见[故障排查](TROUBLESHOOTING.md)。
 

@@ -7,6 +7,20 @@ use crate::{
 use serde_json::json;
 
 pub async fn start(manager: &ManagerClient, scheduler: &PollScheduler) -> Result<RouterStatus> {
+    note_router(
+        "router.start_requested",
+        "start",
+        "success",
+        None,
+        None,
+        &[],
+    );
+    let result = start_inner(manager, scheduler).await;
+    finish_router("start", &result);
+    result
+}
+
+async fn start_inner(manager: &ManagerClient, scheduler: &PollScheduler) -> Result<RouterStatus> {
     scheduler.cancel_release_observation().await;
     scheduler.request_refresh();
     let current: RouterStatus = manager.call("router.status", json!({})).await?;
@@ -52,6 +66,13 @@ pub async fn start(manager: &ManagerClient, scheduler: &PollScheduler) -> Result
 }
 
 pub async fn stop(manager: &ManagerClient, scheduler: &PollScheduler) -> Result<RouterStatus> {
+    note_router("router.stop_requested", "stop", "success", None, None, &[]);
+    let result = stop_inner(manager, scheduler).await;
+    finish_router("stop", &result);
+    result
+}
+
+async fn stop_inner(manager: &ManagerClient, scheduler: &PollScheduler) -> Result<RouterStatus> {
     scheduler.request_refresh();
     match manager.call::<RouterStatus>("router.stop", json!({})).await {
         Ok(status) => {
@@ -63,6 +84,52 @@ pub async fn stop(manager: &ManagerClient, scheduler: &PollScheduler) -> Result<
             scheduler.request_refresh();
             Err(error)
         }
+    }
+}
+
+fn note_router(
+    event: &'static str,
+    stage: &str,
+    outcome: &'static str,
+    code: Option<&str>,
+    level: Option<&'static str>,
+    detail: &[(&'static str, &str)],
+) {
+    crate::app_log::record(crate::app_log::Fields {
+        level: level.unwrap_or("info"),
+        event,
+        component: "router",
+        outcome,
+        code,
+        stage: Some(stage),
+        duration_ms: None,
+        detail,
+        durable: outcome != "success" || event.ends_with("_finished"),
+    });
+}
+
+fn finish_router(action: &'static str, result: &Result<RouterStatus>) {
+    let event = if action == "start" {
+        "router.start_finished"
+    } else {
+        "router.stop_finished"
+    };
+    match result {
+        Ok(status) => {
+            let mut detail = vec![("state", status.state.as_str())];
+            if let Some(owner) = status.owner.as_deref() {
+                detail.push(("owner", owner));
+            }
+            note_router(event, action, "success", None, Some("info"), &detail);
+        }
+        Err(error) => note_router(
+            event,
+            error.stage.as_deref().unwrap_or(action),
+            "failure",
+            Some(error.code.as_str()),
+            Some("error"),
+            &[],
+        ),
     }
 }
 
@@ -379,6 +446,29 @@ mod tests {
                 Some("start_failed")
             );
         });
+    }
+
+    #[test]
+    fn failed_start_writes_the_router_code_without_the_message() {
+        let directory =
+            std::env::temp_dir().join(format!("mtls-router-start-log-{}", uuid::Uuid::new_v4()));
+        crate::app_log::with_temp(&directory, || {
+            runtime().block_on(async {
+                let manager = ManagerClient::new(Arc::new(Factory {
+                    calls: Arc::new(Mutex::new(Vec::new())),
+                    initial: "start_failed",
+                    start_error: Some("ROUTER_START_FAILED"),
+                }));
+                let scheduler = PollScheduler::new(manager.clone());
+                let error = start(&manager, &scheduler).await.unwrap_err();
+                assert_eq!(error.code, "ROUTER_START_FAILED");
+            });
+        });
+        let body = std::fs::read_to_string(directory.join("app.log")).unwrap_or_default();
+        let _ = std::fs::remove_dir_all(&directory);
+        assert!(body.contains("\"event\":\"router.start_finished\""));
+        assert!(body.contains("ROUTER_START_FAILED"));
+        assert!(!body.contains("router start rejected"));
     }
 
     #[test]
