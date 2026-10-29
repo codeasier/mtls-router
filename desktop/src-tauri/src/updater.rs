@@ -666,7 +666,18 @@ fn install_windows_verified(bytes: &[u8]) -> std::result::Result<(), InstallFaul
         file: None,
     };
     let result = execute_install_phases(bytes, &mut steps);
+    finish_windows_install(&mut steps, result)
+}
+
+#[cfg(windows)]
+fn finish_windows_install(
+    steps: &mut WindowsInstaller,
+    result: std::result::Result<(), InstallFault>,
+) -> std::result::Result<(), InstallFault> {
     if result.is_err() {
+        // Windows can defer deleting an open file until its last handle closes,
+        // which would leave the directory nonempty when remove_dir runs.
+        drop(steps.file.take());
         let _ = std::fs::remove_file(&steps.installer);
         let _ = std::fs::remove_dir(&steps.directory);
     }
@@ -678,6 +689,78 @@ fn install_windows_verified(bytes: &[u8]) -> std::result::Result<(), InstallFaul
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    fn windows_installer_with_open_file() -> WindowsInstaller {
+        let directory =
+            std::env::temp_dir().join(format!("mtls-update-cleanup-{}", uuid::Uuid::new_v4()));
+        let mut steps = WindowsInstaller {
+            installer: directory.join("CodeasierRouter-update.exe"),
+            directory,
+            file: None,
+        };
+        steps.create_dir().unwrap();
+        steps.restrict_dir().unwrap();
+        steps.create_file().unwrap();
+        steps
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_prepare_failure_closes_file_before_removing_directory() {
+        for phase in [
+            InstallPhase::RestrictFile,
+            InstallPhase::Write,
+            InstallPhase::Sync,
+        ] {
+            let mut steps = windows_installer_with_open_file();
+            if phase != InstallPhase::RestrictFile {
+                steps.restrict_file().unwrap();
+            }
+            if phase == InstallPhase::Sync {
+                steps.write_all(b"MZ-verified").unwrap();
+            }
+            // Inject the failure after real preparation has left the file open.
+            let fault = io_fault(phase, &std::io::Error::from_raw_os_error(5));
+            assert!(steps.file.is_some());
+            assert_eq!(finish_windows_install(&mut steps, Err(fault)), Err(fault));
+            assert!(steps.file.is_none(), "{phase:?}");
+            assert!(!steps.installer.try_exists().unwrap(), "{phase:?}");
+            assert!(!steps.directory.try_exists().unwrap(), "{phase:?}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_cleanup_failure_preserves_original_install_fault() {
+        let mut steps = windows_installer_with_open_file();
+        let blocker = steps.directory.join("keep-directory-nonempty");
+        std::fs::write(&blocker, b"cleanup failure fixture").unwrap();
+        let fault = io_fault(InstallPhase::Write, &std::io::Error::from_raw_os_error(5));
+
+        assert_eq!(finish_windows_install(&mut steps, Err(fault)), Err(fault));
+        assert!(steps.file.is_none());
+        assert!(!steps.installer.try_exists().unwrap());
+        assert!(steps.directory.try_exists().unwrap());
+        std::fs::remove_file(blocker).unwrap();
+        std::fs::remove_dir(steps.directory).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_success_keeps_installer_for_external_process() {
+        let mut steps = windows_installer_with_open_file();
+        steps.write_all(b"MZ-verified").unwrap();
+        steps.sync_all().unwrap();
+        // Model the handle close in launch, without starting an installer.
+        drop(steps.file.take());
+
+        assert_eq!(finish_windows_install(&mut steps, Ok(())), Ok(()));
+        assert!(steps.installer.try_exists().unwrap());
+        assert!(steps.directory.try_exists().unwrap());
+        std::fs::remove_file(steps.installer).unwrap();
+        std::fs::remove_dir(steps.directory).unwrap();
+    }
 
     #[test]
     fn windows_shell_launch_errors_are_not_install_success() {
