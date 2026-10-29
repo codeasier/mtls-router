@@ -564,6 +564,7 @@ fn known_event(event: &str) -> bool {
             | "update.verify_failed"
             | "update.preflight"
             | "update.install_failed"
+            | "update.restore"
             | "update.restart_blocked"
             | "update.succeeded"
             | "router.start_requested"
