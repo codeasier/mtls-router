@@ -252,20 +252,19 @@ where
     ReadStatusFuture: std::future::Future<Output = Result<RouterStatus>>,
     Stop: FnMut() -> StopFuture,
     StopFuture: std::future::Future<Output = Result<RouterStatus>>,
-    Install: FnOnce() -> bool,
+    Install: FnOnce() -> std::result::Result<(), InstallFault>,
     Restart: FnOnce() -> RestartFuture,
-    RestartFuture: std::future::Future<Output = ()>,
+    RestartFuture: std::future::Future<Output = Result<()>>,
 {
     let stopped_router = stop_owned_router_with(read_status, stop).await?;
-    if !install() {
+    if let Err(fault) = install() {
+        // Record the install cause before recovery so a later start cannot
+        // hide which preparation or launch step failed.
+        let error = record_install_failure(&fault);
         if stopped_router {
-            restart().await;
+            record_restore(&restart().await);
         }
-        return Err(command_error(
-            "install",
-            "UPDATE_INSTALL_FAILED",
-            "cannot install the update",
-        ));
+        return Err(error);
     }
     Ok(())
 }
@@ -312,15 +311,20 @@ async fn download_and_install(app: &AppHandle, state: &AppState, update: Update)
         || {
             #[cfg(windows)]
             {
-                install_windows_verified(&bytes).is_ok()
+                install_windows_verified(&bytes)
             }
             #[cfg(not(windows))]
             {
-                update.install(bytes).is_ok()
+                update
+                    .install(bytes)
+                    .map(|_| ())
+                    .map_err(|error| plugin_install_fault(&error))
             }
         },
         || async {
-            let _ = crate::orchestration::start(&state.manager, &state.scheduler).await;
+            crate::orchestration::start(&state.manager, &state.scheduler)
+                .await
+                .map(|_| ())
         },
     )
     .await
@@ -414,35 +418,226 @@ fn complete_successful_install(windows: bool, restart_prepared: bool) -> Result<
     Ok(InstallCompletion::RestartApp)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InstallPhase {
+    Format,
+    TempDir,
+    RestrictDir,
+    CreateFile,
+    RestrictFile,
+    Write,
+    Sync,
+    Launch,
+    Plugin,
+}
+
+impl InstallPhase {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Format => "format",
+            Self::TempDir => "temp_dir",
+            Self::RestrictDir => "restrict_dir",
+            Self::CreateFile => "create_file",
+            Self::RestrictFile => "restrict_file",
+            Self::Write => "write",
+            Self::Sync => "sync",
+            Self::Launch => "launch",
+            Self::Plugin => "plugin",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct InstallFault {
+    phase: InstallPhase,
+    os_error: Option<i32>,
+    /// ShellExecuteW's own return when launch fails inside 0..=32.
+    shell_result: Option<i32>,
+}
+
+fn io_fault(phase: InstallPhase, error: &std::io::Error) -> InstallFault {
+    InstallFault {
+        phase,
+        os_error: error.raw_os_error().filter(|code| *code > 0),
+        shell_result: None,
+    }
+}
+
+fn launch_fault(code: isize) -> InstallFault {
+    InstallFault {
+        phase: InstallPhase::Launch,
+        os_error: None,
+        shell_result: i32::try_from(code)
+            .ok()
+            .filter(|value| (0..=32).contains(value)),
+    }
+}
+
+fn plugin_install_fault(error: &tauri_plugin_updater::Error) -> InstallFault {
+    let os_error = match error {
+        tauri_plugin_updater::Error::Io(error) => error.raw_os_error().filter(|code| *code > 0),
+        _ => None,
+    };
+    InstallFault {
+        phase: InstallPhase::Plugin,
+        os_error,
+        shell_result: None,
+    }
+}
+
+fn record_install_failure(fault: &InstallFault) -> CommandError {
+    let os_error = fault.os_error.map(|value| value.to_string());
+    let shell_result = fault.shell_result.map(|value| value.to_string());
+    let mut detail = vec![("phase", fault.phase.as_str())];
+    if let Some(value) = os_error.as_deref() {
+        detail.push(("os_error", value));
+    }
+    if fault.phase == InstallPhase::Launch {
+        detail.push(("result", shell_result.as_deref().unwrap_or("out_of_range")));
+    }
+    crate::app_log::record(crate::app_log::Fields {
+        level: "error",
+        event: "update.install_failed",
+        component: "updater",
+        outcome: "failure",
+        code: Some("UPDATE_INSTALL_FAILED"),
+        stage: Some("install"),
+        duration_ms: None,
+        detail: &detail,
+        durable: true,
+    });
+    CommandError::recoverable("UPDATE_INSTALL_FAILED", "cannot install the update")
+        .with_stage("install")
+}
+
+fn record_restore(result: &Result<()>) {
+    match result {
+        Ok(()) => note_update("update.restore", "restore", "success", &[], true),
+        Err(error) => {
+            crate::app_log::record(crate::app_log::Fields {
+                level: "error",
+                event: "update.restore",
+                component: "updater",
+                outcome: "failure",
+                code: Some(error.code.as_str()),
+                stage: Some("restore"),
+                duration_ms: None,
+                detail: &[],
+                durable: true,
+            });
+        }
+    }
+}
+
 #[cfg(any(windows, test))]
 fn installer_launch_succeeded(result: isize) -> bool {
     result > 32
 }
 
-#[cfg(windows)]
-fn install_windows_verified(bytes: &[u8]) -> std::io::Result<()> {
-    use std::{fs, io::Write, os::windows::ffi::OsStrExt};
-    use windows_sys::Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOW};
+#[cfg(any(windows, test))]
+trait InstallSteps {
+    fn create_dir(&mut self) -> std::io::Result<()>;
+    fn restrict_dir(&mut self) -> std::io::Result<()>;
+    fn create_file(&mut self) -> std::io::Result<()>;
+    fn restrict_file(&mut self) -> std::io::Result<()>;
+    fn write_all(&mut self, bytes: &[u8]) -> std::io::Result<()>;
+    fn sync_all(&mut self) -> std::io::Result<()>;
+    fn launch(&mut self) -> std::result::Result<(), isize>;
+}
 
-    // This accepts only the signature-verified bytes returned by Update::download.
+#[cfg(any(windows, test))]
+fn execute_install_phases(
+    bytes: &[u8],
+    steps: &mut impl InstallSteps,
+) -> std::result::Result<(), InstallFault> {
     // Release packaging publishes raw NSIS executables, never MSI or ZIP here.
+    // `bytes` are the signature-verified payload from Update::download.
     if !bytes.starts_with(b"MZ") {
-        return Err(std::io::Error::from(std::io::ErrorKind::InvalidData));
+        return Err(InstallFault {
+            phase: InstallPhase::Format,
+            os_error: None,
+            shell_result: None,
+        });
     }
-    let directory = std::env::temp_dir().join(format!("codeasier-update-{}", uuid::Uuid::new_v4()));
-    fs::create_dir(&directory)?;
-    let installer = directory.join("CodeasierRouter-update.exe");
-    let result = (|| {
-        crate::windows_security::restrict_private(&directory, true)?;
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&installer)?;
-        crate::windows_security::restrict_private(&installer, false)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        drop(file);
-        let path: Vec<_> = installer.as_os_str().encode_wide().chain(Some(0)).collect();
+    steps
+        .create_dir()
+        .map_err(|error| io_fault(InstallPhase::TempDir, &error))?;
+    steps
+        .restrict_dir()
+        .map_err(|error| io_fault(InstallPhase::RestrictDir, &error))?;
+    steps
+        .create_file()
+        .map_err(|error| io_fault(InstallPhase::CreateFile, &error))?;
+    steps
+        .restrict_file()
+        .map_err(|error| io_fault(InstallPhase::RestrictFile, &error))?;
+    steps
+        .write_all(bytes)
+        .map_err(|error| io_fault(InstallPhase::Write, &error))?;
+    steps
+        .sync_all()
+        .map_err(|error| io_fault(InstallPhase::Sync, &error))?;
+    steps.launch().map_err(launch_fault)?;
+    Ok(())
+}
+
+#[cfg(windows)]
+struct WindowsInstaller {
+    directory: std::path::PathBuf,
+    installer: std::path::PathBuf,
+    file: Option<std::fs::File>,
+}
+
+#[cfg(windows)]
+impl InstallSteps for WindowsInstaller {
+    fn create_dir(&mut self) -> std::io::Result<()> {
+        std::fs::create_dir(&self.directory)
+    }
+
+    fn restrict_dir(&mut self) -> std::io::Result<()> {
+        crate::windows_security::restrict_private(&self.directory, true)
+    }
+
+    fn create_file(&mut self) -> std::io::Result<()> {
+        self.file = Some(
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&self.installer)?,
+        );
+        Ok(())
+    }
+
+    fn restrict_file(&mut self) -> std::io::Result<()> {
+        crate::windows_security::restrict_private(&self.installer, false)
+    }
+
+    fn write_all(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        use std::io::Write;
+        let Some(file) = self.file.as_mut() else {
+            return Err(std::io::Error::from(std::io::ErrorKind::InvalidData));
+        };
+        file.write_all(bytes)
+    }
+
+    fn sync_all(&mut self) -> std::io::Result<()> {
+        let Some(file) = self.file.as_mut() else {
+            return Err(std::io::Error::from(std::io::ErrorKind::InvalidData));
+        };
+        file.sync_all()
+    }
+
+    fn launch(&mut self) -> std::result::Result<(), isize> {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOW};
+
+        self.file.take();
+        let path: Vec<_> = self
+            .installer
+            .as_os_str()
+            .encode_wide()
+            .chain(Some(0))
+            .collect();
         let launched = unsafe {
             ShellExecuteW(
                 std::ptr::null_mut(),
@@ -452,15 +647,39 @@ fn install_windows_verified(bytes: &[u8]) -> std::io::Result<()> {
                 std::ptr::null(),
                 SW_SHOW,
             )
-        };
-        if !installer_launch_succeeded(launched as isize) {
-            return Err(std::io::Error::other("update installer launch failed"));
+        } as isize;
+        if installer_launch_succeeded(launched) {
+            Ok(())
+        } else {
+            Err(launched)
         }
-        Ok(())
-    })();
+    }
+}
+
+#[cfg(windows)]
+fn install_windows_verified(bytes: &[u8]) -> std::result::Result<(), InstallFault> {
+    let directory = std::env::temp_dir().join(format!("codeasier-update-{}", uuid::Uuid::new_v4()));
+    let installer = directory.join("CodeasierRouter-update.exe");
+    let mut steps = WindowsInstaller {
+        directory,
+        installer,
+        file: None,
+    };
+    let result = execute_install_phases(bytes, &mut steps);
+    finish_windows_install(&mut steps, result)
+}
+
+#[cfg(windows)]
+fn finish_windows_install(
+    steps: &mut WindowsInstaller,
+    result: std::result::Result<(), InstallFault>,
+) -> std::result::Result<(), InstallFault> {
     if result.is_err() {
-        let _ = fs::remove_file(&installer);
-        let _ = fs::remove_dir(&directory);
+        // Windows can defer deleting an open file until its last handle closes,
+        // which would leave the directory nonempty when remove_dir runs.
+        drop(steps.file.take());
+        let _ = std::fs::remove_file(&steps.installer);
+        let _ = std::fs::remove_dir(&steps.directory);
     }
     // On success the external installer still needs this file. Its temporary
     // directory is left to OS temp cleanup, as in the upstream updater.
@@ -470,6 +689,78 @@ fn install_windows_verified(bytes: &[u8]) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    fn windows_installer_with_open_file() -> WindowsInstaller {
+        let directory =
+            std::env::temp_dir().join(format!("mtls-update-cleanup-{}", uuid::Uuid::new_v4()));
+        let mut steps = WindowsInstaller {
+            installer: directory.join("CodeasierRouter-update.exe"),
+            directory,
+            file: None,
+        };
+        steps.create_dir().unwrap();
+        steps.restrict_dir().unwrap();
+        steps.create_file().unwrap();
+        steps
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_prepare_failure_closes_file_before_removing_directory() {
+        for phase in [
+            InstallPhase::RestrictFile,
+            InstallPhase::Write,
+            InstallPhase::Sync,
+        ] {
+            let mut steps = windows_installer_with_open_file();
+            if phase != InstallPhase::RestrictFile {
+                steps.restrict_file().unwrap();
+            }
+            if phase == InstallPhase::Sync {
+                steps.write_all(b"MZ-verified").unwrap();
+            }
+            // Inject the failure after real preparation has left the file open.
+            let fault = io_fault(phase, &std::io::Error::from_raw_os_error(5));
+            assert!(steps.file.is_some());
+            assert_eq!(finish_windows_install(&mut steps, Err(fault)), Err(fault));
+            assert!(steps.file.is_none(), "{phase:?}");
+            assert!(!steps.installer.try_exists().unwrap(), "{phase:?}");
+            assert!(!steps.directory.try_exists().unwrap(), "{phase:?}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_cleanup_failure_preserves_original_install_fault() {
+        let mut steps = windows_installer_with_open_file();
+        let blocker = steps.directory.join("keep-directory-nonempty");
+        std::fs::write(&blocker, b"cleanup failure fixture").unwrap();
+        let fault = io_fault(InstallPhase::Write, &std::io::Error::from_raw_os_error(5));
+
+        assert_eq!(finish_windows_install(&mut steps, Err(fault)), Err(fault));
+        assert!(steps.file.is_none());
+        assert!(!steps.installer.try_exists().unwrap());
+        assert!(steps.directory.try_exists().unwrap());
+        std::fs::remove_file(blocker).unwrap();
+        std::fs::remove_dir(steps.directory).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_success_keeps_installer_for_external_process() {
+        let mut steps = windows_installer_with_open_file();
+        steps.write_all(b"MZ-verified").unwrap();
+        steps.sync_all().unwrap();
+        // Model the handle close in launch, without starting an installer.
+        drop(steps.file.take());
+
+        assert_eq!(finish_windows_install(&mut steps, Ok(())), Ok(()));
+        assert!(steps.installer.try_exists().unwrap());
+        assert!(steps.directory.try_exists().unwrap());
+        std::fs::remove_file(steps.installer).unwrap();
+        std::fs::remove_dir(steps.directory).unwrap();
+    }
 
     #[test]
     fn windows_shell_launch_errors_are_not_install_success() {
@@ -588,13 +879,14 @@ mod tests {
                     let events = events.clone();
                     move || {
                         events.lock().unwrap().push("install");
-                        true
+                        Ok(())
                     }
                 },
                 {
                     let events = events.clone();
                     move || async move {
                         events.lock().unwrap().push("restart");
+                        Ok(())
                     }
                 },
             )
@@ -633,13 +925,14 @@ mod tests {
                     let events = events.clone();
                     move || {
                         events.lock().unwrap().push("install");
-                        true
+                        Ok(())
                     }
                 },
                 {
                     let events = events.clone();
                     move || async move {
                         events.lock().unwrap().push("restart");
+                        Ok(())
                     }
                 },
             )
@@ -677,13 +970,14 @@ mod tests {
                         let events = events.clone();
                         move || {
                             events.lock().unwrap().push("install");
-                            true
+                            Ok(())
                         }
                     },
                     {
                         let events = events.clone();
                         move || async move {
                             events.lock().unwrap().push("restart");
+                            Ok(())
                         }
                     },
                 )
@@ -729,13 +1023,14 @@ mod tests {
                     let events = events.clone();
                     move || {
                         events.lock().unwrap().push("install");
-                        true
+                        Ok(())
                     }
                 },
                 {
                     let events = events.clone();
                     move || async move {
                         events.lock().unwrap().push("restart");
+                        Ok(())
                     }
                 },
             )
@@ -789,13 +1084,14 @@ mod tests {
                         let events = events.clone();
                         move || {
                             events.lock().unwrap().push("install");
-                            true
+                            Ok(())
                         }
                     },
                     {
                         let events = events.clone();
                         move || async move {
                             events.lock().unwrap().push("restart");
+                            Ok(())
                         }
                     },
                 )
@@ -842,13 +1138,14 @@ mod tests {
                     let events = events.clone();
                     move || {
                         events.lock().unwrap().push("install");
-                        true
+                        Ok(())
                     }
                 },
                 {
                     let events = events.clone();
                     move || async move {
                         events.lock().unwrap().push("restart");
+                        Ok(())
                     }
                 },
             )
@@ -911,13 +1208,18 @@ mod tests {
                         let events = events.clone();
                         move || {
                             events.lock().unwrap().push("install");
-                            false
+                            Err(InstallFault {
+                                phase: InstallPhase::Write,
+                                os_error: Some(5),
+                                shell_result: None,
+                            })
                         }
                     },
                     {
                         let events = events.clone();
                         move || async move {
                             events.lock().unwrap().push("restart");
+                            Ok(())
                         }
                     },
                 )
@@ -1036,8 +1338,14 @@ mod tests {
                 let error = install_after_router_preflight_with(
                     || async { Ok(status("absent", None)) },
                     || async { Ok(status("absent", None)) },
-                    || false,
-                    || async {},
+                    || {
+                        Err(InstallFault {
+                            phase: InstallPhase::Write,
+                            os_error: Some(5),
+                            shell_result: None,
+                        })
+                    },
+                    || async { Ok(()) },
                 )
                 .await
                 .unwrap_err();
@@ -1046,5 +1354,275 @@ mod tests {
         });
         assert!(text.contains("UPDATE_INSTALL_FAILED"));
         assert!(text.contains("\"stage\":\"install\""));
+        assert!(text.contains("\"phase\":\"write\""));
+        assert!(text.contains("\"os_error\":\"5\""));
+        assert!(!text.contains("update.restore"));
+    }
+
+    struct ScriptedInstall {
+        fail_at: Option<InstallPhase>,
+        os_error: i32,
+        shell_code: isize,
+        calls: Vec<&'static str>,
+    }
+
+    impl ScriptedInstall {
+        fn step(&mut self, name: &'static str, phase: InstallPhase) -> std::io::Result<()> {
+            self.calls.push(name);
+            if self.fail_at == Some(phase) {
+                Err(std::io::Error::from_raw_os_error(self.os_error))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    impl InstallSteps for ScriptedInstall {
+        fn create_dir(&mut self) -> std::io::Result<()> {
+            self.step("create_dir", InstallPhase::TempDir)
+        }
+
+        fn restrict_dir(&mut self) -> std::io::Result<()> {
+            self.step("restrict_dir", InstallPhase::RestrictDir)
+        }
+
+        fn create_file(&mut self) -> std::io::Result<()> {
+            self.step("create_file", InstallPhase::CreateFile)
+        }
+
+        fn restrict_file(&mut self) -> std::io::Result<()> {
+            self.step("restrict_file", InstallPhase::RestrictFile)
+        }
+
+        fn write_all(&mut self, _bytes: &[u8]) -> std::io::Result<()> {
+            self.step("write", InstallPhase::Write)
+        }
+
+        fn sync_all(&mut self) -> std::io::Result<()> {
+            self.step("sync", InstallPhase::Sync)
+        }
+
+        fn launch(&mut self) -> std::result::Result<(), isize> {
+            self.calls.push("launch");
+            if self.fail_at == Some(InstallPhase::Launch) {
+                Err(self.shell_code)
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[test]
+    fn windows_prepare_and_launch_failures_keep_phase_and_stop() {
+        let secret = "sk-supersecretvalue";
+        let path = "C:\\Users\\secret\\codeasier-update\\CodeasierRouter-update.exe";
+        for (phase, call) in [
+            (InstallPhase::TempDir, "create_dir"),
+            (InstallPhase::RestrictDir, "restrict_dir"),
+            (InstallPhase::CreateFile, "create_file"),
+            (InstallPhase::RestrictFile, "restrict_file"),
+            (InstallPhase::Write, "write"),
+            (InstallPhase::Sync, "sync"),
+        ] {
+            let mut steps = ScriptedInstall {
+                fail_at: Some(phase),
+                os_error: 5,
+                shell_code: 0,
+                calls: Vec::new(),
+            };
+            let fault = execute_install_phases(b"MZ-verified", &mut steps).unwrap_err();
+            assert_eq!(fault.phase, phase, "{call}");
+            assert_eq!(fault.os_error, Some(5), "{call}");
+            assert_eq!(fault.shell_result, None, "{call}");
+            assert_eq!(steps.calls.last().copied(), Some(call));
+            assert!(!steps.calls.contains(&"launch"));
+        }
+
+        let mut launched = ScriptedInstall {
+            fail_at: Some(InstallPhase::Launch),
+            os_error: 5,
+            shell_code: 5,
+            calls: Vec::new(),
+        };
+        let fault = execute_install_phases(b"MZ-verified", &mut launched).unwrap_err();
+        assert_eq!(
+            fault,
+            InstallFault {
+                phase: InstallPhase::Launch,
+                os_error: None,
+                shell_result: Some(5),
+            }
+        );
+        assert_eq!(launched.calls.len(), 7);
+
+        let mut format = ScriptedInstall {
+            fail_at: None,
+            os_error: 5,
+            shell_code: 0,
+            calls: Vec::new(),
+        };
+        let fault = execute_install_phases(b"PK", &mut format).unwrap_err();
+        assert_eq!(fault.phase, InstallPhase::Format);
+        assert!(format.calls.is_empty());
+
+        let text = logged(|_| {
+            let custom = io_fault(
+                InstallPhase::TempDir,
+                &std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    format!("{path} {secret}"),
+                ),
+            );
+            assert_eq!(custom.os_error, None);
+            record_install_failure(&custom);
+            record_install_failure(&io_fault(
+                InstallPhase::CreateFile,
+                &std::io::Error::from_raw_os_error(5),
+            ));
+            record_install_failure(&io_fault(
+                InstallPhase::Sync,
+                &std::io::Error::from_raw_os_error(0),
+            ));
+            record_install_failure(&launch_fault(0));
+            record_install_failure(&launch_fault(31));
+            record_install_failure(&launch_fault(-1));
+            record_install_failure(&plugin_install_fault(
+                &tauri_plugin_updater::Error::Network(format!("{path} {secret}")),
+            ));
+            record_install_failure(&plugin_install_fault(&tauri_plugin_updater::Error::Io(
+                std::io::Error::from_raw_os_error(13),
+            )));
+        });
+        assert!(text.contains("\"phase\":\"temp_dir\""));
+        assert!(text.contains("\"phase\":\"create_file\""));
+        assert!(text.contains("\"os_error\":\"5\""));
+        assert!(text.contains("\"phase\":\"sync\""));
+        assert!(text.contains("\"result\":\"0\""));
+        assert!(text.contains("\"result\":\"31\""));
+        assert!(text.contains("\"result\":\"out_of_range\""));
+        assert!(text.contains("\"phase\":\"plugin\""));
+        assert!(text.contains("\"os_error\":\"13\""));
+        assert!(!text.contains(secret));
+        assert!(!text.contains(path));
+        assert!(!text.contains("PermissionDenied"));
+        assert!(!text.contains("update installer launch failed"));
+        let sync_line = text
+            .lines()
+            .find(|line| line.contains("\"phase\":\"sync\""))
+            .unwrap();
+        assert!(!sync_line.contains("os_error"));
+    }
+
+    #[test]
+    fn install_cause_is_recorded_before_restore_outcome() {
+        let secret = "sk-supersecretvalue";
+        let path = "C:\\Users\\secret\\router.exe";
+        let text = logged(|_| {
+            runtime().block_on(async {
+                use std::sync::atomic::{AtomicUsize, Ordering};
+                let reads = AtomicUsize::new(0);
+                let error = install_after_router_preflight_with(
+                    || {
+                        let read = reads.fetch_add(1, Ordering::SeqCst);
+                        async move {
+                            if read == 0 {
+                                Ok(status("desktop_owned", Some("desktop")))
+                            } else {
+                                Ok(status("absent", None))
+                            }
+                        }
+                    },
+                    || async { Ok(status("absent", None)) },
+                    || {
+                        Err(InstallFault {
+                            phase: InstallPhase::RestrictDir,
+                            os_error: Some(5),
+                            shell_result: None,
+                        })
+                    },
+                    || async {
+                        Err(CommandError::new(
+                            "MANAGER_FAILED",
+                            format!("{path} {secret}"),
+                        ))
+                    },
+                )
+                .await
+                .unwrap_err();
+                assert_eq!(error.code, "UPDATE_INSTALL_FAILED");
+                assert_eq!(error.stage.as_deref(), Some("install"));
+                assert!(!error.message.contains(path));
+            });
+        });
+        let records: Vec<serde_json::Value> = text
+            .lines()
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .collect();
+        let install_at = records
+            .iter()
+            .position(|record| record["event"] == "update.install_failed")
+            .unwrap();
+        let restore_at = records
+            .iter()
+            .position(|record| record["event"] == "update.restore")
+            .unwrap();
+        assert!(install_at < restore_at);
+        assert_eq!(records[install_at]["code"], "UPDATE_INSTALL_FAILED");
+        assert_eq!(records[install_at]["detail"]["phase"], "restrict_dir");
+        assert_eq!(records[install_at]["detail"]["os_error"], "5");
+        assert_eq!(records[restore_at]["outcome"], "failure");
+        assert_eq!(records[restore_at]["code"], "MANAGER_FAILED");
+        assert_eq!(records[restore_at]["stage"], "restore");
+        assert!(records[restore_at].get("detail").is_none());
+        assert!(!text.contains(secret));
+        assert!(!text.contains(path));
+
+        let restored = logged(|_| {
+            runtime().block_on(async {
+                use std::sync::atomic::{AtomicUsize, Ordering};
+                let reads = AtomicUsize::new(0);
+                let error = install_after_router_preflight_with(
+                    || {
+                        let read = reads.fetch_add(1, Ordering::SeqCst);
+                        async move {
+                            if read == 0 {
+                                Ok(status("legacy_managed", Some("desktop")))
+                            } else {
+                                Ok(status("absent", None))
+                            }
+                        }
+                    },
+                    || async { Ok(status("absent", None)) },
+                    || {
+                        Err(InstallFault {
+                            phase: InstallPhase::Launch,
+                            os_error: None,
+                            shell_result: Some(2),
+                        })
+                    },
+                    || async { Ok(()) },
+                )
+                .await
+                .unwrap_err();
+                assert_eq!(error.code, "UPDATE_INSTALL_FAILED");
+            });
+        });
+        let records: Vec<serde_json::Value> = restored
+            .lines()
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .collect();
+        let restore = records
+            .iter()
+            .find(|record| record["event"] == "update.restore")
+            .unwrap();
+        assert_eq!(restore["outcome"], "success");
+        assert!(restore.get("code").is_none());
+        let install = records
+            .iter()
+            .find(|record| record["event"] == "update.install_failed")
+            .unwrap();
+        assert_eq!(install["detail"]["phase"], "launch");
+        assert_eq!(install["detail"]["result"], "2");
+        assert!(install["detail"].get("os_error").is_none());
     }
 }

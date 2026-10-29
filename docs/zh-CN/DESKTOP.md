@@ -42,11 +42,11 @@ Stable 桌面 release 在 Windows x86_64、macOS Intel/Apple Silicon 和 Linux x
 
 应用每次启动会静默检查一次 `https://release.codeasier.top/latest.json`；检查失败不会阻断启动。设置页面会显示当前和最新桌面版本，以及手动**检查更新**。它旁边的**历史更新**用悬浮窗展示本构建带入的各已发布版本说明，正文按 Markdown 渲染。GitHub 标志打开 `https://github.com/codeasier/mtls-router/releases`。确认对话框会在开始下载前，按当前界面语言再展示一次可用更新的日志。Stable feed 的 `notes` 来自[更新日志](CHANGELOG.md)中对应版本的章节，先简体中文、后 English；`pub_date` 是该章节日期的午夜 UTC。构建里还没有的更新版本，会用 feed 中的说明补在历史列表最上方。feed 没有说明时仍可安装，设置页会标明无法在这里核对改动。由于 manager 与 router 已编译进桌面二进制，设置页面只列出一个应用版本；只有在复用历史 CLI 安装的兼容外部 router 时才会单独列出其版本。应用只接受更高版本的 stable SemVer release；不会提供 prerelease 或含 build metadata 的版本，validation/非 stable 构建也不会发布到桌面更新 channel。
 
-应用绝不会在未经确认时下载或安装更新。你确认界面显示的 stable 版本后，应用才会下载平台包、报告进度、校验强制的 Tauri updater 签名、停止经过验证的桌面所属 router 或关联的历史桌面 router、安装完整包并重启应用。已锁存且 `owner=desktop` 的 `start_failed` 不阻断整包替换：更新替换的是桌面进程，不要求 router 先处于可监听状态。若关联的历史 router 无法通过完整进程身份停止，或关联状态仍为 stale、unknown 或无法验证，更新会被拒绝。兼容的外部 router 不会被停止。如果停止桌面端所属 router 后安装失败，应用会尝试重新启动该 router。下载或安装失败时，设置页会展示稳定命令错误码。
+应用绝不会在未经确认时下载或安装更新。你确认界面显示的 stable 版本后，应用才会下载平台包、报告进度、校验强制的 Tauri updater 签名、停止经过验证的桌面所属 router 或关联的历史桌面 router、安装完整包并重启应用。已锁存且 `owner=desktop` 的 `start_failed` 不阻断整包替换：更新替换的是桌面进程，不要求 router 先处于可监听状态。若关联的历史 router 无法通过完整进程身份停止，或关联状态仍为 stale、unknown 或无法验证，更新会被拒绝。兼容的外部 router 不会被停止。如果停止桌面端所属 router 后安装失败，应用会尝试重新启动该 router。应用日志会在这次尝试之前记下安装失败。Windows 上的记录会标明失败步骤（`format`、`temp_dir`、`restrict_dir`、`create_file`、`restrict_file`、`write`、`sync` 或 `launch`）。文件或目录失败在操作系统给出数值时包含 `os_error`。`launch` 失败包含 `result`，即 `ShellExecuteW` 在其自身 0–32 失败范围内的返回码；返回值超出该范围时记为 `out_of_range`。其他平台的步骤记为 `plugin`。`update.restore` 是单独事件，只有 router 启动调用返回成功时才算成功。日志不保存原始错误文本，也不保存临时安装包路径。下载或安装失败时，设置页会展示稳定命令错误码。恢复本身失败时，返回的安装错误仍是 `UPDATE_INSTALL_FAILED`。
 
 Windows 应用会先检查经过签名验证的 NSIS 安装器是否成功启动，再退出。启动被拒时应用保持打开，并尝试恢复为更新而停止的 router。安装器启动后，安装与成功重启由 NSIS 负责；已退出的应用无法恢复该进程外阶段的失败。此时请重新打开已安装应用，必要时从可信 release 渠道重新安装完整包。更新不会请求提权。
 
-各平台在线安装均要求受支持的安装位置和文件系统布局。如果 updater 无法替换已安装包，请退出应用，再从可信 release 渠道手工安装完整新包。
+各平台在线安装均要求受支持的安装位置和文件系统布局。如果 updater 无法替换已安装包，请退出应用，再从可信 release 渠道手工安装完整新包。仍在运行 v0.5.3 的桌面使用的是旧更新器。它在准备安装器时失败，就无法把自己换成会记录失败步骤的构建，失败仍只表现为没有 phase 的 `UPDATE_INSTALL_FAILED`。请从托盘退出，让进程结束，再把当前 stable Windows 安装包覆盖安装到原目录。在从 v0.5.3 更新到 v0.6.0 失败的那台机器上没有执行过这次手工覆盖，因此该恢复步骤仍未实测。之后的在线更新验收需要从已经包含这套记录的构建开始。
 
 ## Router 所有权和状态
 
